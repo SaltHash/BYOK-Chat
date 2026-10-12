@@ -1,9 +1,9 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { Info, X, Server, Play, MessageSquare, Keyboard, ArrowUp, ArrowDown, MessagesSquare, RotateCcw, Download, Upload, FileText, Trash2, CircleCheck, CircleX, Gauge } from 'lucide-react'
-import { useS, dl, chatMd, BLANK, THEMES, modelsOf, modelNameOf, type Ep, type Kind } from '../store'
+import { useS, dl, BLANK, THEMES, modelsOf, modelNameOf, type Ep, type Kind } from '../store'
 import { combo, fmt, rec as R, testEp, redact } from '../engine'
 import { KEYS } from '../meta'
-import { Btn, Toggle, Confirm, cx, type Ic } from './ui'
+import { Btn, Toggle, Checkbox, Confirm, Modal, cx, type Ic } from './ui'
 import { Panel } from './Settings'
 
 export function Notice({ cfg }: { cfg: (t: string) => void }) {
@@ -188,44 +188,80 @@ export function KeysTab() {
 export function DataTab() {
   const s = useS()
   const [withKeys, setWithKeys] = useState(false)
-  const [imports, setImports] = useState({ eps: true, prompts: true, pls: true, cmds: true, keys: true, appearance: true, tools: true, widgets: true, stats: true })
+  const categories = [['eps', 'Endpoints'], ['prompts', 'Prompts'], ['pls', 'Playlists'], ['cmds', 'Commands'], ['keys', 'Shortcuts'], ['appearance', 'Appearance'], ['tools', 'Tools'], ['widgets', 'Widget settings'], ['stats', 'Usage stats'], ['chats', 'Chat history']] as const
+  type Category = typeof categories[number][0]
+  const [exports, setExports] = useState<Record<Category, boolean>>({ eps: true, prompts: true, pls: true, cmds: true, keys: true, appearance: true, tools: true, widgets: true, stats: true, chats: true })
+  const [fileData, setFileData] = useState<Record<string, any> | null>(null)
+  const [imports, setImports] = useState<Record<Category, boolean>>({ eps: false, prompts: false, pls: false, cmds: false, keys: false, appearance: false, tools: false, widgets: false, stats: false, chats: false })
+  const [available, setAvailable] = useState<Record<Category, boolean>>({ eps: false, prompts: false, pls: false, cmds: false, keys: false, appearance: false, tools: false, widgets: false, stats: false, chats: false })
+  const [merge, setMerge] = useState(true)
   const [cf, setCf] = useState(0)
   const [msg, setMsg] = useState('')
-  const exp = () => dl('chat-config.json', JSON.stringify({ v: 3, theme: s.theme, keys: s.keys, eps: s.eps.map((e) => ({ ...e, key: withKeys ? e.key : '' })), prompts: s.prompts, pls: s.pls, cmds: s.cmds, tools: s.tools, widgets: s.widgets, widgetPrefs: s.widgetPrefs, stats: s.stats }, null, 1), 'application/json')
-  const imp = async (f?: File) => {
+  const exp = () => {
+    const data: Record<string, any> = { v: 3 }
+    if (exports.appearance) { data.theme = s.theme; data.customColors = s.customColors }
+    if (exports.keys) data.keys = s.keys
+    if (exports.eps) data.eps = s.eps.map((e) => ({ ...e, key: withKeys ? e.key : '' }))
+    if (exports.prompts) data.prompts = s.prompts
+    if (exports.pls) data.pls = s.pls
+    if (exports.cmds) data.cmds = s.cmds
+    if (exports.tools) data.tools = s.tools
+    if (exports.widgets) { data.widgets = s.widgets; data.widgetPrefs = s.widgetPrefs }
+    if (exports.stats) data.stats = s.stats
+    if (exports.chats) { data.chats = s.chats; data.folders = s.folders }
+    dl('chat-config.json', JSON.stringify(data, null, 1), 'application/json')
+  }
+  const chooseFile = async (f?: File) => {
     if (!f) return
     try {
       const j = JSON.parse(await f.text())
       if (!j || typeof j !== 'object') throw 0
+      const has: Record<Category, boolean> = { eps: Array.isArray(j.eps), prompts: Array.isArray(j.prompts), pls: Array.isArray(j.pls), cmds: Array.isArray(j.cmds), keys: !!j.keys && typeof j.keys === 'object', appearance: (typeof j.theme === 'string' && j.theme in THEMES) || (!!j.customColors && typeof j.customColors === 'object'), tools: !!j.tools && typeof j.tools === 'object', widgets: (!!j.widgets && typeof j.widgets === 'object') || (!!j.widgetPrefs && typeof j.widgetPrefs === 'object'), stats: !!j.stats && typeof j.stats === 'object', chats: Array.isArray(j.chats) }
+      setAvailable(has)
+      setImports(Object.fromEntries(categories.map(([id]) => [id, has[id]])) as Record<Category, boolean>)
+      setFileData(j)
+      setMerge(true)
+      setMsg('')
+    } catch { setMsg('Import failed: that file is not a valid configuration export.') }
+  }
+  const imp = () => {
+    if (!fileData) return
+    try {
+      const j = fileData
       const fix = (k: Kind) => (Array.isArray(j[k]) ? j[k] : []).filter((y: any) => y && typeof y.id === 'string').map((y: any) => ({ ...BLANK[k](), ...y }))
-      const m = (k: Kind, a: any[]) => { const b = fix(k); return [...a.filter((x) => !b.some((y: any) => y.id === x.id)), ...b] }
-      useS.setState((st) => ({
-        ...(imports.eps ? { eps: m('eps', st.eps).map((e: Ep) => ({ ...e, key: e.key || st.eps.find((x) => x.id === e.id)?.key || '' })) } : {}),
+      const m = (k: Kind, a: any[]) => { const b = fix(k); return merge ? [...a.filter((x) => !b.some((y: any) => y.id === x.id)), ...b] : b }
+      useS.setState((st) => {
+        const importedChats = Array.isArray(j.chats) ? j.chats.filter((c: any) => c && typeof c.id === 'string' && typeof c.title === 'string' && Array.isArray(c.msgs)) : []
+        const importedFolders = Array.isArray(j.folders) ? j.folders.filter((f: any) => f && typeof f.id === 'string' && typeof f.name === 'string') : []
+        const chats = !imports.chats ? st.chats : merge ? [...st.chats.filter((c) => !importedChats.some((x: any) => x.id === c.id)), ...importedChats] : importedChats
+        const folders = !imports.chats ? st.folders : merge ? [...st.folders.filter((f) => !importedFolders.some((x: any) => x.id === f.id)), ...importedFolders] : importedFolders
+        return {
+        ...(imports.eps ? { eps: m('eps', st.eps).map((e: Ep) => ({ ...e, key: merge && !e.key ? st.eps.find((x) => x.id === e.id)?.key || '' : e.key })) } : {}),
         ...(imports.prompts ? { prompts: m('prompts', st.prompts) } : {}), ...(imports.pls ? { pls: m('pls', st.pls) } : {}), ...(imports.cmds ? { cmds: m('cmds', st.cmds) } : {}),
-        ...(imports.keys ? { keys: { ...st.keys, ...(j.keys && typeof j.keys === 'object' ? j.keys : {}) } } : {}),
+        ...(imports.keys ? { keys: merge ? { ...st.keys, ...j.keys } : j.keys } : {}),
         ...(imports.appearance && j.theme in THEMES ? { theme: j.theme } : {}),
-        ...(imports.tools ? { tools: { ...st.tools, ...(j.tools && typeof j.tools === 'object' ? j.tools : {}) } } : {}),
-        ...(imports.widgets ? { widgets: { ...st.widgets, ...(j.widgets && typeof j.widgets === 'object' ? j.widgets : {}) }, widgetPrefs: { ...st.widgetPrefs, ...(j.widgetPrefs && typeof j.widgetPrefs === 'object' ? j.widgetPrefs : {}) } } : {}),
-        ...(imports.stats && j.stats && typeof j.stats === 'object' ? { stats: { ...st.stats, ...j.stats } } : {}),
-      }))
-      setMsg('Imported the selected data. Existing keys were kept when the file did not include one.')
+        ...(imports.appearance && j.customColors && typeof j.customColors === 'object' ? { customColors: merge ? { ...st.customColors, ...j.customColors } : j.customColors } : {}),
+        ...(imports.tools ? { tools: merge ? { ...st.tools, ...j.tools } : j.tools } : {}),
+        ...(imports.widgets ? { widgets: merge ? { ...st.widgets, ...j.widgets } : j.widgets, widgetPrefs: j.widgetPrefs ? (merge ? { ...st.widgetPrefs, ...j.widgetPrefs } : j.widgetPrefs) : st.widgetPrefs } : {}),
+        ...(imports.stats && j.stats && typeof j.stats === 'object' ? { stats: merge ? { ...st.stats, ...j.stats } : j.stats } : {}),
+        ...(imports.chats ? { chats, folders, chat: chats.some((c) => c.id === st.chat) ? st.chat : chats[0]?.id ?? '' } : {}),
+      }})
+      setFileData(null)
+      setMsg(merge ? 'Imported the selected data and merged it with existing settings.' : 'Imported the selected data and replaced those settings.')
     } catch { setMsg('Import failed: that file is not a valid configuration export.') }
   }
   return (
     <Panel id="data">
-      <Box icon={Download} t="Export configuration" d="Setup, widget preferences, shortcuts, appearance and usage stats as JSON.">
-        <label className="flex items-center gap-2 text-xs text-mu">Include keys<Toggle on={withKeys} set={setWithKeys} /></label>
-        <Btn v="soft" onClick={exp}>Export</Btn>
+      <Box icon={Download} t="Export configuration" d="Choose which settings and chat history to include in a JSON backup.">
+        <Btn v="soft" onClick={() => setCf(3)}>Export</Btn>
       </Box>
-      <Box icon={Upload} t="Import configuration" d="Choose which parts of the file to apply. Items with a matching id are replaced.">
-        <div className="basis-full grid grid-cols-2 gap-2 rounded-lg bg-bg p-3 sm:grid-cols-3">{([['eps', 'Endpoints'], ['prompts', 'Prompts'], ['pls', 'Playlists'], ['cmds', 'Commands'], ['keys', 'Shortcuts'], ['appearance', 'Appearance'], ['tools', 'Tools'], ['widgets', 'Widget settings'], ['stats', 'Usage stats']] as const).map(([id, label]) => <label key={id} className="flex items-center gap-2 text-xs"><input type="checkbox" checked={imports[id]} onChange={(e) => setImports({ ...imports, [id]: e.target.checked })} />{label}</label>)}</div>
+      <Box icon={Upload} t="Import configuration" d="Choose a JSON configuration file, then select what to import.">
         <label className="inline-flex h-9 cursor-pointer items-center rounded-lg bg-hov px-3 text-sm font-medium hover:opacity-80">
-          <input type="file" accept=".json" hidden onChange={(e) => { imp(e.target.files?.[0]); e.target.value = '' }} />Choose file
+          <input type="file" accept=".json,application/json" hidden onChange={(e) => { chooseFile(e.target.files?.[0]); e.target.value = '' }} />Choose file
         </label>
         {msg && <span className="basis-full text-xs text-mu">{msg}</span>}
       </Box>
-      <Box icon={FileText} t="Chat history" d="Export every chat as one Markdown file, or delete them all. Stats are kept.">
-        <Btn v="soft" onClick={() => s.chats.length ? dl('chats.md', s.chats.map(chatMd).join('\n\n\n'), 'text/markdown') : setMsg('There are no chats to export.')}>Export</Btn>
+      <Box icon={FileText} t="Chat history" d="Include conversations in configuration exports, or delete them all. Stats are kept.">
         <Btn v="danger" disabled={!s.chats.length} onClick={() => setCf(1)}>Delete all</Btn>
       </Box>
       <Box icon={Trash2} t="Erase everything" d="Removes endpoints, keys, chats, stats and shortcuts from this browser.">
@@ -233,6 +269,18 @@ export function DataTab() {
       </Box>
       {cf === 1 && <Confirm title="Delete all chats?" text="Every saved chat is removed. Stats and settings are kept." ok="Delete all" close={() => setCf(0)} run={() => s.patch({ chats: [], chat: '' })} />}
       {cf === 2 && <Confirm title="Erase everything?" text="Endpoints, API keys, prompts, playlists, commands, chats, stats and shortcuts are removed from this browser. This cannot be undone." ok="Erase" close={() => setCf(0)} run={() => { localStorage.removeItem('byok.v1'); location.reload() }} />}
+      {cf === 3 && <Modal close={() => setCf(0)}><section role="dialog" aria-modal="true" aria-labelledby="export-title" className="w-full max-w-xl space-y-5 rounded-2xl border border-hov bg-bg p-5 shadow-2xl">
+        <div><h2 id="export-title" className="text-lg font-semibold">Export configuration</h2><p className="mt-1 text-sm text-mu">Choose the settings to include in this file.</p></div>
+        <div className="grid grid-cols-2 gap-2 rounded-xl bg-surf p-3 sm:grid-cols-3">{categories.map(([id, label]) => <Checkbox key={id} checked={exports[id]} set={(checked) => setExports({ ...exports, [id]: checked })} label={label} />)}</div>
+        {exports.eps && <div className="rounded-xl bg-surf p-3"><Checkbox checked={withKeys} set={setWithKeys} label="Include API keys" /></div>}
+        <div className="flex justify-end gap-2"><Btn v="soft" onClick={() => setCf(0)}>Cancel</Btn><Btn v="solid" icon={Download} onClick={() => { exp(); setCf(0) }}>Export</Btn></div>
+      </section></Modal>}
+      {fileData && <Modal close={() => setFileData(null)}><section role="dialog" aria-modal="true" aria-labelledby="import-title" className="w-full max-w-xl space-y-5 rounded-2xl border border-hov bg-bg p-5 shadow-2xl">
+        <div><h2 id="import-title" className="text-lg font-semibold">Import configuration</h2><p className="mt-1 text-sm text-mu">Choose the parts of this file to import. Sections not included in the file are unavailable.</p></div>
+        <div className="grid grid-cols-2 gap-2 rounded-xl bg-surf p-3 sm:grid-cols-3">{categories.map(([id, label]) => <Checkbox key={id} checked={imports[id]} disabled={!available[id]} set={(checked) => setImports({ ...imports, [id]: checked })} label={label} />)}</div>
+        <div className="rounded-xl bg-surf p-3"><Checkbox checked={merge} set={setMerge} label="Merge with existing data" /></div>
+        <div className="flex justify-end gap-2"><Btn v="soft" onClick={() => setFileData(null)}>Cancel</Btn><Btn v="solid" icon={Upload} onClick={imp} disabled={!Object.values(imports).some(Boolean)}>Import</Btn></div>
+      </section></Modal>}
     </Panel>
   )
 }

@@ -3,7 +3,7 @@ import { TOOLS } from './meta'
 
 export const est = (s: string) => Math.ceil(s.length / 4)
 export const redact = (e: Ep, s: unknown) => String(s).split(e.key || '\u0000').join('•••').replace(/\b(sk|gsk|pk|xai|AIza)[-\w]{12,}/g, '•••')
-export const can = (e: Ep, k: 'img' | 'pdf') => e[k] !== 'n' && (k !== 'pdf' || e.type === 'anthropic')
+export const can = (e: Ep, k: 'img' | 'pdf') => k === 'img' || e.type === 'anthropic'
 
 /* key bindings */
 export const rec = { on: false }
@@ -57,6 +57,8 @@ export const TOOL_REGISTRY: Record<string, ToolSpec> = {
     if (!match) throw Error(`Unknown app destination: ${destination}. Ask for a page such as Appearance, Endpoints, Tools, Memory, or Chat.`)
     return `[${match[0]}](${match[1]})`
   } },
+  prompt_chip: { description: 'Offer an optional follow-up button when it would help continue the answer. Omit it for simple acknowledgements or urgent requests. Use a short label and a clear follow-up request.', parameters: { type: 'object', properties: { label: textArg('Button label.'), prompt: textArg('Follow-up request to send when selected.') }, required: ['label', 'prompt'], additionalProperties: false }, run: ({ label }) => `Follow-up ready: ${label}` },
+  inline_poll: { description: 'Ask a focused multiple-choice question in a custom card below your answer. Use 2–6 concise options as either plain strings or objects with label and prompt. For strings, use the same text as the follow-up prompt. Use mode single or multiple.', parameters: { type: 'object', properties: { question: textArg('The question shown above the choices.'), mode: { type: 'string', enum: ['single', 'multiple'], description: 'Whether the user may choose one option or several.' }, options: { type: 'array', minItems: 2, maxItems: 6, items: { anyOf: [{ type: 'string' }, { type: 'object', properties: { label: textArg('Visible choice label.'), prompt: textArg('Follow-up prompt sent for this choice.') }, required: ['label', 'prompt'], additionalProperties: false }] } } }, required: ['question', 'options'], additionalProperties: false }, run: ({ question }) => `Choice card ready: ${question}` },
 }
 
 export function toolsFor(enabled: Record<string, boolean>, provider: Ep['type']) {
@@ -153,8 +155,8 @@ export function wire(e: Ep, msgs: Msg[]): Wire[] {
 }
 function parseArgs(raw: string) { try { const v = JSON.parse(raw || '{}'); return v && typeof v === 'object' && !Array.isArray(v) ? v : {} } catch { return {} } }
 
-type O = { cap?: number; max?: number; temp?: number; topp?: number; effort?: number }
-export const supportsEffort = (model: string, type: Ep['type']) => type === 'anthropic'
+type O = { cap?: number; max?: number; temp?: number; topp?: number; effort?: string }
+export const supportsEffort = (model: string, type: Ep['type'], detected?: string[]) => detected !== undefined ? detected.length > 0 : type === 'anthropic'
   ? /claude-(3-7|3\.7|4|opus-4|sonnet-4)/i.test(model)
   : /(^|[\/])o[1-9](?:[-./]|$)|gpt-5|reasoning/i.test(model)
 
@@ -166,9 +168,9 @@ export async function stream(e: Ep, sys: string, ms: Wire[], on: (t: string) => 
     body = { model: e.model, max_tokens: o.max ?? o.cap ?? 4096, stream: true, messages: ms }
     if (availableTools.length) body.tools = availableTools
     if (sys) body.system = sys
-    if (o.effort && supportsEffort(e.model, 'anthropic')) {
-      body.max_tokens = Math.max(body.max_tokens, 4096)
-      body.thinking = { type: 'enabled', budget_tokens: Math.max(1024, Math.min(body.max_tokens - 1, Math.round(1024 + (o.effort / 100) * Math.max(0, body.max_tokens - 1025)))) }
+    if (o.effort && o.effort !== 'off' && supportsEffort(e.model, 'anthropic', e.modelEffortSource?.[e.model] ? e.modelEfforts?.[e.model] ?? [] : undefined)) {
+      body.thinking = { type: 'adaptive' }
+      body.output_config = { effort: o.effort }
     } else if (o.temp != null) body.temperature = o.temp
   } else {
     u = b + '/chat/completions'; if (e.key) h.authorization = 'Bearer ' + e.key
@@ -177,13 +179,11 @@ export async function stream(e: Ep, sys: string, ms: Wire[], on: (t: string) => 
     if (o.max != null) body.max_tokens = o.max
     if (o.temp != null) body.temperature = o.temp
     if (o.topp != null) body.top_p = o.topp
-    if (o.effort && supportsEffort(e.model, 'openai')) body.reasoning_effort = o.effort < 34 ? 'low' : o.effort < 68 ? 'medium' : 'high'
+    if (o.effort && o.effort !== 'off' && supportsEffort(e.model, 'openai', e.modelEffortSource?.[e.model] ? e.modelEfforts?.[e.model] ?? [] : undefined)) body.reasoning_effort = o.effort
   }
-  let to = false, res: Response
-  const tm = setTimeout(() => { to = true; ac.abort() }, 12e4)
+  let res: Response
   try { res = await fetch(u, { method: 'POST', headers: h, body: JSON.stringify(body), signal: ac.signal }) }
-  catch (x: any) { clearTimeout(tm); throw Error(to ? 'No response within 120 s' : x?.name === 'AbortError' ? 'Stopped' : 'Network or CORS error contacting ' + (u.split('/')[2] || u)) }
-  clearTimeout(tm)
+  catch (x: any) { throw Error(x?.name === 'AbortError' ? 'Stopped' : 'Network or CORS error contacting ' + (u.split('/')[2] || u)) }
   if (!res.ok) throw Error(`HTTP ${res.status}: ${(await res.text().catch(() => '')).slice(0, 300) || res.statusText}`)
   let all = '', tin = 0, tout = 0
   const calls = new Map<number, ToolCall>()

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { GitBranch, ChevronLeft, ChevronRight, Sparkles, Server, Cpu, Copy, Check, RefreshCw, Trash2, ListOrdered, CircleCheck, CircleX, TriangleAlert, Paperclip, ChevronDown } from 'lucide-react'
+import { GitBranch, ChevronLeft, ChevronRight, Sparkles, Server, Cpu, Copy, Check, RefreshCw, Trash2, ListOrdered, CircleCheck, CircleX, TriangleAlert, Paperclip, ChevronDown, CornerDownLeft } from 'lucide-react'
 import { useS, usable, type Msg } from '../store'
 import { CI, fmtDuration } from '../meta'
 import { Btn, Chip, cx, type Ic } from './ui'
@@ -8,14 +8,19 @@ import { Header } from './Header'
 import { Tutorial } from './Extra'
 import { Md, UserText } from './Md'
 
-function toolStep(name: string, rawArgs: string) {
+function toolStep(name: string, rawArgs: string, result?: string) {
   let args: Record<string, unknown> = {}
   try { args = JSON.parse(rawArgs || '{}') } catch { /* Keep the action label if arguments are malformed. */ }
   const query = typeof args.query === 'string' ? args.query : ''
   const expression = typeof args.expression === 'string' ? args.expression : ''
   const text = typeof args.text === 'string' ? args.text : ''
+  if (name === 'prompt_chip') return `Follow-up · ${typeof args.label === 'string' ? args.label : 'Continue'}`
+  if (name === 'inline_poll') return `Choice · ${typeof args.question === 'string' ? args.question : 'Choose an option'}`
   const clip = (s: string, n = 90) => s.length > n ? `${s.slice(0, n)}…` : s
-  if (name === 'search') return `Web search · query: “${clip(query || 'missing query')}”`
+  if (name === 'search') {
+    const responses = result?.match(/\[Source [^\]]+\]/g)?.length
+    return `Web search · query: “${clip(query || 'missing query')}”${responses == null ? '' : ` (${responses} responses)`}`
+  }
   if (name === 'time') return 'Checked the current date and time'
   if (name === 'date') return 'Checked the current date'
   if (name === 'calc') return `Calculator · expression: ${expression || 'missing expression'}`
@@ -38,6 +43,35 @@ function toolStep(name: string, rawArgs: string) {
   return `Tool ${name} · inputs: ${Object.keys(args).length ? Object.entries(args).map(([k, v]) => `${k}=${typeof v === 'string' ? clip(v, 60) : String(v)}`).join(', ') : 'none'}`
 }
 const duration = (ms?: number) => ms == null ? '' : ` ${fmtDuration(ms, useS.getState().widgetPrefs.timeUnit ?? 'auto')}`
+
+function MessageActions({ calls }: { calls: { id: string; name: string; arguments: string; error?: boolean }[] }) {
+  const s = useS()
+  const [chosen, setChosen] = useState<Record<string, number[]>>({})
+  const [used, setUsed] = useState<Record<string, boolean>>({})
+  const actions = calls.filter((call) => !call.error && ['prompt_chip', 'inline_poll'].includes(call.name))
+  if (!actions.length) return null
+  const parse = (raw: string) => { try { return JSON.parse(raw || '{}') as Record<string, any> } catch { return {} } }
+  const run = (key: string, prompt: string) => { if (!prompt.trim() || s.busy) return; setUsed((v) => ({ ...v, [key]: true })); void s.send(prompt, []) }
+  return <div className="space-y-2 pt-1">
+    {actions.map((call) => {
+      const args = parse(call.arguments)
+      if (call.name === 'prompt_chip') return <button key={call.id} disabled={s.busy || used[call.id]} onClick={() => run(call.id, String(args.prompt ?? ''))} className="inline-flex min-h-9 items-center gap-2 rounded-full border border-hov bg-surf px-3 py-1.5 text-sm text-tx transition-colors hover:bg-hov focus-visible:ring-2 focus-visible:ring-ac disabled:opacity-50"><CornerDownLeft size={14} className="text-ac" />{String(args.label || 'Continue')}</button>
+      const options = Array.isArray(args.options) ? args.options.map((o: any) => typeof o === 'string' ? { label: o, prompt: o } : o).filter((o: any) => o && typeof o.label === 'string').slice(0, 6) : []
+      const selected = chosen[call.id] ?? []
+      const multi = args.mode === 'multiple'
+      const pick = (index: number) => setChosen((v) => ({ ...v, [call.id]: multi ? selected.includes(index) ? selected.filter((x) => x !== index) : [...selected, index] : [index] }))
+      return <section key={call.id} aria-label="Assistant choice" className="max-w-xl rounded-xl border border-hov bg-surf p-4">
+        <h3 className="text-sm font-medium">{String(args.question || 'Choose an option')}</h3>
+        <div role={multi ? 'group' : 'radiogroup'} aria-label={String(args.question || 'Choose an option')} className="mt-3 grid gap-2 sm:grid-cols-2">
+          {options.map((option: any, index: number) => <button key={index} type="button" role={multi ? 'checkbox' : 'radio'} aria-checked={selected.includes(index)} disabled={used[call.id] || s.busy} onClick={() => pick(index)} onKeyDown={(e) => { if (!multi && ['ArrowDown', 'ArrowRight', 'ArrowUp', 'ArrowLeft'].includes(e.key)) { e.preventDefault(); const next = (index + (e.key === 'ArrowDown' || e.key === 'ArrowRight' ? 1 : -1) + options.length) % options.length; pick(next); e.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>('[role="radio"]')[next]?.focus() } }} className={cx('flex min-h-10 items-center gap-2 rounded-lg border px-3 py-2 text-left text-sm transition-colors hover:bg-hov disabled:opacity-50', selected.includes(index) ? 'border-ac bg-ac/10' : 'border-hov')}>
+            <span aria-hidden="true" className={cx('grid size-4 shrink-0 place-items-center border', multi ? 'rounded' : 'rounded-full', selected.includes(index) ? 'border-ac bg-ac text-acx' : 'border-mu/60')} >{selected.includes(index) && <Check size={11} strokeWidth={3} />}</span>{option.label}
+          </button>)}
+        </div>
+        <div className="mt-3 flex items-center justify-between"><span aria-live="polite" className="text-xs text-mu">{used[call.id] ? 'Sent' : multi ? 'Choose one or more' : 'Choose one'}</span><button disabled={!selected.length || s.busy || used[call.id]} onClick={() => run(call.id, options.filter((_: any, i: number) => selected.includes(i)).map((o: any) => o.prompt).join('\n\n'))} className="rounded-lg bg-ac px-3 py-1.5 text-sm font-medium text-acx transition-opacity hover:opacity-90 disabled:opacity-40">Continue</button></div>
+      </section>
+    })}
+  </div>
+}
 
 function M({ m, last }: { m: Msg; last: boolean }) {
   const { prefs, busy } = useS()
@@ -83,7 +117,7 @@ function M({ m, last }: { m: Msg; last: boolean }) {
             {(m.toolRounds ?? []).flatMap((round) => round.calls).map((call, i) => (
               <li key={`tool-${i}`} className="flex items-center gap-2">
                 {call.error ? <CircleX size={14} className="text-er" /> : <CircleCheck size={14} className="text-ac" />}
-                <span>{toolStep(call.name, call.arguments)}</span>
+                <span>{toolStep(call.name, call.arguments, call.result)}</span>
                 <span className={cx('ml-auto text-tx', call.error && 'text-er')}>{duration(call.ms)}</span>
               </li>
             ))}
@@ -105,11 +139,13 @@ function M({ m, last }: { m: Msg; last: boolean }) {
             <Md t={m.t} fadeEvents={m.fadeEvents} fade={prefs.fade} />
           </div>
         ) : (
-          <span className="text-mu inline-flex items-center gap-1.5">
-            Waiting for a reply…
+          <span className="reply-thinking" role="status" aria-label="Waiting for a reply">
+            <span className="reply-orbit reply-orbit-a"><i /></span><span className="reply-orbit reply-orbit-b"><i /></span><span className="reply-core" />
+            <span className="ml-2 text-mu">Thinking…</span>
           </span>
         )}
       </div>
+      {(m.toolRounds ?? []).length > 0 && <MessageActions calls={(m.toolRounds ?? []).flatMap((round) => round.calls)} />}
       {prefs.showTps && m.tps != null && !m.err && <div className="text-xs text-mu">{m.by} · {m.tps.toLocaleString()} tokens/s</div>}
       <div className={cx('flex items-center gap-0.5 transition-opacity', m.alts && m.alts.length > 1 ? '' : 'opacity-0 group-hover:opacity-100')}>
         {m.alts && m.alts.length > 1 && !busy && (

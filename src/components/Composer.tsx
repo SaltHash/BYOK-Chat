@@ -2,8 +2,8 @@ import { useRef, useState } from 'react'
 import { Plus, FileUp, FileText, Image as ImageIcon, ArrowUp, Square, ChevronDown, ListMusic, Cpu, ScrollText, Settings, Search, X, TriangleAlert, Wrench } from 'lucide-react'
 import { useS, usable, modelsOf, modelNameOf, type Att } from '../store'
 import { CI, TOOLS } from '../meta'
-import { can, fmt, readAtt, supportsEffort } from '../engine'
-import { Btn, Item, Pop, Seg, cx, type Ic } from './ui'
+import { can, fmt, readAtt } from '../engine'
+import { Btn, Item, Pop, Seg, RangeSlider, cx, type Ic } from './ui'
 import { Notice } from './Extra'
 
 const chip = 'flex h-9 items-center gap-2 rounded-lg px-2.5 text-sm text-mu hover:bg-hov hover:text-tx'
@@ -13,13 +13,27 @@ function ModelMenu({ close, cfg }: { close: () => void; cfg: (t: string) => void
   const [t, setT] = useState<'pl' | 'ep'>(s.sel?.k ?? 'ep')
   const [q, setQ] = useState('')
   const L: any[] = (t === 'pl' ? s.pls : s.eps).filter((x) => x.name.toLowerCase().includes(q.toLowerCase()) || (t === 'ep' && modelsOf(x).some((model) => model.toLowerCase().includes(q.toLowerCase()))))
+  const activeEp = t === 'ep' && s.sel?.k === 'ep' && s.sel.model ? s.eps.find((x) => x.id === s.sel?.id) : undefined
+  const activeModel = activeEp && s.sel?.model
+  const efforts: string[] = activeModel ? activeEp?.modelEfforts?.[activeModel] ?? [] : []
+  const effortRank: Record<string, number> = { none: 0, minimal: 1, low: 2, medium: 3, high: 4, xhigh: 5, max: 6 }
+  const effortChoices = ['off', ...[...efforts].sort((a, b) => (effortRank[a.toLowerCase()] ?? 50) - (effortRank[b.toLowerCase()] ?? 50))]
+  const effortValue = activeModel ? s.effort[activeModel] ?? 'off' : 'off'
+  const effortIndex = Math.max(0, effortChoices.indexOf(effortValue))
+  const activeEffort = effortChoices[effortIndex]
   return (
-    <>
+    <div className="flex flex-col" style={{ maxHeight: `min(${s.prefs.modelPickerHeight ?? 480}px, 85dvh)` }}>
       <Seg v={t} set={setT} opts={[['pl', 'Playlists', ListMusic], ['ep', 'Models', Cpu]]} />
       <div className="relative my-2">
         <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-mu" />
         <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search" className="h-9 w-full rounded-lg bg-surf pl-9 pr-3 text-sm outline-none" />
       </div>
+      {activeModel && efforts.length > 0 && <div className="shrink-0 border-b border-hov px-2.5 py-3" onClick={(e) => e.stopPropagation()}>
+        <div className="mb-1 flex items-center justify-between text-xs"><span className="truncate pr-2 font-medium text-tx">Effort · {modelNameOf(activeEp!, activeModel).replace(/^~+/, '')}</span><span className="text-ac capitalize">{activeEffort}</span></div>
+        <RangeSlider label={`${modelNameOf(activeEp!, activeModel).replace(/^~+/, '')} reasoning effort`} min={0} max={effortChoices.length - 1} step={1} value={effortIndex} valueText={effortChoices[effortIndex]} set={(n) => s.patch({ effort: { ...s.effort, [activeModel]: effortChoices[n] } })} className="mt-1 w-full" />
+        <div className="mt-1 flex justify-between text-[10px] capitalize text-mu"><span>{effortChoices[0]}</span><span>{effortChoices.at(-1)}</span></div>
+      </div>}
+      <div className="min-h-0 flex-1 overflow-y-auto">
       {t === 'ep' && <Item icon={Cpu} on={!s.sel} sub="list order" onClick={() => { s.patch({ sel: null }); close() }}>All endpoints</Item>}
       {L.map((x) => (
         <div key={x.id}>
@@ -31,24 +45,18 @@ function ModelMenu({ close, cfg }: { close: () => void; cfg: (t: string) => void
                 const showName = s.prefs.modelDisplay === 'name' || s.prefs.modelDisplay === 'both'
                 const showProvider = s.prefs.modelDisplay === 'provider' || s.prefs.modelDisplay === 'both'
                 const alias = modelNameOf(x, model)
-                const title = s.prefs.modelDisplay === 'provider' ? x.name : s.prefs.modelDisplay === 'none' ? model : alias
+                const title = (s.prefs.modelDisplay === 'provider' ? x.name : s.prefs.modelDisplay === 'none' ? model : alias).replace(/^~+/, '')
                 return <Item key={model} icon={Cpu} off={x.on === false} on={s.sel?.id === x.id && s.sel.model === model} sub={s.prefs.modelDisplay === 'both' ? x.name : ''} onClick={() => { s.patch({ sel: { k: 'ep', id: x.id, model } }); close() }}>{title}</Item>
               })}
             </>}
-          {t === 'ep' && modelsOf(x).filter((model: string) => supportsEffort(model, x.type)).map((model: string) => {
-            const effort = s.effort[model] ?? 0
-            return <label key={model} className="block px-3 pb-2 pt-1 text-xs text-mu" onClick={(e) => e.stopPropagation()}>
-              <span className="flex justify-between"><span>{model} effort</span><span>{effort === 0 ? 'Off' : effort < 34 ? 'Low' : effort < 68 ? 'Medium' : 'High'}</span></span>
-              <input aria-label={`${model} reasoning effort`} type="range" min="0" max="100" step="25" value={effort} onChange={(e) => s.patch({ effort: { ...s.effort, [model]: Number(e.target.value) } })} className="mt-1 w-full accent-ac" />
-            </label>
-          })}
         </div>
       ))}
       {!L.length && <p className="px-2.5 py-3 text-sm text-mu">Nothing here yet.</p>}
-      <div className="mt-2 border-t border-hov px-1 pt-2">
+      </div>
+      <div className="shrink-0 border-t border-hov px-1 pt-2">
         <Item icon={Settings} className="bg-surf/70 hover:bg-surf" onClick={() => { close(); cfg(t === 'pl' ? 'pls' : 'eps') }}>Manage…</Item>
       </div>
-    </>
+    </div>
   )
 }
 
@@ -61,9 +69,9 @@ export function Composer({ cfg }: { cfg: (t: string) => void }) {
   const [hi, setHi] = useState(0)
   const tw = v.match(/(?:^|\s)(@\w*)$/)?.[1]
   const menu: { k: string; icon: Ic; label: string; hint: string; pick: () => void }[] | null = /^\/\S*$/.test(v)
-    ? s.cmds.filter((c) => c.on && c.name.startsWith(v.slice(1))).map((c) => ({ k: c.id, icon: CI[c.in], label: '/' + c.name, hint: c.desc || c.in, pick: () => s.patch({ draft: '/' + c.name + ' ' }) }))
+    ? s.settingsScope === 'power-user' ? s.cmds.filter((c) => c.on && c.name.startsWith(v.slice(1))).map((c) => ({ k: c.id, icon: CI[c.in], label: '/' + c.name, hint: c.desc || c.in, pick: () => s.patch({ draft: '/' + c.name + ' ' }) })) : []
     : tw
-      ? TOOLS.filter((t) => t[3].startsWith(tw.toLowerCase())).map((t) => ({ k: t[0], icon: t[2], label: t[3].split('(')[0], hint: s.tools[t[0]] ? t[4] : 'Off. Enable in Settings → Tools', pick: () => s.patch({ draft: v.slice(0, v.length - tw.length) + '@' + t[0] + (/^(calc|count|json|base64|search|random|hash)$/.test(t[0]) ? '(' : ' ') }) }))
+      ? TOOLS.filter((t) => (t[0] !== 'search' || s.settingsScope === 'power-user') && t[3].startsWith(tw.toLowerCase())).map((t) => ({ k: t[0], icon: t[2], label: t[3].split('(')[0], hint: s.tools[t[0]] ? t[4] : 'Off. Enable in Settings → Tools', pick: () => s.patch({ draft: v.slice(0, v.length - tw.length) + '@' + t[0] + (/^(calc|count|json|base64|search|random|hash)$/.test(t[0]) ? '(' : ' ') }) }))
       : null
   const hl = Math.min(hi, Math.max((menu?.length ?? 1) - 1, 0))
   const sel = s.sel ? (s.sel.k === 'pl' ? s.pls : s.eps).find((x) => x.id === s.sel!.id) : undefined
@@ -79,7 +87,14 @@ export function Composer({ cfg }: { cfg: (t: string) => void }) {
   }
   const ready = !!v.trim() || att.length > 0
   const submit = async () => {
-    if (s.busy || !ready) return
+    if (s.busy) return
+    if (!s.eps.length) {
+      s.add('eps')
+      s.patch({ notice: { t: 'I opened a new endpoint for you. Choose a provider preset, add a model and key, then test the connection before sending again.', tab: 'eps', label: 'Add endpoint' } })
+      cfg('eps')
+      return
+    }
+    if (!ready) return
     const raw = v, files = att
     if (await s.send(raw, files)) {
       if (useS.getState().draft === raw) s.patch({ draft: '' })
@@ -88,14 +103,14 @@ export function Composer({ cfg }: { cfg: (t: string) => void }) {
     }
   }
   return (
-    <div className="mx-auto w-full max-w-3xl px-4 pb-4">
+    <div className="mx-auto w-full max-w-3xl self-center px-4 pb-4">
       <Notice cfg={cfg} />
       <div className="relative rounded-2xl bg-surf p-3" onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); add(e.dataTransfer.files) }}>
         {menu && (
           <div className="absolute inset-x-0 bottom-full mb-2 rounded-xl bg-hov p-1.5">
             {menu.length ? menu.map((o, i) => (
               <Item key={o.k} icon={o.icon} on={i === hl} sub={o.hint} onClick={() => { o.pick(); ta.current?.focus() }}>{o.label}</Item>
-            )) : <p className="px-2.5 py-3 text-sm text-mu">{v.startsWith('/') ? 'No enabled command matches. Manage commands in Settings.' : 'No tool matches.'}</p>}
+            )) : <p className="px-2.5 py-3 text-sm text-mu">{v.startsWith('/') ? s.settingsScope === 'power-user' ? 'No enabled command matches. Manage commands in Settings.' : 'Commands are available in Power user settings.' : 'No tool matches.'}</p>}
           </div>
         )}
         {att.length > 0 && (
@@ -116,7 +131,7 @@ export function Composer({ cfg }: { cfg: (t: string) => void }) {
           </div>
         )}
         <textarea
-          id="composer" ref={ta} rows={1} value={v} placeholder={s.eps.some(usable) ? 'Message, / for commands, @ for tools' : 'Add a model endpoint to start (press Send for a walkthrough)'}
+          id="composer" ref={ta} rows={1} value={v} placeholder={s.eps.some(usable) ? `Message${s.settingsScope === 'power-user' ? ', / for commands' : ''}, @ for tools` : 'Add a model endpoint to start (press Send for a walkthrough)'}
           onChange={(e) => { s.patch({ draft: e.target.value }); setHi(0) }}
           onInput={(e) => { const t = e.currentTarget; t.style.height = 'auto'; t.style.height = Math.min(t.scrollHeight, 208) + 'px' }}
           onKeyDown={(e) => {
@@ -142,7 +157,7 @@ export function Composer({ cfg }: { cfg: (t: string) => void }) {
               </>
             )}
           </Pop>
-          <Pop up w="w-80" trigger={() => (
+          <Pop up w="w-80" scroll={false} trigger={() => (
             <button className={chip}>
               {s.sel?.k === 'pl' ? <ListMusic size={16} /> : <Cpu size={16} />}
               <span className="max-w-40 truncate">{sel ? (s.sel?.model && s.sel.k === 'ep' ? modelNameOf(sel as any, s.sel.model) : sel.name) : 'All endpoints'}</span><ChevronDown size={14} />

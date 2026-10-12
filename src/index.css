@@ -20,6 +20,7 @@
 [data-t=graphite] { color-scheme: dark; --bg:#141414; --side:#0e0e0e; --surf:#1e1e1e; --hov:#292929; --tx:#ececec; --mu:#979797; --ac:#8ab4f8; --acx:#0f1624; --er:#ff8a80; --code:#0a0a0a; --codeh:#262626; --c2:#a6d9a6; --c3:#efb27c; --c4:#e8c47f; --c5:#c0a6ff }
 [data-t=paper] { color-scheme: light; --bg:#fbfbf9; --side:#f1f1ec; --surf:#efefe9; --hov:#e4e4dc; --tx:#1d1d1b; --mu:#6f6f66; --ac:#3b5bdb; --acx:#ffffff; --er:#c92a2a; --code:#e6e5dd; --codeh:#d3d2c6; --c2:#2b8a3e; --c3:#d9480f; --c4:#7048e8; --c5:#0b7285 }
 [data-t=sepia] { color-scheme: light; --bg:#f6eedd; --side:#ede2ca; --surf:#ebdfc6; --hov:#e1d3b3; --tx:#3b2f1e; --mu:#85734f; --ac:#9c4a1a; --acx:#fff8ea; --er:#a61e1e; --code:#e7dabb; --codeh:#d6c59d; --c2:#547a2b; --c3:#a8571c; --c4:#6b3f9e; --c5:#1f6f6b }
+[data-t=custom] { color-scheme: dark; --bg:#17101c; --side:#120c16; --surf:#211828; --hov:#2c2036; --tx:#f3eaf7; --mu:#a893b4; --ac:#dc8ad8; --acx:#1b1020; --er:#ff8fa3; --code:#100b15; --codeh:#2f2040; --c2:#9fe3c5; --c3:#f2b98b; --c4:#8fb9ff; --c5:#c7a6ff }
 
 @layer base {
   body { @apply bg-bg font-sans text-tx antialiased; }
@@ -31,13 +32,29 @@
   :focus-visible { outline: 2px solid var(--ac); outline-offset: 2px; }
 }
 
+/* Settings dropdown styling stays scoped to the settings panel. Adjust the
+   shadow by overriding --settings-dropdown-shadow on .settings-root. */
+.settings-root { --settings-dropdown-shadow: 0 10px 26px rgb(0 0 0 / 30%); }
+.settings-root [aria-haspopup="listbox"] { border: 1px solid color-mix(in srgb, var(--mu) 24%, transparent); }
+.settings-root .settings-dropdown {
+  border: 1px solid color-mix(in srgb, var(--mu) 22%, transparent);
+  box-shadow: var(--settings-dropdown-shadow, 0 10px 26px rgb(0 0 0 / 30%));
+}
+
 /* rendered markdown */
 @keyframes reply-in { from { opacity: 0; } to { opacity: 1; } }
 .animate-reply-in { animation: reply-in 180ms ease-out both; }
 @media (prefers-reduced-motion: reduce) { .animate-reply-in { animation: none; } }
-@keyframes word-fade { from { opacity: 0; } to { opacity: 1; } }
-.stream-fade { animation: word-fade var(--word-fade-duration, 0.2s) ease-out both; }
-@media (prefers-reduced-motion: reduce) { .stream-fade { animation: none; } }
+.reply-thinking { display:inline-flex; align-items:center; height:2rem; position:relative; padding-left:1px; }
+.reply-orbit { position:absolute; left:0; top:50%; width:1.35rem; height:.62rem; margin-top:-.31rem; border:1px solid color-mix(in srgb,var(--ac) 60%,transparent); border-radius:50%; animation: reply-orbit 1.8s linear infinite; }
+.reply-orbit-a { transform:rotate(55deg); }.reply-orbit-b { transform:rotate(-55deg); animation-direction:reverse; animation-duration:2.3s; }
+.reply-orbit i { position:absolute; left:50%; top:-3px; width:5px; height:5px; border-radius:50%; background:var(--ac); box-shadow:0 0 10px color-mix(in srgb,var(--ac) 70%,transparent); }
+.reply-core { width:.45rem; height:.45rem; margin:0 .45rem; border-radius:50%; background:var(--ac); box-shadow:0 0 14px color-mix(in srgb,var(--ac) 75%,transparent); animation:reply-core 1.5s ease-in-out infinite; }
+@keyframes reply-orbit { to { transform:rotate(415deg); } } @keyframes reply-core { 50% { transform:scale(.55); opacity:.55; } }
+@media (prefers-reduced-motion: reduce) { .reply-orbit,.reply-core { animation:none; } }
+.stream-fade { opacity: 0; transition: opacity var(--word-fade-duration, 0.2s) linear; }
+.stream-fade.stream-fade-active { opacity: 1; }
+@media (prefers-reduced-motion: reduce) { .stream-fade { opacity: 1; transition: none; } }
 .md > :first-child { margin-top: 0; }
 .md > :last-child { margin-bottom: 0; }
 .md :not(pre) > code { border-radius: 0.375rem; background: var(--hov); padding: 0.1em 0.4em; font-size: 0.9em; }

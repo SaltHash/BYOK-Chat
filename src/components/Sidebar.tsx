@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type DragEvent } from 'react'
-import { Plus, Clock, Search, PanelLeftClose, Pin, Pencil, Trash2, MessageSquare, Server, ListMusic, ScrollText, Terminal, Wrench, Settings, Palette, Lock, PanelRight, Folder, FolderPlus, FolderMinus, ChevronRight, ChevronDown } from 'lucide-react'
+import { Plus, Clock, Search, PanelLeftClose, Pin, Pencil, Trash2, MessageSquare, Server, ListMusic, ScrollText, Terminal, Wrench, Settings, Palette, Lock, PanelRight, Folder, FolderPlus, FolderMinus, ChevronRight, ChevronDown, Bookmark } from 'lucide-react'
 import { useS, THEMES, type Chat } from '../store'
 import { Btn, Confirm, cx } from './ui'
 
@@ -61,8 +61,10 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
     ['prompts', 'Prompts', ScrollText, s.prompts.length],
     ['cmds', 'Commands', Terminal, s.cmds.filter((c) => c.on).length],
     ['tools', 'Tools', Wrench, Object.values(s.tools).filter(Boolean).length],
+    ['memory', 'Memory', Bookmark, s.memories.length],
     ['widgets', 'Widgets', PanelRight, Object.values(s.widgets).filter(Boolean).length],
   ] as const
+  const library = lib.filter(([key]) => s.settingsScope === 'power-user' || key !== 'cmds')
   const mv = (id: string, x: number, y: number) => setMenu({ id, x, y })
   const target = (key: string, to: string) => ({
     onDragOver: (e: DragEvent) => { e.preventDefault(); setOver(key) },
@@ -86,8 +88,8 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
   return (
     <aside style={{ width }} className="z-20 flex w-72 min-w-0 shrink-0 flex-col gap-3 bg-side p-3 max-md:fixed max-md:inset-y-0">
       <div className="flex gap-2">
-        <Btn v="solid" icon={Plus} className="flex-1" onClick={() => s.newChat(false)}>New chat</Btn>
-        <Btn icon={Clock} title="New temporary chat" onClick={() => s.newChat(true)} />
+        <Btn v="solid" icon={s.prefs.temporaryByDefault ? Clock : Plus} title={s.prefs.temporaryByDefault ? 'New temporary chat' : 'New chat'} className="flex-1" onClick={() => s.newChat()}>{s.prefs.temporaryByDefault ? 'Temporary chat' : 'New chat'}</Btn>
+        <Btn icon={s.prefs.temporaryByDefault ? Plus : Clock} title={s.prefs.temporaryByDefault ? 'New regular chat' : 'New temporary chat'} onClick={() => s.newChat(!s.prefs.temporaryByDefault)} />
         <Btn icon={PanelLeftClose} title="Hide sidebar" onClick={toggle} />
       </div>
       <div className="relative">
@@ -142,9 +144,9 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
       </nav>
       <div className="space-y-0.5">
         <div className="px-2.5 pb-1 text-xs font-medium text-mu">Library</div>
-        {lib.map(([key, l, I, n]) => (
+        {library.map(([key, l, I, n]) => (
           <button key={key} onClick={() => cfg(key)} className={item}>
-            <I size={16} className="text-mu" /><span className="flex-1 text-left">{l}</span><span className="text-xs text-mu">{n}</span>
+            <I size={16} className="text-mu" /><span className="flex-1 text-left">{l}</span>{n !== null && <span className="text-xs text-mu">{n}</span>}
           </button>
         ))}
       </div>

@@ -1,4 +1,4 @@
-import { createElement, memo, useMemo, useState, type CSSProperties, type ReactNode } from 'react'
+import { createElement, memo, useEffect, useMemo, useState, type CSSProperties, type ReactNode } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
@@ -47,7 +47,7 @@ const schema: any = {
     section: [...(A.section ?? []), 'dataFootnotes'],
     h2: [...(A.h2 ?? []), 'id'],
     li: [...(A.li ?? []), 'id'],
-    span: [...drop('span', 'className'), ['className', 'math', 'math-inline', 'math-display', 'stream-fade'], ['style', /^animation-delay:\s*-\d+(?:\.\d+)?s;\s*animation-duration:\s*\d+(?:\.\d+)?s;?$/]],
+    span: [...drop('span', 'className'), ['className', 'math', 'math-inline', 'math-display', 'stream-fade', 'stream-fade-active'], ['style', /^transition-duration:\s*\d+(?:\.\d+)?s;?$/]],
     div: [...drop('div', 'className'), ['className', 'math', 'math-display']],
     code: [...drop('code', 'className'), ['className', /^language-./, 'math-inline', 'math-display']],
     th: [...drop('th', 'align'), 'align', ['style', /^text-align:\s*(left|right|center);?$/]],
@@ -55,8 +55,7 @@ const schema: any = {
   },
 }
 
-// Each fragment keeps its own timestamp. Negative animation delay restores its
-// elapsed progress on later markdown renders, so newer words cannot reset it.
+// Track stream fragments by timestamp so each word gets its own complete fade.
 const fadeFragments = (events: FadeEvent[], duration: number) => () => (tree: any) => {
   if (duration <= 0 || !events.length) return
   const now = performance.now(), active = events.filter((e) => now - e.at < duration * 1000).reverse()
@@ -77,7 +76,10 @@ const fadeFragments = (events: FadeEvent[], duration: number) => () => (tree: an
       const start = value.lastIndexOf(needle, limit - needle.length)
       if (start >= 0 && start + needle.length <= limit) {
         const list = ranges.get(leaves[i]) ?? []
-        list.push({ start, end: start + needle.length, event, age: now - event.at })
+        for (const match of needle.matchAll(/\S+/g)) {
+          const wordStart = start + (match.index ?? 0)
+          list.push({ start: wordStart, end: wordStart + match[0].length, event, age: now - event.at })
+        }
         ranges.set(leaves[i], list)
         leafIndex = i; before = start; found = true
       }
@@ -92,8 +94,8 @@ const fadeFragments = (events: FadeEvent[], duration: number) => () => (tree: an
         for (const mark of marks.sort((a, b) => a.start - b.start)) {
           if (mark.start < offset) continue
           if (mark.start > offset) pieces.push({ type: 'text', value: node.value.slice(offset, mark.start) })
-          const elapsed = Math.max(0, mark.age / 1000).toFixed(3), seconds = (duration).toFixed(3)
-          pieces.push({ type: 'text', value: node.value.slice(mark.start, mark.end), data: { hName: 'span', hProperties: { className: ['stream-fade'], style: `animation-delay:-${elapsed}s;animation-duration:${seconds}s;` } } })
+          const active = mark.age >= 32, remaining = Math.max(0, duration - mark.age / 1000).toFixed(3)
+          pieces.push({ type: 'text', value: node.value.slice(mark.start, mark.end), data: { hName: 'span', hProperties: { className: active ? ['stream-fade', 'stream-fade-active'] : ['stream-fade'], ...(active ? { style: `transition-duration:${remaining}s;` } : {}) } } })
           offset = mark.end
         }
         if (offset < node.value.length) pieces.push({ type: 'text', value: node.value.slice(offset) })
@@ -141,7 +143,7 @@ const C: any = {
   ul: ({ node, className, ...p }: any) => createElement('ul', { ...p, className: cx('my-3 space-y-1', /contains-task-list/.test(className ?? '') ? 'list-none pl-1' : 'list-disc pl-6 marker:text-mu') }),
   li: E('li', 'pl-1 [&>ol]:my-1 [&>p]:my-1 [&>ul]:my-1'),
   input: ({ type, checked }: any) => (type === 'checkbox'
-    ? <span className={cx('mr-2 inline-grid size-4 translate-y-0.5 place-items-center rounded', checked ? 'bg-ac text-acx' : 'bg-hov')}>{checked && <Check size={12} />}</span> : null),
+    ? <span role="checkbox" aria-label="Task complete" aria-checked={!!checked} aria-disabled="true" className={cx('mr-2 inline-grid size-4 translate-y-0.5 place-items-center rounded border', checked ? 'border-ac bg-ac text-acx' : 'border-mu/60 bg-bg text-transparent')}>{checked && <Check size={12} strokeWidth={3} />}</span> : null),
   a: ({ node, href, children, ...p }: any) => (/^#/.test(href ?? '')
     ? <a {...p} href={href} className={link}>
       {children}
@@ -167,6 +169,15 @@ const C: any = {
 
 export default memo(function Rich({ t, fadeEvents = [], fade = 0 }: { t: string; fadeEvents?: FadeEvent[]; fade?: number }) {
   const src = useMemo(() => pre(t), [t])
+  const [, refresh] = useState(0)
+  useEffect(() => {
+    if (fade <= 0 || !fadeEvents.some((event) => performance.now() - event.at < fade * 1000)) return
+    const timer = window.setInterval(() => {
+      refresh((n) => n + 1)
+      if (!fadeEvents.some((event) => performance.now() - event.at < fade * 1000)) window.clearInterval(timer)
+    }, 32)
+    return () => window.clearInterval(timer)
+  }, [fadeEvents, fade])
   return (
     <div className="md leading-7" style={{ '--word-fade-duration': `${fade}s` } as CSSProperties}>
       <ReactMarkdown

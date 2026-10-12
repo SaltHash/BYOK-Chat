@@ -1,14 +1,15 @@
 import { useEffect, useState, type PointerEvent } from 'react'
-import { useS, THEMES, exportChat, modelsOf } from './store'
+import { useS, THEMES, THEME_COLOR_KEYS, exportChat, modelsOf } from './store'
 import { combo, rec } from './engine'
 import { Sidebar } from './components/Sidebar'
 import { Chat } from './components/Chat'
 import { Settings } from './components/Settings'
 import { Palette } from './components/Palette'
 import { Widgets } from './components/Widgets'
+import { Welcome } from './components/Welcome'
 
 export default function App() {
-  const { theme, rail, widgets, prefs } = useS()
+  const { theme, customColors, rail, widgets, prefs, setupDone } = useS()
   const [side, setSide] = useState(() => innerWidth >= 768)
   const [cfg, setCfg] = useState('')
   const [pal, setPal] = useState(false)
@@ -34,7 +35,20 @@ export default function App() {
     const up = () => { removeEventListener('pointermove', move); removeEventListener('pointerup', up) }
     addEventListener('pointermove', move); addEventListener('pointerup', up, { once: true })
   }
-  useEffect(() => { document.documentElement.dataset.t = theme }, [theme])
+  useEffect(() => {
+    const root = document.documentElement
+    root.dataset.t = theme
+    root.style.setProperty('--modal-blur', `${prefs.modalBlur ?? 12}px`)
+    for (const key of THEME_COLOR_KEYS) {
+      if (theme === 'custom') root.style.setProperty(`--${key}`, customColors[key])
+      else root.style.removeProperty(`--${key}`)
+    }
+    if (theme === 'custom') {
+      const hex = customColors.bg.slice(1)
+      const luminance = hex.length === 6 ? (parseInt(hex.slice(0, 2), 16) * 0.299 + parseInt(hex.slice(2, 4), 16) * 0.587 + parseInt(hex.slice(4, 6), 16) * 0.114) : 40
+      root.style.colorScheme = luminance > 145 ? 'light' : 'dark'
+    } else root.style.removeProperty('color-scheme')
+  }, [theme, customColors, prefs.modalBlur])
   useEffect(() => {
     const family = (name: string | undefined, fallback: string) => {
       if (!name || name === 'system') return fallback
@@ -128,6 +142,7 @@ export default function App() {
       {rail && Object.values(widgets).some(Boolean) && <><div role="separator" aria-orientation="vertical" aria-label="Resize widget panel" onPointerDown={resize('widgetWidth', true)} className="hidden w-1 shrink-0 cursor-col-resize bg-transparent hover:bg-ac/50 lg:block" /><Widgets width={prefs.widgetWidth ?? 320} /></>}
       {pal && <Palette close={() => setPal(false)} cfg={setCfg} toggleSide={() => setSide((v) => !v)} />}
       {cfg && <Settings tab={cfg} setTab={setCfg} />}
+      {!setupDone && <Welcome addEndpoint={() => setCfg('eps')} close={() => {}} />}
     </div>
   )
 }
