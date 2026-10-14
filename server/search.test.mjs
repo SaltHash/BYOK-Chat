@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { boundedInt, buildSearchUrl, selectResults } from './search.mjs'
+import { boundedInt, buildSearchUrl, selectResults, normalizeMode, normalizeFallback, normalizeProvider, providerNeedsKey, classifyUpstream, buildApiRequest, parseApiResponse, runSearxng, runApiSearch, apiKeyFor, resolveApiKey, resolveZone } from './search.mjs'
 
 test('builds an encoded SearXNG JSON search URL', () => {
   const url = buildSearchUrl('http://127.0.0.1:8080', 'Fedora Linux & Podman')
@@ -44,4 +44,141 @@ test('bounds configurable integer settings', () => {
   assert.equal(boundedInt('99', 8, 1, 8), 8)
   assert.equal(boundedInt('0', 8, 1, 8), 1)
   assert.equal(boundedInt('invalid', 8, 1, 8), 8)
+})
+
+test('normalizes search modes and provider aliases', () => {
+  assert.equal(normalizeMode('SearXNG'), 'searxng')
+  assert.equal(normalizeMode('API'), 'api')
+  assert.equal(normalizeMode('API (with fallback)'), 'api')
+  assert.equal(normalizeMode('unknown', 'api'), 'api')
+  assert.equal(normalizeFallback(true), true)
+  assert.equal(normalizeFallback('false', true), false)
+  assert.equal(normalizeFallback(undefined, true), true)
+  assert.equal(normalizeProvider('TinyFish'), 'tinyfish')
+  assert.equal(normalizeProvider('you.com'), 'you')
+  assert.equal(normalizeProvider('exa.ai'), 'exa')
+  assert.equal(normalizeProvider('Firecrawl'), 'firecrawl')
+  assert.equal(normalizeProvider('Bright Data'), 'brightdata')
+})
+
+test('builds authenticated API requests per provider', () => {
+  const tiny = buildApiRequest('tinyfish', 'hello', { apiKey: 'k1' })
+  assert.match(tiny.url, /api\.search\.tinyfish\.ai.*query=hello/)
+  assert.equal(tiny.options.headers['X-API-Key'], 'k1')
+  const you = buildApiRequest('you', 'hello', { apiKey: 'k2', count: 5 })
+  assert.equal(JSON.parse(you.options.body).count, 5)
+  assert.equal(you.options.headers['X-API-Key'], 'k2')
+  const exa = buildApiRequest('exa', 'hello', { apiKey: 'k3' })
+  assert.equal(JSON.parse(exa.options.body).numResults, 8)
+  const fire = buildApiRequest('firecrawl', 'hello', { apiKey: 'k4' })
+  assert.match(String(fire.options.headers.Authorization), /^Bearer k4$/)
+  const bright = buildApiRequest('brightdata', 'pizza', { apiKey: 'k5', zone: 'z1' })
+  assert.match(JSON.parse(bright.options.body).url, /google\.com\/search\?q=pizza/)
+  assert.throws(() => buildApiRequest('tinyfish', 'x', { apiKey: '' }), /API key is missing/)
+  assert.throws(() => buildApiRequest('brightdata', 'x', { apiKey: 'k', zone: '' }), /zone/i)
+})
+
+test('parses each provider response into normalized results', () => {
+  assert.deepEqual(parseApiResponse('tinyfish', { results: [{ title: 'T', url: 'https://a.example/', snippet: 's' }] })[0].url, 'https://a.example/')
+  const you = parseApiResponse('you', { results: { web: [{ title: 'Y', url: 'https://b.example/', description: 'd', snippets: ['s1'] }] } })
+  assert.equal(you[0].engine, 'you.com')
+  assert.match(you[0].content, /s1/)
+  const exa = parseApiResponse('exa', { results: [{ title: 'E', url: 'https://c.example/', highlights: ['h1', 'h2'] }] })
+  assert.match(exa[0].content, /h1/)
+  const fire = parseApiResponse('firecrawl', { success: true, data: { web: [{ title: 'F', url: 'https://d.example/', description: 'desc' }] } })
+  assert.equal(fire[0].engine, 'firecrawl')
+  const bright = parseApiResponse('brightdata', { organic: [{ title: 'B', link: 'https://e.example/', description: 'bd' }] })
+  assert.equal(bright[0].url, 'https://e.example/')
+  assert.deepEqual(parseApiResponse('exa', null), [])
+})
+
+test('classifies upstream failures instead of masking them as generic errors', () => {
+  const auth = classifyUpstream('tinyfish', 401, 'bad key')
+  assert.equal(auth.code, 'upstream_auth')
+  assert.equal(auth.retryable, false)
+  assert.equal(auth.status, 401)
+  assert.match(auth.message, /rejected the API key/)
+  assert.equal(classifyUpstream('you', 402, 'payment_required').code, 'billing')
+  assert.equal(classifyUpstream('you', 402, 'payment_required').retryable, false)
+  assert.equal(classifyUpstream('exa', 429, '').code, 'rate_limited')
+  assert.equal(classifyUpstream('exa', 429, '').retryable, true)
+  const down = classifyUpstream('tinyfish', 503, 'unavailable')
+  assert.equal(down.code, 'upstream_unavailable')
+  assert.equal(down.retryable, true)
+  assert.match(down.message, /temporarily unavailable/)
+  assert.equal(classifyUpstream('you', 400, '').code, 'bad_request')
+  assert.equal(classifyUpstream('you', 400, '').retryable, false)
+})
+
+test('retries transient failures with backoff but never permanent errors', async () => {
+  const limits = { maxResults: 8, maxSnippetChars: 100, evidenceBudget: 1000 }
+  let calls = 0
+  const flaky = async () => (++calls <= 2
+    ? new Response('busy', { status: 503 })
+    : new Response(JSON.stringify({ results: [{ title: 'T', url: 'https://t.example/', snippet: 's' }] }), { headers: { 'content-type': 'application/json' } }))
+  const out = await runApiSearch('tinyfish', 'q', { apiKey: 'k', timeoutMs: 5000, limits, retry: { maxRetries: 3, baseMs: 1 }, fetchFn: flaky })
+  assert.equal(calls, 3)
+  assert.equal(out[0].title, 'T')
+  let authCalls = 0
+  const denied = async () => { authCalls++; return new Response('no', { status: 401 }) }
+  await assert.rejects(
+    () => runApiSearch('tinyfish', 'q', { apiKey: 'bad', timeoutMs: 5000, limits, retry: { maxRetries: 3, baseMs: 1 }, fetchFn: denied }),
+    (error) => error.code === 'upstream_auth',
+  )
+  assert.equal(authCalls, 1)
+  let limitedCalls = 0
+  const limited = async () => { limitedCalls++; return new Response('slow', { status: 429 }) }
+  await assert.rejects(
+    () => runApiSearch('you', 'q', { apiKey: 'k', timeoutMs: 5000, limits, retry: { maxRetries: 0, baseMs: 1 }, fetchFn: limited }),
+    (error) => error.code === 'rate_limited' && error.retryable === true,
+  )
+  assert.equal(limitedCalls, 1)
+})
+
+test('reports timeouts as retryable instead of generic failures', async () => {
+  const hanging = (_url, { signal } = {}) => new Promise((_resolve, reject) => {
+    signal?.addEventListener('abort', () => { const error = new Error('aborted'); error.name = 'AbortError'; reject(error) })
+  })
+  await assert.rejects(
+    () => runSearxng('q', { baseUrl: 'http://127.0.0.1:8080', timeoutMs: 20, retry: { maxRetries: 0 }, fetchFn: hanging }),
+    (error) => error.code === 'timeout' && error.retryable === true,
+  )
+})
+
+test('firecrawl search works without an API key', () => {
+  assert.equal(providerNeedsKey('firecrawl'), false)
+  assert.equal(providerNeedsKey('tinyfish'), true)
+  assert.equal(providerNeedsKey('you'), true)
+  const req = buildApiRequest('firecrawl', 'hello', {})
+  assert.equal(req.options.headers.Authorization, undefined)
+  assert.match(req.options.body, /hello/)
+  const keyed = buildApiRequest('firecrawl', 'hello', { apiKey: 'k4' })
+  assert.match(String(keyed.options.headers.Authorization), /^Bearer k4$/)
+})
+
+test('missing keys and zones carry machine-readable codes', () => {
+  assert.throws(() => buildApiRequest('tinyfish', 'x', { apiKey: '' }), (error) => error.code === 'missing_key')
+  assert.throws(() => buildApiRequest('brightdata', 'x', { apiKey: 'k', zone: '' }), (error) => error.code === 'missing_zone')
+})
+
+test('prefers provider-specific API keys with shared fallback', () => {
+  assert.equal(apiKeyFor('exa', { EXA_API_KEY: 'specific', SEARCH_API_KEY: 'shared' }), 'specific')
+  assert.equal(apiKeyFor('exa', { SEARCH_API_KEY: 'shared' }), 'shared')
+  assert.equal(apiKeyFor('exa', {}), '')
+})
+
+test('prefers browser BYOK keys and zones over server env', () => {
+  assert.equal(resolveApiKey('exa', '  own  ', { EXA_API_KEY: 'server' }), 'own')
+  assert.equal(resolveApiKey('exa', '', { EXA_API_KEY: 'server' }), 'server')
+  assert.equal(resolveZone('my-zone', { SEARCH_API_ZONE: 'server-zone' }), 'my-zone')
+  assert.equal(resolveZone('', { SEARCH_API_ZONE: 'server-zone' }), 'server-zone')
+})
+
+test('runs SearXNG and API searches through selectResults', async () => {
+  const searxngFetch = async () => new Response(JSON.stringify({ results: [{ title: 'S', url: 'https://s.example/', content: 'snip' }] }), { headers: { 'content-type': 'application/json' } })
+  const sResults = await runSearxng('q', { baseUrl: 'http://127.0.0.1:8080', timeoutMs: 5000, limits: { maxResults: 8, maxSnippetChars: 100, evidenceBudget: 1000 }, fetchFn: searxngFetch })
+  assert.equal(sResults[0].id, 'S1')
+  const apiFetch = async () => new Response(JSON.stringify({ results: [{ title: 'T', url: 'https://t.example/', snippet: 'hello' }] }), { headers: { 'content-type': 'application/json' } })
+  const aResults = await runApiSearch('tinyfish', 'q', { apiKey: 'k', timeoutMs: 5000, limits: { maxResults: 8, maxSnippetChars: 100, evidenceBudget: 1000 }, fetchFn: apiFetch })
+  assert.equal(aResults[0].title, 'T')
 })

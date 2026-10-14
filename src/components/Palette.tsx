@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
 import { Search, Plus, MessageSquare, Settings, Palette as Pi, Cpu, ScrollText, Download, PanelRight, Server, Trash2, Type, Sun, Moon, Maximize2 } from 'lucide-react'
-import { useS, THEMES, modelsOf, modelNameOf, exportChat } from '../store'
+import { useS, THEMES, modelsOf, modelNameOf, exportChat, featOn } from '../store'
 import { CI } from '../meta'
 import { Modal, cx, type Ic } from './ui'
 
 const TABS: [string, string, string][] = [
   ['eps', 'Endpoints', 'models providers api keys connections model aliases'], ['pls', 'Playlists', 'routes groups'], ['prompts', 'Prompts', 'system instructions'], ['cmds', 'Commands', 'slash'], ['tools', 'Tools', 'helpers'], ['widgets', 'Widgets', 'panels'], ['stats', 'Stats', 'usage tokens cost'], ['keys', 'Shortcuts', 'keybinds keyboard'], ['look', 'Appearance', 'fonts theme display layout max height'], ['data', 'Data', 'import backup privacy'],
 ]
+const TAB_FEATURE: Record<string, 'prompts' | 'skills' | 'tools' | 'playlists' | 'commands' | 'stats' | 'memory' | 'widgets' | 'shortcuts' | 'library'> = { pls: 'playlists', prompts: 'prompts', cmds: 'commands', tools: 'tools', widgets: 'widgets', stats: 'stats', keys: 'shortcuts' }
 
 export function Palette({ close, cfg, toggleSide }: { close: () => void; cfg: (t: string) => void; toggleSide: () => void }) {
   const s = useS()
@@ -19,21 +20,21 @@ export function Palette({ close, cfg, toggleSide }: { close: () => void; cfg: (t
     action(Plus, 'New chat', 'Action', 'create start conversation blank', s.newChat),
     ...s.chats.map((c) => action(MessageSquare, c.title, 'Chat', `chat conversation ${c.title}`, () => s.patch({ chat: c.id }))),
     ...s.eps.flatMap((e) => modelsOf(e).map((model) => action(Cpu, modelNameOf(e, model), e.name, `model ${modelNameOf(e, model)} ${model} ${e.name} provider endpoint switch select`, () => s.patch({ sel: { k: 'ep', id: e.id, model } })))),
-    ...s.pls.map((p) => action(Cpu, p.name, 'Playlist', `playlist model route ${p.name}`, () => s.patch({ sel: { k: 'pl', id: p.id } }))),
+    ...(featOn(s, 'playlists') ? s.pls.map((p) => action(Cpu, p.name, 'Playlist', `playlist model route ${p.name}`, () => s.patch({ sel: { k: 'pl', id: p.id } }))) : []),
     action(Server, 'Add endpoint', 'Action', 'provider model connection api', () => { s.add('eps'); cfg('eps') }),
     action(Settings, 'Open settings', 'Action', 'preferences configure options', () => cfg('eps')),
     action(Settings, 'Close settings', 'Action', 'dismiss settings', () => cfg('')),
-    action(PanelRight, 'Toggle widgets panel', 'Action', 'sidebar widgets panel show hide', () => s.patch({ rail: !s.rail })),
+    action(PanelRight, 'Toggle widgets panel', 'Action', 'sidebar widgets panel show hide', () => (featOn(s, 'widgets') ? s.patch({ rail: !s.rail }) : cfg('features'))),
     action(Maximize2, 'Toggle sidebar', 'Action', 'navigation chats sidebar show hide', toggleSide),
     action(Download, 'Export current chat', 'Action', 'download markdown save', exportChat),
     action(Trash2, 'Clear model selection', 'Action', 'reset automatic endpoints models', () => s.patch({ sel: null })),
-    action(Type, 'Clear prompt selection', 'Action', 'reset system instructions', () => s.patch({ pr: '' })),
-    ...s.cmds.filter((c) => c.on).map((c) => action(CI[c.in], '/' + c.name, c.desc || 'Command', `command slash ${c.name} ${c.desc}`, () => s.patch({ draft: '/' + c.name + ' ' }))),
-    ...TABS.map(([k, label, words]) => action(Settings, label, 'Settings', `${label} ${words}`, () => cfg(k))),
-    ...s.prompts.map((p) => action(ScrollText, p.name, 'Prompt', `prompt system instruction ${p.name} ${p.text}`, () => s.patch({ pr: p.id }))),
+    ...(featOn(s, 'prompts') ? [action(Type, 'Clear prompt selection', 'Action', 'reset system instructions', () => s.patch({ pr: '' }))] : []),
+    ...(featOn(s, 'commands') ? s.cmds.filter((c) => c.on).map((c) => action(CI[c.in], '/' + c.name, c.desc || 'Command', `command slash ${c.name} ${c.desc}`, () => s.patch({ draft: '/' + c.name + ' ' }))) : []),
+    ...TABS.filter(([k]) => !TAB_FEATURE[k] || featOn(s, TAB_FEATURE[k])).map(([k, label, words]) => action(Settings, label, 'Settings', `${label} ${words}`, () => cfg(k))),
+    ...(featOn(s, 'prompts') ? s.prompts.map((p) => action(ScrollText, p.name, 'Prompt', `prompt system instruction ${p.name} ${p.text}`, () => s.patch({ pr: p.id }))) : []),
     ...Object.entries(THEMES).map(([k, n]) => action(Pi, n, 'Theme', `theme color ${n}`, () => s.patch({ theme: k as keyof typeof THEMES }))),
     action(Pi, 'Next theme', 'Action', 'cycle theme appearance colors', () => { const keys = Object.keys(THEMES) as (keyof typeof THEMES)[]; s.patch({ theme: keys[(keys.indexOf(s.theme) + 1) % keys.length] }) }),
-    action(ScrollText, 'Next prompt', 'Action', 'cycle prompt system instruction', () => { const n = s.prompts.length ? (s.prompts.findIndex((p) => p.id === s.pr) + 1) % s.prompts.length : -1; s.patch({ pr: n < 0 ? '' : s.prompts[n].id }) }),
+    ...(featOn(s, 'prompts') ? [action(ScrollText, 'Next prompt', 'Action', 'cycle prompt system instruction', () => { const n = s.prompts.length ? (s.prompts.findIndex((p) => p.id === s.pr) + 1) % s.prompts.length : -1; s.patch({ pr: n < 0 ? '' : s.prompts[n].id }) })] : []),
     action(Cpu, 'Next model', 'Action', 'cycle model endpoint provider', () => { const list = s.eps.flatMap((e) => modelsOf(e).map((model) => ({ k: 'ep' as const, id: e.id, model }))); const at = list.findIndex((m) => m.id === s.sel?.id && m.model === s.sel?.model); s.patch({ sel: list.length ? list[(at + 1) % list.length] : null }) }),
   ]
   const needle = q.trim().toLowerCase()

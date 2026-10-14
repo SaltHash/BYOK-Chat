@@ -111,8 +111,13 @@ const E = (T: string, c: string) => ({ node, className, ...p }: any) => createEl
 const txt = (n: any): string => (n.type === 'text' ? n.value : (n.children ?? []).map(txt).join(''))
 const link = 'text-ac underline decoration-ac/40 underline-offset-2 hover:decoration-ac'
 
-function Code({ lang, code, children }: { lang: string; code: string; children: ReactNode }) {
+function Code({ lang, code, children, bare }: { lang: string; code: string; children: ReactNode; bare?: boolean }) {
   const [ok, setOk] = useState(false)
+  if (bare) {
+    return (
+      <pre className="overflow-x-auto px-6 py-5 font-mono text-[13px] leading-6">{children}</pre>
+    )
+  }
   return (
     <div className="my-4 overflow-hidden rounded-xl bg-code">
       <div className="flex items-center justify-between bg-codeh px-4 py-2 text-xs">
@@ -126,7 +131,7 @@ function Code({ lang, code, children }: { lang: string; code: string; children: 
   )
 }
 
-const C: any = {
+const makeC = (bare: boolean): any => ({
   h1: E('h1', 'mb-3 mt-6 text-2xl font-semibold'),
   h2: E('h2', 'mb-2 mt-5 text-xl font-semibold'),
   h3: E('h3', 'mb-2 mt-4 text-lg font-semibold'),
@@ -163,11 +168,11 @@ const C: any = {
   pre: ({ node, children }: any) => {
     const c = node?.children?.[0]
     const lang = /language-([\w+-]+)/.exec((c?.properties?.className ?? []).join(' '))?.[1] ?? ''
-    return <Code lang={lang} code={c ? txt(c).replace(/\n$/, '') : ''}>{children}</Code>
+    return <Code lang={lang} code={c ? txt(c).replace(/\n$/, '') : ''} bare={bare}>{children}</Code>
   },
-}
+})
 
-export default memo(function Rich({ t, fadeEvents = [], fade = 0 }: { t: string; fadeEvents?: FadeEvent[]; fade?: number }) {
+export default memo(function Rich({ t, fadeEvents = [], fade = 0, bare = false }: { t: string; fadeEvents?: FadeEvent[]; fade?: number; bare?: boolean }) {
   const src = useMemo(() => pre(t), [t])
   const [, refresh] = useState(0)
   useEffect(() => {
@@ -183,7 +188,7 @@ export default memo(function Rich({ t, fadeEvents = [], fade = 0 }: { t: string;
       <ReactMarkdown
         remarkPlugins={[[remarkGfm, { singleTilde: false }], remarkMath, remarkBreaks, remarkEmoji, fadeFragments(fadeEvents, fade)]}
         rehypePlugins={[rehypeRaw, [rehypeSanitize, schema], [rehypeKatex, { throwOnError: false, strict: 'ignore', errorColor: 'var(--er)' }], [rehypeHighlight, { detect: false, ignoreMissing: true }]]}
-        components={C}
+        components={makeC(bare)}
       >
         {src}
       </ReactMarkdown>

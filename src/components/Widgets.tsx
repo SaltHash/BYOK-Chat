@@ -1,6 +1,6 @@
 import { useState, type CSSProperties, type DragEvent, type ReactNode } from 'react'
 import { Gauge, Activity, Layers, StickyNote, Bookmark, Plus, X, CornerDownLeft, Coins, Timer, ScrollText, Keyboard, Type, ListChecks, Check, GripVertical } from 'lucide-react'
-import { useS, modelsOf, uid } from '../store'
+import { useS, modelsOf, uid, widgetOn } from '../store'
 import { fmtDuration, KEYS, WIDGETS } from '../meta'
 import { fmt } from '../engine'
 import { Btn, cx, type Ic } from './ui'
@@ -31,7 +31,7 @@ export function Widgets({ width = 320 }: { width?: number }) {
   const [n, setN] = useState('')
   const [td, setTd] = useState('')
   const c = s.chats.find((x) => x.id === s.chat)
-  const w = s.widgets
+  const w = Object.fromEntries(WIDGETS.map(([k]) => [k, widgetOn(s, k)])) as Record<string, boolean>
   const wp = { contextLimit: 128000, showDisabledEndpoints: true, scratchRows: 6, snippetLimit: 20, costDecimals: 4, activePromptsOnly: false, charsPerToken: 4, hideDoneTodos: false, ...s.widgetPrefs }
   const widgetOrder = [...new Set([...(wp.widgetOrder ?? []), ...WIDGETS.map(([k]) => k)])]
   const tok = Math.round((c?.msgs.reduce((a, m) => a + m.t.length, 0) ?? 0) / Math.max(1, wp.charsPerToken))

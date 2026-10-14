@@ -1,4 +1,4 @@
-import { Type, Image, ImagePlus, FileText, Clock, Clipboard, Calculator, Gauge, Activity, Layers, StickyNote, Bookmark, Fingerprint, Dices, Hash, MapPin, Coins, Timer, ScrollText, Keyboard, ListChecks, Search, Link, CornerDownLeft } from 'lucide-react'
+import { Type, Image, ImagePlus, FileText, Files, Clock, Clipboard, Calculator, Gauge, Activity, Layers, StickyNote, Bookmark, Fingerprint, Dices, Hash, MapPin, Coins, Timer, ScrollText, Keyboard, ListChecks, Search, Link, CornerDownLeft } from 'lucide-react'
 
 export const CI = { text: Type, image: Image, 'image+text': ImagePlus, doc: FileText }
 
@@ -20,6 +20,7 @@ export const TOOLS: [string, string, typeof Clock, string, string, string][] = [
   ['navigate', 'App links', Link, '@navigate(destination)', 'Provides a direct link to a page or setting in this app.', 'Returns links to built-in pages and settings.'],
   ['prompt_chip', 'Quick prompt', CornerDownLeft, 'prompt_chip', 'Adds a concise clickable follow-up prompt below the reply. The hidden prompt should expand on an idea from the answer.', 'Creates a one-click follow-up prompt.'],
   ['inline_poll', 'Inline poll', ListChecks, 'inline_poll', 'Adds a custom, accessible choice card below the reply to clarify the user’s intent. Provide useful options with tailored follow-up prompts.', 'Creates an interactive choice card.'],
+  ['canvas_upsert', 'Canvas files', Files, 'canvas_upsert(path, language, content)', 'Creates downloadable file artifacts shown beside the reply, with preview, versioning and zip download. Before calling, write the file path in your reply text (for example: Writing src/app.py…).', 'Creates local file previews and downloads in this browser.'],
 ]
 
 export const WIDGETS: [string, string, typeof Clock, string][] = [
@@ -36,7 +37,7 @@ export const WIDGETS: [string, string, typeof Clock, string][] = [
   ['todo', 'Checklist', ListChecks, 'A small persistent task list.'],
 ]
 
-export const DEFAULT_TOOLS: Record<string, boolean> = { search: false, calc: true, count: true, date: true, time: true, random: true, navigate: true, prompt_chip: true, inline_poll: true }
+export const DEFAULT_TOOLS: Record<string, boolean> = { search: false, calc: true, count: true, date: true, time: true, random: true, navigate: true, prompt_chip: true, inline_poll: true, canvas_upsert: true }
 export const fmtDuration = (ms: number, unit: 'ms' | 's' | 'auto' = 'auto') => {
   if (unit === 'ms' || (unit === 'auto' && ms < 1000)) return `${Math.round(ms)} ms`
   return `${(ms / 1000).toFixed(unit === 's' ? 2 : 1)} s`

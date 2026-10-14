@@ -1,5 +1,5 @@
 import { useEffect, useState, type PointerEvent } from 'react'
-import { useS, THEMES, THEME_COLOR_KEYS, exportChat, modelsOf } from './store'
+import { useS, THEMES, THEME_COLOR_KEYS, exportChat, modelsOf, featOn } from './store'
 import { combo, rec } from './engine'
 import { Sidebar } from './components/Sidebar'
 import { Chat } from './components/Chat'
@@ -9,7 +9,7 @@ import { Widgets } from './components/Widgets'
 import { Welcome } from './components/Welcome'
 
 export default function App() {
-  const { theme, customColors, rail, widgets, prefs, setupDone } = useS()
+  const { theme, customColors, rail, widgets, prefs, setupDone, features } = useS()
   const [side, setSide] = useState(() => innerWidth >= 768)
   const [cfg, setCfg] = useState('')
   const [pal, setPal] = useState(false)
@@ -102,8 +102,10 @@ export default function App() {
   useEffect(() => {
     const f = (e: KeyboardEvent) => {
       if (rec.on) return
+      const st = useS.getState()
+      if (!featOn(st, 'shortcuts')) return
       const c = combo(e); if (!c) return
-      const s = useS.getState(), a = Object.entries(s.keys).find(([, v]) => v === c)?.[0]
+      const s = st, a = Object.entries(s.keys).find(([, v]) => v === c)?.[0]
       if (!a) return
       e.preventDefault()
       if (a === 'palette') setPal((v) => !v)
@@ -113,7 +115,7 @@ export default function App() {
       else if (a === 'focus') document.getElementById('composer')?.focus()
       else if (a === 'stop') s.stop()
       else if (a === 'regen') s.regen()
-      else if (a === 'widgets') { if (Object.values(s.widgets).some(Boolean)) s.patch({ rail: !s.rail }); else setCfg('widgets') }
+      else if (a === 'widgets') { if (!featOn(s, 'widgets')) setCfg('features'); else if (Object.values(s.widgets).some(Boolean)) s.patch({ rail: !s.rail }); else setCfg('widgets') }
       else if (a === 'theme') { const t = Object.keys(THEMES); s.patch({ theme: t[(t.indexOf(s.theme) + 1) % t.length] as keyof typeof THEMES }) }
       else if (a === 'export') exportChat()
       else if (a === 'nextModel' || a === 'prevModel') {
@@ -125,6 +127,7 @@ export default function App() {
         }
       }
       else if (a === 'nextPrompt') {
+        if (!featOn(s, 'prompts')) return
         const at = s.prompts.findIndex((p) => p.id === s.pr)
         s.patch({ pr: s.prompts.length ? s.prompts[(at + 1) % s.prompts.length].id : '' })
       }
@@ -139,7 +142,7 @@ export default function App() {
       <Sidebar open={side} toggle={() => setSide((v) => !v)} cfg={setCfg} width={prefs.sidebarWidth ?? 288} />
       {side && <div role="separator" aria-orientation="vertical" aria-label="Resize sidebar" onPointerDown={resize('sidebarWidth')} className="hidden w-1 shrink-0 cursor-col-resize bg-transparent hover:bg-ac/50 md:block" />}
       <Chat side={side} toggle={() => setSide(true)} cfg={setCfg} pal={() => setPal(true)} />
-      {rail && Object.values(widgets).some(Boolean) && <><div role="separator" aria-orientation="vertical" aria-label="Resize widget panel" onPointerDown={resize('widgetWidth', true)} className="hidden w-1 shrink-0 cursor-col-resize bg-transparent hover:bg-ac/50 lg:block" /><Widgets width={prefs.widgetWidth ?? 320} /></>}
+      {rail && featOn({ features }, 'widgets') && Object.values(widgets).some(Boolean) && <><div role="separator" aria-orientation="vertical" aria-label="Resize widget panel" onPointerDown={resize('widgetWidth', true)} className="hidden w-1 shrink-0 cursor-col-resize bg-transparent hover:bg-ac/50 lg:block" /><Widgets width={prefs.widgetWidth ?? 320} /></>}
       {pal && <Palette close={() => setPal(false)} cfg={setCfg} toggleSide={() => setSide((v) => !v)} />}
       {cfg && <Settings tab={cfg} setTab={setCfg} />}
       {!setupDone && <Welcome addEndpoint={() => setCfg('eps')} close={() => {}} />}

@@ -1,8 +1,9 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { Info, X, Server, Play, MessageSquare, Keyboard, ArrowUp, ArrowDown, MessagesSquare, RotateCcw, Download, Upload, FileText, Trash2, CircleCheck, CircleX, Gauge } from 'lucide-react'
-import { useS, dl, BLANK, THEMES, modelsOf, modelNameOf, type Ep, type Kind } from '../store'
-import { combo, fmt, rec as R, testEp, redact } from '../engine'
-import { KEYS } from '../meta'
+import { useS, dl, BLANK, THEMES, DEFAULT_FEATURES, modelsOf, modelNameOf, normSearch, normAdvanced, normFeatureOrder, featOn, errText, type Ep, type Kind, type FeatureId } from '../store'
+import { normSkills } from '../skills'
+import { combo, fmt, rec as R, testEp } from '../engine'
+import { KEYS, TOOLS } from '../meta'
 import { Btn, Toggle, Checkbox, Confirm, Modal, cx, type Ic } from './ui'
 import { Panel } from './Settings'
 
@@ -60,7 +61,7 @@ export function TestRow({ e }: { e: Ep }) {
         const x = await testEp({ ...e, model })
         setR((rows) => rows.map((r) => r.model === model ? { ...r, s: 'ok', t: `Reachable in ${Date.now() - t0} ms. Reply: ${x.slice(0, 40)}` } : r))
       } catch (x: any) {
-        setR((rows) => rows.map((r) => r.model === model ? { ...r, s: 'err', t: redact(e, x.message) } : r))
+        setR((rows) => rows.map((r) => r.model === model ? { ...r, s: 'err', t: errText(e, x.message) } : r))
       }
     }
   }
@@ -90,7 +91,7 @@ export function TestAllEndpoints({ eps }: { eps: Ep[] }) {
         const answer = await testEp({ ...e, model })
         setRows((items) => items.map((x) => x.key === key ? { ...x, s: 'ok', t: `Reachable in ${Date.now() - t0} ms. Reply: ${answer.slice(0, 40)}` } : x))
       } catch (x: any) {
-        setRows((items) => items.map((row) => row.key === key ? { ...row, s: 'err', t: redact(e, x?.message ?? x) } : row))
+        setRows((items) => items.map((row) => row.key === key ? { ...row, s: 'err', t: errText(e, x?.message ?? x) } : row))
       }
     }
     setRunning(false)
@@ -118,6 +119,7 @@ const Box = ({ icon: I, t, d, children }: { icon: Ic; t: string; d: string; chil
 export function StatsTab() {
   const s = useS(), t = s.stats
   const [cf, setCf] = useState(false)
+  if (!featOn(s, 'stats')) return null
   const card = (I: Ic, l: string, v: number, d: string) => (
     <div className="rounded-xl bg-surf p-4">
       <div className="flex items-center gap-2 text-sm text-mu"><I size={16} className="text-ac" />{l}</div>
@@ -141,7 +143,9 @@ export function StatsTab() {
 }
 
 export function KeysTab() {
-  const { keys, patch } = useS()
+  const st = useS()
+  const { keys, patch } = st
+  const off = !featOn(st, 'shortcuts')
   const [rec, setRec] = useState('')
   const [err, setErr] = useState('')
   useEffect(() => {
@@ -160,6 +164,7 @@ export function KeysTab() {
     addEventListener('keydown', f, true)
     return () => { R.on = false; removeEventListener('keydown', f, true) }
   }, [rec, keys])
+  if (off) return null
   return (
     <Panel id="keys">
       <div className="space-y-2">
@@ -188,27 +193,34 @@ export function KeysTab() {
 export function DataTab() {
   const s = useS()
   const [withKeys, setWithKeys] = useState(false)
-  const categories = [['eps', 'Endpoints'], ['prompts', 'Prompts'], ['pls', 'Playlists'], ['cmds', 'Commands'], ['keys', 'Shortcuts'], ['appearance', 'Appearance'], ['tools', 'Tools'], ['widgets', 'Widget settings'], ['stats', 'Usage stats'], ['chats', 'Chat history']] as const
+  const catFeature: Record<string, FeatureId> = { prompts: 'prompts', pls: 'playlists', cmds: 'commands', skills: 'skills', memory: 'memory', keys: 'shortcuts', tools: 'tools', widgets: 'widgets', stats: 'stats' }
+  const categories = [['eps', 'Endpoints'], ['prompts', 'Prompts'], ['pls', 'Playlists'], ['cmds', 'Commands'], ['skills', 'Skills'], ['memory', 'Memory'], ['keys', 'Shortcuts'], ['appearance', 'Appearance'], ['features', 'Features'], ['tools', 'Tools'], ['tuning', 'Model tuning'], ['widgets', 'Widget settings'], ['stats', 'Usage stats'], ['chats', 'Chat history']].filter(([id]) => !catFeature[id] || featOn(s, catFeature[id])) as unknown as [['eps', 'Endpoints'], ['prompts', 'Prompts'], ['pls', 'Playlists'], ['cmds', 'Commands'], ['skills', 'Skills'], ['memory', 'Memory'], ['keys', 'Shortcuts'], ['appearance', 'Appearance'], ['features', 'Features'], ['tools', 'Tools'], ['tuning', 'Model tuning'], ['widgets', 'Widget settings'], ['stats', 'Usage stats'], ['chats', 'Chat history']]
   type Category = typeof categories[number][0]
-  const [exports, setExports] = useState<Record<Category, boolean>>({ eps: true, prompts: true, pls: true, cmds: true, keys: true, appearance: true, tools: true, widgets: true, stats: true, chats: true })
+  const allOn = { eps: true, prompts: true, pls: true, cmds: true, skills: true, memory: true, keys: true, appearance: true, features: true, tools: true, tuning: true, widgets: true, stats: true, chats: true }
+  const allOff = { eps: false, prompts: false, pls: false, cmds: false, skills: false, memory: false, keys: false, appearance: false, features: false, tools: false, tuning: false, widgets: false, stats: false, chats: false }
+  const [exports, setExports] = useState<Record<Category, boolean>>({ ...allOn })
   const [fileData, setFileData] = useState<Record<string, any> | null>(null)
-  const [imports, setImports] = useState<Record<Category, boolean>>({ eps: false, prompts: false, pls: false, cmds: false, keys: false, appearance: false, tools: false, widgets: false, stats: false, chats: false })
-  const [available, setAvailable] = useState<Record<Category, boolean>>({ eps: false, prompts: false, pls: false, cmds: false, keys: false, appearance: false, tools: false, widgets: false, stats: false, chats: false })
+  const [imports, setImports] = useState<Record<Category, boolean>>({ ...allOff })
+  const [available, setAvailable] = useState<Record<Category, boolean>>({ ...allOff })
   const [merge, setMerge] = useState(true)
   const [cf, setCf] = useState(0)
   const [msg, setMsg] = useState('')
   const exp = () => {
-    const data: Record<string, any> = { v: 3 }
-    if (exports.appearance) { data.theme = s.theme; data.customColors = s.customColors }
+    const data: Record<string, any> = { v: 4 }
+    if (exports.appearance) { data.theme = s.theme; data.customColors = s.customColors; data.prefs = s.prefs }
     if (exports.keys) data.keys = s.keys
-    if (exports.eps) data.eps = s.eps.map((e) => ({ ...e, key: withKeys ? e.key : '' }))
-    if (exports.prompts) data.prompts = s.prompts
+    if (exports.eps) { data.eps = s.eps.map((e) => ({ ...e, key: withKeys ? e.key : '' })); data.sel = s.sel }
+    if (exports.prompts) { data.prompts = s.prompts; data.pr = s.pr; data.globalPrompt = s.globalPrompt }
     if (exports.pls) data.pls = s.pls
     if (exports.cmds) data.cmds = s.cmds
-    if (exports.tools) data.tools = s.tools
+    if (exports.skills) data.skills = normSkills(s.skills).skills
+    if (exports.memory) { data.memories = s.memories; data.memoryPrefs = s.memoryPrefs }
+    if (exports.features) { data.features = s.features; data.featureOrder = s.featureOrder; data.libraryShow = s.libraryShow; data.advanced = s.advanced }
+    if (exports.tools) { data.tools = s.tools; const sp = normSearch(s.search); data.search = withKeys ? sp : { ...sp, keys: { tinyfish: '', you: '', exa: '', firecrawl: '', brightdata: '' } } }
+    if (exports.tuning) { data.params = s.params; data.effort = s.effort; data.canvasPrefs = s.canvasPrefs }
     if (exports.widgets) { data.widgets = s.widgets; data.widgetPrefs = s.widgetPrefs }
     if (exports.stats) data.stats = s.stats
-    if (exports.chats) { data.chats = s.chats; data.folders = s.folders }
+    if (exports.chats) { data.chats = s.chats; data.folders = s.folders; data.chat = s.chat; data.todos = s.todos; data.snips = s.snips; data.pad = s.pad }
     dl('chat-config.json', JSON.stringify(data, null, 1), 'application/json')
   }
   const chooseFile = async (f?: File) => {
@@ -216,7 +228,21 @@ export function DataTab() {
     try {
       const j = JSON.parse(await f.text())
       if (!j || typeof j !== 'object') throw 0
-      const has: Record<Category, boolean> = { eps: Array.isArray(j.eps), prompts: Array.isArray(j.prompts), pls: Array.isArray(j.pls), cmds: Array.isArray(j.cmds), keys: !!j.keys && typeof j.keys === 'object', appearance: (typeof j.theme === 'string' && j.theme in THEMES) || (!!j.customColors && typeof j.customColors === 'object'), tools: !!j.tools && typeof j.tools === 'object', widgets: (!!j.widgets && typeof j.widgets === 'object') || (!!j.widgetPrefs && typeof j.widgetPrefs === 'object'), stats: !!j.stats && typeof j.stats === 'object', chats: Array.isArray(j.chats) }
+      const has: Record<Category, boolean> = {
+        eps: Array.isArray(j.eps) || (j.sel && typeof j.sel === 'object'),
+        prompts: Array.isArray(j.prompts) || typeof j.pr === 'string' || (!!j.globalPrompt && typeof j.globalPrompt === 'object'),
+        pls: Array.isArray(j.pls), cmds: Array.isArray(j.cmds),
+        skills: Array.isArray(j.skills),
+        memory: Array.isArray(j.memories) || (!!j.memoryPrefs && typeof j.memoryPrefs === 'object'),
+        keys: !!j.keys && typeof j.keys === 'object',
+        appearance: (typeof j.theme === 'string' && j.theme in THEMES) || (!!j.customColors && typeof j.customColors === 'object') || (!!j.prefs && typeof j.prefs === 'object'),
+        features: (!!j.features && typeof j.features === 'object') || Array.isArray(j.featureOrder) || (!!j.libraryShow && typeof j.libraryShow === 'object') || (!!j.advanced && typeof j.advanced === 'object'),
+        tools: (!!j.tools && typeof j.tools === 'object') || (!!j.search && typeof j.search === 'object'),
+        tuning: (!!j.params && typeof j.params === 'object') || (!!j.effort && typeof j.effort === 'object') || (!!j.canvasPrefs && typeof j.canvasPrefs === 'object'),
+        widgets: (!!j.widgets && typeof j.widgets === 'object') || (!!j.widgetPrefs && typeof j.widgetPrefs === 'object'),
+        stats: !!j.stats && typeof j.stats === 'object',
+        chats: Array.isArray(j.chats) || Array.isArray(j.todos) || Array.isArray(j.snips) || typeof j.pad === 'string',
+      }
       setAvailable(has)
       setImports(Object.fromEntries(categories.map(([id]) => [id, has[id]])) as Record<Category, boolean>)
       setFileData(j)
@@ -230,21 +256,41 @@ export function DataTab() {
       const j = fileData
       const fix = (k: Kind) => (Array.isArray(j[k]) ? j[k] : []).filter((y: any) => y && typeof y.id === 'string').map((y: any) => ({ ...BLANK[k](), ...y }))
       const m = (k: Kind, a: any[]) => { const b = fix(k); return merge ? [...a.filter((x) => !b.some((y: any) => y.id === x.id)), ...b] : b }
+      // Only known tool ids are accepted; hidden runtime capabilities (e.g. use_skill) are never stored.
+      const toolIds = new Set(TOOLS.map(([name]) => name))
+      const cleanBools = (v: unknown): Record<string, boolean> => (v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).filter(([, val]) => typeof val === 'boolean')) as Record<string, boolean> : {})
+      const cleanTools = (v: unknown): Record<string, boolean> => (v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).filter(([k, val]) => toolIds.has(k) && typeof val === 'boolean')) as Record<string, boolean> : {})
+      const cleanStrings = (v: unknown): Record<string, string> => (v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).filter(([, val]) => typeof val === 'string')) as Record<string, string> : {})
+      const cleanFeatures = (v: unknown): Record<string, boolean> => (v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).filter(([k, val]) => k in DEFAULT_FEATURES && typeof val === 'boolean')) as Record<string, boolean> : {})
       useS.setState((st) => {
         const importedChats = Array.isArray(j.chats) ? j.chats.filter((c: any) => c && typeof c.id === 'string' && typeof c.title === 'string' && Array.isArray(c.msgs)) : []
         const importedFolders = Array.isArray(j.folders) ? j.folders.filter((f: any) => f && typeof f.id === 'string' && typeof f.name === 'string') : []
         const chats = !imports.chats ? st.chats : merge ? [...st.chats.filter((c) => !importedChats.some((x: any) => x.id === c.id)), ...importedChats] : importedChats
         const folders = !imports.chats ? st.folders : merge ? [...st.folders.filter((f) => !importedFolders.some((x: any) => x.id === f.id)), ...importedFolders] : importedFolders
+        const validSel = j.sel && typeof j.sel === 'object' && (j.sel.k === 'ep' || j.sel.k === 'pl') && typeof j.sel.id === 'string'
+          ? { k: j.sel.k, id: j.sel.id, ...(typeof j.sel.model === 'string' && j.sel.model ? { model: j.sel.model } : {}) } : null
+        const validMemories = Array.isArray(j.memories) ? j.memories.filter((x: any) => x && typeof x.id === 'string' && typeof x.text === 'string').map((x: any) => ({ id: x.id, text: String(x.text).slice(0, 500), category: typeof x.category === 'string' ? x.category.slice(0, 60) || 'General' : 'General', createdAt: typeof x.createdAt === 'number' ? x.createdAt : Date.now(), updatedAt: typeof x.updatedAt === 'number' ? x.updatedAt : Date.now() })) : []
+        const validTodos = Array.isArray(j.todos) ? j.todos.filter((x: any) => x && typeof x.id === 'string' && typeof x.t === 'string').map((x: any) => ({ id: x.id, t: String(x.t).slice(0, 500), done: x.done === true })) : []
         return {
-        ...(imports.eps ? { eps: m('eps', st.eps).map((e: Ep) => ({ ...e, key: merge && !e.key ? st.eps.find((x) => x.id === e.id)?.key || '' : e.key })) } : {}),
-        ...(imports.prompts ? { prompts: m('prompts', st.prompts) } : {}), ...(imports.pls ? { pls: m('pls', st.pls) } : {}), ...(imports.cmds ? { cmds: m('cmds', st.cmds) } : {}),
-        ...(imports.keys ? { keys: merge ? { ...st.keys, ...j.keys } : j.keys } : {}),
-        ...(imports.appearance && j.theme in THEMES ? { theme: j.theme } : {}),
-        ...(imports.appearance && j.customColors && typeof j.customColors === 'object' ? { customColors: merge ? { ...st.customColors, ...j.customColors } : j.customColors } : {}),
-        ...(imports.tools ? { tools: merge ? { ...st.tools, ...j.tools } : j.tools } : {}),
-        ...(imports.widgets ? { widgets: merge ? { ...st.widgets, ...j.widgets } : j.widgets, widgetPrefs: j.widgetPrefs ? (merge ? { ...st.widgetPrefs, ...j.widgetPrefs } : j.widgetPrefs) : st.widgetPrefs } : {}),
+        ...(imports.eps ? { eps: m('eps', st.eps).map((e: Ep) => ({ ...e, key: merge && !e.key ? st.eps.find((x) => x.id === e.id)?.key || '' : e.key })), ...(validSel ? { sel: validSel } : {}) } : {}),
+        ...(imports.prompts ? { prompts: m('prompts', st.prompts), ...(typeof j.pr === 'string' ? { pr: j.pr } : {}), ...(j.globalPrompt && typeof j.globalPrompt === 'object' ? { globalPrompt: { on: j.globalPrompt.on === true, text: typeof j.globalPrompt.text === 'string' ? j.globalPrompt.text : '' } } : {}) } : {}),
+        ...(imports.pls ? { pls: m('pls', st.pls) } : {}), ...(imports.cmds ? { cmds: m('cmds', st.cmds) } : {}),
+        ...(imports.skills && Array.isArray(j.skills) ? { skills: normSkills(merge ? [...(st as any).skills ?? [], ...j.skills] : j.skills).skills } : {}),
+        ...(imports.memory ? { ...(Array.isArray(j.memories) ? { memories: merge ? [...st.memories.filter((x) => !validMemories.some((y: any) => y.id === x.id)), ...validMemories] : validMemories } : {}), ...(j.memoryPrefs && typeof j.memoryPrefs === 'object' ? { memoryPrefs: { ...st.memoryPrefs, ...(merge ? {} : { enabled: false, intent: 'balanced', recall: 'contextual', classifierEp: '', classifierModel: '' }), ...Object.fromEntries(Object.entries(j.memoryPrefs).filter(([k]) => ['enabled', 'intent', 'recall', 'classifierEp', 'classifierModel'].includes(k))) } } : {}) } : {}),
+        ...(imports.keys ? { keys: merge ? { ...st.keys, ...cleanStrings(j.keys) } : cleanStrings(j.keys) } : {}),
+        ...(imports.appearance ? { ...(j.theme in THEMES ? { theme: j.theme } : {}), ...(j.customColors && typeof j.customColors === 'object' ? { customColors: merge ? { ...st.customColors, ...j.customColors } : j.customColors } : {}), ...(j.prefs && typeof j.prefs === 'object' ? { prefs: merge ? { ...st.prefs, ...j.prefs } : { ...st.prefs, ...j.prefs } } : {}) } : {}),
+        ...(imports.features ? { ...(j.features && typeof j.features === 'object' ? { features: merge ? { ...st.features, ...cleanFeatures(j.features) } : { ...DEFAULT_FEATURES, ...cleanFeatures(j.features) } } : {}), ...(j.libraryShow && typeof j.libraryShow === 'object' ? { libraryShow: merge ? { ...st.libraryShow, ...j.libraryShow } : j.libraryShow } : {}), ...(Array.isArray(j.featureOrder) ? { featureOrder: normFeatureOrder(merge ? [...st.featureOrder ?? [], ...j.featureOrder] : j.featureOrder) } : {}), ...(j.advanced && typeof j.advanced === 'object' ? { advanced: normAdvanced(merge ? { ...st.advanced, ...j.advanced } : j.advanced) } : {}) } : {}),
+        ...(imports.tools ? { tools: merge ? { ...st.tools, ...cleanTools(j.tools) } : { ...st.tools, ...cleanTools(j.tools) }, ...(j.search && typeof j.search === 'object' ? (() => {
+          const current = normSearch((st as any).search)
+          const incoming = normSearch(j.search)
+          const keys: Record<string, string> = {}
+          for (const p of Object.keys(current.keys)) keys[p] = merge ? ((incoming.keys as Record<string, string>)[p] || current.keys[p as keyof typeof current.keys] || '') : ((incoming.keys as Record<string, string>)[p] || '')
+          return { search: { ...incoming, keys } }
+        })() : {}) } : {}),
+        ...(imports.tuning ? { ...(j.params && typeof j.params === 'object' ? { params: { ...st.params, ...Object.fromEntries(Object.entries(j.params).filter(([k]) => ['def', 'temp', 'topp', 'max'].includes(k))) } } : {}), ...(j.effort && typeof j.effort === 'object' ? { effort: merge ? { ...st.effort, ...cleanStrings(j.effort) } : cleanStrings(j.effort) } : {}), ...(j.canvasPrefs && typeof j.canvasPrefs === 'object' ? { canvasPrefs: { ...st.canvasPrefs, ...Object.fromEntries(Object.entries(j.canvasPrefs).filter(([k]) => ['autoOpen', 'autoClose'].includes(k))) } } : {}) } : {}),
+        ...(imports.widgets ? { widgets: merge ? { ...st.widgets, ...cleanBools(j.widgets) } : cleanBools(j.widgets), widgetPrefs: j.widgetPrefs ? (merge ? { ...st.widgetPrefs, ...j.widgetPrefs } : { ...st.widgetPrefs, ...j.widgetPrefs }) : st.widgetPrefs } : {}),
         ...(imports.stats && j.stats && typeof j.stats === 'object' ? { stats: merge ? { ...st.stats, ...j.stats } : j.stats } : {}),
-        ...(imports.chats ? { chats, folders, chat: chats.some((c) => c.id === st.chat) ? st.chat : chats[0]?.id ?? '' } : {}),
+        ...(imports.chats ? { chats, folders, chat: chats.some((c) => c.id === st.chat) ? st.chat : chats[0]?.id ?? '', ...(Array.isArray(j.todos) ? { todos: merge ? [...st.todos.filter((x) => !validTodos.some((y: any) => y.id === x.id)), ...validTodos] : validTodos } : {}), ...(Array.isArray(j.snips) ? { snips: merge ? [...st.snips, ...j.snips.filter((x: any) => typeof x === 'string')] : j.snips.filter((x: any) => typeof x === 'string') } : {}), ...(typeof j.pad === 'string' ? { pad: merge && st.pad ? st.pad : j.pad } : {}) } : {}),
       }})
       setFileData(null)
       setMsg(merge ? 'Imported the selected data and merged it with existing settings.' : 'Imported the selected data and replaced those settings.')
@@ -264,11 +310,11 @@ export function DataTab() {
       <Box icon={FileText} t="Chat history" d="Include conversations in configuration exports, or delete them all. Stats are kept.">
         <Btn v="danger" disabled={!s.chats.length} onClick={() => setCf(1)}>Delete all</Btn>
       </Box>
-      <Box icon={Trash2} t="Erase everything" d="Removes endpoints, keys, chats, stats and shortcuts from this browser.">
+      <Box icon={Trash2} t="Erase everything" d="Removes all endpoints, keys, prompts, skills, memories, chats, stats and settings from this browser.">
         <Btn v="danger" onClick={() => setCf(2)}>Erase</Btn>
       </Box>
       {cf === 1 && <Confirm title="Delete all chats?" text="Every saved chat is removed. Stats and settings are kept." ok="Delete all" close={() => setCf(0)} run={() => s.patch({ chats: [], chat: '' })} />}
-      {cf === 2 && <Confirm title="Erase everything?" text="Endpoints, API keys, prompts, playlists, commands, chats, stats and shortcuts are removed from this browser. This cannot be undone." ok="Erase" close={() => setCf(0)} run={() => { localStorage.removeItem('byok.v1'); location.reload() }} />}
+      {cf === 2 && <Confirm title="Erase everything?" text="Endpoints, API keys, prompts, playlists, commands, skills, memories, chats, stats and all other settings are removed from this browser. This cannot be undone." ok="Erase" close={() => setCf(0)} run={() => { localStorage.removeItem('byok.v1'); location.reload() }} />}
       {cf === 3 && <Modal close={() => setCf(0)}><section role="dialog" aria-modal="true" aria-labelledby="export-title" className="w-full max-w-xl space-y-5 rounded-2xl border border-hov bg-bg p-5 shadow-2xl">
         <div><h2 id="export-title" className="text-lg font-semibold">Export configuration</h2><p className="mt-1 text-sm text-mu">Choose the settings to include in this file.</p></div>
         <div className="grid grid-cols-2 gap-2 rounded-xl bg-surf p-3 sm:grid-cols-3">{categories.map(([id, label]) => <Checkbox key={id} checked={exports[id]} set={(checked) => setExports({ ...exports, [id]: checked })} label={label} />)}</div>

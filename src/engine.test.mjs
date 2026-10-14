@@ -180,3 +180,58 @@ test('provider rejection of tool definitions surfaces an explicit error', async 
   try { await assert.rejects(() => stream(openai, '', [{ role: 'user', content: 'time?' }], () => {}, new AbortController(), {}, () => {}, toolsFor({ time: true }, 'openai')), /HTTP 400/) }
   finally { globalThis.fetch = original }
 })
+
+test('canvas_upsert executes locally, coerces bad paths, and truncates oversized content', async () => {
+  const { CANVAS_MAX_CONTENT } = await import('./canvas.ts')
+  const ok = await executeTool({ id: 'canvas-1', name: 'canvas_upsert', arguments: JSON.stringify({ action: 'create', path: 'src/app.py', language: 'python', content: 'print(1)' }) }, enabled)
+  assert.equal(ok.result, 'Canvas ready: src/app.py')
+  assert.equal(ok.error, undefined)
+  const evil = await executeTool({ id: 'canvas-2', name: 'canvas_upsert', arguments: JSON.stringify({ action: 'create', path: '../../evil.sh', content: 'x' }) }, enabled)
+  assert.equal(evil.result, 'Canvas ready: evil.sh')
+  const gone = await executeTool({ id: 'canvas-3', name: 'canvas_upsert', arguments: JSON.stringify({ action: 'delete', path: '/tmp/old.txt' }) }, enabled)
+  assert.equal(gone.result, 'Canvas deleted: tmp/old.txt')
+  const big = await executeTool({ id: 'canvas-4', name: 'canvas_upsert', arguments: JSON.stringify({ action: 'create', path: 'big.txt', content: 'x'.repeat(CANVAS_MAX_CONTENT + 5) }) }, enabled)
+  assert.match(big.result, /Canvas ready: big\.txt/)
+  assert.match((await executeTool({ id: 'canvas-5', name: 'canvas_upsert', arguments: JSON.stringify({ action: 'explode', path: 'a.txt' }) }, enabled)).result, /action must be/)
+  assert.match((await executeTool({ id: 'canvas-6', name: 'canvas_upsert', arguments: JSON.stringify({ action: 'create' }) }, enabled)).result, /Missing required argument: path/)
+  assert.match((await executeTool({ id: 'canvas-7', name: 'canvas_upsert', arguments: '{}' }, {})).result, /disabled/)
+})
+
+test('streaming tool deltas fire per chunk with the accumulated canvas arguments', async () => {
+  const original = globalThis.fetch
+  globalThis.fetch = async () => new Response([
+    'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"cv-1","function":{"name":"canvas_upsert","arguments":"{\\"action\\":\\"create\\""}}]}}]}',
+    'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":",\\"path\\":\\"a.py\\",\\"content\\":\\"print("}}]}}]}',
+    'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"1)\\"}"}}]}}]}',
+    'data: [DONE]', '',
+  ].join('\n'), { headers: { 'content-type': 'text/event-stream' } })
+  try {
+    const seen = []
+    const result = await stream(openai, '', [{ role: 'user', content: 'make a file' }], () => {}, new AbortController(), {}, () => {}, toolsFor({ canvas_upsert: true }, 'openai'), (calls) => seen.push(structuredClone(calls)))
+    assert.equal(result.toolCalls[0].name, 'canvas_upsert')
+    assert.ok(seen.length >= 3)
+    // Each snapshot reflects the full accumulated string so far (rewrites re-render).
+    assert.ok(seen[0][0].arguments.length < seen[seen.length - 1][0].arguments.length)
+    const { parseCanvasArgsPartial } = await import('./canvas.ts')
+    assert.equal(parseCanvasArgsPartial(result.toolCalls[0].arguments).content, 'print(1)')
+    assert.equal(parseCanvasArgsPartial(seen[0][0].arguments).action, 'create')
+  } finally { globalThis.fetch = original }
+})
+
+test('runToolLoop forwards live tool deltas to its callback', async () => {
+  const originalFetch = globalThis.fetch, originalRaf = globalThis.requestAnimationFrame
+  globalThis.requestAnimationFrame = (fn) => setTimeout(fn, 0)
+  let n = 0
+  globalThis.fetch = async () => {
+    n++
+    if (n === 1) return jsonResponse({ choices: [{ message: { tool_calls: [{ id: 'cv-9', type: 'function', function: { name: 'canvas_upsert', arguments: '{"action":"create","path":"a.py","content":"x"}' } }] } }] })
+    return jsonResponse({ choices: [{ message: { content: 'Done.' } }] })
+  }
+  try {
+    const seen = []
+    const result = await runToolLoop(openai, '', (rounds) => wire(openai, [{ id: 'a', r: 'assistant', t: '', toolRounds: rounds }]), { canvas_upsert: true }, () => {}, new AbortController(), {}, () => {}, () => {}, 8, {}, (calls) => seen.push(calls))
+    assert.equal(result.rounds[0].calls[0].result, 'Canvas ready: a.py')
+    assert.ok(seen.length >= 1)
+    assert.equal(seen[0][0].name, 'canvas_upsert')
+  } finally { globalThis.fetch = originalFetch; globalThis.requestAnimationFrame = originalRaf }
+})

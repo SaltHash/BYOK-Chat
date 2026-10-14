@@ -1,7 +1,8 @@
 import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
 import { DEFAULT_TOOLS, KEYS, TOOLS, WIDGETS } from './meta'
-import { est, redact, can, stream, wire, runToolLoop, type ToolResult, searchWeb, formatSearch, shouldSearchWeb } from './engine'
+import { est, redact, can, stream, wire, runToolLoop, type ToolCall, type ToolResult, searchWeb, formatSearch, shouldSearchWeb } from './engine'
+import { DEFAULT_SKILL_STATE, normSkills, enabledSkills, getSkillInstructions, composeSystemPrompt, SKILL_TOOL_NAME, type SkillState, type ResolvedSkill } from './skills'
 
 export type Kind = 'eps' | 'prompts' | 'pls' | 'cmds'
 export type ModelPrice = { input: number; output: number; source?: 'manual' | 'openrouter' }
@@ -12,13 +13,62 @@ export type Cmd = { id: string; name: string; desc: string; in: 'text' | 'image'
 export type Try = { n: string; m: string; detail?: string; ms?: number; err?: string; tin?: number; tout?: number; at?: number }
 export type Att = { name: string; kind: 'img' | 'pdf' | 'txt'; size: string; mime?: string; data?: string; text?: string }
 export type FadeEvent = { text: string; at: number }
-export type Msg = { id: string; r: 'user' | 'assistant'; t: string; at?: number; fadeEvents?: FadeEvent[]; by?: string; tps?: number; log?: Try[]; att?: Att[]; err?: boolean; full?: string; ctx?: string[]; fx?: string; cmd?: string; alts?: Snap[]; ai?: number; historyTokens?: number; explicitTokens?: number; reasoning?: string; thinkingOn?: boolean; toolRounds?: { text: string; calls: ToolResult[] }[]; toolFinal?: string }
-export type Snap = { t: string; by?: string; tps?: number; log?: Try[]; err?: boolean }
+export type Msg = { id: string; r: 'user' | 'assistant'; t: string; at?: number; fadeEvents?: FadeEvent[]; by?: string; tps?: number; log?: Try[]; att?: Att[]; err?: boolean; full?: string; ctx?: string[]; fx?: string; cmd?: string; alts?: Snap[]; ai?: number; historyTokens?: number; explicitTokens?: number; reasoning?: string; thinkingOn?: boolean; toolRounds?: { text: string; calls: ToolResult[] }[]; toolFinal?: string; sys?: string }
+export type Snap = { t: string; by?: string; tps?: number; log?: Try[]; err?: boolean; toolRounds?: { text: string; calls: ToolResult[] }[]; toolFinal?: string }
 export type Chat = { id: string; title: string; pin?: boolean; started?: boolean; folder?: string; msgs: Msg[]; temporary?: boolean; expiresAt?: number; titleAuto?: boolean }
 export type Folder = { id: string; name: string; open: boolean }
 export type Notice = { t: string; tab?: string; label?: string } | null
 export type Stats = { tin: number; tout: number; historyIn: number; explicitIn: number; sent: number; chats: number; since: number; cost: number }
 export type Memory = { id: string; text: string; category: string; createdAt: number; updatedAt: number }
+
+/* Advanced debugging aids. All off by default; only take effect while the
+   `advanced` feature is enabled. */
+export type AdvancedPrefs = { verboseErrors: boolean; showHiddenTools: boolean; showSystemPrompt: boolean; showToolPayloads: boolean; showTokenCounts: boolean }
+export const DEFAULT_ADVANCED: AdvancedPrefs = { verboseErrors: false, showHiddenTools: false, showSystemPrompt: false, showToolPayloads: false, showTokenCounts: false }
+export const normAdvanced = (v: any): AdvancedPrefs => {
+  const out = { ...DEFAULT_ADVANCED }
+  if (v && typeof v === 'object') for (const k of Object.keys(DEFAULT_ADVANCED) as (keyof AdvancedPrefs)[]) if (typeof v[k] === 'boolean') out[k] = v[k]
+  return out
+}
+/* Persisted feature display order: drop unknown ids, append missing features in default order. */
+export const normFeatureOrder = (v: any): FeatureId[] => {
+  const order = Array.isArray(v) ? [...new Set(v.filter((x: unknown) => typeof x === 'string' && x in DEFAULT_FEATURES))] as FeatureId[] : []
+  for (const k of Object.keys(DEFAULT_FEATURES) as FeatureId[]) if (!order.includes(k)) order.push(k)
+  return order
+}
+
+/* Feature kill-switches. A disabled feature must not be used by the AI or the
+   program in any capacity until turned back on. `library` is off by default. */
+export type FeatureId = 'prompts' | 'skills' | 'tools' | 'playlists' | 'commands' | 'stats' | 'memory' | 'widgets' | 'shortcuts' | 'library' | 'advanced'
+export const FEATURES: [FeatureId, string, string][] = [
+  ['prompts', 'Prompts', 'Per-chat system prompts and the global system prompt. Off hides the prompt picker everywhere.'],
+  ['skills', 'Skills', 'Skill catalogs the model can load on demand with use_skill.'],
+  ['tools', 'Tools', 'Every model tool: @-mentions, web search, canvas files. The AI cannot call any tool while off.'],
+  ['playlists', 'Playlists', 'Ordered model lists and classifier routing. Off leaves endpoint-only model selection.'],
+  ['commands', 'Commands', 'Slash commands, their templates, and the home-screen command shortcuts.'],
+  ['stats', 'Stats', 'Token, message, and cost totals. Turning off asks whether to delete existing totals.'],
+  ['memory', 'Memory', 'Stored memories and the memory tool. Turning off asks whether to delete all memories.'],
+  ['widgets', 'Widgets', 'The side widget panel and every widget inside it.'],
+  ['shortcuts', 'Shortcuts', 'Every keyboard shortcut, plus the shortcut cheat-sheet widget.'],
+  ['library', 'Library', 'The sidebar shortcut list below your chats.'],
+  ['advanced', 'Advanced', 'Debugging aids: verbose errors, hidden tools, and the full system prompt. Off by default.'],
+]
+export const DEFAULT_FEATURES: Record<FeatureId, boolean> = { prompts: true, skills: true, tools: true, playlists: true, commands: true, stats: true, memory: true, widgets: true, shortcuts: true, library: false, advanced: false }
+export const LIBRARY_ITEMS: [string, string][] = [['eps', 'Endpoints'], ['pls', 'Playlists'], ['prompts', 'Prompts'], ['cmds', 'Commands'], ['tools', 'Tools'], ['memory', 'Memory'], ['widgets', 'Widgets']]
+export const DEFAULT_LIBRARY_SHOW: Record<string, boolean> = { eps: true, pls: true, prompts: true, cmds: true, tools: true, memory: true, widgets: true }
+/** Widgets that belong to a feature and must go dark with it. */
+export const FEATURE_WIDGETS: Partial<Record<FeatureId, string[]>> = { prompts: ['prompts'], shortcuts: ['keys'], stats: ['usage', 'cost', 'last'] }
+/** Settings tabs hidden while their feature is off. */
+export const FEATURE_TABS: Partial<Record<FeatureId, string[]>> = { prompts: ['prompts'], skills: ['skills'], tools: ['tools'], playlists: ['pls'], commands: ['cmds'], stats: ['stats'], memory: ['memory'], widgets: ['widgets'], shortcuts: ['keys'], advanced: ['adv'] }
+export const featOn = (s: { features?: Record<FeatureId, boolean> } | null | undefined, f: FeatureId): boolean => s?.features?.[f] ?? DEFAULT_FEATURES[f]
+/** Whether a widget may render: widgets feature on, its owning feature on, and itself enabled. */
+export const widgetOn = (s: { features?: Record<FeatureId, boolean>; widgets: Record<string, boolean> }, id: string): boolean => {
+  if (!featOn(s, 'widgets')) return false
+  for (const [f, ids] of Object.entries(FEATURE_WIDGETS)) {
+    if ((ids as string[]).includes(id) && !featOn(s, f as FeatureId)) return false
+  }
+  return !!s.widgets[id]
+}
 
 export const THEMES = { plum: 'Plum', graphite: 'Graphite', paper: 'Paper', sepia: 'Sepia', custom: 'Custom' }
 export const THEME_COLOR_KEYS = ['bg', 'side', 'surf', 'hov', 'tx', 'mu', 'ac', 'acx', 'er', 'code', 'codeh', 'c2', 'c3', 'c4', 'c5'] as const
@@ -42,8 +92,30 @@ export const PRE: Record<string, ['openai' | 'anthropic', string, string, 'autho
   OpenRouter: ['openai', 'https://openrouter.ai/api/v1', '', 'author'],
   'Other OpenAI-compatible': ['openai', '', '', 'author'],
 }
+export const GENERAL_PROMPT_TEXT = 'You are a helpful general-purpose assistant. Follow the user\u2019s instructions carefully and answer directly. Be clear, accurate, and concise, adapting the level of detail to what the request needs. Reason step by step when a problem calls for it, and distinguish what you know from what you infer. Ask a brief clarifying question only when it would materially change your answer.'
+export const CREATIVITY_PROMPT_TEXT = 'You are a creativity-focused assistant. Favor original ideas, imaginative angles, and unconventional approaches over the most obvious answer. Explore multiple possibilities, make surprising but useful connections between seemingly unrelated concepts, and write richly and expressively when the task calls for it. Adapt to the user\u2019s requested style, tone, genre, and constraints, and experiment freely within them. Stay factually honest: never present invented content as fact, and never fabricate sources, evidence, quotes, or capabilities.'
+export const CONCISE_PROMPT_TEXT = 'Answer briefly and directly. Skip preamble.'
+export const GLOBAL_PROMPT_PRESETS: { id: string; name: string; text: string }[] = [
+  { id: 'g-concise', name: 'Concise', text: 'Answer briefly and directly. Skip preamble and keep formatting minimal unless asked otherwise.' },
+  { id: 'g-thorough', name: 'Thorough', text: 'Answer in detail with clear structure. Explain your reasoning, cover edge cases, and use headings and examples where they help.' },
+  { id: 'g-coder', name: 'Careful coder', text: 'You are a careful software engineer. Write correct, idiomatic code, explain key decisions briefly, and never invent APIs. When unsure, say so instead of guessing.' },
+]
 export const uid = () => Math.random().toString(36).slice(2, 9)
 export const usable = (e: Ep) => e.on && !!e.model.trim() && /^https?:\/\//i.test(e.url.trim())
+
+/* Ephemeral per-reply streaming tool calls (live canvas preview). Deliberately
+   outside the persisted store: cleared when each reply completes. */
+type Live = { tools: Record<string, ToolCall[]>; set: (mid: string, calls: ToolCall[]) => void; clear: (mid: string) => void }
+export const useLive = create<Live>()((set) => ({
+  tools: {},
+  set: (mid, calls) => set((s) => ({ tools: { ...s.tools, [mid]: calls } })),
+  clear: (mid) => set((s) => {
+    if (!(mid in s.tools)) return s
+    const tools = { ...s.tools }
+    delete tools[mid]
+    return { tools }
+  }),
+}))
 export const BLANK: Record<Kind, () => any> = {
   eps: () => ({ id: uid(), name: 'New endpoint', type: 'openai', url: '', key: '', model: '', models: [''], modelsMode: 'separate', prices: {}, on: true }),
   prompts: () => ({ id: uid(), name: 'New prompt', text: '' }),
@@ -59,16 +131,46 @@ export const exportChat = () => {
   dl(c.title.replace(/[^\w-]+/g, '_') + '.md', chatMd(c), 'text/markdown')
 }
 
+export type SearchMode = 'api' | 'searxng'
+export type SearchProvider = 'tinyfish' | 'you' | 'exa' | 'firecrawl' | 'brightdata'
+export const SEARCH_MODES: [SearchMode, string][] = [['api', 'API'], ['searxng', 'SearXNG']]
+export const SEARCH_PROVIDERS: [SearchProvider, string][] = [['tinyfish', 'TinyFish'], ['you', 'You.com'], ['exa', 'Exa'], ['firecrawl', 'Firecrawl'], ['brightdata', 'Bright Data']]
+export type SearchPrefs = { mode: SearchMode; provider: SearchProvider; fallback: boolean; keys: Record<SearchProvider, string>; zone: string }
+export const BLANK_SEARCH: SearchPrefs = { mode: 'api', provider: 'tinyfish', fallback: true, keys: { tinyfish: '', you: '', exa: '', firecrawl: '', brightdata: '' }, zone: '' }
+const SEARCH_VALID_MODES: SearchMode[] = ['api', 'searxng']
+const SEARCH_VALID_PROVIDERS: SearchProvider[] = ['tinyfish', 'you', 'exa', 'firecrawl', 'brightdata']
+export const normSearch = (v: any): SearchPrefs => {
+  const legacyFallback = v?.mode === 'api-fallback'
+  const keys = { ...BLANK_SEARCH.keys, ...((v?.keys ?? {}) as Record<string, string>) }
+  for (const k of SEARCH_VALID_PROVIDERS) keys[k] = typeof keys[k] === 'string' ? keys[k] : ''
+  return {
+    mode: SEARCH_VALID_MODES.includes(v?.mode) ? v.mode : legacyFallback ? 'api' : BLANK_SEARCH.mode,
+    provider: SEARCH_VALID_PROVIDERS.includes(v?.provider) ? v.provider : BLANK_SEARCH.provider,
+    fallback: typeof v?.fallback === 'boolean' ? v.fallback : true,
+    keys,
+    zone: typeof v?.zone === 'string' ? v.zone : '',
+  }
+}
+export const searchKeyOf = (s: any) => String(s?.keys?.[s?.provider] ?? '').trim()
+
 type S = {
   eps: Ep[]; prompts: Prompt[]; pls: Pl[]; cmds: Cmd[]; chats: Chat[]; chat: string
   tools: Record<string, boolean>
+  search: SearchPrefs
+  skills: SkillState[]
   sel: { k: 'ep' | 'pl'; id: string; model?: string } | null; pr: string
+  globalPrompt: { on: boolean; text: string }
+  features: Record<FeatureId, boolean>
+  featureOrder: FeatureId[]
+  libraryShow: Record<string, boolean>
   theme: keyof typeof THEMES
   customColors: ThemeColors
-  setupDone: boolean; settingsScope: 'standard' | 'power-user'
-  prefs: { showBy: boolean; showLog: boolean; showTps: boolean; enterSends: boolean; autoTitle: boolean; temporaryByDefault: boolean; showModelPricing: boolean; titleEp: string; titleModel?: string; fade: number; tempHours: number; fontBody: string; fontMono: string; fontHeader: string; modelDisplay: 'none' | 'name' | 'provider' | 'both'; paletteMax: number; chatWidth: 'narrow' | 'standard' | 'wide'; settingsWidth: number; settingsHeight: number; modelPickerHeight: number; sidebarWidth?: number; widgetWidth?: number; modalBlur: number; settingsOpacity: number }
+  setupDone: boolean
+  prefs: { showBy: boolean; showLog: boolean; showTps: boolean; enterSends: boolean; autoTitle: boolean; temporaryByDefault: boolean; showModelPricing: boolean; titleEp: string; titleModel?: string; fade: number; tempHours: number; fontBody: string; fontMono: string; fontHeader: string; modelDisplay: 'none' | 'name' | 'provider' | 'both'; paletteMax: number; chatWidth: 'narrow' | 'standard' | 'wide'; settingsWidth: number; settingsHeight: number; modelPickerHeight: number; sidebarWidth?: number; widgetWidth?: number; canvasWidth?: number; modalBlur: number; settingsOpacity: number }
   widgets: Record<string, boolean>; widgetPrefs: { usageGroup: 'endpoint' | 'model'; usageMode: 'success' | 'tokens'; usageFormat: string; usageTotal: boolean; usagePeriod: 'session' | 'day' | 'week' | 'custom' | 'all'; usageFrom?: string; usageTo?: string; lastSpeed: boolean; timeUnit: 'ms' | 's' | 'auto'; widgetOrder: string[]; shortcuts: string[]; contextLimit: number; showDisabledEndpoints: boolean; scratchRows: number; snippetLimit: number; costDecimals: number; activePromptsOnly: boolean; charsPerToken: number; hideDoneTodos: boolean }; rail: boolean; pad: string; snips: string[]
   params: { def: boolean; temp: number; topp: number; max: number }; effort: Record<string, string>
+  canvasPrefs: { autoOpen: boolean; autoClose: boolean }
+  advanced: AdvancedPrefs
   stats: Stats; keys: Record<string, string>
   memories: Memory[]; memoryPrefs: { enabled: boolean; intent: 'intentional' | 'balanced' | 'aggressive'; recall: 'holistic' | 'contextual' | 'specific'; classifierEp: string; classifierModel: string }
   folders: Folder[]; price: { in: number; out: number }; todos: { id: string; t: string; done: boolean }[]
@@ -111,8 +213,18 @@ const hint = (l: Try[]) => {
     : /HTTP 40[13]/.test(t) ? '\n\nThe key was rejected. Check it in Settings → Endpoints.'
     : /HTTP 404/.test(t) ? '\n\nNot found. Check the base URL and the model id.' : ''
 }
+/* Error text for the process log and failure messages. By default messages
+   are redacted (API keys and key-like tokens masked). With Advanced →
+   verbose errors, the exact message is shown — the endpoint's own key is
+   still masked. */
+export const errText = (e: Ep, message: unknown) => {
+  const s = String(message ?? 'unknown error')
+  let verbose = false
+  try { verbose = useS.getState().advanced?.verboseErrors === true && featOn(useS.getState(), 'advanced') } catch { /* store not ready */ }
+  return verbose ? s.split(e.key || '\u0000').join('•••') : redact(e, s)
+}
 
-const snap = (m: Msg): Snap => ({ t: m.t, by: m.by, tps: m.tps, log: m.log, err: m.err })
+const snap = (m: Msg): Snap => ({ t: m.t, by: m.by, tps: m.tps, log: m.log, err: m.err, toolRounds: m.toolRounds, toolFinal: m.toolFinal })
 export const modelsOf = (e: Ep) => [...new Set((e.models?.length ? e.models : [e.model]).map((x) => x?.trim()).filter(Boolean))]
 export const modelNameOf = (e: Ep, model: string) => {
   const name = e.modelNames?.[model]
@@ -126,10 +238,12 @@ export const modelNameOf = (e: Ep, model: string) => {
 }
 
 function plan(s: S, um: Msg) {
-  const cmd = um.cmd ? s.cmds.find((c) => c.id === um.cmd) : undefined
-  const sel = s.sel ? (s.sel.k === 'pl' ? s.pls : s.eps).find((x) => x.id === s.sel!.id) : undefined
+  const F = s.features ?? DEFAULT_FEATURES
+  const cmd = F.commands && um.cmd ? s.cmds.find((c) => c.id === um.cmd) : undefined
+  const rawSel = s.sel ? (s.sel.k === 'pl' && !F.playlists ? undefined : (s.sel.k === 'pl' ? s.pls : s.eps).find((x) => x.id === s.sel!.id)) : undefined
+  const sel = rawSel
   let pool: Ep[], pl: Pl | null = null, ex = false, tgt: string
-  if (cmd) { pl = s.pls.find((p) => p.id === cmd.pl) ?? null; pool = pl ? ents(s, pl) : s.eps; tgt = '/' + cmd.name }
+  if (cmd) { pl = F.playlists ? s.pls.find((p) => p.id === cmd.pl) ?? null : null; pool = pl ? ents(s, pl) : s.eps; tgt = '/' + cmd.name }
   else if (sel && s.sel!.k === 'ep') { pool = [sel as Ep]; ex = true; tgt = sel.name }
   else if (sel) { pl = sel as Pl; pool = ents(s, pl); tgt = 'playlist ' + pl.name }
   else { pool = s.eps; tgt = 'your endpoints' }
@@ -137,14 +251,39 @@ function plan(s: S, um: Msg) {
   const ready = pool.filter(usable), cand = ready.filter((e) => need.every((n) => can(e, n))).flatMap((e) => modelsOf(e)
     .filter((model) => !(s.sel?.k === 'ep' && s.sel.id === e.id && s.sel.model) || s.sel?.model === model)
     .map((model) => ({ ...e, model })))
-  const baseSys = cmd?.sys || s.prompts.find((x) => x.id === s.pr)?.text || (pl && !cmd ? pl.sys : '') || ''
-  const enabledTools = TOOLS.filter(([name]) => s.tools[name] === true).map(([name]) => name)
-  const sys = enabledTools.length ? `${baseSys}${baseSys ? '\n\n' : ''}You may use the enabled tools when needed to answer the user. Call a tool for requests that need its actual result, then base your answer on the returned result.` : baseSys
+  const scoped = F.prompts ? cmd?.sys || s.prompts.find((x) => x.id === s.pr)?.text || (pl && !cmd ? pl.sys : '') || '' : ''
+  const globalSys = F.prompts && s.globalPrompt?.on && s.globalPrompt.text.trim() ? s.globalPrompt.text.trim() : ''
+  const baseSys = [globalSys, scoped].filter(Boolean).join('\n\n')
+  const enabledTools = F.tools ? TOOLS.filter(([name]) => s.tools[name] === true).map(([name]) => name) : []
+  const toolSys = enabledTools.length ? `${baseSys}${baseSys ? '\n\n' : ''}You may use the enabled tools when needed to answer the user. Call a tool for requests that need its actual result, then base your answer on the returned result.` : baseSys
+  // Skills: the model decides. The system prompt lists the skill catalog
+  // (id + when-to-use description); full instructions load via use_skill.
+  const skills = F.skills ? enabledSkills(normSkills(s.skills).skills) : []
+  const sys = composeSystemPrompt(toolSys, skills)
   let err: Notice = null
   if (!s.eps.length) err = { t: 'You have not added a model endpoint yet. Open Settings → Endpoints, choose a provider preset, paste your API key and the model id, then press Test connection. After that, send your message again.', tab: 'eps', label: 'Add an endpoint' }
   else if (!ready.length) err = { t: ex ? `${tgt} is disabled or incomplete. An endpoint must be enabled and have a base URL and a model id.` : `No endpoint in ${tgt} is ready. Enable one and make sure it has a base URL and a model id.`, tab: pl ? 'pls' : 'eps', label: 'Fix endpoints' }
   else if (!cand.length) err = { t: `Not sent: no ready endpoint in ${tgt} can process ${need.map((n) => (n === 'img' ? 'images' : 'PDFs')).join(' and ')}. Your attachments are still in the message box. Choose a compatible endpoint or model.`, tab: 'eps', label: 'Open endpoints' }
-  return { cmd, pl, ex, sys, cand, err }
+  // A saved selection pointing at a deleted endpoint/playlist must never silently fall back to everything.
+  // (A playlist selection while playlists are disabled is simply ignored, not an error.)
+  else if (s.sel && !sel && (s.sel.k === 'ep' || F.playlists)) err = { t: `The selected ${s.sel.k === 'pl' ? 'playlist' : 'endpoint'} is no longer available. Choose another model${s.sel.k === 'pl' ? ' or playlist' : ''}, then send again.`, tab: s.sel.k === 'pl' ? 'pls' : 'eps', label: 'Fix selection' }
+  return { cmd, pl, ex, sys, cand, err, tgt, skills }
+}
+
+/* System prompt for the process log when a reply has no saved `sys` (older
+   replies). Rebuilt from the preceding user message with current settings,
+   so it is an approximation — memory recall in particular may have differed. */
+export const previewSysFor = (msgId: string): string | null => {
+  const s = useS.getState()
+  const chat = s.chats.find((c) => c.msgs.some((m) => m.id === msgId))
+  if (!chat) return null
+  const i = chat.msgs.findIndex((m) => m.id === msgId)
+  const um = [...chat.msgs.slice(0, i)].reverse().find((m) => m.r === 'user')
+  if (!um) return null
+  try {
+    const sys = plan(s, um).sys
+    return sys ? sys : null
+  } catch { return null }
 }
 
 type Run = { stopped: boolean; ctl: AbortController | null }
@@ -158,8 +297,9 @@ const storage = createJSONStorage(() => ({
 export const useS = create<S>()(
   persist(
     (set, get) => {
-      const bump = (tin: number, tout: number, historyIn = tin, explicitIn = 0) => set((s) => ({ stats: { ...s.stats, tin: s.stats.tin + tin, tout: s.stats.tout + tout, historyIn: s.stats.historyIn + historyIn, explicitIn: s.stats.explicitIn + explicitIn } }))
+      const bump = (tin: number, tout: number, historyIn = tin, explicitIn = 0) => { if (!featOn(get(), 'stats')) return; set((s) => ({ stats: { ...s.stats, tin: s.stats.tin + tin, tout: s.stats.tout + tout, historyIn: s.stats.historyIn + historyIn, explicitIn: s.stats.explicitIn + explicitIn } })) }
       const addCost = (e: Ep, model: string, tin: number, tout: number) => {
+        if (!featOn(get(), 'stats')) return
         const price = e.prices?.[model]
         if (price) set((s) => ({ stats: { ...s.stats, cost: s.stats.cost + (tin * price.input + tout * price.output) / 1e6 } }))
       }
@@ -219,7 +359,7 @@ export const useS = create<S>()(
           const f = cand.find((e) => e.model === j.model)!
           return [f, ...cand.filter((e) => e !== f)]
         } catch (x: any) {
-          if (!r.stopped) log.push({ n: c.name + ' (classifier)', m: c.model, ms: Date.now() - t0, err: redact(c, x.message), at: Date.now() })
+          if (!r.stopped) log.push({ n: c.name + ' (classifier)', m: c.model, ms: Date.now() - t0, err: errText(c, x.message), at: Date.now() })
           return cand
         }
       }
@@ -230,16 +370,18 @@ export const useS = create<S>()(
         const r: Run = { stopped: false, ctl: null }
         cur = r
         const mid = uid(), log: Try[] = []
+        useLive.getState().clear(mid)
         set((st) => ({ busy: true, notice: null, chats: st.chats.map((c) => (c.id === id ? { ...c, msgs: [...c.msgs, { id: mid, r: 'assistant', t: '', at: Date.now(), by: '', log: [], ...(prev ? { alts: prev, ai: prev.length } : {}) }] } : c)) }))
         const hist = () => (get().chats.find((c) => c.id === id)?.msgs ?? []).filter((m) => m.id !== mid)
         let order = p.cand, ok = false, usedEp: Ep | undefined, system = p.sys
         const memoryState = get(), mp = memoryState.memoryPrefs
+        const memOn = featOn(memoryState, 'memory') && mp.enabled
         // Capture the memory context decision for the visible process log without exposing memory text.
         let memoryTrace: string | undefined
-        if (mp.enabled) system += `${system ? '\n\n' : ''}Memory tool policy: memories are user-controlled local data. Use action list to find exact IDs before updating or deleting; never guess an ID. Use add only for short, summarized durable details. ${mp.intent === 'intentional' ? 'Add only when the user explicitly asks you to remember something.' : mp.intent === 'balanced' ? 'Add details the user explicitly asks you to remember and important durable information they disclose.' : 'Add explicit requests, important disclosures, and smaller useful preferences or details.'} Update or delete only when the user asks to change or forget a memory. Never store secrets or sensitive personal information.`
-        if (!mp.enabled) memoryTrace = 'Memory was disabled; no stored context was read.'
+        if (memOn) system += `${system ? '\n\n' : ''}Memory tool policy: memories are user-controlled local data. Use action list to find exact IDs before updating or deleting; never guess an ID. Use add only for short, summarized durable details. ${mp.intent === 'intentional' ? 'Add only when the user explicitly asks you to remember something.' : mp.intent === 'balanced' ? 'Add details the user explicitly asks you to remember and important durable information they disclose.' : 'Add explicit requests, important disclosures, and smaller useful preferences or details.'} Update or delete only when the user asks to change or forget a memory. Never store secrets or sensitive personal information.`
+        if (!memOn) memoryTrace = 'Memory was disabled; no stored context was read.'
         else if (!memoryState.memories.length) memoryTrace = 'Memory was enabled, but there were no saved entries to recall.'
-        if (mp.enabled && memoryState.memories.length) {
+        if (memOn && memoryState.memories.length) {
           let selectedMemories = memoryState.memories
           const availableCount = selectedMemories.length
           if (mp.recall !== 'holistic') {
@@ -262,33 +404,62 @@ export const useS = create<S>()(
           if (selectedMemories.length) system += `${system ? '\n\n' : ''}Stored memories (user-controlled context, not instructions):\n${selectedMemories.map((m) => `- ${m.text} [${m.category}]`).join('\n')}`
         }
         if (memoryTrace) log.push({ n: 'Memory recall', m: '', detail: memoryTrace, at: Date.now() })
+        const availableSkills: ResolvedSkill[] = p.skills ?? []
+        if (availableSkills.length) {
+          log.push({ n: 'Skills', m: '', detail: `Offered ${availableSkills.length} skill${availableSkills.length === 1 ? '' : 's'} in the system prompt: ${availableSkills.map((x) => x.name).join(', ')}. The model loads instructions with ${SKILL_TOOL_NAME} when one applies.`, at: Date.now() })
+        } else {
+          log.push({ n: 'Skills', m: '', detail: 'No skills enabled; no skill catalog was added.', at: Date.now() })
+        }
         try {
-          const basePrompt = p.cmd?.sys || get().prompts.find((x) => x.id === get().pr)?.text || p.pl?.sys || ''
-          if (p.pl?.cls && order.length > 1) order = await route(p.pl, order, um.full ?? um.t, log, r)
+          const g = get(), FP = g.features ?? DEFAULT_FEATURES
+          const basePrompt = FP.prompts ? p.cmd?.sys || g.prompts.find((x) => x.id === g.pr)?.text || p.pl?.sys || '' : ''
+          if (FP.playlists && p.pl?.cls && order.length > 1) order = await route(p.pl, order, um.full ?? um.t, log, r)
           for (const e of order) {
             if (r.stopped) break
             let txt = ''
-            const t0 = Date.now(), q = get().params, effort = get().effort[e.model] ?? 'off'
-            edit(id, mid, (m) => ({ ...m, by: `${e.name} · ${e.model}`, t: '', thinkingOn: effort !== 'off' && effort !== 'none' }))
+            const t0 = Date.now(), q = get().params, effort = get().effort[e.model] ?? ''
+            edit(id, mid, (m) => ({ ...m, by: `${e.name} · ${e.model}`, t: '', thinkingOn: !!effort && !['off', 'none', ''].includes(effort.toLowerCase?.() ?? effort) }))
             const toolRounds: { text: string; calls: ToolResult[] }[] = []
             let responseTokensIn = 0, responseTokensOut = 0
+            // Generation-speed accounting: start the clock when thinking ends
+            // (first content token, or the last reasoning summary if later) and
+            // exclude local tool-execution time.
+            let firstTokenAt = 0, lastThinkAt = 0
             try {
               r.ctl = new AbortController()
               const x = await runToolLoop(e, system, (rounds) => {
                 const partial = { id: mid, r: 'assistant' as const, t: '', toolRounds: rounds }
                 return wire(e, [...hist(), partial])
-              }, { ...get().tools, search: get().settingsScope === 'power-user' && get().tools.search, memory: get().memoryPrefs.enabled }, (t) => {
+              }, (() => {
+                const g = get(), GF = g.features ?? DEFAULT_FEATURES
+                const base: Record<string, boolean> = GF.tools ? { ...g.tools, memory: memOn } : {}
+                // use_skill is a hidden model capability (not listed in Settings → Tools).
+                if (featOn(get(), 'skills') && (p.skills ?? []).length) base[SKILL_TOOL_NAME] = true
+                return base
+              })(), (t) => {
+                if (t && !firstTokenAt) firstTokenAt = Date.now()
                 txt += t
                 const at = performance.now(), duration = get().prefs.fade * 1000
                 edit(id, mid, (m) => ({ ...m, t: txt, fadeEvents: duration > 0 && /\S/.test(t)
                   ? [...(m.fadeEvents ?? []).filter((x) => at - x.at < duration), { text: t, at }]
                   : (m.fadeEvents ?? []).filter((x) => at - x.at < duration) }))
               }, r.ctl, { ...(q.def ? {} : { max: q.max, temp: q.temp, topp: q.topp }), effort }, (summary) => {
+                if (summary) lastThinkAt = Date.now()
                 edit(id, mid, (m) => ({ ...m, reasoning: (m.reasoning ?? '') + summary }))
               }, (rounds) => {
                 toolRounds.splice(0, toolRounds.length, ...rounds)
                 edit(id, mid, (m) => ({ ...m, toolRounds: [...rounds] }))
               }, 8, {
+                [SKILL_TOOL_NAME]: ({ id: skillId }: { id?: string }) => {
+                  const states = normSkills(get().skills).skills
+                  const def = getSkillInstructions(String(skillId || ''), states)
+                  if (!def) throw Error(`Unknown or disabled skill: ${String(skillId || '').trim() || '(empty)'}. Use an id from the Available skills list.`)
+                  return `Skill: ${def.name}\n${def.instructions}`
+                },
+                search: async ({ query }: { query: string }) => {
+                  const prefs = normSearch(get().search)
+                  return formatSearch(await searchWeb(query, { mode: prefs.mode, provider: prefs.provider, fallback: prefs.fallback, apiKey: searchKeyOf(prefs), zone: prefs.zone }))
+                },
                 memory: ({ action, id, text, category }: { action: 'list' | 'add' | 'update' | 'delete'; id?: string; text?: string; category?: string }) => {
                 const state = get(), prefs = state.memoryPrefs
                 if (!prefs.enabled) throw Error('Memory is disabled')
@@ -315,33 +486,47 @@ export const useS = create<S>()(
                   return `Updated memory ${id}: ${updated.text} [${updated.category}]`
                 }
                 throw Error('Choose list, add, update, or delete')
-              } })
+              } },
+                // Live tool deltas feed the ephemeral streaming preview; rewritten
+                // wholesale each chunk so backspaces re-render instead of appending.
+                (calls) => { useLive.getState().set(mid, calls.map((c) => ({ ...c }))) })
               txt = x.text
               responseTokensIn = x.tin; responseTokensOut = x.tout
               const current = get().chats.find(c => c.id === id)
               if (txt.trim() && current && (current.titleAuto || current.title === 'New chat' || !current.title)) void generateTitle(id, e, txt)
+              const usedSkills = [...new Set(toolRounds.flatMap((r) => r.calls).filter((c) => c.name === SKILL_TOOL_NAME && !c.error).map((c) => { try { return String(JSON.parse(c.arguments || '{}').id || '').trim() } catch { return '' } }).filter(Boolean))]
+              if (usedSkills.length) log.push({ n: 'Skills used', m: '', detail: `Model loaded ${usedSkills.length} skill${usedSkills.length === 1 ? '' : 's'}: ${usedSkills.join(', ')}.`, at: Date.now() })
+              else if ((p.skills ?? []).length) log.push({ n: 'Skills used', m: '', detail: 'Model did not load any skills for this reply.', at: Date.now() })
               const elapsed = Date.now() - t0
               const toolElapsed = toolRounds.reduce((total, round) => total + Math.max(0, ...round.calls.map((call) => call.ms ?? 0)), 0)
-              log.push({ n: e.name, m: e.model, detail: `Answered with ${(um.att ?? []).length} attachments and ${Object.values(get().tools).filter(Boolean).length} enabled tools`, ms: Math.max(0, elapsed - toolElapsed), tin: responseTokensIn, tout: responseTokensOut, at: Date.now() })
+              log.push({ n: e.name, m: e.model, detail: `Answered ${p.tgt} with ${(um.att ?? []).length} attachments and ${(() => { const g = get(); return featOn(g, 'tools') ? Object.values(g.tools).filter(Boolean).length : 0 })()} enabled tools`, ms: Math.max(0, elapsed - toolElapsed), tin: responseTokensIn, tout: responseTokensOut, at: Date.now() })
               const sum = (um.historyTokens ?? 0) + (um.explicitTokens ?? 0), explicit = sum ? Math.round(x.tin * (um.explicitTokens ?? 0) / sum) : 0
               bump(responseTokensIn, responseTokensOut, responseTokensIn - explicit, explicit); ok = true
               addCost(e, e.model, responseTokensIn, responseTokensOut)
-              edit(id, mid, (m) => ({ ...m, tps: Math.round(responseTokensOut / Math.max(elapsed / 1000, 0.001) * 10) / 10, toolRounds, ...(toolRounds.length ? { toolFinal: x.text } : {}) }))
+              // Tokens/sec over generated output tokens (including tokens written
+              // across tool rounds), measured from the end of thinking and
+              // excluding local tool-execution time.
+              const genEnd = Date.now()
+              const genToolMs = toolRounds.reduce((total, round) => total + Math.max(0, ...round.calls.map((call) => call.ms ?? 0)), 0)
+              const thinkEnd = Math.max(firstTokenAt || t0, lastThinkAt || t0)
+              const genMs = Math.max(0, genEnd - thinkEnd - genToolMs)
+              edit(id, mid, (m) => ({ ...m, tps: Math.round(responseTokensOut / Math.max(genMs / 1000, 0.001) * 10) / 10, toolRounds, ...(toolRounds.length ? { toolFinal: x.text } : {}) }))
               usedEp = e
               break
             } catch (x: any) {
               if (r.stopped) { if (txt) bump(0, est(txt)); break }
               const elapsed = Date.now() - t0
               const toolElapsed = toolRounds.reduce((total, round) => total + Math.max(0, ...round.calls.map((call) => call.ms ?? 0)), 0)
-              log.push({ n: e.name, m: e.model, ms: Math.max(0, elapsed - toolElapsed), err: redact(e, x.message), at: Date.now() })
+              log.push({ n: e.name, m: e.model, ms: Math.max(0, elapsed - toolElapsed), err: errText(e, x.message), at: Date.now() })
               if (p.ex) break
             }
           }
         } catch (x: any) { log.push({ n: 'engine', m: '', err: String(x?.message ?? x) }) }
         edit(id, mid, (m) => r.stopped
-          ? { ...m, log, by: m.by ? m.by + ' (stopped)' : 'Stopped', t: m.t || '(stopped before any text arrived)' }
-          : ok ? { ...m, log }
-          : { ...m, log, err: true, by: 'No model responded', t: log.filter((x) => x.err).map((x) => `${x.n}${x.m ? ' · ' + x.m : ''}: ${x.err}`).join('\n') + hint(log) })
+          ? { ...m, sys: system, log, by: m.by ? m.by + ' (stopped)' : 'Stopped', t: m.t || '(stopped before any text arrived)' }
+          : ok ? { ...m, sys: system, log }
+          : { ...m, sys: system, log, err: true, by: 'No model responded', t: log.filter((x) => x.err).map((x) => `${x.n}${x.m ? ' · ' + x.m : ''}: ${x.err}`).join('\n') + hint(log) })
+        useLive.getState().clear(mid)
         if (prev) edit(id, mid, (m) => ({ ...m, alts: [...prev, snap(m)], ai: prev.length }))
         if (cur === r) { cur = null; set({ busy: false }) }
       }
@@ -349,9 +534,9 @@ export const useS = create<S>()(
       return {
         eps: [], pls: [],
         prompts: [
-          { id: 's1', name: 'Concise', text: 'Answer briefly and directly. Skip preamble.' },
-          { id: 's2', name: 'Code review', text: 'Review the code for bugs, edge cases and unclear naming. List findings by severity.' },
-          { id: 's3', name: 'Coding', text: 'You are a capable software engineer and product-minded frontend designer. First understand the request, existing code, constraints, and project conventions; inspect before changing, preserve working behavior, and make the smallest complete implementation. For UI work, ground the design in the product and audience, choose a deliberate visual direction, and use hierarchy, typography, color, spacing, and motion with intent. Avoid generic template layouts, repetitive cards, decorative labels, and default-looking controls; make every element earn its place. Build responsive, accessible interfaces with clear focus states, keyboard support, reduced-motion handling, and consistent custom controls. Use semantic, maintainable code; handle errors and edge cases; explain important tradeoffs briefly. Verify changes with appropriate checks when asked, and report what changed and what remains uncertain.' },
+          { id: 'general', name: 'General', text: GENERAL_PROMPT_TEXT },
+          { id: 'creativity', name: 'Creativity', text: CREATIVITY_PROMPT_TEXT },
+          { id: 'concise', name: 'Concise', text: CONCISE_PROMPT_TEXT },
         ],
         cmds: [
           { id: 'k1', name: 'describe', desc: 'Describe an image', in: 'image', sys: 'Describe images accurately and objectively.', tpl: 'Describe this image.', pl: '', on: true },
@@ -362,9 +547,11 @@ export const useS = create<S>()(
           { id: 'k6', name: 'translate', desc: 'Translate text', in: 'text', sys: 'Translate the provided text into the language requested. If no target language is specified, ask which language.', tpl: '{{input}}', pl: '', on: true },
           { id: 'k7', name: 'brainstorm', desc: 'Generate useful ideas', in: 'text', sys: 'Generate varied, practical ideas. Keep each idea distinct and briefly explain why it may work.', tpl: '{{input}}', pl: '', on: true },
         ],
-        chats: [], chat: '', memories: [], memoryPrefs: { enabled: false, intent: 'balanced', recall: 'contextual', classifierEp: '', classifierModel: '' }, tools: { ...DEFAULT_TOOLS }, widgets: {}, widgetPrefs: { usageGroup: 'endpoint', usageMode: 'success', usageFormat: '{in}/{out}', usageTotal: false, usagePeriod: 'all', lastSpeed: true, timeUnit: 'auto', widgetOrder: WIDGETS.map(([k]) => k), shortcuts: KEYS.map(([k]) => k), contextLimit: 128000, showDisabledEndpoints: true, scratchRows: 6, snippetLimit: 20, costDecimals: 4, activePromptsOnly: false, charsPerToken: 4, hideDoneTodos: false }, rail: false, pad: '', snips: [],
+        chats: [], chat: '', memories: [], memoryPrefs: { enabled: false, intent: 'balanced', recall: 'contextual', classifierEp: '', classifierModel: '' }, tools: { ...DEFAULT_TOOLS }, search: { ...BLANK_SEARCH, keys: { ...BLANK_SEARCH.keys } }, skills: DEFAULT_SKILL_STATE.map((s) => ({ ...s })), widgets: {}, widgetPrefs: { usageGroup: 'endpoint', usageMode: 'success', usageFormat: '{in}/{out}', usageTotal: false, usagePeriod: 'all', lastSpeed: true, timeUnit: 'auto', widgetOrder: WIDGETS.map(([k]) => k), shortcuts: KEYS.map(([k]) => k), contextLimit: 128000, showDisabledEndpoints: true, scratchRows: 6, snippetLimit: 20, costDecimals: 4, activePromptsOnly: false, charsPerToken: 4, hideDoneTodos: false }, rail: false, pad: '', snips: [],
         params: { def: true, temp: 0.7, topp: 1, max: 4096 }, effort: {},
-        sel: null, pr: '', theme: 'plum', customColors: { ...DEFAULT_CUSTOM_COLORS }, setupDone: false, settingsScope: 'standard', prefs: { showBy: true, showLog: true, showTps: false, enterSends: true, autoTitle: true, temporaryByDefault: false, showModelPricing: false, titleEp: '', titleModel: '', fade: 0.4, tempHours: 3, fontBody: 'system', fontMono: 'system', fontHeader: 'system', modelDisplay: 'both', paletteMax: 320, chatWidth: 'standard', settingsWidth: 1024, settingsHeight: 780, modelPickerHeight: 480, sidebarWidth: 288, widgetWidth: 320, modalBlur: 12, settingsOpacity: 55 },
+        canvasPrefs: { autoOpen: true, autoClose: false },
+        advanced: { ...DEFAULT_ADVANCED },
+        sel: null, pr: 'general', globalPrompt: { on: false, text: '' }, features: { ...DEFAULT_FEATURES }, featureOrder: FEATURES.map(([id]) => id), libraryShow: { ...DEFAULT_LIBRARY_SHOW }, theme: 'plum', customColors: { ...DEFAULT_CUSTOM_COLORS }, setupDone: false, prefs: { showBy: true, showLog: true, showTps: false, enterSends: true, autoTitle: true, temporaryByDefault: false, showModelPricing: false, titleEp: '', titleModel: '', fade: 0.4, tempHours: 3, fontBody: 'system', fontMono: 'system', fontHeader: 'system', modelDisplay: 'both', paletteMax: 320, chatWidth: 'standard', settingsWidth: 1024, settingsHeight: 780, modelPickerHeight: 480, sidebarWidth: 288, widgetWidth: 320, canvasWidth: 0.4, modalBlur: 12, settingsOpacity: 55 },
         stats: ZERO(), keys: Object.fromEntries(KEYS.map(([k, , d]) => [k, d])),
         folders: [], price: { in: 0, out: 0 }, todos: [],
         draft: '', busy: false, notice: null,
@@ -405,8 +592,7 @@ export const useS = create<S>()(
           if (!raw && !att.length) return false
           let text = raw, cmd: Cmd | undefined
           const m = v.match(/^\/(\S+)(?:\s+([\s\S]*))?$/)
-          if (m) {
-            if (s.settingsScope !== 'power-user') return warn({ t: 'Slash commands are available in Power user settings.' })
+          if (m && featOn(s, 'commands')) {
             cmd = s.cmds.find((c) => c.name === m[1])
             if (!cmd) return warn({ t: `/${m[1]} is not a saved command. Start the message with a space to send it as plain text.`, tab: 'cmds', label: 'Manage commands' })
             if (!cmd.on) return warn({ t: `/${cmd.name} is disabled. Enable it in Settings → Commands.`, tab: 'cmds', label: 'Open commands' })
@@ -419,8 +605,9 @@ export const useS = create<S>()(
           const pre = plan(s, um)
           if (pre.err) return warn(pre.err)
           um.ctx = []
-          if (s.settingsScope === 'power-user' && s.tools.search && shouldSearchWeb(text)) {
-            try { um.ctx.push(formatSearch(await searchWeb(text))) }
+          if (featOn(s, 'tools') && s.tools.search && shouldSearchWeb(text)) {
+            const sp = normSearch(s.search)
+            try { um.ctx.push(formatSearch(await searchWeb(text, { mode: sp.mode, provider: sp.provider, fallback: sp.fallback, apiKey: searchKeyOf(sp), zone: sp.zone }))) }
             catch (x: any) { um.ctx.push(`Web search was unavailable: ${x?.message ?? 'unknown error'}. Answer without claiming live verification.`) }
           }
           um.fx = att.filter((a) => a.kind === 'txt').map((a) => `\n\n[file: ${a.name}]\n${a.text ?? ''}`).join('')
@@ -432,7 +619,7 @@ export const useS = create<S>()(
             const old = st.chats.find((c) => c.id === st.chat)
             const base: Chat = old ?? { id: uid(), title: 'New chat', msgs: [] }
             const next: Chat = { ...base, started: true, titleAuto: base.msgs.length ? base.titleAuto : st.prefs.autoTitle, title: base.msgs.length ? base.title : (raw || att[0]?.name || 'New chat').slice(0, 40), msgs: [...base.msgs, um] }
-            return { chat: base.id, chats: old ? st.chats.map((c) => (c.id === base.id ? next : c)) : [next, ...st.chats], notice: null, stats: { ...st.stats, sent: st.stats.sent + 1, chats: st.stats.chats + (base.started ? 0 : 1) } }
+            return { chat: base.id, chats: old ? st.chats.map((c) => (c.id === base.id ? next : c)) : [next, ...st.chats], notice: null, stats: featOn(st, 'stats') ? { ...st.stats, sent: st.stats.sent + 1, chats: st.stats.chats + (base.started ? 0 : 1) } : st.stats }
           })
           void answer(um)
           return true
@@ -458,10 +645,10 @@ export const useS = create<S>()(
           if (s.busy) { set({ notice: { t: 'Stop the current reply before editing a message.' } }); return }
           const o = c.msgs[i]
           if (!t.trim() && !o.att?.length) return
-          const m = t.match(/^\/(\S+)(?:\s+([\s\S]*))?$/), cmd = s.settingsScope === 'power-user' ? m ? s.cmds.find((x) => x.name === m[1]) : s.cmds.find((x) => x.id === o.cmd) : undefined
+          const m = t.match(/^\/(\S+)(?:\s+([\s\S]*))?$/), cmd = m && featOn(s, 'commands') ? s.cmds.find((x) => x.name === m[1]) : (!m && featOn(s, 'commands') ? s.cmds.find((x) => x.id === o.cmd) : undefined)
           const um: Msg = { ...o, t: t.trim(), cmd: cmd?.id, full: full(body(cmd, m && cmd ? (m[2] ?? '').trim() : t.trim()), o.ctx, o.fx) }
           { const pre = plan(s, um); if (pre.err) { set({ notice: pre.err }); return } }
-          set((st) => ({ chats: st.chats.map((x) => (x.id === c.id ? { ...x, msgs: [...c.msgs.slice(0, i), um] } : x)), stats: { ...st.stats, sent: st.stats.sent + 1 } }))
+          set((st) => ({ chats: st.chats.map((x) => (x.id === c.id ? { ...x, msgs: [...c.msgs.slice(0, i), um] } : x)), stats: featOn(st, 'stats') ? { ...st.stats, sent: st.stats.sent + 1 } : st.stats } ))
           void answer(um)
         },
         resetStats: () => set({ stats: ZERO() }),
@@ -488,12 +675,12 @@ export const useS = create<S>()(
       }
     },
     {
-      name: 'byok.v1', version: 13, storage,
+      name: 'byok.v1', version: 17, storage,
       migrate: (p: any, v: number) => {
+        delete p.settingsScope
         if (v < 11) {
-          const hasUserData = !!(p.eps?.length || p.chats?.length || p.pls?.length || p.prompts?.some((x: any) => !['s1','s2','s3'].includes(x.id)))
+          const hasUserData = !!(p.eps?.length || p.chats?.length || p.pls?.length || p.prompts?.some((x: any) => !['general', 'creativity', 'concise', 's1', 's2', 's3'].includes(x.id)))
           p.setupDone = hasUserData
-          p.settingsScope ??= 'standard'
         }
         p.customColors = { ...DEFAULT_CUSTOM_COLORS, ...(p.customColors ?? {}) }
         p.eps = (p.eps ?? []).map((e: Ep) => {
@@ -505,7 +692,7 @@ export const useS = create<S>()(
           const remap = (obj?: Record<string, any>) => obj ? Object.fromEntries(Object.entries(obj).map(([id, value]) => [strip(id), value])) : obj
           return { ...e, ...(preset ? { preset } : {}), name: oldGoogle && e.name === 'Gemini' ? 'Google' : e.name, endpointId, endpointFilter: e.endpointFilter ?? (preset ? PRE[preset]?.[3] : undefined), model: strip(e.model), models: e.models?.map(strip), modelNames: remap(e.modelNames), modelEfforts: remap(e.modelEfforts), modelEffortSource: remap(e.modelEffortSource), prices: remap(e.prices) }
         })
-        if (p.effort) p.effort = Object.fromEntries(Object.entries(p.effort).map(([id, value]: [string, any]) => [id, typeof value === 'number' ? (value <= 0 ? 'off' : value < 34 ? 'low' : value < 68 ? 'medium' : 'high') : value]))
+        if (p.effort) p.effort = Object.fromEntries(Object.entries(p.effort).map(([id, value]: [string, any]) => [id, typeof value === 'number' ? (value <= 0 ? '' : value < 34 ? 'low' : value < 68 ? 'medium' : 'high') : value]).filter(([, value]) => value && String(value).toLowerCase() !== 'off'))
         delete p.allow
         delete p.fetchMode
         if (p.tools) delete p.tools.fetch
@@ -520,9 +707,34 @@ export const useS = create<S>()(
           p.prefs.titleEp = ''
         }
         if (p.prefs && p.prefs.showTps === undefined) p.prefs.showTps = false
-        p.prefs = { ...p.prefs, fade: p.prefs?.fade ?? 0.4, tempHours: p.prefs?.tempHours ?? 3, fontBody: p.prefs?.fontBody ?? 'system', fontMono: p.prefs?.fontMono ?? 'system', fontHeader: p.prefs?.fontHeader ?? 'system', modelDisplay: p.prefs?.modelDisplay ?? 'both', paletteMax: p.prefs?.paletteMax ?? 320, chatWidth: p.prefs?.chatWidth ?? 'standard', settingsWidth: p.prefs?.settingsWidth ?? 1024, settingsHeight: p.prefs?.settingsHeight ?? 780, modelPickerHeight: p.prefs?.modelPickerHeight ?? 480, showModelPricing: p.prefs?.showModelPricing ?? false, titleModel: p.prefs?.titleModel ?? '', sidebarWidth: p.prefs?.sidebarWidth ?? 288, widgetWidth: p.prefs?.widgetWidth ?? 320, modalBlur: p.prefs?.modalBlur ?? 12, settingsOpacity: p.prefs?.settingsOpacity ?? 55, temporaryByDefault: p.prefs?.temporaryByDefault ?? false }
+        p.prefs = { ...p.prefs, fade: p.prefs?.fade ?? 0.4, tempHours: p.prefs?.tempHours ?? 3, fontBody: p.prefs?.fontBody ?? 'system', fontMono: p.prefs?.fontMono ?? 'system', fontHeader: p.prefs?.fontHeader ?? 'system', modelDisplay: p.prefs?.modelDisplay ?? 'both', paletteMax: p.prefs?.paletteMax ?? 320, chatWidth: p.prefs?.chatWidth ?? 'standard', settingsWidth: p.prefs?.settingsWidth ?? 1024, settingsHeight: p.prefs?.settingsHeight ?? 780, modelPickerHeight: p.prefs?.modelPickerHeight ?? 480, showModelPricing: p.prefs?.showModelPricing ?? false, titleModel: p.prefs?.titleModel ?? '', sidebarWidth: p.prefs?.sidebarWidth ?? 288, widgetWidth: p.prefs?.widgetWidth ?? 320, canvasWidth: typeof p.prefs?.canvasWidth === 'number' && p.prefs.canvasWidth <= 1 ? p.prefs.canvasWidth : 0.4, modalBlur: p.prefs?.modalBlur ?? 12, settingsOpacity: p.prefs?.settingsOpacity ?? 55, temporaryByDefault: p.prefs?.temporaryByDefault ?? false }
         p.tools = { ...DEFAULT_TOOLS, ...(p.tools ?? {}) }
+        p.search = normSearch(p.search)
+        p.skills = normSkills(p.skills).skills
+        if (typeof p.pr !== 'string') p.pr = ''
+        // Fresh installs start on the general-purpose prompt. Existing custom
+        // prompts are never deleted here; coding expertise now lives in skills.
+        if (!Array.isArray(p.prompts) || !p.prompts.length) {
+          p.prompts = [
+            { id: 'general', name: 'General', text: GENERAL_PROMPT_TEXT },
+            { id: 'creativity', name: 'Creativity', text: CREATIVITY_PROMPT_TEXT },
+            { id: 'concise', name: 'Concise', text: CONCISE_PROMPT_TEXT },
+          ]
+          if (!p.pr) p.pr = 'general'
+        } else if (!p.pr && p.prompts.some((x: Prompt) => x.id === 'general')) {
+          p.pr = 'general'
+        }
         p.memories = Array.isArray(p.memories) ? p.memories : []
+        p.globalPrompt = { on: false, text: '', ...(typeof p.globalPrompt === 'object' && p.globalPrompt ? p.globalPrompt : {}) }
+        if (typeof p.globalPrompt.on !== 'boolean') p.globalPrompt.on = false
+        if (typeof p.globalPrompt.text !== 'string') p.globalPrompt.text = ''
+        p.features = { ...DEFAULT_FEATURES, ...(typeof p.features === 'object' && p.features ? p.features : {}) }
+        for (const k of Object.keys(DEFAULT_FEATURES) as FeatureId[]) if (typeof (p.features as Record<string, unknown>)[k] !== 'boolean') (p.features as Record<string, unknown>)[k] = DEFAULT_FEATURES[k]
+        // Persisted feature order: drop unknown ids, append any missing features in default order.
+        p.featureOrder = normFeatureOrder(p.featureOrder)
+        p.libraryShow = { ...DEFAULT_LIBRARY_SHOW, ...(typeof p.libraryShow === 'object' && p.libraryShow ? p.libraryShow : {}) }
+        p.canvasPrefs = { autoOpen: true, autoClose: false, ...(p.canvasPrefs ?? {}) }
+        p.advanced = normAdvanced(p.advanced)
         p.memoryPrefs = { enabled: false, intent: 'balanced', recall: 'contextual', classifierEp: '', classifierModel: '', ...(p.memoryPrefs ?? {}) }
         p.widgetPrefs = { usageGroup: 'endpoint', usageMode: 'success', usageFormat: '{in}/{out}', usageTotal: false, usagePeriod: 'all', lastSpeed: true, timeUnit: 'auto', widgetOrder: WIDGETS.map(([k]) => k), shortcuts: KEYS.map(([k]) => k), contextLimit: 128000, showDisabledEndpoints: true, scratchRows: 6, snippetLimit: 20, costDecimals: 4, activePromptsOnly: false, charsPerToken: 4, hideDoneTodos: false, ...(p.widgetPrefs ?? {}) }
         p.widgetPrefs.widgetOrder = [...new Set([...(p.widgetPrefs.widgetOrder ?? []), ...WIDGETS.map(([k]) => k)])]
@@ -533,10 +745,6 @@ export const useS = create<S>()(
           const ep = p.eps.find((item: Ep) => item.id === ref)
           return ep ? modelsOf(ep).map((model) => `${ep.id}::${model}`) : [ref]
         }) }))
-        if (Array.isArray(p.prompts) && !p.prompts.some((x: Prompt) => x.id === 's3')) {
-          p.prompts.push({ id: 's3', name: 'Coding', text: 'You are a capable software engineer and product-minded frontend designer. First understand the request, existing code, constraints, and project conventions; inspect before changing, preserve working behavior, and make the smallest complete implementation. For UI work, ground the design in the product and audience, choose a deliberate visual direction, and use hierarchy, typography, color, spacing, and motion with intent. Avoid generic template layouts, repetitive cards, decorative labels, and default-looking controls; make every element earn its place. Build responsive, accessible interfaces with clear focus states, keyboard support, reduced-motion handling, and consistent custom controls. Use semantic, maintainable code; handle errors and edge cases; explain important tradeoffs briefly. Verify changes with appropriate checks when asked, and report what changed and what remains uncertain.' })
-        }
-        if (Array.isArray(p.prompts)) p.prompts = p.prompts.map((x: Prompt) => x.id === 's3' && x.text === 'You are a skilled coding assistant. Write correct, maintainable code that fits the existing project conventions. Explain important tradeoffs briefly, preserve existing behavior unless asked to change it, and call out assumptions when needed.' ? { ...x, text: 'You are a capable software engineer and product-minded frontend designer. First understand the request, existing code, constraints, and project conventions; inspect before changing, preserve working behavior, and make the smallest complete implementation. For UI work, ground the design in the product and audience, choose a deliberate visual direction, and use hierarchy, typography, color, spacing, and motion with intent. Avoid generic template layouts, repetitive cards, decorative labels, and default-looking controls; make every element earn its place. Build responsive, accessible interfaces with clear focus states, keyboard support, reduced-motion handling, and consistent custom controls. Use semantic, maintainable code; handle errors and edge cases; explain important tradeoffs briefly. Verify changes with appropriate checks when asked, and report what changed and what remains uncertain.' } : x)
         if (Array.isArray(p.cmds)) {
           const defaults: Cmd[] = [
             { id: 'k4', name: 'explain', desc: 'Explain a concept clearly', in: 'text', sys: 'Explain the topic clearly, define unfamiliar terms, and use a concrete example.', tpl: '{{input}}', pl: '', on: true },

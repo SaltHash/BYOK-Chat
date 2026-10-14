@@ -1,12 +1,14 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { GitBranch, ChevronLeft, ChevronRight, Sparkles, Server, Cpu, Copy, Check, RefreshCw, Trash2, ListOrdered, CircleCheck, CircleX, TriangleAlert, Paperclip, ChevronDown, CornerDownLeft } from 'lucide-react'
-import { useS, usable, type Msg } from '../store'
+import { useS, useLive, usable, featOn, previewSysFor, type Msg } from '../store'
 import { CI, fmtDuration } from '../meta'
 import { Btn, Chip, cx, type Ic } from './ui'
 import { Composer } from './Composer'
 import { Header } from './Header'
 import { Tutorial } from './Extra'
 import { Md, UserText } from './Md'
+import { CanvasRail, CanvasPanel } from './Canvas'
+import { groupCanvasVersions } from '../canvas'
 
 function toolStep(name: string, rawArgs: string, result?: string) {
   let args: Record<string, unknown> = {}
@@ -17,6 +19,11 @@ function toolStep(name: string, rawArgs: string, result?: string) {
   if (name === 'prompt_chip') return `Follow-up · ${typeof args.label === 'string' ? args.label : 'Continue'}`
   if (name === 'inline_poll') return `Choice · ${typeof args.question === 'string' ? args.question : 'Choose an option'}`
   const clip = (s: string, n = 90) => s.length > n ? `${s.slice(0, n)}…` : s
+  if (name === 'canvas_upsert') {
+    const action = typeof args.action === 'string' ? args.action : 'file'
+    const path = typeof args.path === 'string' ? args.path : 'file'
+    return `Canvas file · ${action}: ${clip(path, 80)}`
+  }
   if (name === 'search') {
     const responses = result?.match(/\[Source [^\]]+\]/g)?.length
     return `Web search · query: “${clip(query || 'missing query')}”${responses == null ? '' : ` (${responses} responses)`}`
@@ -40,9 +47,34 @@ function toolStep(name: string, rawArgs: string, result?: string) {
     if (action === 'delete') return `Memory · deleted entry ${String(args.id ?? '(missing id)')}`
     return `Memory · ${action}`
   }
+  if (name === 'use_skill') {
+    let id = ''
+    try { const a = JSON.parse(rawArgs || '{}'); if (a && typeof a.id === 'string') id = a.id } catch { /* Keep the generic label. */ }
+    return `Skill · loaded instructions for “${clip(id || 'unknown skill', 60)}”`
+  }
   return `Tool ${name} · inputs: ${Object.keys(args).length ? Object.entries(args).map(([k, v]) => `${k}=${typeof v === 'string' ? clip(v, 60) : String(v)}`).join(', ') : 'none'}`
 }
 const duration = (ms?: number) => ms == null ? '' : ` ${fmtDuration(ms, useS.getState().widgetPrefs.timeUnit ?? 'auto')}`
+const prettyArgs = (raw: string) => {
+  try {
+    return JSON.stringify(JSON.parse(raw || '{}'), null, 1)
+  } catch { return raw || '{}' }
+}
+/* A clipped payload (args/result) with a read-more toggle revealing the whole thing at once. */
+function Payload({ label, text, open, onToggle }: { label: string; text: string; open: boolean; onToggle: () => void }) {
+  const LIMIT = 2000
+  const clipped = text.length > LIMIT
+  return (
+    <span className="block space-y-1">
+      <pre className="overflow-x-auto whitespace-pre-wrap break-words rounded-lg bg-bg p-2 font-mono text-xs text-mu">{label}: {open || !clipped ? text : `${text.slice(0, LIMIT)}…`}</pre>
+      {clipped && (
+        <button onClick={onToggle} className="rounded-md px-1.5 py-0.5 text-xs text-mu hover:bg-bg hover:text-tx">
+          {open ? 'Show less' : `Read more (${text.length.toLocaleString()} characters)`}
+        </button>
+      )}
+    </span>
+  )
+}
 
 function MessageActions({ calls }: { calls: { id: string; name: string; arguments: string; error?: boolean }[] }) {
   const s = useS()
@@ -73,11 +105,29 @@ function MessageActions({ calls }: { calls: { id: string; name: string; argument
   </div>
 }
 
-function M({ m, last }: { m: Msg; last: boolean }) {
-  const { prefs, busy } = useS()
+function M({ m, last, onOpenCanvas, selectedPath }: { m: Msg; last: boolean; onOpenCanvas: (mid: string, path: string) => void; selectedPath?: string | null }) {
+  const { prefs, busy, advanced, features } = useS()
+  const adv = featOn({ features }, 'advanced') ? advanced : undefined
+  const [sysOpen, setSysOpen] = useState(false)
+  const [copied, setCopied] = useState(false)
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({})
+  const [sysPreview, setSysPreview] = useState<string | null>(null)
+  // Saved prompt for new replies; reconstructed from current settings for older ones.
+  const sysText = m.sys ?? sysPreview
+  const togglePayload = (k: string) => setExpanded((v) => ({ ...v, [k]: !v[k] }))
+  const live = useLive((s) => s.tools[m.id])
   const [log, setLog] = useState(false)
   const [thinkingOpen, setThinkingOpen] = useState(false)
   const [ok, setOk] = useState(false)
+  const writingPath = useMemo(() => {
+    const final = (m.toolRounds ?? []).flatMap((r) => r.calls).filter((t) => t.name === 'canvas_upsert')
+    const streaming = (live ?? []).filter((t) => t.name === 'canvas_upsert' || !t.name)
+    const done = new Set(final.map((t) => t.id))
+    const pending = streaming.filter((t) => !t.id || !done.has(t.id))
+    if (!pending.length) return null
+    const groups = groupCanvasVersions(pending.map((t) => ({ ...t })))
+    return groups[groups.length - 1]?.path ?? null
+  }, [m.toolRounds, live])
   if (m.r === 'user')
     return (
       <div className="ml-auto max-w-[85%] space-y-2">
@@ -99,26 +149,60 @@ function M({ m, last }: { m: Msg; last: boolean }) {
       )}
       {log && (
         <div className="space-y-1.5 rounded-xl bg-surf p-3 text-sm">
+          {adv?.showSystemPrompt && (
+            <div className="rounded-lg bg-bg p-2">
+              {sysText != null ? (
+                <>
+                  <span className="flex items-center gap-2">
+                    <button onClick={() => setSysOpen(!sysOpen)} className="inline-flex items-center gap-1.5 rounded-md px-1.5 py-0.5 text-xs text-mu hover:bg-surf hover:text-tx">
+                      <ChevronDown size={14} className={cx('transition-transform', !sysOpen && '-rotate-90')} />Full system prompt ({sysText.length.toLocaleString()} characters)
+                    </button>
+                    <button
+                      onClick={() => { void navigator.clipboard?.writeText(sysText).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500) }).catch(() => {}) }}
+                      className="ml-auto inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs text-mu hover:bg-surf hover:text-tx"
+                      title="Copy the full system prompt"
+                    >
+                      {copied ? <Check size={13} /> : <Copy size={13} />}{copied ? 'Copied' : 'Copy'}
+                    </button>
+                  </span>
+                  {m.sys == null && <p className="mt-1 px-1.5 text-xs text-mu">Reconstructed from current settings — the exact prompt was not saved for this reply.</p>}
+                  {sysOpen && <div className="mt-2 max-h-96 overflow-y-auto rounded-lg bg-surf p-3 leading-7"><Md t={sysText} /></div>}
+                </>
+              ) : (
+                <button onClick={() => setSysPreview(previewSysFor(m.id) ?? '(Could not reconstruct a system prompt for this reply.)')} className="inline-flex items-center gap-1.5 rounded-md px-1.5 py-0.5 text-xs text-mu hover:bg-surf hover:text-tx">
+                  <ChevronDown size={14} className="-rotate-90" />Preview the system prompt for this reply
+                </button>
+              )}
+            </div>
+          )}
           <ol className="space-y-1.5">
             {m.log!.filter((t) => /\(classifier\)$/.test(t.n) || t.n === 'Memory recall').map((t, i) => (
               <li key={`classifier-${i}`} className="flex items-center gap-2">
-                {t.err ? <CircleX size={14} className="text-er" /> : <CircleCheck size={14} className="text-ac" />}
+                {t.err ? <CircleX size={14} className="shrink-0 text-er" /> : <CircleCheck size={14} className="shrink-0 text-ac" />}
                 <span>{t.n === 'Memory recall' ? t.detail : `Classifier${t.m ? ` · ${t.m}` : ''}${t.detail ? ` · ${t.detail}` : ''}`}</span>
-                <span className="ml-auto text-tx">{duration(t.ms)}</span>{t.err && <span className="text-er">{t.err}</span>}
+                <span className="ml-auto text-mu">{duration(t.ms)}{adv?.showTokenCounts && (t.tin != null || t.tout != null) ? ` · ${t.tin ?? 0} in / ${t.tout ?? 0} out` : ''}</span>{t.err && <span className="text-er">{t.err}</span>}
               </li>
             ))}
             {m.log!.filter((t) => !/\(classifier\)$/.test(t.n) && t.n !== 'Memory recall').map((t, i) => (
               <li key={`model-${i}`} className="flex items-center gap-2">
-                {t.err ? <CircleX size={14} className="text-er" /> : <CircleCheck size={14} className="text-ac" />}
+                {t.err ? <CircleX size={14} className="shrink-0 text-er" /> : <CircleCheck size={14} className="shrink-0 text-ac" />}
                 <span>{t.m || t.n}{m.reasoning && !t.err ? ' (reasoning)' : ''}{t.detail ? ` · ${t.detail}` : ''}</span>
-                <span className="ml-auto text-tx">{duration(t.ms)}</span>{t.err && <span className="text-er">{t.err}</span>}
+                <span className="ml-auto text-mu">{duration(t.ms)}{adv?.showTokenCounts && (t.tin != null || t.tout != null) ? ` · ${t.tin ?? 0} in / ${t.tout ?? 0} out` : ''}</span>{t.err && <span className="text-er">{t.err}</span>}
               </li>
             ))}
             {(m.toolRounds ?? []).flatMap((round) => round.calls).map((call, i) => (
-              <li key={`tool-${i}`} className="flex items-center gap-2">
-                {call.error ? <CircleX size={14} className="text-er" /> : <CircleCheck size={14} className="text-ac" />}
-                <span>{toolStep(call.name, call.arguments, call.result)}</span>
-                <span className={cx('ml-auto text-tx', call.error && 'text-er')}>{duration(call.ms)}</span>
+              <li key={`tool-${i}`} className="flex flex-col gap-1">
+                <span className="flex items-center gap-2">
+                  {call.error ? <CircleX size={14} className="shrink-0 text-er" /> : <CircleCheck size={14} className="shrink-0 text-ac" />}
+                  <span>{toolStep(call.name, call.arguments, call.result)}</span>
+                  <span className={cx('ml-auto text-mu', call.error && 'text-er')}>{duration(call.ms)}</span>
+                </span>
+                {adv?.showToolPayloads && (
+                  <span className="ml-6 space-y-1">
+                    <Payload label="args" text={prettyArgs(call.arguments)} open={!!expanded[`args-${i}`]} onToggle={() => togglePayload(`args-${i}`)} />
+                    {call.result != null && <Payload label="result" text={call.result} open={!!expanded[`result-${i}`]} onToggle={() => togglePayload(`result-${i}`)} />}
+                  </span>
+                )}
               </li>
             ))}
           </ol>
@@ -138,13 +222,19 @@ function M({ m, last }: { m: Msg; last: boolean }) {
           <div className="inline">
             <Md t={m.t} fadeEvents={m.fadeEvents} fade={prefs.fade} />
           </div>
+        ) : writingPath ? (
+          <span className="reply-thinking" role="status" aria-label={`Writing ${writingPath}`}>
+            <span className="reply-dots" aria-hidden="true"><i /><i /><i /></span>
+            <span className="ml-2 text-mu">Writing {writingPath}…</span>
+          </span>
         ) : (
           <span className="reply-thinking" role="status" aria-label="Waiting for a reply">
-            <span className="reply-orbit reply-orbit-a"><i /></span><span className="reply-orbit reply-orbit-b"><i /></span><span className="reply-core" />
+            <span className="reply-dots" aria-hidden="true"><i /><i /><i /></span>
             <span className="ml-2 text-mu">Thinking…</span>
           </span>
         )}
       </div>
+      {((m.toolRounds ?? []).length > 0 || (live ?? []).length > 0) && <CanvasRail msg={m} live={live} selected={selectedPath} onOpen={(path) => onOpenCanvas(m.id, path)} />}
       {(m.toolRounds ?? []).length > 0 && <MessageActions calls={(m.toolRounds ?? []).flatMap((round) => round.calls)} />}
       {prefs.showTps && m.tps != null && !m.err && <div className="text-xs text-mu">{m.by} · {m.tps.toLocaleString()} tokens/s</div>}
       <div className={cx('flex items-center gap-0.5 transition-opacity', m.alts && m.alts.length > 1 ? '' : 'opacity-0 group-hover:opacity-100')}>
@@ -174,36 +264,114 @@ const Tile = ({ icon: I, t, d, on }: { icon: Ic; t: string; d: string; on: () =>
 export function Chat({ side, toggle, cfg, pal }: { side: boolean; toggle: () => void; cfg: (t: string) => void; pal: () => void }) {
   const s = useS()
   const c = s.chats.find((x) => x.id === s.chat)
-  const tiles = s.cmds.filter((k) => k.on).slice(0, 4)
+  const tiles = featOn(s, 'commands') ? s.cmds.filter((k) => k.on).slice(0, 4) : []
   const box = useRef<HTMLDivElement>(null), stick = useRef(true)
+  const liveTools = useLive((l) => l.tools)
+  const busy = useS((st) => st.busy)
+  const canvasPrefs = useS((st) => st.canvasPrefs ?? { autoOpen: true, autoClose: false })
+  const [dock, setDock] = useState<{ mid: string; path: string | null } | null>(null)
+  const prevBusy = useRef(busy)
   useEffect(() => { stick.current = true }, [s.chat])
   useEffect(() => {
     const b = box.current, last = c?.msgs[c.msgs.length - 1]
     if (b && (stick.current || last?.r === 'user')) b.scrollTop = b.scrollHeight
   }, [c?.msgs, s.chat])
+  // Drop the dock when switching to a chat that does not contain it.
+  useEffect(() => {
+    if (dock && c && !c.msgs.some((m) => m.id === dock.mid)) setDock(null)
+  }, [s.chat])
+  // Auto-open on live canvas writes; follow the last file written; auto-close optionally.
+  useEffect(() => {
+    if (!c) return
+    if (busy && canvasPrefs.autoOpen) {
+      for (let i = c.msgs.length - 1; i >= 0; i--) {
+        const m = c.msgs[i]
+        if (m.r !== 'assistant') continue
+        const final = (m.toolRounds ?? []).flatMap((r) => r.calls).filter((t) => t.name === 'canvas_upsert')
+        const live = (liveTools[m.id] ?? []).filter((t) => t.name === 'canvas_upsert' || !t.name)
+        const done = new Set(final.map((t) => t.id))
+        const pending = live.filter((t) => !t.id || !done.has(t.id))
+        const combined = [...final, ...pending.map((t) => ({ ...t }))]
+        if (!combined.length) {
+          // No canvas activity on this message — keep looking at older ones.
+          continue
+        }
+        const groups = groupCanvasVersions(combined)
+        const lastPath = groups[groups.length - 1]?.path
+        if (!lastPath) break
+        setDock((d) => {
+          if (!d || d.mid !== m.id) return { mid: m.id, path: lastPath }
+          if (d.path !== lastPath) return { ...d, path: lastPath }
+          return d
+        })
+        break
+      }
+    }
+    if (prevBusy.current && !busy && canvasPrefs.autoClose) setDock(null)
+    prevBusy.current = busy
+  }, [busy, liveTools, c, canvasPrefs.autoOpen, canvasPrefs.autoClose])
+  const openCanvas = (mid: string, path: string) => setDock({ mid, path })
+  const dockMsg = dock ? c?.msgs.find((m) => m.id === dock.mid) : undefined
+  // Canvas width is a fraction of the chat section (screen minus sidebar).
+  // Legacy pixel values (>1) fall back to the 40% default without persisting.
+  const rawCanvas = s.prefs.canvasWidth ?? 0.4
+  const canvasFrac = typeof rawCanvas === 'number' && rawCanvas > 0 && rawCanvas <= 1 ? rawCanvas : 0.4
+  const rowRef = useRef<HTMLDivElement>(null)
+  const [wide, setWide] = useState(() => typeof matchMedia === 'function' && matchMedia('(min-width: 640px)').matches)
+  useEffect(() => {
+    const q = matchMedia('(min-width: 640px)')
+    const f = () => setWide(q.matches)
+    f()
+    q.addEventListener('change', f)
+    return () => q.removeEventListener('change', f)
+  }, [])
+  const startResize = (e: React.PointerEvent) => {
+    e.preventDefault()
+    const row = rowRef.current
+    if (!row) return
+    const x = e.clientX, start = canvasFrac, total = row.getBoundingClientRect().width || 1
+    const move = (ev: PointerEvent) => {
+      const value = Math.max(0.15, Math.min(0.7, start - (ev.clientX - x) / total))
+      const st = useS.getState()
+      st.patch({ prefs: { ...st.prefs, canvasWidth: Math.round(value * 1000) / 1000 } })
+    }
+    const up = () => { removeEventListener('pointermove', move); removeEventListener('pointerup', up) }
+    addEventListener('pointermove', move); addEventListener('pointerup', up, { once: true })
+  }
   return (
     <section className="flex min-h-0 min-w-0 flex-1 flex-col bg-bg">
       <Header side={side} toggle={toggle} cfg={cfg} pal={pal} title={c?.title ?? 'New chat'} />
-      <div ref={box} onScroll={(e) => { const b = e.currentTarget; stick.current = b.scrollHeight - b.scrollTop - b.clientHeight < 80 }} className="min-h-0 flex-1 overflow-y-auto">
-        {c && c.msgs.length ? (
-          <div className="mx-auto space-y-8 px-4 py-6" style={{ maxWidth: ({ narrow: 640, standard: 768, wide: 1024 } as const)[s.prefs.chatWidth] }}>
-            {c.msgs.map((m, i) => <M key={m.id} m={m} last={i === c.msgs.length - 1} />)}
-
+      <div ref={rowRef} className="flex min-h-0 flex-1 flex-col sm:flex-row">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+          <div ref={box} onScroll={(e) => { const b = e.currentTarget; stick.current = b.scrollHeight - b.scrollTop - b.clientHeight < 80 }} className="min-h-0 flex-1 overflow-y-auto">
+            {c && c.msgs.length ? (
+              <div className="mx-auto space-y-8 px-4 py-6" style={{ maxWidth: ({ narrow: 640, standard: 768, wide: 1024 } as const)[s.prefs.chatWidth] }}>
+                {c.msgs.map((m, i) => <M key={m.id} m={m} last={i === c.msgs.length - 1} onOpenCanvas={openCanvas} selectedPath={dock?.mid === m.id ? dock.path : null} />)}
+              </div>
+            ) : !s.eps.some(usable) ? (
+              <Tutorial cfg={cfg} />
+            ) : (
+              <div className="mx-auto flex h-full max-w-xl flex-col items-center justify-center gap-6 px-4 text-center">
+                <span className="grid size-12 place-items-center rounded-2xl bg-surf text-ac"><Sparkles size={22} /></span>
+                <h2 className="text-xl font-semibold">What do you want to work on?</h2>
+                <div className="grid w-full gap-2 sm:grid-cols-2">
+                  {!s.eps.length && <Tile icon={Server} t="Add an endpoint" d="Connect a model with your own key" on={() => cfg('eps')} />}
+                  {tiles.map((k) => <Tile key={k.id} icon={CI[k.in]} t={'/' + k.name} d={k.desc} on={() => s.patch({ draft: '/' + k.name + ' ' })} />)}
+                </div>
+              </div>
+            )}
           </div>
-        ) : !s.eps.some(usable) ? (
-          <Tutorial cfg={cfg} />
-        ) : (
-          <div className="mx-auto flex h-full max-w-xl flex-col items-center justify-center gap-6 px-4 text-center">
-            <span className="grid size-12 place-items-center rounded-2xl bg-surf text-ac"><Sparkles size={22} /></span>
-            <h2 className="text-xl font-semibold">What do you want to work on?</h2>
-            <div className="grid w-full gap-2 sm:grid-cols-2">
-              {!s.eps.length && <Tile icon={Server} t="Add an endpoint" d="Connect a model with your own key" on={() => cfg('eps')} />}
-              {tiles.map((k) => <Tile key={k.id} icon={CI[k.in]} t={'/' + k.name} d={k.desc} on={() => s.patch({ draft: '/' + k.name + ' ' })} />)}
-            </div>
-          </div>
+          <Composer cfg={cfg} />
+        </div>
+        {dockMsg && (
+          <>
+            <div role="separator" aria-orientation="vertical" aria-label="Resize canvas panel" onPointerDown={startResize} className="hidden w-1.5 shrink-0 cursor-col-resize bg-transparent hover:bg-ac/50 sm:block" />
+            <aside aria-label="Canvas side panel" style={wide ? { flex: `0 0 ${canvasFrac * 100}%`, maxWidth: '70%', minWidth: '15%' } : { height: '45dvh', width: '100%' }} className="flex min-h-0 shrink-0 flex-col border-t border-hov bg-surf/40 sm:border-l sm:border-t-0">
+              <CanvasPanel key={`${dockMsg.id}:${dockMsg.ai ?? 0}`} msg={dockMsg} live={liveTools[dockMsg.id]} path={dock?.path ?? null} setPath={(path) => setDock((d) => (d ? { ...d, path } : d))} onClose={() => setDock(null)} />
+            </aside>
+          </>
         )}
       </div>
-      <Composer cfg={cfg} />
     </section>
   )
 }

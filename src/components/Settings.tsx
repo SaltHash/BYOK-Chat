@@ -1,17 +1,31 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { X, Plus, Trash2, ArrowUp, ArrowDown, ChevronDown, Eye, EyeOff, Play, ShieldCheck, Shield, Download, Upload, Check, CircleCheck, Cpu, Route, GripVertical, Server, ListMusic, ScrollText, Terminal, Wrench, Palette, Database, FileText, PanelRight, TrendingUp, Keyboard, Search, Brain, Pencil } from 'lucide-react'
-import { useS, PRE, THEMES, THEME_COLOR_KEYS, THEME_COLOR_LABELS, modelsOf, modelNameOf, type Kind } from '../store'
+import { X, Plus, Trash2, ArrowUp, ArrowDown, ChevronDown, Eye, EyeOff, Play, ShieldCheck, Shield, Download, Upload, Check, CircleCheck, Cpu, Route, GripVertical, Server, ListMusic, ScrollText, Terminal, Wrench, Palette, Database, FileText, PanelRight, TrendingUp, Keyboard, Search, Brain, Pencil, Sparkles, RotateCcw, SlidersHorizontal, FlaskConical, Library } from 'lucide-react'
+import { useS, PRE, THEMES, THEME_COLOR_KEYS, THEME_COLOR_LABELS, SEARCH_MODES, SEARCH_PROVIDERS, GLOBAL_PROMPT_PRESETS, FEATURES, LIBRARY_ITEMS, FEATURE_TABS, FEATURE_WIDGETS, DEFAULT_LIBRARY_SHOW, DEFAULT_ADVANCED, featOn, normSearch, normAdvanced, modelsOf, modelNameOf, type Kind, type FeatureId } from '../store'
+import { normSkills, resolveSkill, validateCustomSkill, enabledSkills, BUILTIN_SKILLS, SKILL_TOOL_NAME, type SkillState } from '../skills'
+import { TOOL_REGISTRY } from '../engine'
 import { CI, TOOLS, WIDGETS, KEYS } from '../meta'
 import { DataTab, StatsTab, KeysTab, TestRow, TestAllEndpoints } from './Extra'
 import { Btn, Field, Input, Area, Sel, Toggle, Seg, RangeSlider, Checkbox, HelpTip, Modal, Chip, cx, type Ic } from './ui'
 
 const TABS: [string, string, Ic][] = [
-  ['eps', 'Endpoints', Server], ['prompts', 'Prompts', ScrollText], ['pls', 'Playlists', ListMusic],
-  ['cmds', 'Commands', Terminal], ['tools', 'Tools', Wrench], ['memory', 'Memory', Brain], ['widgets', 'Widgets', PanelRight], ['stats', 'Stats', TrendingUp], ['keys', 'Shortcuts', Keyboard], ['look', 'Appearance', Palette], ['data', 'Data controls', Database],
+  ['features', 'Features', SlidersHorizontal],
+  ['eps', 'Endpoints', Server], ['prompts', 'Prompts', ScrollText], ['skills', 'Skills', Sparkles], ['pls', 'Playlists', ListMusic],
+  ['cmds', 'Commands', Terminal], ['tools', 'Tools', Wrench], ['memory', 'Memory', Brain], ['widgets', 'Widgets', PanelRight], ['look', 'Appearance', Palette], ['keys', 'Shortcuts', Keyboard], ['stats', 'Stats', TrendingUp], ['data', 'Data controls', Database], ['adv', 'Advanced', FlaskConical],
 ]
+/** Tabs hidden while their owning feature is disabled. */
+export const visibleTabs = (features?: Record<FeatureId, boolean>) => {
+  const hidden = new Set<string>()
+  for (const [f, tabs] of Object.entries(FEATURE_TABS)) {
+    if (!featOn({ features }, f as FeatureId)) for (const t of tabs as string[]) hidden.add(t)
+  }
+  return TABS.filter(([k]) => !hidden.has(k))
+}
 const INFO: Record<string, string> = {
+  features: 'Turn whole features on or off. A disabled feature is hidden everywhere and is never used by the AI or the app until you turn it back on.',
+  library: 'Choose which shortcuts appear in the sidebar library.',
   eps: 'Model APIs you connect with your own key. Add several, disable any, and test each one.',
-  prompts: 'Reusable system prompts. Pick one from the prompt menu under the chat box to override a playlist prompt.',
+  prompts: 'Reusable system prompts. Pick one from the prompt menu under the chat box to override a playlist prompt. A global system prompt can also apply to every message in every chat.',
+  skills: 'Instruction packs the model loads itself. Each skill lists when it applies; the model calls use_skill to read the full instructions. use_skill is a hidden capability and never appears under Tools.',
   pls: 'Ordered lists of models from your endpoints. A request tries each model from top to bottom and stops at the first that succeeds. An optional classifier model picks one entry first.',
   cmds: 'Slash commands apply a system prompt and template to a typed input and run on the first endpoint that accepts that input type.',
   tools: 'Model tools such as date, calculator, and web search. Only enabled tools are sent to the provider.',
@@ -21,6 +35,7 @@ const INFO: Record<string, string> = {
   keys: 'Click Change, then press the keys you want. Shortcuts need Ctrl/Cmd or Alt so they never fire while you type.',
   look: 'Theme, display options, and auto-generated chat names settings.',
   data: 'Export or import your setup. Exports leave API keys out unless you include them.',
+  adv: 'Debugging aids for understanding what the model sees and does. Everything here is off by default; enable the Advanced feature to use it.',
 }
 
 export function Panel({ id, k, n, add, children }: { id: string; k?: Kind; n?: number; add?: string; children: ReactNode }) {
@@ -211,6 +226,79 @@ function ModelsEditor({ e, update }: { e: any; update: (p: object) => void }) {
   </div>
 }
 
+function FeaturesTab() {
+  const s = useS()
+  const F = s.features
+  const setF = (id: FeatureId, on: boolean) => s.patch({ features: { ...F, [id]: on } })
+  const [confirm, setConfirm] = useState<'stats' | 'memory' | null>(null)
+  const toggle = (id: FeatureId, on: boolean) => {
+    // Destructive-adjacent disables ask first: delete existing data or keep it dormant.
+    if (!on && (id === 'stats' || id === 'memory')) { setConfirm(id); return }
+    setF(id, on)
+    if (id === 'widgets' && on === false) s.patch({ rail: false })
+  }
+  // Each feature row uses its own settings tab icon; features without a tab keep a fallback.
+  const iconFor = (id: FeatureId): Ic => {
+    if (id === 'library') return Library
+    return TABS.find(([k]) => (FEATURE_TABS[id] ?? []).includes(k))?.[2] ?? SlidersHorizontal
+  }
+  const show = s.libraryShow ?? DEFAULT_LIBRARY_SHOW
+  const order = (s.featureOrder ?? []).filter((id) => FEATURES.some(([f]) => f === id))
+  for (const [id] of FEATURES) if (!order.includes(id)) order.push(id)
+  const move = (id: FeatureId, d: number) => {
+    const next = [...order], i = next.indexOf(id), j = i + d
+    if (i < 0 || j < 0 || j >= next.length) return
+    ;[next[i], next[j]] = [next[j], next[i]]
+    s.patch({ featureOrder: next })
+  }
+  const byId = (id: FeatureId) => FEATURES.find(([f]) => f === id)!
+  return (
+    <Panel id="features">
+      {order.map((id) => {
+        const [, label, desc] = byId(id)
+        return (
+        <Card key={id} icon={iconFor(id)} title={label} sub={F[id] ? 'On' : 'Off'} right={<span className="flex items-center gap-1"><Btn sm icon={ArrowUp} title={`Move ${label} up`} disabled={order.indexOf(id) === 0} onClick={() => move(id, -1)} /><Btn sm icon={ArrowDown} title={`Move ${label} down`} disabled={order.indexOf(id) === order.length - 1} onClick={() => move(id, 1)} /><Toggle on={!!F[id]} set={(on) => toggle(id, on)} /></span>}>
+          <p className="text-sm text-mu">{desc}</p>
+          {id === 'library' && !!F[id] && (
+            <Field label="Library entries" hint="Choose which shortcuts appear in the sidebar library.">
+              <div className="grid grid-cols-2 gap-2">
+                {LIBRARY_ITEMS.map(([k, l]) => <Checkbox key={k} checked={show[k] ?? true} set={(v) => s.patch({ libraryShow: { ...show, [k]: v } })} label={l} />)}
+              </div>
+            </Field>
+          )}
+        </Card>
+        )
+      })}
+      {confirm === 'stats' && (
+        <Modal close={() => setConfirm(null)}>
+          <div className="w-full max-w-sm space-y-4 rounded-2xl bg-bg p-5">
+            <div className="flex items-center gap-2 font-semibold"><TrendingUp size={18} className="text-ac" />Turn off stats?</div>
+            <p className="text-sm text-mu">Stats stop counting immediately. Delete the existing totals, or keep them stored but frozen until you turn stats back on.</p>
+            <div className="flex flex-col gap-2">
+              <Btn v="danger" onClick={() => { s.resetStats(); setF('stats', false); setConfirm(null) }}>Delete totals and turn off</Btn>
+              <Btn v="soft" onClick={() => { setF('stats', false); setConfirm(null) }}>Keep totals and turn off</Btn>
+              <Btn v="soft" onClick={() => setConfirm(null)}>Cancel</Btn>
+            </div>
+          </div>
+        </Modal>
+      )}
+      {confirm === 'memory' && (
+        <Modal close={() => setConfirm(null)}>
+          <div className="w-full max-w-sm space-y-4 rounded-2xl bg-bg p-5">
+            <div className="flex items-center gap-2 font-semibold"><Brain size={18} className="text-ac" />Turn off memory?</div>
+            <p className="text-sm text-mu">The memory tool stops being offered and no stored context is read. Delete every stored memory, or keep them stored but unused until you turn memory back on.</p>
+            <div className="flex flex-col gap-2">
+              <Btn v="danger" onClick={() => { s.patch({ memories: [] }); setF('memory', false); setConfirm(null) }}>Delete all memories and turn off</Btn>
+              <Btn v="soft" onClick={() => { setF('memory', false); setConfirm(null) }}>Keep memories and turn off</Btn>
+              <Btn v="soft" onClick={() => setConfirm(null)}>Cancel</Btn>
+            </div>
+          </div>
+        </Modal>
+      )}
+    </Panel>
+  )
+}
+
 function Eps() {
   const { eps, upd } = useS()
   const [show, setShow] = useState('')
@@ -226,9 +314,10 @@ function Eps() {
       {eps.map((e) => {
         const u = (p: object) => upd('eps', e.id, p)
         return (
-          <Card key={e.id} dk="eps" did={e.id} icon={Server} title={<span className="inline-flex min-w-0 items-center gap-1.5"><span className="truncate">{e.name}</span><button type="button" title="Edit endpoint name" aria-label="Edit endpoint name" onClick={(ev) => { ev.stopPropagation(); setEditingName(e.id) }} className="grid size-6 shrink-0 place-items-center rounded text-mu hover:bg-hov hover:text-tx"><Pencil size={13}/></button></span>} sub={e.model || 'No model id'} open0={!e.model && !e.key} right={<Toggle on={e.on} set={(v) => u({ on: v })} />}>
+          <Card key={e.id} dk="eps" did={e.id} icon={Server} title={editingName === e.id
+            ? <input autoFocus value={e.name} onChange={(ev) => u({ name: ev.target.value })} onBlur={() => setEditingName('')} onKeyDown={(ev) => { if (ev.key === 'Enter' || ev.key === 'Escape') setEditingName('') }} onClick={(ev) => ev.stopPropagation()} aria-label="Endpoint name" className="w-full min-w-0 rounded-md bg-bg px-2 py-1 font-medium outline-none focus:ring-2 focus:ring-ac/40" />
+            : <span className="inline-flex min-w-0 items-center gap-1.5"><span className="truncate">{e.name}</span><button type="button" title="Rename endpoint" aria-label="Rename endpoint" onClick={(ev) => { ev.stopPropagation(); setEditingName(e.id) }} className="grid size-6 shrink-0 place-items-center rounded text-mu hover:bg-hov hover:text-tx"><Pencil size={13}/></button></span>} sub={e.model || 'No model id'} open0={!e.model && !e.key} right={<Toggle on={e.on} set={(v) => u({ on: v })} />}>
             <div className="space-y-3">
-              {editingName === e.id && <Field label="Endpoint name"><Input autoFocus value={e.name} set={(name) => u({ name })} onBlur={() => setEditingName('')} onKeyDown={(ev) => { if (ev.key === 'Enter') setEditingName('') }} /></Field>}
               <section className="space-y-3 rounded-xl bg-bg p-3"><div className="text-sm font-medium">Models</div>
               <Field label="Preset"><Sel value={e.preset ?? presetForUrl(e.url)?.[0] ?? ''} set={(v) => v ? selectPreset(e.id, v) : u({ preset: '', endpointId: '', endpointFilter: 'author' })} opts={[[ '', 'Choose a preset'], ...Object.keys(PRE).map((k) => [k, k] as [string, string])]} /></Field>
               <Field label="Models" hint="Press Enter to add the next row. Every row uses this endpoint and API key.">
@@ -290,9 +379,25 @@ function Eps() {
 }
 
 function Prompts() {
-  const { prompts, upd } = useS()
+  const { prompts, upd, patch, globalPrompt } = useS()
+  const g = globalPrompt ?? { on: false, text: '' }
+  const setG = (v: Partial<{ on: boolean; text: string }>) => patch({ globalPrompt: { ...g, ...v } })
   return (
     <Panel id="prompts" k="prompts" n={prompts.length} add="Add prompt">
+      <Card icon={ScrollText} title="Global system prompt" sub={g.on ? (g.text.trim() ? 'On · applies to every message in every chat' : 'On · no text yet') : 'Off by default'} open0>
+        <div className="flex items-center justify-between gap-3"><div><div className="text-sm font-medium">Apply to every message</div><div className="text-xs text-mu">Prepended to the system prompt in every chat, alongside the per-chat prompt.</div></div><Toggle on={g.on} set={(on) => setG({ on })} /></div>
+        <Field label="Start from a preset" hint="Fills the box below; you can edit it afterwards.">
+          <div className="flex flex-wrap gap-1.5">
+            {GLOBAL_PROMPT_PRESETS.map((p) => (
+              <button key={p.id} onClick={() => setG({ text: p.text })} className="rounded-lg bg-bg px-2.5 py-1.5 text-xs font-medium hover:bg-hov">{p.name}</button>
+            ))}
+          </div>
+        </Field>
+        <Field label="Or pick an existing prompt" hint="Copies its text into the global box.">
+          <Sel value="" set={(v) => { const p = prompts.find((x) => x.id === v); if (p) setG({ text: p.text }) }} opts={[['', 'Choose a prompt…'], ...prompts.map((p) => [p.id, p.name] as [string, string])]} />
+        </Field>
+        <Field label="Global system prompt" hint="Write one from scratch, or use a preset or existing prompt above."><Area rows={6} value={g.text} set={(v) => setG({ text: v })} /></Field>
+      </Card>
       {prompts.map((p) => (
         <Card key={p.id} dk="prompts" did={p.id} icon={ScrollText} title={p.name} sub={p.text.slice(0, 70)}>
           <Field label="Name"><Input value={p.name} set={(v) => upd('prompts', p.id, { name: v })} /></Field>
@@ -379,15 +484,27 @@ function Cmds() {
 function Tools() {
   const s = useS()
   const [ask, setAsk] = useState<string | null>(null)
-  const [searchReady, setSearchReady] = useState<boolean | null>(null)
+  const [showSearchKey, setShowSearchKey] = useState(false)
+  const [health, setHealth] = useState<{ searchConfigured?: boolean; searchMode?: string; searchFallback?: boolean; apiProvider?: string; searchProvider?: string; apiProviders?: Record<string, { label: string; configured: boolean; needsZone?: boolean }> } | null>(null)
   useEffect(() => {
-    if (s.settingsScope !== 'power-user') return
-    fetch('/api/health').then((r) => r.json()).then((x) => setSearchReady(!!x.searchConfigured)).catch(() => setSearchReady(false))
-  }, [s.settingsScope])
+    fetch('/api/health').then((r) => r.json()).then((x) => setHealth(x)).catch(() => setHealth({ searchConfigured: false }))
+  }, [])
   const t = TOOLS.find((x) => x[0] === ask)
+  const searchReady = health ? !!health.searchConfigured : null
+  const search = normSearch(s.search)
+  const setSearch = (p: Partial<typeof search>) => s.patch({ search: { ...search, ...p } })
+  const ownKey = (search.keys[search.provider] || '').trim()
+  const otherLabel = search.mode === 'api' ? 'SearXNG' : (health?.apiProviders?.[search.provider]?.label ?? 'API')
+  const providerHint: Record<string, string> = {
+    tinyfish: 'GET https://api.search.tinyfish.ai with an X-API-Key header.',
+    you: 'POST https://ydc-index.io/v1/search with an X-API-Key header.',
+    exa: 'POST https://api.exa.ai/search with highlights enabled.',
+    firecrawl: 'POST https://api.firecrawl.dev/v2/search with a Bearer token (optional: works without a key at lower limits).',
+    brightdata: 'POST https://api.brightdata.com/request plus your SERP zone.',
+  }
   return (
     <Panel id="tools">
-      {TOOLS.filter(([k]) => k !== 'memory' && !(k === 'search' && s.settingsScope !== 'power-user')).map(([k, n, I, u, d, p]) => (
+      {TOOLS.filter(([k]) => k !== 'memory').map(([k, n, I, u, d, p]) => (
         <Card key={k} icon={I} title={n} sub={u} right={
           <>
             <span className="hidden items-center gap-1.5 text-xs text-mu sm:flex">{s.tools[k] ? <ShieldCheck size={14} className="text-ac" /> : <Shield size={14} />}{s.tools[k] ? 'Allowed' : 'Off'}</span>
@@ -396,9 +513,65 @@ function Tools() {
         }>
           <p className="text-sm">{d}</p>
           <p className="text-sm text-mu">Permission: {p}</p>
-          {k === 'search' && <p className="text-xs text-mu">{searchReady === null ? 'Checking search service…' : searchReady ? 'SearXNG is configured. When allowed, messages about current or recent information can use web results. You can also write @search(query).' : 'SearXNG is unavailable. Check the server’s SEARXNG_BASE_URL and restart it. When allowed, current-information questions will use web results.'}</p>}
+          {k === 'canvas_upsert' && <div className="space-y-3 rounded-xl bg-bg p-3">
+            <div className="flex items-center justify-between gap-3"><div><div className="text-sm font-medium">Open canvas panel automatically</div><div className="text-xs text-mu">Show the side panel beside the chat as soon as a file starts streaming.</div></div><Toggle on={s.canvasPrefs?.autoOpen ?? true} set={(autoOpen) => s.patch({ canvasPrefs: { autoOpen, autoClose: s.canvasPrefs?.autoClose ?? false } })} /></div>
+            <div className="flex items-center justify-between gap-3"><div><div className="text-sm font-medium">Auto-close when the response finishes</div><div className="text-xs text-mu">Close the side panel when the reply completes. Off leaves the last file open.</div></div><Toggle on={s.canvasPrefs?.autoClose ?? false} set={(autoClose) => s.patch({ canvasPrefs: { autoOpen: s.canvasPrefs?.autoOpen ?? true, autoClose } })} /></div>
+          </div>}
+          {k === 'search' && <div className="space-y-3 rounded-xl bg-bg p-3">
+            <Field label="Search mode" hint="API uses your own provider key below. SearXNG uses your self-hosted instance.">
+              <Seg v={search.mode} set={(mode) => setSearch({ mode })} opts={SEARCH_MODES.map(([id, label]) => [id, label] as [typeof search.mode, string])} />
+            </Field>
+            <div className="flex items-center gap-3">
+              <div className="flex flex-1 items-center gap-2 text-sm font-medium">Fall back onto the other<HelpTip text={search.mode === 'api' ? 'When the API key is missing or the API request fails, retry with SearXNG.' : 'When SearXNG fails, retry with your API provider key.'} label="Help: search fallback" /></div>
+              <Toggle on={search.fallback} set={(fallback) => setSearch({ fallback })} />
+            </div>
+            <Field label="API provider" hint="Used when the mode is API, or as the fallback when the mode is SearXNG.">
+              <Sel value={search.provider} set={(provider) => { setShowSearchKey(false); setSearch({ provider: provider as typeof search.provider }) }} opts={SEARCH_PROVIDERS.map(([id, label]) => [id, label] as [string, string])} />
+            </Field>
+            {!ownKey && search.provider !== 'firecrawl' && <p role="status" className="rounded-lg bg-er/10 px-3 py-2 text-xs text-er">No {health?.apiProviders?.[search.provider]?.label ?? search.provider} key saved in this browser yet. Searches will fail until you paste one{search.fallback ? ', or fall back to SearXNG' : ', and fallback is off'}.</p>}
+            <Field label={`${health?.apiProviders?.[search.provider]?.label ?? search.provider} API key`} hint="Bring your own key. Stored unencrypted in this browser and sent only to your search backend with each query.">
+              <div className="relative">
+                <Input type={showSearchKey ? 'text' : 'password'} value={search.keys[search.provider] ?? ''} set={(v) => setSearch({ keys: { ...search.keys, [search.provider]: v } })} placeholder="Paste your search API key" />
+                <button onClick={() => setShowSearchKey(!showSearchKey)} title="Show or hide key" className="absolute right-2 top-1/2 -translate-y-1/2 text-mu hover:text-tx">{showSearchKey ? <EyeOff size={16} /> : <Eye size={16} />}</button>
+              </div>
+            </Field>
+            {search.provider === 'brightdata' && <Field label="SERP zone" hint="Your Bright Data SERP API zone name. Stored in this browser like the key."><Input value={search.zone} set={(zone) => setSearch({ zone })} placeholder="e.g. serp_api1" /></Field>}
+            <p className="text-xs text-mu">{searchReady === null ? 'Checking search service…' : search.mode === 'api' ? (ownKey ? `Using your ${health?.apiProviders?.[search.provider]?.label ?? 'API'} key${search.fallback ? ', with SearXNG as the fallback' : ', without fallback'}.` : `No ${health?.apiProviders?.[search.provider]?.label ?? 'API'} key in this browser yet.${search.fallback ? ' SearXNG will be used until you paste one.' : ' Paste a key or switch the mode to SearXNG.'}`) : `Using SearXNG${search.fallback ? `, with ${health?.apiProviders?.[search.provider]?.label ?? 'your API provider'} as the fallback` : ', without fallback'}.`}{` When allowed, messages about current or recent information can use web results. You can also write @search(query).`}</p>
+            <p className="text-xs text-mu">Server keys (TINYFISH_API_KEY, YOU_API_KEY, EXA_API_KEY, FIRECRAWL_API_KEY, BRIGHTDATA_API_KEY) still work as a shared fallback when this browser sends no key. Fallback target: {otherLabel}.</p>
+            <p className="text-xs text-mu">{providerHint[search.provider]}</p>
+          </div>}
         </Card>
       ))}
+      {featOn(s, 'advanced') && s.advanced?.showHiddenTools && (
+        <Card icon={FlaskConical} title="Hidden capabilities" sub="Owned by other features · read-only">
+          <p className="text-sm text-mu">These model capabilities are enabled automatically by their owning feature and cannot be toggled here.</p>
+          {Object.keys(TOOL_REGISTRY)
+            .filter((name) => name === 'memory' || !TOOLS.some(([t]) => t === name))
+            .map((name) => {
+              const spec = TOOL_REGISTRY[name]
+              const live = name === SKILL_TOOL_NAME
+                ? featOn(s, 'skills') && enabledSkills(normSkills(s.skills).skills).length > 0
+                : name === 'memory'
+                  ? featOn(s, 'memory') && s.memoryPrefs.enabled
+                  : !!s.tools[name]
+              const why = name === SKILL_TOOL_NAME
+                ? (featOn(s, 'skills') ? (enabledSkills(normSkills(s.skills).skills).length ? 'Offered while enabled skills exist' : 'Idle: no enabled skills') : 'Idle: the Skills feature is off')
+                : name === 'memory'
+                  ? (featOn(s, 'memory') ? (s.memoryPrefs.enabled ? 'Offered while the memory tool is enabled' : 'Idle: the memory tool is disabled in Memory settings') : 'Idle: the Memory feature is off')
+                  : ''
+              return (
+                <div key={name} className="space-y-1 rounded-xl bg-bg p-3">
+                  <div className="flex items-center gap-2 text-sm font-medium">
+                    <span className="font-mono">{name}</span>
+                    <span className="ml-auto inline-flex items-center gap-1.5 text-xs text-mu">{live ? <ShieldCheck size={14} className="text-ac" /> : <Shield size={14} />}{live ? 'Allowed' : 'Off'}</span>
+                  </div>
+                  <p className="text-sm">{spec.description}</p>
+                  {why && <p className="text-xs text-mu">{why}</p>}
+                </div>
+              )
+            })}
+        </Card>
+      )}
       {t && (
         <Modal close={() => setAsk(null)}>
           <div className="w-full max-w-sm space-y-4 rounded-2xl bg-bg p-5">
@@ -411,6 +584,57 @@ function Tools() {
           </div>
         </Modal>
       )}
+    </Panel>
+  )
+}
+
+function SkillsTab() {
+  const s = useS()
+  const { skills, warnings } = normSkills(s.skills)
+  const setSkills = (next: SkillState[]) => s.patch({ skills: next })
+  const upd = (id: string, p: Partial<SkillState>) => setSkills(skills.map((x) => (x.id === id ? { ...x, ...p } : x)))
+  const [draft, setDraft] = useState({ id: '', name: '', description: '', instructions: '' })
+  const [error, setError] = useState('')
+  const add = () => {
+    try {
+      const skill = validateCustomSkill({ ...draft })
+      if (skills.some((x) => x.id === skill.id)) throw new Error(`A skill named "${skill.id}" already exists.`)
+      setSkills([...skills, skill])
+      setDraft({ id: '', name: '', description: '', instructions: '' })
+      setError('')
+    } catch (x: any) { setError(x?.message || 'Could not add the skill.') }
+  }
+  return (
+    <Panel id="skills">
+      <p className="rounded-xl bg-surf px-3 py-2 text-xs text-mu">The model sees each enabled skill's name and description, then calls <span className="font-mono">use_skill</span> with the skill id to load its instructions. There is no keyword matching.</p>
+      {!!warnings.length && <p role="status" className="rounded-xl bg-er/10 px-3 py-2 text-xs text-er">{warnings[0]} Edit or reset the skill below to fix it.</p>}
+      {skills.map((st) => {
+        const def = resolveSkill(st)
+        if (!def) return <Card key={st.id} icon={Sparkles} title={st.id} sub="Missing instructions"><p className="text-sm text-er">This skill has no instructions, so the model cannot load it. Edit it or remove it.</p><div><Btn v="danger" icon={Trash2} onClick={() => setSkills(skills.filter((x) => x.id !== st.id))}>Remove</Btn></div></Card>
+        const builtin = BUILTIN_SKILLS.some((b) => b.id === st.id)
+        return (
+          <Card key={st.id} icon={Sparkles} title={def.name} sub={`${st.enabled ? 'On' : 'Off'} · id: ${st.id}`} right={<Toggle on={st.enabled} set={(enabled) => upd(st.id, { enabled })} />}>
+            <p className="text-xs text-mu">Skill id: <span className="font-mono">{st.id}</span></p>
+            {def.source && <p className="text-xs text-mu">Source: {def.source}{def.license ? ` · ${def.license}` : ''}</p>}
+            <Field label="When to use" hint="Short description the model reads to decide whether to load this skill."><Input value={st.description ?? def.description} set={(description) => upd(st.id, { description })} placeholder="When this skill applies." /></Field>
+            <Field label="Instructions" hint={builtin ? 'What the model follows after loading this skill. Editing overrides the built-in text for this browser. Reset restores it.' : 'What the model follows after loading this skill.'}><Area rows={6} value={st.instructions ?? def.instructions} set={(instructions) => upd(st.id, { instructions })} /></Field>
+            <div className="flex gap-2">
+              {builtin && <Btn v="soft" icon={RotateCcw} onClick={() => upd(st.id, { name: undefined, description: undefined, instructions: undefined } as Partial<SkillState>)}>Reset</Btn>}
+              {!builtin && <Btn v="danger" icon={Trash2} onClick={() => setSkills(skills.filter((x) => x.id !== st.id))}>Remove</Btn>}
+            </div>
+          </Card>
+        )
+      })}
+      <Card icon={Plus} title="Add a custom skill" sub="Your own reusable instructions" open0={false}>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field label="ID" hint="Lowercase letters, numbers, hyphens."><Input value={draft.id} set={(id) => setDraft({ ...draft, id })} placeholder="e.g. api-docs" /></Field>
+          <Field label="Name"><Input value={draft.name} set={(name) => setDraft({ ...draft, name })} placeholder="e.g. API docs" /></Field>
+        </div>
+        <Field label="When to use" hint="The model reads this to decide whether to load the skill."><Input value={draft.description} set={(description) => setDraft({ ...draft, description })} placeholder="When this skill applies." /></Field>
+        <Field label="Instructions" hint="Full steps the model follows after loading the skill."><Area rows={5} value={draft.instructions} set={(instructions) => setDraft({ ...draft, instructions })} /></Field>
+        {error && <p role="alert" className="text-xs text-er">{error}</p>}
+        <div><Btn v="solid" icon={Plus} onClick={add}>Add skill</Btn></div>
+      </Card>
     </Panel>
   )
 }
@@ -450,10 +674,21 @@ function WidgetsTab() {
   const s = useS()
   const wp = s.widgetPrefs
   const setWp = (p: Partial<typeof wp>) => s.patch({ widgetPrefs: { ...wp, ...p } })
+  const blockedBy = (k: string): string | null => {
+    for (const [f, ids] of Object.entries(FEATURE_WIDGETS)) {
+      if ((ids as string[]).includes(k) && !featOn(s, f as FeatureId)) return (FEATURES.find(([id]) => id === f)?.[1] ?? f)
+    }
+    return null
+  }
   return (
     <Panel id="widgets">
-      {WIDGETS.map(([k, n, I, d]) => (
-        <Card key={k} icon={I} title={n} sub={d} right={<Toggle on={!!s.widgets[k]} set={(v) => s.patch({ widgets: { ...s.widgets, [k]: v }, rail: v || s.rail })} />}>
+      {WIDGETS.map(([k, n, I, d]) => {
+        const blocked = blockedBy(k)
+        return (
+        <Card key={k} icon={I} title={n} sub={blocked ? `Needs the ${blocked} feature` : d} right={blocked
+          ? <span className="shrink-0 rounded-md bg-hov px-2 py-1 text-xs text-mu">Off</span>
+          : <Toggle on={!!s.widgets[k]} set={(v) => s.patch({ widgets: { ...s.widgets, [k]: v }, rail: v || s.rail })} />}>
+          <div className={blocked ? 'pointer-events-none opacity-50' : ''}>
           <p className="text-sm text-mu">Shown in the panel at the right of the chat. Open or close that panel with the panel button in the chat header.</p>
           {k === 'usage' && <div className="space-y-3 rounded-xl bg-bg p-3">
             <Field label="Group usage"><Seg v={wp.usageGroup} set={(usageGroup) => setWp({ usageGroup })} opts={[["endpoint", "Endpoint totals"], ["model", "Individual models"]]} /></Field>
@@ -465,7 +700,7 @@ function WidgetsTab() {
           </div>}
           {k === 'last' && <div className="space-y-3"><div className="rounded-xl bg-bg p-3"><Checkbox checked={wp.lastSpeed} set={(lastSpeed) => setWp({ lastSpeed })} label="Show response speed" /></div><Field label="Time unit"><Seg v={wp.timeUnit} set={(timeUnit) => setWp({ timeUnit })} opts={[["auto", "Auto"], ["ms", "Milliseconds"], ["s", "Seconds"]]} /></Field></div>}
           {k === 'keys' && <div className="grid gap-2 rounded-xl bg-bg p-3 sm:grid-cols-2">{KEYS.map(([id, label]) => <Checkbox key={id} checked={wp.shortcuts.includes(id)} set={(checked) => setWp({ shortcuts: checked ? [...wp.shortcuts, id] : wp.shortcuts.filter((x) => x !== id) })} label={label} />)}</div>}
-          {k === 'ctx' && s.settingsScope === 'power-user' && <Field label="Estimated context limit" hint="Sets the scale of the meter. This does not change the model's actual context window."><Input type="number" min="1000" step="1000" value={wp.contextLimit} set={(v) => setWp({ contextLimit: Math.max(1000, Number(v) || 1000) })} /></Field>}
+          {k === 'ctx' && <Field label="Estimated context limit" hint="Sets the scale of the meter. This does not change the model's actual context window."><Input type="number" min="1000" step="1000" value={wp.contextLimit} set={(v) => setWp({ contextLimit: Math.max(1000, Number(v) || 1000) })} /></Field>}
           {k === 'eps' && <div className="rounded-xl bg-bg p-3"><Checkbox checked={wp.showDisabledEndpoints} set={(showDisabledEndpoints) => setWp({ showDisabledEndpoints })} label="Show disabled endpoints" /></div>}
           {k === 'pad' && <Field label="Visible note height" hint="Number of text rows before scrolling."><Input type="number" min="2" max="20" value={wp.scratchRows} set={(v) => setWp({ scratchRows: Math.min(20, Math.max(2, Number(v) || 6)) })} /></Field>}
           {k === 'snips' && <Field label="Maximum snippets shown" hint="Older snippets remain saved and can be found by removing newer ones."><Input type="number" min="1" max="100" value={wp.snippetLimit} set={(v) => setWp({ snippetLimit: Math.min(100, Math.max(1, Number(v) || 20)) })} /></Field>}
@@ -473,8 +708,10 @@ function WidgetsTab() {
           {k === 'prompts' && <div className="rounded-xl bg-bg p-3"><Checkbox checked={wp.activePromptsOnly} set={(activePromptsOnly) => setWp({ activePromptsOnly })} label="Show only the selected prompt" /></div>}
           {k === 'draft' && <Field label="Characters per estimated token" hint="A rough estimate; 4 is a common default for English text."><Input type="number" min="1" max="10" value={wp.charsPerToken} set={(v) => setWp({ charsPerToken: Math.min(10, Math.max(1, Number(v) || 4)) })} /></Field>}
           {k === 'todo' && <div className="rounded-xl bg-bg p-3"><Checkbox checked={wp.hideDoneTodos} set={(hideDoneTodos) => setWp({ hideDoneTodos })} label="Hide completed tasks" /></div>}
+          </div>
         </Card>
-      ))}
+        )
+      })}
     </Panel>
   )
 }
@@ -580,11 +817,11 @@ function Look() {
           <span className="text-sm text-mu">seconds</span>
         </div>
       </div>
-      {s.settingsScope === 'power-user' && <div className="rounded-xl bg-surf p-3 space-y-2">
+      <div className="rounded-xl bg-surf p-3 space-y-2">
         <div className="text-sm font-medium">Temporary chat retention</div>
         <div className="text-xs text-mu">Temporary chats are removed automatically after this time. Immediate also removes them when you start another chat or leave this page.</div>
         <div className="flex items-center gap-3"><RangeSlider label="Temporary chat retention" min={0} max={48} step={1} value={s.prefs.tempHours} set={(tempHours) => s.patch({ prefs: { ...s.prefs, tempHours } })} className="flex-1" /><span className="w-24 text-right text-sm">{s.prefs.tempHours === 0 ? 'Immediate' : `${s.prefs.tempHours} hours`}</span></div>
-      </div>}
+      </div>
       <div className="rounded-xl bg-surf p-3 space-y-3">
         <div><div className="text-sm font-medium">Fonts</div><div className="text-xs text-mu">Fonts already loaded in the app are reused; other choices load from Google Fonts.</div></div>
         <Field label="Body font"><FontPicker value={s.prefs.fontBody} set={(fontBody) => s.patch({ prefs: { ...s.prefs, fontBody } })} options={FONT_OPTIONS} /></Field>
@@ -605,36 +842,56 @@ function Look() {
 const FONT_OPTIONS: [string, string][] = [['system', 'System default'], ['Arial', 'Arial'], ['Verdana', 'Verdana'], ['Georgia', 'Georgia'], ['Trebuchet MS', 'Trebuchet MS'], ['Times New Roman', 'Times New Roman'], ['Inter', 'Inter'], ['Roboto', 'Roboto'], ['Open Sans', 'Open Sans'], ['Segoe UI', 'Segoe UI'], ['Helvetica Neue', 'Helvetica Neue']]
 const MONO_OPTIONS: [string, string][] = [['system', 'System monospace'], ['Consolas', 'Consolas'], ['Menlo', 'Menlo'], ['Monaco', 'Monaco'], ['Courier New', 'Courier New'], ['Cascadia Code', 'Cascadia Code'], ['JetBrains Mono', 'JetBrains Mono'], ['Fira Code', 'Fira Code']]
 
-const VIEWS: Record<string, () => ReactNode> = { eps: Eps, prompts: Prompts, pls: Pls, cmds: Cmds, tools: Tools, memory: MemoryTab, widgets: WidgetsTab, look: Look, stats: StatsTab, keys: KeysTab, data: DataTab }
+function AdvancedTab() {
+  const s = useS()
+  if (!featOn(s, 'advanced')) return null
+  const a = { ...DEFAULT_ADVANCED, ...s.advanced }
+  const setA = (p: Partial<typeof a>) => s.patch({ advanced: { ...a, ...p } })
+  const row = (k: 'verboseErrors' | 'showHiddenTools' | 'showSystemPrompt' | 'showToolPayloads' | 'showTokenCounts', t: string, d: string) => (
+    <div className="flex items-center gap-3 rounded-xl bg-surf p-3">
+      <div className="flex flex-1 items-center gap-2 text-sm font-medium">{t}<HelpTip text={d} label={`Help: ${t}`} /></div>
+      <Toggle on={a[k]} set={(v) => setA({ [k]: v })} />
+    </div>
+  )
+  return (
+    <Panel id="adv">
+      {row('verboseErrors', 'Verbose errors', 'Show exact provider error messages in the process log and failure replies. The endpoint key is still masked; other key-like tokens are shown verbatim.')}
+      {row('showHiddenTools', 'Show hidden tools', 'List model capabilities owned by other features (such as the skills loader) in Settings → Tools. They stay read-only and cannot be toggled there.')}
+      {row('showSystemPrompt', 'Show full system prompt', 'Save the exact system prompt sent with each reply and show it in the process log: global prompt, selected prompt, tool guidance, skill catalog, and memory context.')}
+      {row('showToolPayloads', 'Show tool arguments and results', 'Render the full JSON arguments and returned text of every tool call in the process log instead of one-line summaries.')}
+      {row('showTokenCounts', 'Show per-step token counts', 'List reported input/output tokens beside each process-log entry when the provider reports them.')}
+    </Panel>
+  )
+}
+
+const VIEWS: Record<string, () => ReactNode> = { features: FeaturesTab, eps: Eps, prompts: Prompts, skills: SkillsTab, pls: Pls, cmds: Cmds, tools: Tools, memory: MemoryTab, widgets: WidgetsTab, look: Look, stats: StatsTab, keys: KeysTab, data: DataTab, adv: AdvancedTab }
 
 export function Settings({ tab, setTab }: { tab: string; setTab: (t: string) => void }) {
-  const V = VIEWS[tab] ?? Eps
-  const scope = useS((s) => s.settingsScope)
+  const features = useS((s) => s.features)
+  const tabs = visibleTabs(features)
+  const active = tabs.some(([k]) => k === tab) ? tab : 'features'
+  const V = VIEWS[active] ?? FeaturesTab
   const settingsOpacity = useS((s) => s.prefs.settingsOpacity)
   const settingsWidth = useS((s) => s.prefs.settingsWidth ?? 1024)
   const settingsHeight = useS((s) => s.prefs.settingsHeight ?? 780)
-  const advanced = scope === 'power-user'
-  const standardTabs = ['eps', 'prompts', 'pls', 'tools', 'memory', 'widgets', 'look', 'data']
-  const visibleTabs = advanced ? TABS : TABS.filter(([k]) => standardTabs.includes(k))
-  const setScope = (v: boolean) => { useS.getState().patch({ settingsScope: v ? 'power-user' : 'standard' }); if (!v && !standardTabs.includes(tab)) setTab('eps') }
   return (
     <Modal close={() => setTab('')} blur={false} opacity={settingsOpacity}>
       <div style={{ width: `min(${settingsWidth}px, 96vw)`, height: `min(${settingsHeight}px, 92dvh)` }} className="settings-root flex overflow-hidden rounded-2xl bg-bg">
         <nav className="hidden w-56 shrink-0 flex-col bg-side p-3 sm:flex">
           <div className="min-h-0 flex-1 space-y-0.5 overflow-y-auto">
-            {visibleTabs.map(([k, l, I]) => (
-              <button key={k} onClick={() => setTab(k)} className={cx('flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-sm', tab === k ? 'bg-hov' : 'text-mu hover:bg-surf hover:text-tx')}>
-                <I size={16} />{l}
-              </button>
+            {tabs.map(([k, l, I], i) => (
+              <div key={k}>
+                {i === 1 && <div aria-hidden="true" className="mx-2 my-2 h-px rounded-full bg-hov shadow-[0_1px_2px_rgb(0_0_0/0.35)]" />}
+                <button onClick={() => setTab(k)} className={cx('flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-sm', active === k ? 'bg-hov' : 'text-mu hover:bg-surf hover:text-tx')}>
+                  <I size={16} />{l}
+                </button>
+              </div>
             ))}
-          </div>
-          <div className="mt-3 border-t border-hov pt-3">
-            <label className="flex items-center justify-between gap-2 rounded-lg px-3 py-2 text-sm text-mu">Power user<Toggle on={advanced} set={setScope} /></label>
           </div>
         </nav>
         <div className="relative flex-1 overflow-y-auto p-6">
         <div className="absolute right-3 top-3 z-20"><Btn icon={X} title="Close settings" aria-label="Close settings" onClick={() => setTab('')} /></div>
-          <div className="mb-4 pr-44 sm:hidden"><Sel value={tab} set={setTab} opts={visibleTabs.map(([k, l]) => [k, l] as [string, string])} /></div>
+          <div className="mb-4 pr-44 sm:hidden"><Sel value={active} set={setTab} opts={tabs.map(([k, l]) => [k, l] as [string, string])} /></div>
           <V />
         </div>
       </div>

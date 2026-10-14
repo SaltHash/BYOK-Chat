@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react'
 import { Plus, FileUp, FileText, Image as ImageIcon, ArrowUp, Square, ChevronDown, ListMusic, Cpu, ScrollText, Settings, Search, X, TriangleAlert, Wrench } from 'lucide-react'
-import { useS, usable, modelsOf, modelNameOf, type Att } from '../store'
+import { useS, usable, modelsOf, modelNameOf, featOn, type Att } from '../store'
 import { CI, TOOLS } from '../meta'
 import { can, fmt, readAtt } from '../engine'
 import { Btn, Item, Pop, Seg, RangeSlider, cx, type Ic } from './ui'
@@ -10,20 +10,22 @@ const chip = 'flex h-9 items-center gap-2 rounded-lg px-2.5 text-sm text-mu hove
 
 function ModelMenu({ close, cfg }: { close: () => void; cfg: (t: string) => void }) {
   const s = useS()
-  const [t, setT] = useState<'pl' | 'ep'>(s.sel?.k ?? 'ep')
+  const plsOn = featOn(s, 'playlists')
+  const [t, setT] = useState<'pl' | 'ep'>(plsOn ? s.sel?.k ?? 'ep' : 'ep')
   const [q, setQ] = useState('')
-  const L: any[] = (t === 'pl' ? s.pls : s.eps).filter((x) => x.name.toLowerCase().includes(q.toLowerCase()) || (t === 'ep' && modelsOf(x).some((model) => model.toLowerCase().includes(q.toLowerCase()))))
+  const L: any[] = (t === 'pl' && plsOn ? s.pls : s.eps).filter((x) => x.name.toLowerCase().includes(q.toLowerCase()) || (t === 'ep' && modelsOf(x).some((model) => model.toLowerCase().includes(q.toLowerCase()))))
   const activeEp = t === 'ep' && s.sel?.k === 'ep' && s.sel.model ? s.eps.find((x) => x.id === s.sel?.id) : undefined
   const activeModel = activeEp && s.sel?.model
   const efforts: string[] = activeModel ? activeEp?.modelEfforts?.[activeModel] ?? [] : []
   const effortRank: Record<string, number> = { none: 0, minimal: 1, low: 2, medium: 3, high: 4, xhigh: 5, max: 6 }
-  const effortChoices = ['off', ...[...efforts].sort((a, b) => (effortRank[a.toLowerCase()] ?? 50) - (effortRank[b.toLowerCase()] ?? 50))]
-  const effortValue = activeModel ? s.effort[activeModel] ?? 'off' : 'off'
+  const effortChoices = [...efforts].sort((a, b) => (effortRank[a.toLowerCase()] ?? 50) - (effortRank[b.toLowerCase()] ?? 50))
+  const storedEffort = activeModel ? s.effort[activeModel] : undefined
+  const effortValue = storedEffort && effortChoices.includes(storedEffort) ? storedEffort : effortChoices[0]
   const effortIndex = Math.max(0, effortChoices.indexOf(effortValue))
   const activeEffort = effortChoices[effortIndex]
   return (
     <div className="flex flex-col" style={{ maxHeight: `min(${s.prefs.modelPickerHeight ?? 480}px, 85dvh)` }}>
-      <Seg v={t} set={setT} opts={[['pl', 'Playlists', ListMusic], ['ep', 'Models', Cpu]]} />
+      {plsOn && <Seg v={t} set={setT} opts={[['pl', 'Playlists', ListMusic], ['ep', 'Models', Cpu]]} />}
       <div className="relative my-2">
         <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-mu" />
         <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search" className="h-9 w-full rounded-lg bg-surf pl-9 pr-3 text-sm outline-none" />
@@ -37,7 +39,7 @@ function ModelMenu({ close, cfg }: { close: () => void; cfg: (t: string) => void
       {t === 'ep' && <Item icon={Cpu} on={!s.sel} sub="list order" onClick={() => { s.patch({ sel: null }); close() }}>All endpoints</Item>}
       {L.map((x) => (
         <div key={x.id}>
-          {t === 'pl' || x.modelsMode === 'playlist'
+          {t === 'pl' || (plsOn && x.modelsMode === 'playlist')
             ? <Item icon={t === 'pl' ? ListMusic : Cpu} off={x.on === false} on={s.sel?.id === x.id && !s.sel.model} sub={t === 'pl' ? `${x.e.length} models` : `${modelsOf(x).length} model playlist`} onClick={() => { s.patch({ sel: { k: t, id: x.id } }); close() }}>{x.name}</Item>
             : <>
               <div className="px-3 pb-1 pt-2 text-xs font-semibold uppercase tracking-wide text-mu">{x.name}</div>
@@ -54,7 +56,7 @@ function ModelMenu({ close, cfg }: { close: () => void; cfg: (t: string) => void
       {!L.length && <p className="px-2.5 py-3 text-sm text-mu">Nothing here yet.</p>}
       </div>
       <div className="shrink-0 border-t border-hov px-1 pt-2">
-        <Item icon={Settings} className="bg-surf/70 hover:bg-surf" onClick={() => { close(); cfg(t === 'pl' ? 'pls' : 'eps') }}>Manage…</Item>
+        <Item icon={Settings} className="bg-surf/70 hover:bg-surf" onClick={() => { close(); cfg(t === 'pl' && plsOn ? 'pls' : 'eps') }}>Manage…</Item>
       </div>
     </div>
   )
@@ -68,10 +70,10 @@ export function Composer({ cfg }: { cfg: (t: string) => void }) {
   const v = s.draft
   const [hi, setHi] = useState(0)
   const tw = v.match(/(?:^|\s)(@\w*)$/)?.[1]
-  const menu: { k: string; icon: Ic; label: string; hint: string; pick: () => void }[] | null = /^\/\S*$/.test(v)
-    ? s.settingsScope === 'power-user' ? s.cmds.filter((c) => c.on && c.name.startsWith(v.slice(1))).map((c) => ({ k: c.id, icon: CI[c.in], label: '/' + c.name, hint: c.desc || c.in, pick: () => s.patch({ draft: '/' + c.name + ' ' }) })) : []
-    : tw
-      ? TOOLS.filter((t) => (t[0] !== 'search' || s.settingsScope === 'power-user') && t[3].startsWith(tw.toLowerCase())).map((t) => ({ k: t[0], icon: t[2], label: t[3].split('(')[0], hint: s.tools[t[0]] ? t[4] : 'Off. Enable in Settings → Tools', pick: () => s.patch({ draft: v.slice(0, v.length - tw.length) + '@' + t[0] + (/^(calc|count|json|base64|search|random|hash)$/.test(t[0]) ? '(' : ' ') }) }))
+  const menu: { k: string; icon: Ic; label: string; hint: string; pick: () => void }[] | null = /^\/\S*$/.test(v) && featOn(s, 'commands')
+    ? s.cmds.filter((c) => c.on && c.name.startsWith(v.slice(1))).map((c) => ({ k: c.id, icon: CI[c.in], label: '/' + c.name, hint: c.desc || c.in, pick: () => s.patch({ draft: '/' + c.name + ' ' }) }))
+    : tw && featOn(s, 'tools')
+      ? TOOLS.filter((t) => t[3].startsWith(tw.toLowerCase())).map((t) => ({ k: t[0], icon: t[2], label: t[3].split('(')[0], hint: s.tools[t[0]] ? t[4] : 'Off. Enable in Settings → Tools', pick: () => s.patch({ draft: v.slice(0, v.length - tw.length) + '@' + t[0] + (/^(calc|count|json|base64|search|random|hash)$/.test(t[0]) ? '(' : ' ') }) }))
       : null
   const hl = Math.min(hi, Math.max((menu?.length ?? 1) - 1, 0))
   const sel = s.sel ? (s.sel.k === 'pl' ? s.pls : s.eps).find((x) => x.id === s.sel!.id) : undefined
@@ -110,7 +112,7 @@ export function Composer({ cfg }: { cfg: (t: string) => void }) {
           <div className="absolute inset-x-0 bottom-full mb-2 rounded-xl bg-hov p-1.5">
             {menu.length ? menu.map((o, i) => (
               <Item key={o.k} icon={o.icon} on={i === hl} sub={o.hint} onClick={() => { o.pick(); ta.current?.focus() }}>{o.label}</Item>
-            )) : <p className="px-2.5 py-3 text-sm text-mu">{v.startsWith('/') ? s.settingsScope === 'power-user' ? 'No enabled command matches. Manage commands in Settings.' : 'Commands are available in Power user settings.' : 'No tool matches.'}</p>}
+            )) : <p className="px-2.5 py-3 text-sm text-mu">{v.startsWith('/') ? 'No enabled command matches. Manage commands in Settings.' : 'No tool matches.'}</p>}
           </div>
         )}
         {att.length > 0 && (
@@ -131,7 +133,7 @@ export function Composer({ cfg }: { cfg: (t: string) => void }) {
           </div>
         )}
         <textarea
-          id="composer" ref={ta} rows={1} value={v} placeholder={s.eps.some(usable) ? `Message${s.settingsScope === 'power-user' ? ', / for commands' : ''}, @ for tools` : 'Add a model endpoint to start (press Send for a walkthrough)'}
+          id="composer" ref={ta} rows={1} value={v} placeholder={s.eps.some(usable) ? (featOn(s, 'commands') && featOn(s, 'tools') ? 'Message, / for commands, @ for tools' : featOn(s, 'commands') ? 'Message, / for commands' : featOn(s, 'tools') ? 'Message, @ for tools' : 'Message') : 'Add a model endpoint to start (press Send for a walkthrough)'}
           onChange={(e) => { s.patch({ draft: e.target.value }); setHi(0) }}
           onInput={(e) => { const t = e.currentTarget; t.style.height = 'auto'; t.style.height = Math.min(t.scrollHeight, 208) + 'px' }}
           onKeyDown={(e) => {
@@ -159,21 +161,40 @@ export function Composer({ cfg }: { cfg: (t: string) => void }) {
           </Pop>
           <Pop up w="w-80" scroll={false} trigger={() => (
             <button className={chip}>
-              {s.sel?.k === 'pl' ? <ListMusic size={16} /> : <Cpu size={16} />}
+              {s.sel?.k === 'pl' && featOn(s, 'playlists') ? <ListMusic size={16} /> : <Cpu size={16} />}
               <span className="max-w-40 truncate">{sel ? (s.sel?.model && s.sel.k === 'ep' ? modelNameOf(sel as any, s.sel.model) : sel.name) : 'All endpoints'}</span><ChevronDown size={14} />
             </button>
           )}>{(close) => <ModelMenu close={close} cfg={cfg} />}</Pop>
-          <Pop up trigger={() => (
-            <button className={chip}><ScrollText size={16} /><span className="max-w-32 truncate">{pr ? pr.name : 'No prompt'}</span><ChevronDown size={14} /></button>
+          {featOn(s, 'prompts') && <Pop up trigger={() => (
+            <button className={chip}><ScrollText size={16} /><span className="max-w-32 truncate">{pr ? pr.name : 'No prompt'}</span>{s.globalPrompt?.on && <span className="size-1.5 shrink-0 rounded-full bg-ac" title="Global system prompt on" />}<ChevronDown size={14} /></button>
           )}>
-            {(close) => (
-              <>
-                <Item icon={X} on={!s.pr} onClick={() => { s.patch({ pr: '' }); close() }}>No override</Item>
-                {s.prompts.map((p) => <Item key={p.id} icon={ScrollText} on={s.pr === p.id} onClick={() => { s.patch({ pr: p.id }); close() }}>{p.name}</Item>)}
-                <Item icon={Settings} onClick={() => { close(); cfg('prompts') }}>Manage…</Item>
-              </>
-            )}
-          </Pop>
+            {(close) => {
+              const g = s.globalPrompt ?? { on: false, text: '' }
+              return (
+                <>
+                  <Item icon={X} on={!s.pr} onClick={() => { s.patch({ pr: '' }); close() }}>No override</Item>
+                  {s.prompts.map((p) => <Item key={p.id} icon={ScrollText} on={s.pr === p.id} onClick={() => { s.patch({ pr: p.id }); close() }}>{p.name}</Item>)}
+                  <div className="mx-1 mb-1 mt-2 rounded-xl border border-ac/30 bg-ac/5 p-2.5">
+                    <div className="flex items-center gap-2">
+                      <span className="min-w-0 flex-1 text-sm font-medium">Global system prompt</span>
+                      <button
+                        role="switch"
+                        aria-checked={g.on}
+                        aria-label="Toggle global system prompt"
+                        onClick={() => s.patch({ globalPrompt: { ...g, on: !g.on } })}
+                        className={cx('relative h-6 w-11 shrink-0 rounded-full border transition-colors', g.on ? 'border-ac bg-ac shadow-[0_0_8px_color-mix(in_srgb,var(--ac)_60%,transparent)]' : 'border-mu/40 bg-surf')}
+                      >
+                        <span className={cx('absolute top-1/2 size-4 -translate-y-1/2 rounded-full transition-all', g.on ? 'left-[22px] bg-acx' : 'left-[3px] bg-mu')} />
+                      </button>
+                    </div>
+                    <p className="mt-1 text-xs leading-relaxed text-mu">{g.on ? (g.text.trim() ? 'On — applies to every message in every chat.' : 'On, but no text set yet — add one in Manage.') : 'Off — applies to every message in every chat when on.'}</p>
+                    <Item icon={Settings} onClick={() => { close(); cfg('prompts') }}>Manage global…</Item>
+                  </div>
+                  <Item icon={Settings} onClick={() => { close(); cfg('prompts') }}>Manage…</Item>
+                </>
+              )
+            }}
+          </Pop>}
           <span className="flex-1" />
           <button onClick={s.busy ? s.stop : submit} title={s.busy ? 'Stop' : 'Send'} className={cx('grid size-9 place-items-center rounded-full transition-colors', s.busy || ready ? 'bg-ac text-acx' : 'bg-hov text-mu')}>
             {s.busy ? <Square size={14} fill="currentColor" /> : <ArrowUp size={18} />}

@@ -6,10 +6,10 @@ import { Btn } from './ui'
 // The full renderer (tables, math, highlighting) loads on first use to keep the first paint light.
 const Rich = lazy(() => import('./Rich'))
 
-export function Md({ t, fadeEvents = [], fade = 0 }: { t: string; fadeEvents?: FadeEvent[]; fade?: number }) {
+export function Md({ t, fadeEvents = [], fade = 0, bare = false }: { t: string; fadeEvents?: FadeEvent[]; fade?: number; bare?: boolean }) {
   return (
     <Suspense fallback={<p className="whitespace-pre-wrap">{t}</p>}>
-      <Rich t={t} fadeEvents={fadeEvents} fade={fade} />
+      <Rich t={t} fadeEvents={fadeEvents} fade={fade} bare={bare} />
     </Suspense>
   )
 }

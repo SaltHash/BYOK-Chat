@@ -46,12 +46,27 @@
 .animate-reply-in { animation: reply-in 180ms ease-out both; }
 @media (prefers-reduced-motion: reduce) { .animate-reply-in { animation: none; } }
 .reply-thinking { display:inline-flex; align-items:center; height:2rem; position:relative; padding-left:1px; }
-.reply-orbit { position:absolute; left:0; top:50%; width:1.35rem; height:.62rem; margin-top:-.31rem; border:1px solid color-mix(in srgb,var(--ac) 60%,transparent); border-radius:50%; animation: reply-orbit 1.8s linear infinite; }
-.reply-orbit-a { transform:rotate(55deg); }.reply-orbit-b { transform:rotate(-55deg); animation-direction:reverse; animation-duration:2.3s; }
-.reply-orbit i { position:absolute; left:50%; top:-3px; width:5px; height:5px; border-radius:50%; background:var(--ac); box-shadow:0 0 10px color-mix(in srgb,var(--ac) 70%,transparent); }
-.reply-core { width:.45rem; height:.45rem; margin:0 .45rem; border-radius:50%; background:var(--ac); box-shadow:0 0 14px color-mix(in srgb,var(--ac) 75%,transparent); animation:reply-core 1.5s ease-in-out infinite; }
-@keyframes reply-orbit { to { transform:rotate(415deg); } } @keyframes reply-core { 50% { transform:scale(.55); opacity:.55; } }
-@media (prefers-reduced-motion: reduce) { .reply-orbit,.reply-core { animation:none; } }
+.reply-dots { position:relative; display:inline-block; width:1.35rem; height:1.2rem; margin:0 .45rem; flex:none; }
+.reply-dots i { position:absolute; width:.42rem; height:.42rem; border-radius:50%; background:var(--ac); box-shadow:0 0 4px color-mix(in srgb,var(--ac) 30%,transparent);
+  animation:
+    tri-orbit 6s linear infinite,
+    tri-pulse 2s ease-in-out infinite; }
+/* vertices: A=top, B=bottom-right, C=bottom-left. A->B->C->A is counterclockwise. */
+.reply-dots i:nth-child(1) { animation-delay: 0s, 0s; }
+.reply-dots i:nth-child(2) { animation-delay: -2s, -.666s; }
+.reply-dots i:nth-child(3) { animation-delay: -4s, -1.333s; }
+@keyframes tri-pulse { 0%, 100% { opacity:.65; transform:scale(.92); } 50% { opacity:.95; transform:scale(1.05); } }
+/* 6s cycle = 3 x (1.5s hold + 0.5s move). Moves use easing via per-keyframe timing. */
+@keyframes tri-orbit {
+  0% { left:50%; top:0%; translate:-50% 0; animation-timing-function:linear; }
+  25% { left:50%; top:0%; translate:-50% 0; animation-timing-function:cubic-bezier(.45,.05,.35,1); }
+  33.333% { left:100%; top:100%; translate:-100% -100%; animation-timing-function:linear; }
+  58.333% { left:100%; top:100%; translate:-100% -100%; animation-timing-function:cubic-bezier(.45,.05,.35,1); }
+  66.666% { left:0%; top:100%; translate:0 -100%; animation-timing-function:linear; }
+  91.666% { left:0%; top:100%; translate:0 -100%; animation-timing-function:cubic-bezier(.45,.05,.35,1); }
+  100% { left:50%; top:0%; translate:-50% 0; }
+}
+@media (prefers-reduced-motion: reduce) { .reply-dots i { animation:none; } .reply-dots i:nth-child(1) { left:50%; top:0%; translate:-50% 0; } .reply-dots i:nth-child(2) { left:100%; top:100%; translate:-100% -100%; } .reply-dots i:nth-child(3) { left:0%; top:100%; translate:0 -100%; } }
 .stream-fade { opacity: 0; transition: opacity var(--word-fade-duration, 0.2s) linear; }
 .stream-fade.stream-fade-active { opacity: 1; }
 @media (prefers-reduced-motion: reduce) { .stream-fade { opacity: 1; transition: none; } }

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type DragEvent } from 'react'
 import { Plus, Clock, Search, PanelLeftClose, Pin, Pencil, Trash2, MessageSquare, Server, ListMusic, ScrollText, Terminal, Wrench, Settings, Palette, Lock, PanelRight, Folder, FolderPlus, FolderMinus, ChevronRight, ChevronDown, Bookmark } from 'lucide-react'
-import { useS, THEMES, type Chat } from '../store'
+import { useS, THEMES, DEFAULT_LIBRARY_SHOW, featOn, type Chat, type FeatureId } from '../store'
 import { Btn, Confirm, cx } from './ui'
 
 const act = 'grid size-7 place-items-center rounded-md text-mu hover:text-tx'
@@ -55,7 +55,9 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
   const k = q.toLowerCase()
   const L = s.chats.filter((c) => !k || c.title.toLowerCase().includes(k) || c.msgs.some((m) => m.t.toLowerCase().includes(k)))
   const th = Object.keys(THEMES)
-  const lib = [
+  const libFeature: Record<string, FeatureId> = { pls: 'playlists', prompts: 'prompts', cmds: 'commands', tools: 'tools', memory: 'memory', widgets: 'widgets' }
+  const show = s.libraryShow ?? DEFAULT_LIBRARY_SHOW
+  const lib: [string, string, typeof Server, number][] = [
     ['eps', 'Endpoints', Server, s.eps.length],
     ['pls', 'Playlists', ListMusic, s.pls.length],
     ['prompts', 'Prompts', ScrollText, s.prompts.length],
@@ -63,8 +65,8 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
     ['tools', 'Tools', Wrench, Object.values(s.tools).filter(Boolean).length],
     ['memory', 'Memory', Bookmark, s.memories.length],
     ['widgets', 'Widgets', PanelRight, Object.values(s.widgets).filter(Boolean).length],
-  ] as const
-  const library = lib.filter(([key]) => s.settingsScope === 'power-user' || key !== 'cmds')
+  ]
+  const library = lib.filter(([key]) => (show[key] ?? true) && (!libFeature[key] || featOn(s, libFeature[key])))
   const mv = (id: string, x: number, y: number) => setMenu({ id, x, y })
   const target = (key: string, to: string) => ({
     onDragOver: (e: DragEvent) => { e.preventDefault(); setOver(key) },
@@ -142,6 +144,7 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
           {!free.length && <p className="px-2.5 py-1 text-sm text-mu">{!s.chats.length ? 'No chats yet.' : k ? 'No chats match.' : 'Nothing here. Drop a chat to unfile it.'}</p>}
         </div>
       </nav>
+      {featOn(s, 'library') && (
       <div className="space-y-0.5">
         <div className="px-2.5 pb-1 text-xs font-medium text-mu">Library</div>
         {library.map(([key, l, I, n]) => (
@@ -150,6 +153,7 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
           </button>
         ))}
       </div>
+      )}
       <div className="flex items-center gap-1">
         <Btn icon={Settings} className="flex-1 justify-start" onClick={() => cfg('eps')}>Settings</Btn>
         <Btn icon={Palette} title={`Theme: ${THEMES[s.theme]}`} onClick={() => s.patch({ theme: th[(th.indexOf(s.theme) + 1) % th.length] as keyof typeof THEMES })} />
