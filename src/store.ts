@@ -1,20 +1,34 @@
 import { create } from 'zustand'
-import { persist, createJSONStorage } from 'zustand/middleware'
-import { DEFAULT_TOOLS, KEYS, TOOLS, WIDGETS } from './meta'
-import { est, redact, can, stream, wire, trimHistory, estimateHistoryTokens, runToolLoop, type ToolCall, type ToolResult, searchWeb, formatSearch } from './engine'
+import { persist } from 'zustand/middleware'
+import { DEFAULT_TOOLS, KEYS, WIDGETS } from './meta'
+import { est, redact, stream, wire, trimHistory, estimateHistoryTokens, runToolLoop, type ToolCall, type ToolResult, searchWeb, formatSearch } from './engine'
 import { DEFAULT_SKILL_STATE, normSkills, enabledSkills, getSkillInstructions, composeSystemPrompt, SKILL_TOOL_NAME, type SkillState, type ResolvedSkill } from './skills'
+import { hintForLog, getErrorCode, classifyModelError, type ErrorCode } from './errors'
+import { usable, modelsOf, modelNameOf } from './models'
+import { splitEntry, playlistEntries, applyCommandTemplate, composeFullInput, planRequest } from './chatPlan'
 import { migrateLegacyCanvasGroups, truncateWorkspaceContent, type Workspace, type WorkspaceFile, type WorkspaceRevision } from './workspace'
+import { QUOTA_FLAG, prunePersisted, storageUsage, persistStorage } from './persistence'
+
+export { QUOTA_FLAG, prunePersisted, storageUsage }
+
+export { usable, modelsOf, modelNameOf }
 
 export type Kind = 'eps' | 'prompts' | 'pls' | 'cmds'
 export type ModelPrice = { input: number; output: number; source?: 'manual' | 'openrouter' }
-export type Ep = { id: string; name: string; type: 'openai' | 'anthropic'; url: string; key: string; model: string; preset?: string; endpointId?: string; endpointFilter?: 'author' | 'provider'; models?: string[]; modelNames?: Record<string, string>; modelEfforts?: Record<string, string[]>; modelEffortSource?: Record<string, 'auto' | 'manual'>; modelsMode?: 'separate' | 'playlist'; prices?: Record<string, ModelPrice>; on: boolean }
-export type Prompt = { id: string; name: string; text: string }
-export type Pl = { id: string; name: string; sys: string; e: string[]; cls: string; clsModel?: string; rule: string }
-export type Cmd = { id: string; name: string; desc: string; in: 'text' | 'image' | 'image+text' | 'doc'; sys: string; tpl: string; pl: string; on: boolean }
-export type Try = { n: string; m: string; detail?: string; ms?: number; err?: string; tin?: number; tout?: number; at?: number }
-export type Att = { name: string; kind: 'img' | 'pdf' | 'txt'; size: string; mime?: string; data?: string; text?: string }
+/* Explicit names (preferred for new code); short aliases kept as deprecated. */
+export type Endpoint = { id: string; name: string; type: 'openai' | 'anthropic'; url: string; key: string; model: string; preset?: string; endpointId?: string; endpointFilter?: 'author' | 'provider'; models?: string[]; modelNames?: Record<string, string>; modelEfforts?: Record<string, string[]>; modelEffortSource?: Record<string, 'auto' | 'manual'>; modelsMode?: 'separate' | 'playlist'; prices?: Record<string, ModelPrice>; on: boolean }
+export type Ep = Endpoint
+export type Playlist = { id: string; name: string; sys: string; e: string[]; cls: string; clsModel?: string; rule: string }
+export type Pl = Playlist
+export type Command = { id: string; name: string; desc: string; in: 'text' | 'image' | 'image+text' | 'doc'; sys: string; tpl: string; pl: string; on: boolean }
+export type Cmd = Command
+export type Attempt = { n: string; m: string; detail?: string; ms?: number; err?: string; errCode?: ErrorCode; tin?: number; tout?: number; at?: number }
+export type Try = Attempt
+export type Attachment = { name: string; kind: 'img' | 'pdf' | 'txt'; size: string; mime?: string; data?: string; text?: string }
+export type Att = Attachment
 export type FadeEvent = { text: string; at: number }
-export type Msg = { id: string; r: 'user' | 'assistant'; t: string; at?: number; fadeEvents?: FadeEvent[]; by?: string; tps?: number; log?: Try[]; att?: Att[]; err?: boolean; full?: string; ctx?: string[]; fx?: string; cmd?: string; alts?: Snap[]; ai?: number; historyTokens?: number; explicitTokens?: number; reasoning?: string; toolRounds?: { text: string; calls: ToolResult[] }[]; toolFinal?: string; sys?: string; workspaceIds?: string[] }
+export type Message = { id: string; r: 'user' | 'assistant'; t: string; at?: number; fadeEvents?: FadeEvent[]; by?: string; tps?: number; log?: Attempt[]; att?: Attachment[]; err?: boolean; full?: string; ctx?: string[]; fx?: string; cmd?: string; alts?: Snap[]; ai?: number; historyTokens?: number; explicitTokens?: number; reasoning?: string; toolRounds?: { text: string; calls: ToolResult[] }[]; toolFinal?: string; sys?: string; workspaceIds?: string[] }
+export type Msg = Message
 export type Snap = { t: string; by?: string; tps?: number; log?: Try[]; err?: boolean; toolRounds?: { text: string; calls: ToolResult[] }[]; toolFinal?: string }
 export type Chat = { id: string; title: string; pin?: boolean; started?: boolean; folder?: string; msgs: Msg[]; temporary?: boolean; expiresAt?: number; titleAuto?: boolean }
 export type Folder = { id: string; name: string; open: boolean }
@@ -76,12 +90,34 @@ export const widgetOn = (s: { features?: Record<FeatureId, boolean>; widgets: Re
   return !!s.widgets[id]
 }
 
-export const THEMES = { plum: 'Plum', claude: 'Claude', paper: 'Paper', sepia: 'Sepia', custom: 'Custom' }
+export const THEMES = { plum: 'Plum', claude: 'Claude', nord: 'Nord', amoled: 'AMOLED', paper: 'Paper', sepia: 'Sepia', porcelain: 'Porcelain', sand: 'Sand', custom: 'Custom' }
+export const DARK_THEMES = ['plum', 'claude', 'nord', 'amoled'] as const
+export const LIGHT_THEMES = ['paper', 'sepia', 'porcelain', 'sand'] as const
+export type ThemeMode = 'dark' | 'light'
+export type DarkTheme = typeof DARK_THEMES[number] | 'custom'
+export type LightTheme = typeof LIGHT_THEMES[number] | 'custom'
+/** Effective `data-t` value for the current mode (custom stays `custom`; vars come from the mode's custom colors). */
+export const themeKeyOf = (s: { themeMode: ThemeMode; themeDark: DarkTheme; themeLight: LightTheme }) => {
+  const t = s.themeMode === 'light' ? s.themeLight : s.themeDark
+  return (t === 'custom' ? 'custom' : t) as keyof typeof THEMES
+}
+/** Custom colors for the active mode, or null when a built-in theme is active. */
+export const themeCustomOf = (s: { themeMode: ThemeMode; themeDark: DarkTheme; themeLight: LightTheme; customDarkColors: ThemeColors; customLightColors: ThemeColors }) =>
+  s.themeMode === 'light'
+    ? (s.themeLight === 'custom' ? s.customLightColors : null)
+    : (s.themeDark === 'custom' ? s.customDarkColors : null)
+/** Patch selecting a theme key, switching mode when the key belongs to the other palette. `custom` applies to the current mode. */
+export const themePatch = (s: { themeMode: ThemeMode }, key: keyof typeof THEMES) => {
+  if (key === 'custom') return s.themeMode === 'light' ? { themeLight: 'custom' as LightTheme } : { themeDark: 'custom' as DarkTheme }
+  if ((DARK_THEMES as readonly string[]).includes(key)) return { themeMode: 'dark' as ThemeMode, themeDark: key as DarkTheme }
+  return { themeMode: 'light' as ThemeMode, themeLight: key as LightTheme }
+}
 export const THEME_COLOR_KEYS = ['bg', 'side', 'surf', 'hov', 'tx', 'mu', 'ac', 'acx', 'er', 'code', 'codeh', 'c2', 'c3', 'c4', 'c5'] as const
 export type ThemeColorKey = typeof THEME_COLOR_KEYS[number]
 export type ThemeColors = Record<ThemeColorKey, string>
 export const THEME_COLOR_LABELS: Record<ThemeColorKey, string> = { bg: 'Main background', side: 'Sidebar', surf: 'Panel surface', hov: 'Hover and selection', tx: 'Main text', mu: 'Muted text', ac: 'Accent', acx: 'Text on accent', er: 'Error', code: 'Code block', codeh: 'Code block header', c2: 'Syntax: strings', c3: 'Syntax: numbers', c4: 'Syntax: titles', c5: 'Syntax: types' }
 export const DEFAULT_CUSTOM_COLORS: ThemeColors = { bg: '#17101c', side: '#120c16', surf: '#211828', hov: '#2c2036', tx: '#f3eaf7', mu: '#a893b4', ac: '#dc8ad8', acx: '#1b1020', er: '#ff8fa3', code: '#100b15', codeh: '#2f2040', c2: '#9fe3c5', c3: '#f2b98b', c4: '#8fb9ff', c5: '#c7a6ff' }
+export const DEFAULT_CUSTOM_LIGHT_COLORS: ThemeColors = { bg: '#fbfbf9', side: '#f1f1ec', surf: '#efefe9', hov: '#e4e4dc', tx: '#1d1d1b', mu: '#6f6f66', ac: '#3b5bdb', acx: '#ffffff', er: '#c92a2a', code: '#e6e5dd', codeh: '#d3d2c6', c2: '#2b8a3e', c3: '#d9480f', c4: '#7048e8', c5: '#0b7285' }
 export const PRE: Record<string, ['openai' | 'anthropic', string, string, 'author' | 'provider']> = {
   Anthropic: ['anthropic', 'https://api.anthropic.com/v1', 'anthropic', 'author'],
   Google: ['openai', 'https://generativelanguage.googleapis.com/v1beta/openai/', 'google', 'author'],
@@ -102,7 +138,6 @@ export const GENERAL_PROMPT_TEXT = 'You are a helpful general-purpose assistant.
 export const CREATIVITY_PROMPT_TEXT = 'You are a creativity-focused assistant. Favor original ideas, imaginative angles, and unconventional approaches over the most obvious answer. Explore multiple possibilities, make surprising but useful connections between seemingly unrelated concepts, and write richly and expressively when the task calls for it. Adapt to the user\u2019s requested style, tone, genre, and constraints, and experiment freely within them. Stay factually honest: never present invented content as fact, and never fabricate sources, evidence, quotes, or capabilities.'
 export const CONCISE_PROMPT_TEXT = 'Answer briefly and directly. Skip preamble.'
 export const uid = () => Math.random().toString(36).slice(2, 9)
-export const usable = (e: Ep) => e.on && !!e.model.trim() && /^https?:\/\//i.test(e.url.trim())
 
 /* Ephemeral per-reply streaming tool calls (live canvas preview). Deliberately
    outside the persisted store: cleared when each reply completes. */
@@ -164,10 +199,13 @@ type S = {
   features: Record<FeatureId, boolean>
   featureOrder: FeatureId[]
   libraryShow: Record<string, boolean>
-  theme: keyof typeof THEMES
-  customColors: ThemeColors
+  themeMode: ThemeMode
+  themeDark: DarkTheme
+  themeLight: LightTheme
+  customDarkColors: ThemeColors
+  customLightColors: ThemeColors
   setupDone: boolean
-  prefs: { showBy: boolean; showLog: boolean; showTps: boolean; enterSends: boolean; autoTitle: boolean; temporaryByDefault: boolean; showModelPricing: boolean; titleEp: string; titleModel?: string; fade: number; tempHours: number; fontBody: string; fontMono: string; fontHeader: string; modelPrimary: 'id' | 'name'; modelSecondary: 'none' | 'provider' | 'id' | 'name'; modelDisplay?: 'none' | 'name' | 'provider' | 'both'; paletteMax: number; chatWidth: 'narrow' | 'standard' | 'wide'; settingsWidth: number; settingsHeight: number; modelPickerHeight: number; sidebarWidth?: number; widgetWidth?: number; workspaceWidth?: number; modalBlur: number; settingsOpacity: number; routingMode?: 'ordered' | 'classified' }
+  prefs: { showBy: boolean; showLog: boolean; showTps: boolean; enterSends: boolean; autoTitle: boolean; temporaryByDefault: boolean; showModelPricing: boolean; titleEp: string; titleModel?: string; fade: number; tempHours: number; fontBody: string; fontMono: string; fontHeader: string; modelPrimary: 'id' | 'name'; modelSecondary: 'none' | 'provider' | 'id' | 'name'; modelDisplay?: 'none' | 'name' | 'provider' | 'both'; paletteMax: number; chatWidth: 'narrow' | 'standard' | 'wide'; settingsWidth: number; settingsHeight: number; modelPickerHeight: number; sidebarWidth?: number; widgetWidth?: number; workspaceWidth?: number; workspaceSplit?: number; modalBlur: number; settingsOpacity: number; routingMode?: 'ordered' | 'classified' }
   widgets: Record<string, boolean>; widgetPrefs: { usageGroup: 'endpoint' | 'model'; usageMode: 'success' | 'tokens'; usageFormat: string; usageTotal: boolean; usagePeriod: 'session' | 'day' | 'week' | 'custom' | 'all'; usageFrom?: string; usageTo?: string; lastSpeed: boolean; timeUnit: 'ms' | 's' | 'auto'; widgetOrder: string[]; shortcuts: string[]; contextLimit: number; showDisabledEndpoints: boolean; scratchRows: number; snippetLimit: number; costDecimals: number; activePromptsOnly: boolean; charsPerToken: number; hideDoneTodos: boolean }; rail: boolean; pad: string; snips: string[]
   params: { def: boolean; temp: number; topp: number; max: number }; effort: Record<string, string>
   workspacePrefs: WorkspacePrefs
@@ -204,20 +242,11 @@ type S = {
   variant: (mid: string, idx: number) => void
 }
 
-const splitEntry = (ref: string) => { const i = ref.indexOf('::'); return i < 0 ? [ref, ''] : [ref.slice(0, i), ref.slice(i + 2)] }
-const ents = (s: S, p: Pl) => p.e.flatMap((ref) => {
-  const [id, model] = splitEntry(ref), e = s.eps.find((x) => x.id === id)
-  if (!e) return []
-  return (model ? [model] : modelsOf(e)).map((m) => ({ ...e, model: m }))
-})
-const body = (c: Cmd | undefined, t: string) => (!c?.tpl ? t : c.tpl.includes('{{input}}') ? c.tpl.split('{{input}}').join(t) : c.tpl + (t ? '\n\n' + t : ''))
-const full = (b: string, ctx: string[] = [], fx = '') => b + (ctx.length ? '\n\n[tool results]\n' + ctx.join('\n') : '') + fx
-const hint = (l: Try[]) => {
-  const t = l.map((x) => x.err ?? '').join(' ')
-  return /CORS/.test(t) ? '\n\nCORS or network error: check the base URL, your connection, and that the server allows browser requests.'
-    : /HTTP 40[13]/.test(t) ? '\n\nThe key was rejected. Check it in Settings → Endpoints.'
-    : /HTTP 404/.test(t) ? '\n\nNot found. Check the base URL and the model id.' : ''
-}
+export { splitEntry, playlistEntries as ents, applyCommandTemplate as body, composeFullInput as full }
+/* Structured failure hint: prefers coded errors, falls back to classifying
+ * legacy string messages so stored logs still get a useful hint. */
+const hint = (l: Try[]) => hintForLog(l)
+const errCodeOf = (x: unknown): ErrorCode => classifyModelError((x as { message?: unknown })?.message ?? x)
 /* Error text for the process log and failure messages. By default messages
    are redacted (API keys and key-like tokens masked). With Advanced →
    verbose errors, the exact message is shown — the endpoint's own key is
@@ -230,49 +259,9 @@ export const errText = (e: Ep, message: unknown) => {
 }
 
 const snap = (m: Msg): Snap => ({ t: m.t, by: m.by, tps: m.tps, log: m.log, err: m.err, toolRounds: m.toolRounds, toolFinal: m.toolFinal })
-export const modelsOf = (e: Ep) => [...new Set((e.models?.length ? e.models : [e.model]).map((x) => x?.trim()).filter(Boolean))]
-export const modelNameOf = (e: Ep, model: string) => {
-  const name = e.modelNames?.[model]
-  if (name) {
-    const colon = name.indexOf(':')
-    const prefix = colon >= 0 ? name.slice(0, colon).trim().toLowerCase() : ''
-    if (prefix && [e.name, e.endpointId, model.split('/')[0]].some(owner => owner?.toLowerCase() === prefix)) return name.slice(colon + 1).trim()
-    return name
-  }
-  return model.split('/').pop()!.replace(/-/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
-}
 
 function plan(s: S, um: Msg) {
-  const F = s.features ?? DEFAULT_FEATURES
-  const cmd = F.commands && um.cmd ? s.cmds.find((c) => c.id === um.cmd) : undefined
-  const rawSel = s.sel ? (s.sel.k === 'pl' && !F.playlists ? undefined : (s.sel.k === 'pl' ? s.pls : s.eps).find((x) => x.id === s.sel!.id)) : undefined
-  const sel = rawSel
-  let pool: Ep[], pl: Pl | null = null, ex = false, tgt: string
-  if (cmd) { pl = F.playlists ? s.pls.find((p) => p.id === cmd.pl) ?? null : null; pool = pl ? ents(s, pl) : s.eps; tgt = '/' + cmd.name }
-  else if (sel && s.sel!.k === 'ep') { pool = [sel as Ep]; ex = true; tgt = sel.name }
-  else if (sel) { pl = sel as Pl; pool = ents(s, pl); tgt = 'playlist ' + pl.name }
-  else { pool = s.eps; tgt = 'your endpoints' }
-  const need = [...new Set((um.att ?? []).filter((a) => a.kind !== 'txt').map((a) => a.kind as 'img' | 'pdf'))]
-  const ready = pool.filter(usable), cand = ready.filter((e) => need.every((n) => can(e, n))).flatMap((e) => modelsOf(e)
-    .filter((model) => !(s.sel?.k === 'ep' && s.sel.id === e.id && s.sel.model) || s.sel?.model === model)
-    .map((model) => ({ ...e, model })))
-  const scoped = F.prompts ? cmd?.sys || s.prompts.find((x) => x.id === s.pr)?.text || (pl && !cmd ? pl.sys : '') || '' : ''
-  const globalSys = F.prompts && s.globalPrompt?.on && s.globalPrompt.text.trim() ? s.globalPrompt.text.trim() : ''
-  const baseSys = [globalSys, scoped].filter(Boolean).join('\n\n')
-  const enabledTools = F.tools ? TOOLS.filter(([name]) => s.tools[name] === true).map(([name]) => name) : []
-  const toolSys = enabledTools.length ? `${baseSys}${baseSys ? '\n\n' : ''}You may use the enabled tools when needed to answer the user. Call a tool for requests that need its actual result, then base your answer on the returned result.` : baseSys
-  // Skills: the model decides. The system prompt lists the skill catalog
-  // (id + when-to-use description); full instructions load via use_skill.
-  const skills = F.skills ? enabledSkills(normSkills(s.skills).skills) : []
-  const sys = composeSystemPrompt(toolSys, skills)
-  let err: Notice = null
-  if (!s.eps.length) err = { t: 'You have not added a model endpoint yet. Open Settings → Endpoints, choose a provider preset, paste your API key and the model id, then press Test connection. After that, send your message again.', tab: 'eps', label: 'Add an endpoint' }
-  else if (!ready.length) err = { t: ex ? `${tgt} is disabled or incomplete. An endpoint must be enabled and have a base URL and a model id.` : `No endpoint in ${tgt} is ready. Enable one and make sure it has a base URL and a model id.`, tab: pl ? 'pls' : 'eps', label: 'Fix endpoints' }
-  else if (!cand.length) err = { t: `Not sent: no ready endpoint in ${tgt} can process ${need.map((n) => (n === 'img' ? 'images' : 'PDFs')).join(' and ')}. Your attachments are still in the message box. Choose a compatible endpoint or model.`, tab: 'eps', label: 'Open endpoints' }
-  // A saved selection pointing at a deleted endpoint/playlist must never silently fall back to everything.
-  // (A playlist selection while playlists are disabled is simply ignored, not an error.)
-  else if (s.sel && !sel && (s.sel.k === 'ep' || F.playlists)) err = { t: `The selected ${s.sel.k === 'pl' ? 'playlist' : 'endpoint'} is no longer available. Choose another model${s.sel.k === 'pl' ? ' or playlist' : ''}, then send again.`, tab: s.sel.k === 'pl' ? 'pls' : 'eps', label: 'Fix selection' }
-  return { cmd, pl, ex, sys, cand, err, tgt, skills }
+  return planRequest(s, um, DEFAULT_FEATURES)
 }
 
 /* System prompt for the process log when a reply has no saved `sys` (older
@@ -293,72 +282,6 @@ export const previewSysFor = (msgId: string): string | null => {
 
 type Run = { stopped: boolean; ctl: AbortController | null }
 let cur: Run | null = null
-export const QUOTA_FLAG = 'byok.v1:quota-full'
-const isQuotaError = (x: any) => x && (x.name === 'QuotaExceededError' || x.code === 22 || /quota/i.test(String(x?.message ?? '')))
-/* Shrink a serialized persist payload so it fits localStorage: keep settings,
-   keep chats, but drop the bulkiest regenerable/derived fields (old tool
-   results, reasoning traces, workspace history beyond the latest revisions). */
-export const prunePersisted = (raw: string): string | null => {
-  try {
-    const v = JSON.parse(raw)
-    const s = v?.state ?? v
-    if (!s || typeof s !== 'object') return null
-    const cap = (t: unknown, n: number) => typeof t === 'string' && t.length > n ? t.slice(0, n) + `\n[compacted: kept ${n.toLocaleString()} of ${t.length.toLocaleString()} characters]` : t
-    if (Array.isArray(s.chats)) s.chats = s.chats.map((c: any) => ({
-      ...c,
-      msgs: (c.msgs ?? []).map((m: any) => ({
-        ...m,
-        fadeEvents: undefined,
-        reasoning: typeof m.reasoning === 'string' && m.reasoning.length > 5000 ? m.reasoning.slice(0, 5000) + '\n[compacted]' : m.reasoning,
-        toolRounds: (m.toolRounds ?? []).map((r: any) => ({
-          ...r,
-          calls: (r.calls ?? []).map((call: any) => ({ ...call, result: cap(call.result, 5000) })),
-        })),
-      })),
-    }))
-    if (s.workspaces && typeof s.workspaces === 'object') {
-      for (const ws of Object.values(s.workspaces) as any[]) {
-        if (Array.isArray(ws.revisions) && ws.revisions.length > 2) ws.revisions = ws.revisions.slice(-2)
-        for (const rev of ws.revisions ?? []) for (const f of rev.files ?? []) f.content = cap(f.content, 20000)
-      }
-    }
-    return JSON.stringify(v?.state ? { ...v, state: s } : s)
-  } catch { return null }
-}
-export const storageUsage = async (): Promise<{ localBytes: number; quota?: number; usage?: number }> => {
-  let localBytes = 0
-  try {
-    for (let i = 0; i < localStorage.length; i++) {
-      const k = localStorage.key(i)
-      if (!k || (!k.startsWith('byok.v1') && k !== QUOTA_FLAG)) continue
-      localBytes += (k.length + (localStorage.getItem(k) ?? '').length) * 2
-    }
-  } catch { /* blocked storage */ }
-  try {
-    const e: any = await (navigator as any)?.storage?.estimate?.()
-    if (e && typeof e === 'object') return { localBytes, quota: e.quota, usage: e.usage }
-  } catch { /* unavailable */ }
-  return { localBytes }
-}
-const storage = createJSONStorage(() => ({
-  getItem: (k: string) => { try { localStorage.removeItem(QUOTA_FLAG); return localStorage.getItem(k) } catch { return null } },
-  setItem: (k: string, v: string) => {
-    try { localStorage.setItem(k, v); localStorage.removeItem(QUOTA_FLAG) }
-    catch (x) {
-      // localStorage (~5MB) overflows on long chats with txt attachments and
-      // workspace revisions. Retry once with a compacted payload; if that
-      // still fails, keep the last good value and flag it for the Data tab.
-      const pruned = prunePersisted(v)
-      if (pruned && pruned.length < v.length) {
-        try { localStorage.setItem(k, pruned); localStorage.removeItem(QUOTA_FLAG); return }
-        catch { /* fall through to flag */ }
-      }
-      try { localStorage.setItem(QUOTA_FLAG, String(Date.now())) } catch { /* ignore */ }
-      if (!isQuotaError(x)) throw x
-    }
-  },
-  removeItem: (k: string) => { try { localStorage.removeItem(k); localStorage.removeItem(QUOTA_FLAG) } catch { /* ignore */ } },
-}))
 
 export const useS = create<S>()(
   persist(
@@ -425,7 +348,7 @@ export const useS = create<S>()(
           const f = cand.find((e) => e.model === j.model)!
           return [f, ...cand.filter((e) => e !== f)]
         } catch (x: any) {
-          if (!r.stopped) log.push({ n: c.name + ' (classifier)', m: c.model, ms: Date.now() - t0, err: errText(c, x.message), at: Date.now() })
+          if (!r.stopped) log.push({ n: c.name + ' (classifier)', m: c.model, ms: Date.now() - t0, err: errText(c, x.message), errCode: getErrorCode(x) ?? errCodeOf(x), at: Date.now() })
           return cand
         }
       }
@@ -700,7 +623,7 @@ export const useS = create<S>()(
               if (r.stopped) { if (txt) bump(0, est(txt)); break }
               const elapsed = Date.now() - t0
               const toolElapsed = toolRounds.reduce((total, round) => total + Math.max(0, ...round.calls.map((call) => call.ms ?? 0)), 0)
-              log.push({ n: e.name, m: e.model, ms: Math.max(0, elapsed - toolElapsed), err: errText(e, x.message), at: Date.now() })
+              log.push({ n: e.name, m: e.model, ms: Math.max(0, elapsed - toolElapsed), err: errText(e, x.message), errCode: getErrorCode(x) ?? errCodeOf(x), at: Date.now() })
               // Preserve whatever the model streamed before aborting. `on()`
               // already wrote it into `txt` (flushed synchronously on error),
               // with `error.partial` as fallback. Keep it on the message now
@@ -719,7 +642,7 @@ export const useS = create<S>()(
               if (p.ex) break
             }
           }
-        } catch (x: any) { log.push({ n: 'engine', m: '', err: String(x?.message ?? x) }) }
+        } catch (x: any) { log.push({ n: 'engine', m: '', err: String(x?.message ?? x), errCode: getErrorCode(x) ?? errCodeOf(x) }) }
         edit(id, mid, (m) => r.stopped
           ? { ...m, sys: system, log, by: m.by ? m.by + ' (stopped)' : 'Stopped', t: m.t || '(stopped before any text arrived)' }
           : ok ? { ...m, sys: system, log }
@@ -751,7 +674,7 @@ export const useS = create<S>()(
         params: { def: true, temp: 0.7, topp: 1, max: 4096 }, effort: {},
         workspacePrefs: { defaultView: 'latest', autoOpen: true, autoFollow: true },
         advanced: { ...DEFAULT_ADVANCED },
-        sel: null, pr: 'general', globalPrompt: { on: false, text: '' }, features: { ...DEFAULT_FEATURES }, featureOrder: FEATURES.map(([id]) => id), libraryShow: { ...DEFAULT_LIBRARY_SHOW }, theme: 'plum', customColors: { ...DEFAULT_CUSTOM_COLORS }, setupDone: false, prefs: { showBy: true, showLog: true, showTps: false, enterSends: true, autoTitle: true, temporaryByDefault: false, showModelPricing: false, titleEp: '', titleModel: '', fade: 0.4, tempHours: 3, fontBody: 'system', fontMono: 'system', fontHeader: 'system', modelPrimary: 'name', modelSecondary: 'none', paletteMax: 320, chatWidth: 'standard', settingsWidth: 1024, settingsHeight: 780, modelPickerHeight: 480, sidebarWidth: 288, widgetWidth: 320, workspaceWidth: 0.4, modalBlur: 12, settingsOpacity: 55 },
+        sel: null, pr: 'general', globalPrompt: { on: false, text: '' }, features: { ...DEFAULT_FEATURES }, featureOrder: FEATURES.map(([id]) => id), libraryShow: { ...DEFAULT_LIBRARY_SHOW }, themeMode: 'dark', themeDark: 'claude', themeLight: 'paper', customDarkColors: { ...DEFAULT_CUSTOM_COLORS }, customLightColors: { ...DEFAULT_CUSTOM_LIGHT_COLORS }, setupDone: false, prefs: { showBy: true, showLog: true, showTps: false, enterSends: true, autoTitle: true, temporaryByDefault: false, showModelPricing: false, titleEp: '', titleModel: '', fade: 0.4, tempHours: 3, fontBody: 'system', fontMono: 'system', fontHeader: 'system', modelPrimary: 'name', modelSecondary: 'none', paletteMax: 320, chatWidth: 'standard', settingsWidth: 1024, settingsHeight: 780, modelPickerHeight: 480, sidebarWidth: 288, widgetWidth: 320, workspaceWidth: 0.4, workspaceSplit: 0.2, modalBlur: 12, settingsOpacity: 55 },
         stats: ZERO(), keys: Object.fromEntries(KEYS.map(([k, , d]) => [k, d])),
         folders: [], price: { in: 0, out: 0 }, todos: [],
         draft: '', busy: false, notice: null,
@@ -889,14 +812,28 @@ export const useS = create<S>()(
       }
     },
     {
-      name: 'byok.v1', version: 17, storage,
+      name: 'byok.v1', version: 18, storage: persistStorage,
       migrate: (p: any, v: number) => {
         delete p.settingsScope
         if (v < 11) {
           const hasUserData = !!(p.eps?.length || p.chats?.length || p.pls?.length || p.prompts?.some((x: any) => !['general', 'creativity', 'concise', 's1', 's2', 's3'].includes(x.id)))
           p.setupDone = hasUserData
         }
-        p.customColors = { ...DEFAULT_CUSTOM_COLORS, ...(p.customColors ?? {}) }
+        if (v < 18) {
+          const old = typeof p.theme === 'string' ? p.theme : undefined
+          const oldCustom = p.customColors
+          if (typeof p.themeMode !== 'string') p.themeMode = 'dark'
+          if (typeof p.themeDark !== 'string') p.themeDark = 'claude'
+          if (typeof p.themeLight !== 'string') p.themeLight = 'paper'
+          if (old && old !== 'custom' && (DARK_THEMES as readonly string[]).includes(old)) p.themeDark = old
+          else if (old && old !== 'custom' && (LIGHT_THEMES as readonly string[]).includes(old)) { p.themeMode = 'light'; p.themeLight = old }
+          else if (old === 'custom') p.themeDark = 'custom'
+          if (oldCustom && typeof oldCustom === 'object') p.customDarkColors = { ...DEFAULT_CUSTOM_COLORS, ...oldCustom }
+          delete p.theme
+          delete p.customColors
+        }
+        p.customDarkColors = { ...DEFAULT_CUSTOM_COLORS, ...(p.customDarkColors ?? {}) }
+        p.customLightColors = { ...DEFAULT_CUSTOM_LIGHT_COLORS, ...(p.customLightColors ?? {}) }
         p.eps = (p.eps ?? []).map((e: Ep) => {
           const oldGoogle = e.preset === 'Gemini' || (/generativelanguage\.googleapis\.com/i.test(e.url) && e.name === 'Gemini')
           const preset = oldGoogle ? 'Google' : e.preset
@@ -921,7 +858,7 @@ export const useS = create<S>()(
           p.prefs.titleEp = ''
         }
         if (p.prefs && p.prefs.showTps === undefined) p.prefs.showTps = false
-        p.prefs = { ...p.prefs, fade: p.prefs?.fade ?? 0.4, tempHours: p.prefs?.tempHours ?? 3, fontBody: p.prefs?.fontBody ?? 'system', fontMono: p.prefs?.fontMono ?? 'system', fontHeader: p.prefs?.fontHeader ?? 'system', modelPrimary: p.prefs?.modelPrimary ?? ({ none: 'id', name: 'name', provider: 'id', both: 'name' } as const)[(p.prefs?.modelDisplay as string) ?? 'both'] ?? 'name', modelSecondary: p.prefs?.modelSecondary ?? ({ none: 'none', name: 'none', provider: 'provider', both: 'provider' } as const)[(p.prefs?.modelDisplay as string) ?? 'both'] ?? 'none', paletteMax: p.prefs?.paletteMax ?? 320, chatWidth: p.prefs?.chatWidth ?? 'standard', settingsWidth: p.prefs?.settingsWidth ?? 1024, settingsHeight: p.prefs?.settingsHeight ?? 780, modelPickerHeight: p.prefs?.modelPickerHeight ?? 480, showModelPricing: p.prefs?.showModelPricing ?? false, titleModel: p.prefs?.titleModel ?? '', sidebarWidth: p.prefs?.sidebarWidth ?? 288, widgetWidth: p.prefs?.widgetWidth ?? 320, workspaceWidth: typeof p.prefs?.workspaceWidth === 'number' && p.prefs.workspaceWidth <= 1 ? p.prefs.workspaceWidth : 0.4, modalBlur: p.prefs?.modalBlur ?? 12, settingsOpacity: p.prefs?.settingsOpacity ?? 55, temporaryByDefault: p.prefs?.temporaryByDefault ?? false }
+        p.prefs = { ...p.prefs, fade: p.prefs?.fade ?? 0.4, tempHours: p.prefs?.tempHours ?? 3, fontBody: p.prefs?.fontBody ?? 'system', fontMono: p.prefs?.fontMono ?? 'system', fontHeader: p.prefs?.fontHeader ?? 'system', modelPrimary: p.prefs?.modelPrimary ?? ({ none: 'id', name: 'name', provider: 'id', both: 'name' } as const)[(p.prefs?.modelDisplay as string) ?? 'both'] ?? 'name', modelSecondary: p.prefs?.modelSecondary ?? ({ none: 'none', name: 'none', provider: 'provider', both: 'provider' } as const)[(p.prefs?.modelDisplay as string) ?? 'both'] ?? 'none', paletteMax: p.prefs?.paletteMax ?? 320, chatWidth: p.prefs?.chatWidth ?? 'standard', settingsWidth: p.prefs?.settingsWidth ?? 1024, settingsHeight: p.prefs?.settingsHeight ?? 780, modelPickerHeight: p.prefs?.modelPickerHeight ?? 480, showModelPricing: p.prefs?.showModelPricing ?? false, titleModel: p.prefs?.titleModel ?? '', sidebarWidth: p.prefs?.sidebarWidth ?? 288, widgetWidth: p.prefs?.widgetWidth ?? 320, workspaceWidth: typeof p.prefs?.workspaceWidth === 'number' && p.prefs.workspaceWidth <= 1 ? p.prefs.workspaceWidth : 0.4, workspaceSplit: typeof p.prefs?.workspaceSplit === 'number' ? p.prefs.workspaceSplit : 0.2, modalBlur: p.prefs?.modalBlur ?? 12, settingsOpacity: p.prefs?.settingsOpacity ?? 55, temporaryByDefault: p.prefs?.temporaryByDefault ?? false }
         p.tools = { ...DEFAULT_TOOLS, ...(p.tools ?? {}) }
         p.search = normSearch(p.search)
         p.skills = normSkills(p.skills).skills

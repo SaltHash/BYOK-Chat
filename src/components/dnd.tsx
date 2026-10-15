@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
+import { dndDirection, insertionIndex } from '../dndShared'
 
 /* Cohesive pointer-based drag-and-drop system (replaces the old HTML5 DnD handlers).
  *
@@ -225,26 +226,18 @@ export function SortableList(props: {
     const d = drag.current
     if (!d) return 0
     const rest = stateRef.current.ids.filter((id) => id !== d.id)
-    const els: { id: string; mid: number }[] = []
+    const mids: number[] = []
     for (const id of rest) {
       const el = itemEls.current.get(id)
       if (!el) continue
       const r = el.getBoundingClientRect()
-      els.push({ id, mid: r.top + r.height / 2 })
+      mids.push(r.top + r.height / 2)
     }
-    const dir: 1 | -1 = pointerY >= d.lastY ? 1 : -1
+    const dir = dndDirection(pointerY, d.lastY)
     d.dir = dir
     d.lastY = pointerY
     // Hysteresis band keeps the placeholder stable right on a boundary.
-    const bias = dir === 1 ? -4 : 4
-    let at = els.length
-    for (let i = 0; i < els.length; i++) {
-      if (pointerY < els[i].mid + bias) {
-        at = i
-        break
-      }
-    }
-    return at
+    return insertionIndex(mids, pointerY, dir)
   }, [])
 
   const autoScroll = useCallback((pointerY: number) => {

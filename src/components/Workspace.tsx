@@ -2,10 +2,11 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Archive, Check, Copy, ChevronRight, Download, FileCode, FileJson, FileText, FileType, Globe, Image, Music, Video, Braces, Terminal, Database, Cog, Hash, PenTool, LayoutTemplate, Sparkles, File, Files, Folder, FolderOpen, Pencil, X, type LucideIcon } from 'lucide-react'
 import { strToU8, zipSync } from 'fflate'
 import { useS, type Msg } from '../store'
+import { clampWorkspaceSplit } from '../layout'
 import type { ToolCall } from '../engine'
 import { Md } from './Md'
 import { Btn, cx } from './ui'
-import { WORKSPACE_MAX_FILES, buildZipEntries, workspaceLines, workspaceSize, groupWorkspaceVersions, sanitizePath, zipFilename, type Workspace, type WorkspaceRevision } from '../workspace'
+import { WORKSPACE_MAX_FILES, buildZipEntries, workspaceLines, workspaceSize, buildFolderTree, expandedFoldersForPath, extractWorkspaceIds, findWritingPath, groupWorkspaceVersions, sanitizePath, zipFilename, type Workspace, type WorkspaceRevision } from '../workspace'
 
 const fence = (lang: string, code: string) => {
   const runs = code.match(/`{3,}/g)
@@ -34,9 +35,8 @@ export function fileIconFor(path: string) {
   const ext = path.split('.').pop()?.toLowerCase() ?? ''
   return fileIconMap[ext] ?? FileText
 }
-export function fileIconColor(ext: string) {
-  return 'var(--ac)'
-}
+/** Accent color for file icons (single token, replaces per-extension helper). */
+export const FILE_ICON_COLOR = 'var(--ac)'
 export const saveBlob = (name: string, blob: Blob) => {
   const a = document.createElement('a')
   a.href = URL.createObjectURL(blob)
@@ -77,6 +77,75 @@ export function downloadAllFiles(groups: { path: string; versions: { action: str
   saveBlob(`${rootName || zipFilename(entries).replace(/\.zip$/, '')}.zip`, new Blob([zipSync(obj)], { type: 'application/zip' }))
 }
 
+/* Shared folder/file tree used by both the compact tile and the side panel.
+ * `variant` preserves each caller's styling; recursion + sorting live here once. */
+export function WorkspaceFileTree<T extends { path: string; content: string }>({
+  tree, expanded, selectedPath, onToggle, onSelect, variant = 'tile',
+}: {
+  tree: Record<string, { files: T[]; folders: Set<string> }>
+  expanded: Record<string, boolean>
+  selectedPath: string | null
+  onToggle: (path: string) => void
+  onSelect: (path: string) => void
+  variant?: 'tile' | 'panel'
+}) {
+  const renderFolder = (path: string, depth = 0): React.ReactNode => {
+    const node = tree[path]
+    if (!node) return null
+    const isExpanded = expanded[path] ?? false
+    const displayName = path === '/' ? 'Root' : path.split('/').pop() || ''
+    const indent = depth * 16
+    const showButton = path !== '/'
+    return (
+      <div key={path} className={variant === 'tile' ? 'space-y-1' : 'space-y-0.5'}>
+        {showButton && (
+          <button
+            onClick={() => onToggle(path)}
+            className={variant === 'tile'
+              ? 'flex w-full items-start gap-2 px-2 py-1.5 text-sm hover:bg-hov rounded transition-colors'
+              : cx('flex w-full items-start gap-2 px-2 py-1.5 text-sm hover:bg-hov rounded transition-colors', depth > 0 && 'ml-4')}
+            style={{ paddingLeft: `${16 + indent}px` }}
+            aria-expanded={isExpanded}
+            aria-label={variant === 'tile' ? undefined : isExpanded ? `Collapse ${displayName}` : `Expand ${displayName}`}
+          >
+            <span className="flex-1 min-w-0 flex items-start gap-2">
+              <span className="shrink-0">{isExpanded ? <FolderOpen size={14} className="text-mu" /> : <Folder size={14} className="text-mu" />}</span>
+              <span className="font-mono text-xs text-mu text-left">{displayName}</span>
+              {variant === 'panel' && <span className="text-xs text-mu/70">{node.files.length} file{node.files.length === 1 ? '' : 's'}{node.folders.size > 0 ? `, ${node.folders.size} folder${node.folders.size === 1 ? '' : 's'}` : ''}</span>}
+              <ChevronRight size={12} className={cx('shrink-0 text-mu transition-transform', isExpanded && 'rotate-90')} />
+            </span>
+            {variant === 'tile' && <span className="text-xs text-mu">{node.files.length} file{node.files.length === 1 ? '' : 's'}</span>}
+          </button>
+        )}
+        {(showButton ? isExpanded : true) && (
+          <>
+            {Array.from(node.folders).sort().map((name) => renderFolder(path === '/' ? `/${name}` : `${path}/${name}`, path === '/' ? depth : depth + 1))}
+            {[...node.files].sort((a, b) => a.path.localeCompare(b.path)).map((f) => {
+              const Icon = fileIconFor(f.path)
+              const selected = selectedPath === f.path
+              return (
+                <button
+                  key={f.path}
+                  onClick={() => onSelect(f.path)}
+                  className={cx('flex w-full items-center gap-2 rounded-md px-2 py-1 text-sm transition-colors hover:bg-hov', selected ? 'text-tx' : 'text-tx/90', variant === 'panel' && depth > 0 && 'ml-4')}
+                  style={{ paddingLeft: path === '/' ? `${16 + indent}px` : `${16 + indent + 14}px`, backgroundColor: selected ? 'color-mix(in srgb, var(--ac) 12%, transparent)' : undefined }}
+                  aria-current={variant === 'panel' && selected ? 'true' : undefined}
+                  aria-label={variant === 'panel' ? `${f.path} · ${workspaceLines(f.content)} lines` : undefined}
+                >
+                  <span className="shrink-0" style={{ color: FILE_ICON_COLOR }}><Icon size={variant === 'tile' ? 14 : 13} /></span>
+                  <span className="min-w-0 truncate font-mono text-xs">{f.path.split('/').pop()}</span>
+                  <span className="ml-auto text-xs text-mu">{workspaceLines(f.content)} lines</span>
+                </button>
+              )
+            })}
+          </>
+        )}
+      </div>
+    )
+  }
+  return <>{renderFolder('/')}</>
+}
+
 /* Compact tile beneath the reply: shows workspace name, file count, revision, and file list grouped by folder. */
 export function WorkspaceTile({ msg, live, workspace, selectedRevisionId, onOpen, onSelectRevision }: {
   msg: Msg; live?: ToolCall[]; workspace: Workspace; selectedRevisionId: string | null;
@@ -88,104 +157,21 @@ export function WorkspaceTile({ msg, live, workspace, selectedRevisionId, onOpen
 
   const revision = workspace.revisions?.find(r => r.id === selectedRevisionId) ?? workspace.revisions?.[workspace.revisions.length - 1]
   if (!revision) return null
-  const writingPath = useMemo(() => {
-    const pending = (live ?? []).filter((c) => c.name === 'workspace_upsert' || !c.name)
-    const done = new Set((msg.toolRounds ?? []).flatMap((r) => r.calls).filter((c) => c.name === 'workspace_upsert').map((c) => c.id))
-    const writing = pending.filter((c) => !c.id || !done.has(c.id))
-    if (!writing.length) return null
-    const wgroups = groupWorkspaceVersions(writing.map((c) => ({ ...c })))
-    return wgroups[wgroups.length - 1]?.path ?? null
-  }, [msg.toolRounds, live])
+  const writingPath = useMemo(() => findWritingPath(live, msg.toolRounds), [msg.toolRounds, live])
 
   const [expandedFolders, setExpandedFolders] = useState<Record<string, boolean>>({})
   const [selectedPath, setSelectedPath] = useState<string | null>(null)
 
   // Auto-expand only folders leading to writing file; mirror panel
   useEffect(() => {
-    if (!writingPath) {
-      setExpandedFolders({})
-      return
-    }
-    const parts = writingPath.split('/')
-    const newExpanded: Record<string, boolean> = {}
-    let currentPath = '/'
-    for (let i = 0; i < parts.length - 1; i++) {
-      const folderName = parts[i]
-      currentPath = currentPath === '/' ? `/${folderName}` : `${currentPath}/${folderName}`
-      newExpanded[currentPath] = true
-    }
-    setExpandedFolders(newExpanded)
+    setExpandedFolders(expandedFoldersForPath(writingPath))
   }, [writingPath])
 
   // Build nested folder tree for expandable folders
-  const folderTree = useMemo(() => {
-    const root: Record<string, { files: typeof revision.files; folders: Set<string> }> = { '/': { files: [], folders: new Set() } }
-    for (const f of revision.files) {
-      const parts = f.path.split('/')
-      let currentPath = '/'
-      for (let i = 0; i < parts.length - 1; i++) {
-        const folderName = parts[i]
-        const nextPath = currentPath === '/' ? `/${folderName}` : `${currentPath}/${folderName}`
-        if (!root[nextPath]) root[nextPath] = { files: [], folders: new Set() }
-        root[currentPath].folders.add(folderName)
-        currentPath = nextPath
-      }
-      root[currentPath].files.push(f)
-    }
-    return root
-  }, [revision.files])
+  const folderTree = useMemo(() => buildFolderTree(revision.files), [revision.files])
 
   const toggleFolder = (folderPath: string) => {
     setExpandedFolders(prev => ({ ...prev, [folderPath]: !prev[folderPath] }))
-  }
-
-  const renderFolder = (path: string, depth: number = 0) => {
-    const node = folderTree[path]
-    if (!node) return null
-    const isExpanded = expandedFolders[path] ?? false
-    const displayName = path === '/' ? 'Root' : path.split('/').pop() || ''
-    const indent = depth * 16
-
-    return (
-      <div key={path} className="space-y-1">
-        {path !== '/' && (
-          <button
-            onClick={() => toggleFolder(path)}
-            className="flex w-full items-start gap-2 px-2 py-1.5 text-sm hover:bg-hov rounded transition-colors"
-            style={{ paddingLeft: `${16 + indent}px` }}
-            aria-expanded={isExpanded}
-          >
-            <span className="flex-1 min-w-0 flex items-start gap-2">
-              <span className="shrink-0">
-                {isExpanded ? <FolderOpen size={14} className="text-mu" /> : <Folder size={14} className="text-mu" />}
-              </span>
-              <span className="font-mono text-[12px] text-mu text-left">{displayName}</span>
-              <ChevronRight size={12} className={cx('shrink-0 text-mu transition-transform', isExpanded && 'rotate-90')} />
-            </span>
-            <span className="text-xs text-mu">{node.files.length} file{node.files.length === 1 ? '' : 's'}</span>
-          </button>
-        )}
-        {(path === '/' ? true : isExpanded) && (
-          <>
-            {Array.from(node.folders).sort().map((folderName) => {
-              const childPath = path === '/' ? `/${folderName}` : `${path}/${folderName}`
-              return renderFolder(childPath, path === '/' ? depth : depth + 1)
-            })}
-            {[...node.files].sort((a, b) => a.path.localeCompare(b.path)).map((f) => {
-              const Icon = fileIconFor(f.path)
-              const ext = f.path.split('.').pop()?.toLowerCase() ?? ''
-              return (
-                <button onClick={() => { setSelectedPath(f.path); onOpen?.(f.path); }} className={cx('flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm transition-colors', selectedPath === f.path ? 'text-tx' : 'text-tx/90', 'hover:bg-hov/60')} style={{ paddingLeft: path === '/' ? `${16 + indent}px` : `${16 + indent + 14}px`, backgroundColor: selectedPath === f.path ? 'color-mix(in srgb, var(--ac) 12%, transparent)' : undefined }}>
-                  <span className="shrink-0" style={{ color: fileIconColor(ext) }}><Icon size={14} /></span>
-                  <span className="min-w-0 truncate font-mono text-[12px]">{f.path.split('/').pop()}</span>
-                  <span className="ml-auto text-xs text-mu">{workspaceLines(f.content)} lines</span>
-                </button>
-              )
-            })}
-          </>
-        )}
-      </div>
-    )
   }
 
   return (
@@ -203,8 +189,15 @@ export function WorkspaceTile({ msg, live, workspace, selectedRevisionId, onOpen
         )}
         {total > WORKSPACE_MAX_FILES && <span className="shrink-0 text-xs text-mu">(showing first {WORKSPACE_MAX_FILES})</span>}
       </div>
-      <div className="max-h-[800px] overflow-y-auto space-y-1 border-t border-hov pt-2 mt-1">
-        {renderFolder('/')}
+      <div className="max-h-200 overflow-y-auto space-y-1 border-t border-hov pt-2 mt-1">
+        <WorkspaceFileTree
+          tree={folderTree}
+          expanded={expandedFolders}
+          selectedPath={selectedPath}
+          onToggle={toggleFolder}
+          onSelect={(p) => { setSelectedPath(p); onOpen?.(p) }}
+          variant="tile"
+        />
       </div>
       <div className="flex items-center gap-2 pt-1">
         {workspace.revisions.length > 0 && (
@@ -235,7 +228,7 @@ function WorkspaceRevisionPicker({ workspace, selectedId, onSelect, className }:
         aria-haspopup="listbox"
         aria-expanded={open}
       >
-        <span className="truncate font-mono text-[13px]">{selected.name}</span>
+        <span className="truncate font-mono text-sm">{selected.name}</span>
         <span className="shrink-0 text-xs text-mu">v{workspace.revisions.findIndex(r => r.id === selected.id) + 1} of {workspace.revisions.length}</span>
         <span className="flex-1" />
         <span className="shrink-0">{open ? '▲' : '▼'}</span>
@@ -267,27 +260,25 @@ export function WorkspacePanel({ msg, live, workspace, selectedRevisionId, setSe
   const send = useS((s) => s.send)
   const busy = useS((s) => s.busy)
   const workspacePrefs = useS((s) => s.workspacePrefs ?? { defaultView: 'latest', autoOpen: true, autoFollow: true })
+  const storedSplit = useS((s) => s.prefs.workspaceSplit)
   const [pinned, setPinned] = useState<Record<string, number>>({})
   const [edits, setEdits] = useState<Record<string, { content: string; language: string }[]>>({})
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState('')
   const [selectedFilePath, setSelectedFilePath] = useState<string | null>(null)
   const [expandedFolders, setExpandedFolders] = useState<Record<string, boolean>>({})
-  const [split, setSplit] = useState(0.2)
+  const split = clampWorkspaceSplit(storedSplit)
+  const setSplit = (v: number) => {
+    const st = useS.getState()
+    st.patch({ prefs: { ...st.prefs, workspaceSplit: Math.round(clampWorkspaceSplit(v) * 1000) / 1000 } })
+  }
   const initialPathRef = useRef(initialFilePath)
 
   const revision = workspace.revisions.find(r => r.id === selectedRevisionId) ?? workspace.revisions[workspace.revisions.length - 1]
   const { groups, total, isLive } = useWorkspaceFiles(msg, live)
 
   // Determine the file currently being written by the AI
-  const writingPath = useMemo(() => {
-    const pending = (live ?? []).filter((c) => c.name === 'workspace_upsert' || !c.name)
-    const done = new Set((msg.toolRounds ?? []).flatMap((r) => r.calls).filter((c) => c.name === 'workspace_upsert').map((c) => c.id))
-    const writing = pending.filter((c) => !c.id || !done.has(c.id))
-    if (!writing.length) return null
-    const wgroups = groupWorkspaceVersions(writing.map((c) => ({ ...c })))
-    return wgroups[wgroups.length - 1]?.path ?? null
-  }, [msg.toolRounds, live])
+  const writingPath = useMemo(() => findWritingPath(live, msg.toolRounds), [msg.toolRounds, live])
 
   // Exit edit mode whenever the followed file changes (e.g. AI starts writing another file).
   useEffect(() => { setEditing(false) }, [revision.id])
@@ -297,15 +288,7 @@ export function WorkspacePanel({ msg, live, workspace, selectedRevisionId, setSe
     if (initialPathRef.current && !selectedFilePath) {
       setSelectedFilePath(initialPathRef.current)
       // Ensure the folder containing this file is expanded
-      const parts = initialPathRef.current.split('/')
-      let currentPath = '/'
-      const newExpanded = { ...expandedFolders }
-      for (let i = 0; i < parts.length - 1; i++) {
-        const folderName = parts[i]
-        currentPath = currentPath === '/' ? `/${folderName}` : `${currentPath}/${folderName}`
-        newExpanded[currentPath] = true
-      }
-      setExpandedFolders(newExpanded)
+      setExpandedFolders((prev) => ({ ...prev, ...expandedFoldersForPath(initialPathRef.current) }))
     }
   }, [])
 
@@ -314,17 +297,9 @@ export function WorkspacePanel({ msg, live, workspace, selectedRevisionId, setSe
     if (workspacePrefs.autoFollow && writingPath && writingPath !== selectedFilePath) {
       setSelectedFilePath(writingPath)
       // Ensure the folder containing this file is expanded
-      const parts = writingPath.split('/')
-      let currentPath = '/'
-      const newExpanded = { ...expandedFolders }
-      for (let i = 0; i < parts.length - 1; i++) {
-        const folderName = parts[i]
-        currentPath = currentPath === '/' ? `/${folderName}` : `${currentPath}/${folderName}`
-        newExpanded[currentPath] = true
-      }
-      setExpandedFolders(newExpanded)
+      setExpandedFolders((prev) => ({ ...prev, ...expandedFoldersForPath(writingPath) }))
     }
-  }, [writingPath, workspacePrefs.autoFollow, selectedFilePath, expandedFolders])
+  }, [writingPath, workspacePrefs.autoFollow, selectedFilePath])
 
   // Initialize selected file to first file in revision (only if no file selected yet and no initial path)
   useEffect(() => {
@@ -346,82 +321,7 @@ export function WorkspacePanel({ msg, live, workspace, selectedRevisionId, setSe
   }
 
   // Build folder tree for expandable folders
-  const folderTree = useMemo(() => {
-    const root: Record<string, { files: typeof files; folders: Set<string> }> = { '/': { files: [], folders: new Set() } }
-    for (const f of files) {
-      const parts = f.path.split('/')
-      let currentPath = '/'
-      for (let i = 0; i < parts.length - 1; i++) {
-        const folderName = parts[i]
-        const nextPath = currentPath === '/' ? `/${folderName}` : `${currentPath}/${folderName}`
-        if (!root[nextPath]) root[nextPath] = { files: [], folders: new Set() }
-        root[currentPath].folders.add(folderName)
-        currentPath = nextPath
-      }
-      root[currentPath].files.push(f)
-    }
-    return root
-  }, [files])
-
-  const renderFolder = (path: string, depth: number = 0) => {
-    const node = folderTree[path]
-    if (!node) return null
-    // Only expand folders that lead to selected/writing file; never expand all by default
-    const isExpanded = expandedFolders[path] ?? false
-    const showButton = path !== '/'
-    const displayName = path === '/' ? 'Root' : path.split('/').pop() || ''
-    const indent = depth * 16
-
-    return (
-      <div key={path} className="space-y-0.5">
-        {showButton && (
-          <button
-            onClick={() => setExpandedFolders(prev => ({ ...prev, [path]: !isExpanded }))}
-            className={cx('flex w-full items-start gap-2 px-2 py-1.5 text-sm hover:bg-hov rounded transition-colors', depth > 0 && 'ml-4')}
-            style={{ paddingLeft: `${16 + indent}px` }}
-            aria-expanded={isExpanded}
-            aria-label={isExpanded ? `Collapse ${displayName}` : `Expand ${displayName}`}
-          >
-            <span className="flex-1 min-w-0 flex items-start gap-2">
-              <span className="shrink-0">
-                {isExpanded ? <FolderOpen size={14} className="text-mu" /> : <Folder size={14} className="text-mu" />}
-              </span>
-              <span className="font-mono text-[12px] text-mu">{displayName}</span>
-              <span className="text-[10px] text-mu/70">{node.files.length} file{node.files.length === 1 ? '' : 's'}{node.folders.size > 0 ? `, ${node.folders.size} folder${node.folders.size === 1 ? '' : 's'}` : ''}</span>
-              <ChevronRight size={12} className={cx('shrink-0 text-mu transition-transform', isExpanded && 'rotate-90')} />
-            </span>
-          </button>
-        )}
-        {(showButton ? isExpanded : true) && (
-          <>
-            {Array.from(node.folders).sort().map((folderName) => {
-              const childPath = path === '/' ? `/${folderName}` : `${path}/${folderName}`
-              return renderFolder(childPath, path === '/' ? depth : depth + 1)
-            })}
-            {[...node.files].sort((a, b) => a.path.localeCompare(b.path)).map((f) => {
-              const Icon = fileIconFor(f.path)
-              const ext = f.path.split('.').pop()?.toLowerCase() ?? ''
-              const isSelected = selectedFilePath === f.path
-              return (
-                <button
-                  key={f.path}
-                  onClick={() => setSelectedFilePath(f.path)}
-                  className={cx('flex w-full items-center gap-2 rounded-md px-2 py-1 text-sm transition-colors hover:bg-hov', isSelected ? 'text-tx' : 'text-tx/90', depth > 0 && 'ml-4')}
-                  style={{ paddingLeft: path === '/' ? `${16 + indent}px` : `${16 + indent + 14}px`, backgroundColor: isSelected ? 'color-mix(in srgb, var(--ac) 12%, transparent)' : undefined }}
-                  aria-current={isSelected ? 'true' : undefined}
-                  aria-label={`${f.path} · ${workspaceLines(f.content)} lines`}
-                >
-                  <span className="shrink-0" style={{ color: fileIconColor(ext) }}><Icon size={13} /></span>
-                  <span className="min-w-0 truncate font-mono text-[12px]">{f.path.split('/').pop()}</span>
-                  <span className="ml-auto text-[10px] text-mu">{workspaceLines(f.content)} lines</span>
-                </button>
-              )
-            })}
-          </>
-        )}
-      </div>
-    )
-  }
+  const folderTree = useMemo(() => buildFolderTree(files), [files])
 
   const selectedFile = files.find(f => f.path === selectedFilePath) ?? files[0]
 
@@ -440,7 +340,14 @@ export function WorkspacePanel({ msg, live, workspace, selectedRevisionId, setSe
         <Btn sm icon={X} title="Close workspace panel" onClick={() => { setSelectedFilePath(null); onClose(); }} />
       </div>
       <div role="tree" aria-label="Workspace files" className="min-h-0 overflow-y-auto border-b border-hov px-2 py-2" style={{ flex: `0 0 ${split * 100}%` }}>
-        {renderFolder('/')}
+        <WorkspaceFileTree
+          tree={folderTree}
+          expanded={expandedFolders}
+          selectedPath={selectedFilePath}
+          onToggle={(p) => setExpandedFolders((prev) => ({ ...prev, [p]: !prev[p] }))}
+          onSelect={(p) => setSelectedFilePath(p)}
+          variant="panel"
+        />
       </div>
       <div role="separator" onPointerDown={(e) => {
         e.preventDefault()
@@ -461,7 +368,7 @@ export function WorkspacePanel({ msg, live, workspace, selectedRevisionId, setSe
         {selectedFile && (
           <div className="flex min-h-0 flex-1 flex-col bg-code">
             <div className="flex flex-wrap items-center gap-1.5 px-4 pt-3">
-              {selectedFile.language && <span className="rounded bg-codeh px-1.5 py-0.5 font-mono text-[11px] text-mu">{selectedFile.language}</span>}
+              {selectedFile.language && <span className="rounded bg-codeh px-1.5 py-0.5 font-mono text-xs text-mu">{selectedFile.language}</span>}
               <span className="text-xs text-mu">{workspaceLines(selectedFile.content)} lines · {workspaceSize(selectedFile.content)}</span>
               {selectedFile.path === writingPath && <span className="ml-auto inline-flex items-center gap-1.5 text-xs text-ac"><span className="size-1.5 animate-pulse rounded-full bg-ac" />Writing…</span>}
               <span className="flex-1" />
@@ -483,8 +390,7 @@ export function WorkspacePanel({ msg, live, workspace, selectedRevisionId, setSe
   )
 }
 
-/* Back-compat: old import still renders the compact tile. */
-/* Legacy back-compat: old import still renders the compact tile. */
+/* Back-compat: old `Canvas` import still renders the compact tile. */
 export function Canvas({ msg, live }: { msg: Msg; live?: ToolCall[] }) {
   return <WorkspaceTile msg={msg} live={live} workspace={{ id: '', name: '', revisions: [] }} selectedRevisionId={null} onOpen={() => {}} onSelectRevision={() => {}} />
 }

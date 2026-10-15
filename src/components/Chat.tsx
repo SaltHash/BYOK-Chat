@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { GitBranch, ChevronLeft, ChevronRight, Sparkles, Server, Cpu, Copy, Check, RefreshCw, Trash2, ListOrdered, CircleCheck, CircleX, TriangleAlert, Paperclip, ChevronDown, CornerDownLeft } from 'lucide-react'
+import { GitBranch, ChevronLeft, ChevronRight, Sparkles, Server, Cpu, Copy, Check, RefreshCw, Trash2, ListOrdered, CircleCheck, CircleX, TriangleAlert, Paperclip, CornerDownLeft } from 'lucide-react'
 import { useS, useLive, usable, featOn, previewSysFor, type Msg } from '../store'
+import { clampWorkspaceFrac, roundFrac, CHAT_WIDTH } from '../layout'
 import { CI, fmtDuration } from '../meta'
 import { Btn, Chip, cx, type Ic } from './ui'
 import { Composer } from './Composer'
@@ -8,7 +9,7 @@ import { Header } from './Header'
 import { Tutorial } from './Extra'
 import { Md, UserText } from './Md'
 import { WorkspaceTile, WorkspacePanel } from './Workspace'
-import { groupWorkspaceVersions, type Workspace, type WorkspaceCallLike } from '../workspace'
+import { findLastWorkspacePath, findWritingPath, extractWorkspaceIds, type WorkspaceCallLike } from '../workspace'
 
 function toolStep(name: string, rawArgs: string, result?: string) {
   let args: Record<string, unknown> = {}
@@ -122,17 +123,10 @@ function M({ m, last, onOpenWorkspace, selectedWorkspaceId }: { m: Msg; last: bo
   const [log, setLog] = useState(false)
   const [thinkingOpen, setThinkingOpen] = useState(false)
   const [ok, setOk] = useState(false)
-  const writingPath = useMemo(() => {
-    const final = (m.toolRounds ?? []).flatMap((r) => r.calls).filter((t) => t.name === 'workspace_upsert')
-    const streaming = (live ?? []).filter((t) => t.name === 'workspace_upsert' || !t.name)
-    const done = new Set(final.map((t) => t.id))
-    const pending = streaming.filter((t) => !t.id || !done.has(t.id))
-    const allCalls = [...pending.map((t) => ({ ...t })), ...final.map((t) => ({ ...t }))]
-    const groups = groupWorkspaceVersions(allCalls)
-    if (!pending.length && final.length && groups[groups.length - 1]?.path) return groups[groups.length - 1].path
-    if (!pending.length) return null
-    return groups[groups.length - 1]?.path ?? null
-  }, [m.toolRounds, live])
+  const writingPath = useMemo(
+    () => findLastWorkspacePath(live as { id: string; name?: string; arguments: string }[] | undefined, m.toolRounds),
+    [m.toolRounds, live],
+  )
   if (m.r === 'user')
     return (
       <div className="ml-auto max-w-[85%] space-y-2">
@@ -160,7 +154,7 @@ function M({ m, last, onOpenWorkspace, selectedWorkspaceId }: { m: Msg; last: bo
                 <>
                   <span className="flex items-center gap-2">
                     <button onClick={() => setSysOpen(!sysOpen)} className="inline-flex items-center gap-1.5 rounded-md px-1.5 py-0.5 text-xs text-mu hover:bg-surf hover:text-tx">
-                      <ChevronDown size={14} className={cx('transition-transform', !sysOpen && '-rotate-90')} />Full system prompt ({sysText.length.toLocaleString()} characters)
+                      <ChevronRight size={14} className={cx('transition-transform', sysOpen && 'rotate-90')} />Full system prompt ({sysText.length.toLocaleString()} characters)
                     </button>
                     <button
                       onClick={() => { void navigator.clipboard?.writeText(sysText).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500) }).catch(() => {}) }}
@@ -175,7 +169,7 @@ function M({ m, last, onOpenWorkspace, selectedWorkspaceId }: { m: Msg; last: bo
                 </>
               ) : (
                 <button onClick={() => setSysPreview(previewSysFor(m.id) ?? '(Could not reconstruct a system prompt for this reply.)')} className="inline-flex items-center gap-1.5 rounded-md px-1.5 py-0.5 text-xs text-mu hover:bg-surf hover:text-tx">
-                  <ChevronDown size={14} className="-rotate-90" />Preview the system prompt for this reply
+                  <ChevronRight size={14} />Preview the system prompt for this reply
                 </button>
               )}
             </div>
@@ -250,13 +244,7 @@ function M({ m, last, onOpenWorkspace, selectedWorkspaceId }: { m: Msg; last: bo
       </div>
       {/* Workspace tiles for this message — shown above message controls but below content */}
       {(() => {
-        const wsIds = new Set<string>(m.workspaceIds ?? [])
-        const liveWsIds = (live ?? []).filter((c: any) => c.name === 'workspace_upsert').map((c: any) => {
-          try { const a = JSON.parse(c.arguments || '{}'); if (a.workspaceId) return a.workspaceId } catch {}
-          try { const r = JSON.parse(c.result || '{}'); if (r.workspaceId) return r.workspaceId } catch {}
-          return null
-        }).filter(Boolean) as string[]
-        liveWsIds.forEach(id => wsIds.add(id))
+        const wsIds = new Set<string>([...(m.workspaceIds ?? []), ...extractWorkspaceIds(((live ?? []) as { name: string; arguments: string; result?: string }[]))])
         const ids = Array.from(wsIds)
         return ids.length > 0 ? (
           <div className="space-y-2">
@@ -329,21 +317,13 @@ export function Chat({ side, toggle, cfg, pal }: { side: boolean; toggle: () => 
       for (let i = c.msgs.length - 1; i >= 0; i--) {
         const m = c.msgs[i]
         if (m.r !== 'assistant') continue
-        const finalCalls = (m.toolRounds ?? []).flatMap((r) => r.calls).filter((t) => t.name === 'workspace_upsert')
-        const liveCalls = (liveTools[m.id] ?? []).filter((t) => t.name === 'workspace_upsert' || !t.name)
-        const done = new Set(finalCalls.map((t) => t.id))
-        const pending = liveCalls.filter((t) => !t.id || !done.has(t.id))
-        if (pending.length === 0) continue
+        const writingPath = findWritingPath(liveTools[m.id], m.toolRounds)
+        if (!writingPath) continue
         // Find workspace ID and active file path from live arguments
-        let wsId = (m.workspaceIds ?? [])[0]
-        let initialPath: string | undefined
-        const args = liveCalls.map((t: any) => {
-          try { return JSON.parse(t.arguments || '{}') } catch { return {} }
-        })
-        const paths = args.map((a: any) => typeof a.path === 'string' ? a.path : '').filter(Boolean)
-        initialPath = paths[paths.length - 1] || undefined
-        const liveWsIds = args.map((a: any) => a.workspaceId ? String(a.workspaceId) : null).filter(Boolean) as string[]
-        if (!wsId) wsId = liveWsIds[0] || (m.workspaceIds ?? [])[0]
+        const liveCalls = (liveTools[m.id] ?? []) as { name: string; arguments: string; result?: string }[]
+        const liveWsIds = extractWorkspaceIds(liveCalls)
+        const wsId = (m.workspaceIds ?? [])[0] ?? liveWsIds[0] ?? (m.workspaceIds ?? [])[0]
+        const initialPath: string | undefined = writingPath
         if (wsId || initialPath) {
           setWorkspacePanel((prev) => {
             if (!prev || prev.mid !== m.id || prev.workspaceId !== wsId || prev.initialFilePath !== initialPath) {
@@ -375,8 +355,7 @@ export function Chat({ side, toggle, cfg, pal }: { side: boolean; toggle: () => 
   const workspaceMsg = workspacePanel ? c?.msgs.find((m) => m.id === workspacePanel.mid) : undefined
   const workspace = workspaceMsg ? s.workspaces[workspacePanel.workspaceId] : undefined
   const selectedRevId = workspacePanel ? s.selectedRevision[workspacePanel.workspaceId] : null
-  const rawWorkspace = s.prefs.workspaceWidth ?? 0.4
-  const workspaceFrac = typeof rawWorkspace === 'number' && rawWorkspace > 0 && rawWorkspace <= 1 ? rawWorkspace : 0.4
+  const workspaceFrac = clampWorkspaceFrac(s.prefs.workspaceWidth)
 
   const startResize = (e: React.PointerEvent) => {
     e.preventDefault()
@@ -384,9 +363,9 @@ export function Chat({ side, toggle, cfg, pal }: { side: boolean; toggle: () => 
     if (!row) return
     const x = e.clientX, start = workspaceFrac, total = row.getBoundingClientRect().width || 1
     const move = (ev: PointerEvent) => {
-      const value = Math.max(0.15, Math.min(0.7, start - (ev.clientX - x) / total))
+      const value = clampWorkspaceFrac(start - (ev.clientX - x) / total)
       const st = useS.getState()
-      st.patch({ prefs: { ...st.prefs, workspaceWidth: Math.round(value * 1000) / 1000 } })
+      st.patch({ prefs: { ...st.prefs, workspaceWidth: roundFrac(value) } })
     }
     const up = () => { removeEventListener('pointermove', move); removeEventListener('pointerup', up) }
     addEventListener('pointermove', move); addEventListener('pointerup', up, { once: true })
@@ -397,9 +376,9 @@ export function Chat({ side, toggle, cfg, pal }: { side: boolean; toggle: () => 
       <Header side={side} toggle={toggle} cfg={cfg} pal={pal} title={c?.title ?? 'New chat'} />
       <div ref={rowRef} className="flex min-h-0 flex-1 flex-col sm:flex-row">
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-          <div ref={box} onScroll={(e) => { const b = e.currentTarget; stick.current = b.scrollHeight - b.scrollTop - b.clientHeight < 80 }} className="min-h-0 flex-1 overflow-y-auto">
+          <div ref={box} onScroll={(e) => { const b = e.currentTarget; stick.current = b.scrollHeight - b.scrollTop - b.clientHeight < 80 }} className="min-h-0 flex-1 overflow-y-auto" style={{ WebkitMaskImage: 'linear-gradient(to bottom, black calc(100% - 32px), rgba(0,0,0,0.1) 100%)', maskImage: 'linear-gradient(to bottom, black calc(100% - 32px), rgba(0,0,0,0.1) 100%)' }}>
             {c && c.msgs.length ? (
-              <div className="mx-auto space-y-8 px-4 py-6" style={{ maxWidth: ({ narrow: 640, standard: 768, wide: 1024 } as const)[s.prefs.chatWidth] }}>
+              <div className="mx-auto space-y-8 px-4 py-6" style={{ maxWidth: CHAT_WIDTH[s.prefs.chatWidth] }}>
                 {c.msgs.map((m, i) => <M key={m.id} m={m} last={i === c.msgs.length - 1} onOpenWorkspace={(mid, wsId, filePath) => setWorkspacePanel({ mid, workspaceId: wsId, initialFilePath: filePath })} selectedWorkspaceId={workspacePanel?.mid === m.id ? selectedRevId : null} />)}
               </div>
             ) : !s.eps.some(usable) ? (

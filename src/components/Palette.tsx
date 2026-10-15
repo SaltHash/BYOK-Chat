@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Search, Plus, MessageSquare, Settings, Palette as Pi, Cpu, ScrollText, Download, PanelRight, Server, Trash2, Type, Sun, Moon, Maximize2 } from 'lucide-react'
-import { useS, THEMES, modelsOf, modelNameOf, exportChat, featOn } from '../store'
+import { useS, THEMES, themePatch, modelsOf, modelNameOf, exportChat, featOn } from '../store'
+import { nextThemePatch, stepModelSelection, stepPromptSelection } from '../selection'
 import { CI } from '../meta'
 import { Modal, cx, type Ic } from './ui'
 
@@ -32,10 +33,10 @@ export function Palette({ close, cfg, toggleSide }: { close: () => void; cfg: (t
     ...(featOn(s, 'commands') ? s.cmds.filter((c) => c.on).map((c) => action(CI[c.in], '/' + c.name, c.desc || 'Command', `command slash ${c.name} ${c.desc}`, () => s.patch({ draft: '/' + c.name + ' ' }))) : []),
     ...TABS.filter(([k]) => !TAB_FEATURE[k] || featOn(s, TAB_FEATURE[k])).map(([k, label, words]) => action(Settings, label, 'Settings', `${label} ${words}`, () => cfg(k))),
     ...(featOn(s, 'prompts') ? s.prompts.map((p) => action(ScrollText, p.name, 'Prompt', `prompt system instruction ${p.name} ${p.text}`, () => s.patch({ pr: p.id }))) : []),
-    ...Object.entries(THEMES).map(([k, n]) => action(Pi, n, 'Theme', `theme color ${n}`, () => s.patch({ theme: k as keyof typeof THEMES }))),
-    action(Pi, 'Next theme', 'Action', 'cycle theme appearance colors', () => { const keys = Object.keys(THEMES) as (keyof typeof THEMES)[]; s.patch({ theme: keys[(keys.indexOf(s.theme) + 1) % keys.length] }) }),
-    ...(featOn(s, 'prompts') ? [action(ScrollText, 'Next prompt', 'Action', 'cycle prompt system instruction', () => { const n = s.prompts.length ? (s.prompts.findIndex((p) => p.id === s.pr) + 1) % s.prompts.length : -1; s.patch({ pr: n < 0 ? '' : s.prompts[n].id }) })] : []),
-    action(Cpu, 'Next model', 'Action', 'cycle model endpoint provider', () => { const list = s.eps.flatMap((e) => modelsOf(e).map((model) => ({ k: 'ep' as const, id: e.id, model }))); const at = list.findIndex((m) => m.id === s.sel?.id && m.model === s.sel?.model); s.patch({ sel: list.length ? list[(at + 1) % list.length] : null }) }),
+    ...Object.entries(THEMES).map(([k, n]) => action(Pi, n, 'Theme', `theme color ${n}`, () => s.patch(themePatch(s, k as keyof typeof THEMES)))),
+    action(Pi, 'Next theme', 'Action', 'cycle theme appearance colors', () => s.patch(nextThemePatch(s))),
+    ...(featOn(s, 'prompts') ? [action(ScrollText, 'Next prompt', 'Action', 'cycle prompt system instruction', () => s.patch({ pr: stepPromptSelection(s.prompts, s.pr) }))] : []),
+    action(Cpu, 'Next model', 'Action', 'cycle model endpoint provider', () => { const next = stepModelSelection(s.eps, s.sel, 1); s.patch({ sel: next }) }),
   ]
   const needle = q.trim().toLowerCase()
   const L = all.map((x, order) => {

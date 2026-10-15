@@ -1,11 +1,12 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { Info, X, Server, Play, MessageSquare, Keyboard, ArrowUp, ArrowDown, MessagesSquare, RotateCcw, Download, Upload, FileText, Trash2, CircleCheck, CircleX, Gauge } from 'lucide-react'
-import { useS, dl, BLANK, THEMES, DEFAULT_FEATURES, modelsOf, modelNameOf, normSearch, normAdvanced, normFeatureOrder, featOn, errText, storageUsage, QUOTA_FLAG, type Ep, type Kind, type FeatureId } from '../store'
+import { useS, dl, BLANK, THEMES, themePatch, DEFAULT_FEATURES, modelsOf, modelNameOf, normSearch, normAdvanced, normFeatureOrder, featOn, errText, storageUsage, QUOTA_FLAG, type Ep, type Kind, type FeatureId } from '../store'
 import { normSkills } from '../skills'
 import { combo, fmt, rec as R, testEp } from '../engine'
 import { KEYS, TOOLS } from '../meta'
-import { Btn, Toggle, Checkbox, Confirm, Modal, cx, type Ic } from './ui'
+import { Btn, Toggle, Checkbox, Confirm, Modal, Surface, cx, type Ic } from './ui'
 import { Panel } from './Settings'
+import { detectAvailableCategories, buildExportPayload } from '../configIO'
 
 export function Notice({ cfg }: { cfg: (t: string) => void }) {
   const n = useS((s) => s.notice), patch = useS((s) => s.patch)
@@ -109,11 +110,11 @@ export function TestAllEndpoints({ eps }: { eps: Ep[] }) {
 }
 
 const Box = ({ icon: I, t, d, children }: { icon: Ic; t: string; d: string; children?: ReactNode }) => (
-  <div className="flex flex-wrap items-center gap-3 rounded-xl bg-surf p-3">
+  <Surface className="flex flex-wrap items-center gap-3">
     <span className="grid size-9 place-items-center rounded-lg bg-hov text-ac"><I size={18} /></span>
     <div className="min-w-48 flex-1"><div className="text-sm font-medium">{t}</div><div className="text-xs text-mu">{d}</div></div>
     {children}
-  </div>
+  </Surface>
 )
 
 export function StatsTab() {
@@ -228,21 +229,7 @@ export function DataTab() {
   const [cf, setCf] = useState(0)
   const [msg, setMsg] = useState('')
   const exp = () => {
-    const data: Record<string, any> = { v: 4 }
-    if (exports.appearance) { data.theme = s.theme; data.customColors = s.customColors; data.prefs = s.prefs }
-    if (exports.keys) data.keys = s.keys
-    if (exports.eps) { data.eps = s.eps.map((e) => ({ ...e, key: withKeys ? e.key : '' })); data.sel = s.sel }
-    if (exports.prompts) { data.prompts = s.prompts; data.pr = s.pr; data.globalPrompt = s.globalPrompt }
-    if (exports.pls) data.pls = s.pls
-    if (exports.cmds) data.cmds = s.cmds
-    if (exports.skills) data.skills = normSkills(s.skills).skills
-    if (exports.memory) { data.memories = s.memories; data.memoryPrefs = s.memoryPrefs }
-    if (exports.features) { data.features = s.features; data.featureOrder = s.featureOrder; data.libraryShow = s.libraryShow; data.advanced = s.advanced }
-    if (exports.tools) { data.tools = s.tools; const sp = normSearch(s.search); data.search = withKeys ? sp : { ...sp, keys: { tinyfish: '', you: '', exa: '', firecrawl: '', brightdata: '' } } }
-    if (exports.tuning) { data.params = s.params; data.effort = s.effort; data.workspacePrefs = s.workspacePrefs }
-    if (exports.widgets) { data.widgets = s.widgets; data.widgetPrefs = s.widgetPrefs }
-    if (exports.stats) data.stats = s.stats
-    if (exports.chats) { data.chats = s.chats; data.folders = s.folders; data.chat = s.chat; data.todos = s.todos; data.snips = s.snips; data.pad = s.pad }
+    const data = buildExportPayload(s as Parameters<typeof buildExportPayload>[0], exports, withKeys, normSkills, normSearch)
     dl('chat-config.json', JSON.stringify(data, null, 1), 'application/json')
   }
   const chooseFile = async (f?: File) => {
@@ -250,21 +237,7 @@ export function DataTab() {
     try {
       const j = JSON.parse(await f.text())
       if (!j || typeof j !== 'object') throw 0
-      const has: Record<Category, boolean> = {
-        eps: Array.isArray(j.eps) || (j.sel && typeof j.sel === 'object'),
-        prompts: Array.isArray(j.prompts) || typeof j.pr === 'string' || (!!j.globalPrompt && typeof j.globalPrompt === 'object'),
-        pls: Array.isArray(j.pls), cmds: Array.isArray(j.cmds),
-        skills: Array.isArray(j.skills),
-        memory: Array.isArray(j.memories) || (!!j.memoryPrefs && typeof j.memoryPrefs === 'object'),
-        keys: !!j.keys && typeof j.keys === 'object',
-        appearance: (typeof j.theme === 'string' && j.theme in THEMES) || (!!j.customColors && typeof j.customColors === 'object') || (!!j.prefs && typeof j.prefs === 'object'),
-        features: (!!j.features && typeof j.features === 'object') || Array.isArray(j.featureOrder) || (!!j.libraryShow && typeof j.libraryShow === 'object') || (!!j.advanced && typeof j.advanced === 'object'),
-        tools: (!!j.tools && typeof j.tools === 'object') || (!!j.search && typeof j.search === 'object'),
-        tuning: (!!j.params && typeof j.params === 'object') || (!!j.effort && typeof j.effort === 'object') || (!!j.workspacePrefs && typeof j.workspacePrefs === 'object'),
-        widgets: (!!j.widgets && typeof j.widgets === 'object') || (!!j.widgetPrefs && typeof j.widgetPrefs === 'object'),
-        stats: !!j.stats && typeof j.stats === 'object',
-        chats: Array.isArray(j.chats) || Array.isArray(j.todos) || Array.isArray(j.snips) || typeof j.pad === 'string',
-      }
+      const has = detectAvailableCategories(j, THEMES)
       setAvailable(has)
       setImports(Object.fromEntries(categories.map(([id]) => [id, has[id]])) as Record<Category, boolean>)
       setFileData(j)
@@ -300,7 +273,7 @@ export function DataTab() {
         ...(imports.skills && Array.isArray(j.skills) ? { skills: normSkills(merge ? [...(st as any).skills ?? [], ...j.skills] : j.skills).skills } : {}),
         ...(imports.memory ? { ...(Array.isArray(j.memories) ? { memories: merge ? [...st.memories.filter((x) => !validMemories.some((y: any) => y.id === x.id)), ...validMemories] : validMemories } : {}), ...(j.memoryPrefs && typeof j.memoryPrefs === 'object' ? { memoryPrefs: { ...st.memoryPrefs, ...(merge ? {} : { enabled: false, intent: 'balanced', recall: 'contextual', classifierEp: '', classifierModel: '' }), ...Object.fromEntries(Object.entries(j.memoryPrefs).filter(([k]) => ['enabled', 'intent', 'recall', 'classifierEp', 'classifierModel'].includes(k))) } } : {}) } : {}),
         ...(imports.keys ? { keys: merge ? { ...st.keys, ...cleanStrings(j.keys) } : cleanStrings(j.keys) } : {}),
-        ...(imports.appearance ? { ...(j.theme in THEMES ? { theme: j.theme } : {}), ...(j.customColors && typeof j.customColors === 'object' ? { customColors: merge ? { ...st.customColors, ...j.customColors } : j.customColors } : {}), ...(j.prefs && typeof j.prefs === 'object' ? { prefs: merge ? { ...st.prefs, ...j.prefs } : { ...st.prefs, ...j.prefs } } : {}) } : {}),
+        ...(imports.appearance ? { ...(j.themeMode === 'dark' || j.themeMode === 'light' ? { themeMode: j.themeMode } : {}), ...(j.themeDark in THEMES ? { themeDark: j.themeDark } : {}), ...(j.themeLight in THEMES ? { themeLight: j.themeLight } : {}), ...(j.customDarkColors && typeof j.customDarkColors === 'object' ? { customDarkColors: merge ? { ...st.customDarkColors, ...j.customDarkColors } : j.customDarkColors } : {}), ...(j.customLightColors && typeof j.customLightColors === 'object' ? { customLightColors: merge ? { ...st.customLightColors, ...j.customLightColors } : j.customLightColors } : {}), ...(j.theme in THEMES ? themePatch(st, j.theme) : {}), ...(j.customColors && typeof j.customColors === 'object' ? { customDarkColors: merge ? { ...st.customDarkColors, ...j.customColors } : j.customColors } : {}), ...(j.prefs && typeof j.prefs === 'object' ? { prefs: merge ? { ...st.prefs, ...j.prefs } : { ...st.prefs, ...j.prefs } } : {}) } : {}),
         ...(imports.features ? { ...(j.features && typeof j.features === 'object' ? { features: merge ? { ...st.features, ...cleanFeatures(j.features) } : { ...DEFAULT_FEATURES, ...cleanFeatures(j.features) } } : {}), ...(j.libraryShow && typeof j.libraryShow === 'object' ? { libraryShow: merge ? { ...st.libraryShow, ...j.libraryShow } : j.libraryShow } : {}), ...(Array.isArray(j.featureOrder) ? { featureOrder: normFeatureOrder(merge ? [...st.featureOrder ?? [], ...j.featureOrder] : j.featureOrder) } : {}), ...(j.advanced && typeof j.advanced === 'object' ? { advanced: normAdvanced(merge ? { ...st.advanced, ...j.advanced } : j.advanced) } : {}) } : {}),
         ...(imports.tools ? { tools: merge ? { ...st.tools, ...cleanTools(j.tools) } : { ...st.tools, ...cleanTools(j.tools) }, ...(j.search && typeof j.search === 'object' ? (() => {
           const current = normSearch((st as any).search)

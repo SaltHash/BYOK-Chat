@@ -1,6 +1,10 @@
 import type { Ep, Att, Msg } from './store'
 import { TOOLS } from './meta'
 import { WORKSPACE_MAX_CONTENT, WORKSPACE_TRUNC_MARKER, sanitizePath } from './workspace'
+import { withCode } from './errors'
+import { buildStreamRequest, splitSseBuffer, parseSseLine } from './streamRequest'
+
+export { supportsEffort } from './streamRequest'
 
 export const est = (s: string) => Math.ceil(s.length / 4)
 export const redact = (e: Ep, s: unknown) => String(s).split(e.key || '\u0000').join('•••').replace(/\b(sk|gsk|pk|xai|AIza)[-\w]{12,}/g, '•••')
@@ -52,15 +56,100 @@ export type ToolCall = { id: string; name: string; arguments: string; extra_cont
 export type ToolResult = ToolCall & { result: string; error?: boolean; ms?: number }
 type ToolSpec = { description: string; parameters: Record<string, unknown>; run: (args: any) => unknown | Promise<unknown> }
 const textArg = (description: string) => ({ type: 'string', description })
+
+/* Safe arithmetic evaluator: tokenizes + parses without eval/Function.
+ * Supports + - * / % ^ (**), parentheses, unary +/-, decimals and
+ * scientific notation (1e3). Rejects over-long input, too many tokens,
+ * and non-finite / runaway exponent results. */
+export const CALC_MAX_INPUT = 200
+const CALC_MAX_TOKENS = 120
+const CALC_MAX_EXP = 1e6
+export function evaluateArithmetic(raw: string): number {
+  if (typeof raw !== 'string') throw Error('Provide a basic arithmetic expression.')
+  const expr = raw.trim()
+  if (!expr || expr.length > CALC_MAX_INPUT || !/^[\d\s+\-*/%().^eE]+$/.test(expr)) throw Error('Provide a basic arithmetic expression.')
+  // Tokenize numbers (incl. scientific), operators, parens. `**` is one token.
+  const tokens: (number | string)[] = []
+  let i = 0
+  const s = expr.replace(/\^/g, '**')
+  while (i < s.length) {
+    const c = s[i]
+    if (/\s/.test(c)) { i++; continue }
+    if (c === '(' || c === ')' || c === '%' || c === ',') { tokens.push(c); i++; continue }
+    if (c === '*' && s[i + 1] === '*') { tokens.push('**'); i += 2; continue }
+    if (c === '+' || c === '-' || c === '*' || c === '/') { tokens.push(c); i++; continue }
+    const num = /^[0-9]*\.?[0-9]+(?:[eE][+-]?[0-9]+)?/.exec(s.slice(i))
+    if (num) { tokens.push(parseFloat(num[0])); i += num[0].length; continue }
+    if (c === '.') throw Error('Provide a basic arithmetic expression.')
+    throw Error('Provide a basic arithmetic expression.')
+  }
+  if (tokens.length > CALC_MAX_TOKENS || !tokens.length) throw Error('Provide a basic arithmetic expression.')
+  let pos = 0
+  const peek = (): number | string | undefined => tokens[pos]
+  const consume = (): number | string | undefined => tokens[pos++]
+  const parseExpr = (): number => {
+    let v = parseTerm()
+    for (;;) {
+      const t = peek()
+      if (t === '+' || t === '-') { consume(); v = t === '+' ? v + parseTerm() : v - parseTerm() }
+      else return v
+    }
+  }
+  const parseTerm = (): number => {
+    let v = parseFactor()
+    for (;;) {
+      const t = peek()
+      if (t === '*' || t === '/' || t === '%') {
+        consume()
+        const r = parseFactor()
+        v = t === '*' ? v * r : t === '/' ? v / r : v % r
+      } else return v
+    }
+  }
+  // Right-associative exponent.
+  const parseFactor = (): number => {
+    const base = parseUnary()
+    if (peek() === '**') {
+      consume()
+      const exp = parseFactor()
+      if (!Number.isFinite(exp) || Math.abs(exp) > CALC_MAX_EXP) throw Error('The result is not a finite number')
+      const v = base ** exp
+      if (typeof v !== 'number' || !Number.isFinite(v)) throw Error('The result is not a finite number')
+      return v
+    }
+    return base
+  }
+  const parseUnary = (): number => {
+    const t = peek()
+    if (t === '+') { consume(); return parseUnary() }
+    if (t === '-') { consume(); return -parseUnary() }
+    return parsePrimary()
+  }
+  const parsePrimary = (): number => {
+    const t = consume()
+    if (typeof t === 'number') {
+      if (!Number.isFinite(t)) throw Error('The result is not a finite number')
+      return t
+    }
+    if (t === '(') {
+      const v = parseExpr()
+      if (consume() !== ')') throw Error('Provide a basic arithmetic expression.')
+      return v
+    }
+    throw Error('Provide a basic arithmetic expression.')
+  }
+  const value = parseExpr()
+  if (pos !== tokens.length) throw Error('Provide a basic arithmetic expression.')
+  if (typeof value !== 'number' || !Number.isFinite(value)) throw Error('The result is not a finite number')
+  return value
+}
 export const TOOL_REGISTRY: Record<string, ToolSpec> = {
   time: { description: 'Read the device date, time, and time zone.', parameters: { type: 'object', properties: {}, additionalProperties: false }, run: () => new Date().toString() },
   date: { description: 'Read the current local date.', parameters: { type: 'object', properties: {}, additionalProperties: false }, run: () => new Date().toLocaleDateString() },
   clipboard: { description: 'Read the current clipboard text.', parameters: { type: 'object', properties: {}, additionalProperties: false }, run: () => navigator.clipboard.readText() },
   calc: { description: 'Evaluate a basic arithmetic expression.', parameters: { type: 'object', properties: { expression: textArg('Arithmetic expression.') }, required: ['expression'], additionalProperties: false }, run: ({ expression }) => {
-    if (typeof expression !== 'string' || !/^[\d\s+\-*/%().^e]+$/.test(expression)) throw Error('Provide a basic arithmetic expression.')
-    const v = Function('"use strict";return(' + expression.replace(/\^/g, '**') + ')')()
-    if (typeof v !== 'number' || !isFinite(v)) throw Error('The result is not a finite number')
-    return v
+    if (typeof expression !== 'string') throw Error('Provide a basic arithmetic expression.')
+    return evaluateArithmetic(expression)
   } },
   count: { description: 'Count characters, words, and lines in text.', parameters: { type: 'object', properties: { text: textArg('Text to count.') }, required: ['text'], additionalProperties: false }, run: ({ text }) => {
     if (typeof text !== 'string') throw Error('text must be a string')
@@ -162,35 +251,40 @@ export const formatSearch = (data: Awaited<ReturnType<typeof searchWeb>>) => dat
 const sz = (n: number) => (n < 1e6 ? Math.ceil(n / 1e3) + ' KB' : (n / 1e6).toFixed(1) + ' MB')
 export const ATT_TXT_LIMIT = 200000
 export const ATT_TOTAL_TXT_BUDGET = 500000
+export type AttachmentRejection = 'office' | 'media' | 'archive' | 'unsupported' | 'too_large' | 'budget' | 'unreadable'
+export type ReadAttResult = { ok: true; att: Att } | { ok: false; file: string; reason: AttachmentRejection; message: string }
 const TXT_EXT = /\.(txt|md|markdown|csv|tsv|json|jsonl|jsx?|tsx?|py|html?|css|scss|xml|ya?ml|toml|ini|env|log|sql|sh|rs|go|java|cpp?|h|hpp|rb|php|swift|kt|scala|r|pl|vue|svelte|astro)$/i
 const isTxtFile = (f: File) =>
   /^text\//.test(f.type) || /json|xml|javascript|yaml|toml|csv/.test(f.type) || TXT_EXT.test(f.name)
-export async function readAtt(f: File, existingTxtChars = 0): Promise<Att | string> {
+/* Structured attachment loader: success carries the Att, failures carry a
+ * machine-readable reason + user-facing message. Never returns a bare string. */
+export async function readAtt(f: File, existingTxtChars = 0): Promise<ReadAttResult> {
+  const fail = (reason: AttachmentRejection, message: string): ReadAttResult => ({ ok: false, file: f.name, reason, message })
   const img = f.type.startsWith('image/'), pdf = f.type === 'application/pdf' || (/\.pdf$/i.test(f.name) && !f.type)
   // Office binaries, archives, and media cannot be processed: reject with
   // guidance instead of attaching unreadable bytes. Checked before text
   // sniffing because e.g. .docx MIME types contain "xml".
   if (!img && !pdf) {
     if (/officedocument|msword|ms-excel|ms-powerpoint|opendocument|\.(docx?|xlsx?|pptx?|odt|ods|odp|rtf)$/i.test(f.type + ' ' + f.name))
-      return `${f.name}: Office documents are not processed directly. Export it as PDF or copy the text into a .txt/.md file, then attach that.`
+      return fail('office', `${f.name}: Office documents are not processed directly. Export it as PDF or copy the text into a .txt/.md file, then attach that.`)
     if (/^(audio|video)\//.test(f.type) || /\.(mp3|wav|m4a|ogg|flac|mp4|mov|webm|mkv)$/i.test(f.name))
-      return `${f.name}: audio and video are not transcribed in this app. Attach a text transcript instead.`
+      return fail('media', `${f.name}: audio and video are not transcribed in this app. Attach a text transcript instead.`)
     if (/\.zip$|\.tar|\.gz$|\.7z$|^(application\/(zip|x-tar|gzip|x-7z-compressed))/.test(f.type + ' ' + f.name))
-      return `${f.name}: archives are not unpacked. Attach the individual text, image, or PDF files instead.`
+      return fail('archive', `${f.name}: archives are not unpacked. Attach the individual text, image, or PDF files instead.`)
   }
   if (!img && !pdf && !isTxtFile(f)) {
-    return `${f.name}: unsupported type (${f.type || 'unknown'}). Attach images, PDFs or text files.`
+    return fail('unsupported', `${f.name}: unsupported type (${f.type || 'unknown'}). Attach images, PDFs or text files.`)
   }
-  if (f.size > 2e7) return `${f.name} is over 20 MB and was not attached.`
+  if (f.size > 2e7) return fail('too_large', `${f.name} is over 20 MB and was not attached.`)
   if (!img && !pdf) {
-    if (existingTxtChars >= ATT_TOTAL_TXT_BUDGET) return `${f.name} was not attached: the message already carries ~${Math.round(existingTxtChars / 1000)}k characters of text files (budget ${ATT_TOTAL_TXT_BUDGET / 1000}k).`
+    if (existingTxtChars >= ATT_TOTAL_TXT_BUDGET) return fail('budget', `${f.name} was not attached: the message already carries ~${Math.round(existingTxtChars / 1000)}k characters of text files (budget ${ATT_TOTAL_TXT_BUDGET / 1000}k).`)
     let t = await f.text()
     if (t.length > ATT_TXT_LIMIT) t = t.slice(0, ATT_TXT_LIMIT) + `\n[truncated at ${ATT_TXT_LIMIT.toLocaleString()} characters]`
-    return { name: f.name, kind: 'txt', size: sz(f.size), text: t }
+    return { ok: true, att: { name: f.name, kind: 'txt', size: sz(f.size), text: t } }
   }
   const d = await new Promise<string>((res) => { const x = new FileReader(); x.onload = () => res(String(x.result)); x.onerror = () => res(''); x.readAsDataURL(f) })
-  if (!d) return `${f.name} could not be read.`
-  return { name: f.name, kind: img ? 'img' : 'pdf', size: sz(f.size), mime: f.type, data: d.split(',')[1] }
+  if (!d) return fail('unreadable', `${f.name} could not be read.`)
+  return { ok: true, att: { name: f.name, kind: img ? 'img' : 'pdf', size: sz(f.size), mime: f.type, data: d.split(',')[1] } }
 }
 
 /* wire format */
@@ -233,35 +327,26 @@ export function wire(e: Ep, msgs: Msg[]): Wire[] {
 function parseArgs(raw: string) { try { const v = JSON.parse(raw || '{}'); return v && typeof v === 'object' && !Array.isArray(v) ? v : {} } catch { return {} } }
 
 type O = { cap?: number; max?: number; temp?: number; topp?: number; effort?: string }
-export const supportsEffort = (_model: string, _type: Ep['type'], detected?: string[]) => Array.isArray(detected) && detected.length > 0
 
 export async function stream(e: Ep, sys: string, ms: Wire[], on: (t: string) => void, ac: AbortController, o: O = {}, onSummary: (t: string) => void = () => {}, availableTools: any[] = [], onToolDelta: (calls: ToolCall[]) => void = () => {}) {
-  const an = e.type === 'anthropic', b = e.url.trim().replace(/\/+$/, ''), h: Record<string, string> = { 'content-type': 'application/json' }
-  let u: string, body: any
-  if (an) {
-    u = b + '/messages'; h['x-api-key'] = e.key; h['anthropic-version'] = '2023-06-01'; h['anthropic-dangerous-direct-browser-access'] = 'true'
-    body = { model: e.model, max_tokens: o.max ?? o.cap ?? 4096, stream: true, messages: ms }
-    if (availableTools.length) body.tools = availableTools
-    if (sys) body.system = sys
-    const reported = e.modelEffortSource?.[e.model] ? e.modelEfforts?.[e.model] ?? [] : undefined
-    if (o.effort && o.effort.toLowerCase() !== 'off' && reported?.includes(o.effort) && supportsEffort(e.model, 'anthropic', reported)) {
-      body.thinking = { type: 'adaptive' }
-      body.output_config = { effort: o.effort }
-    } else if (o.temp != null) body.temperature = o.temp
-  } else {
-    u = b + '/chat/completions'; if (e.key) h.authorization = 'Bearer ' + e.key
-    body = { model: e.model, stream: true, messages: sys ? [{ role: 'system', content: sys }, ...ms] : ms }
-    if (availableTools.length) { body.tools = availableTools; body.tool_choice = 'auto' }
-    if (o.max != null) body.max_tokens = o.max
-    if (o.temp != null) body.temperature = o.temp
-    if (o.topp != null) body.top_p = o.topp
-    const reportedOpen = e.modelEffortSource?.[e.model] ? e.modelEfforts?.[e.model] ?? [] : undefined
-    if (o.effort && o.effort.toLowerCase() !== 'off' && reportedOpen?.includes(o.effort) && supportsEffort(e.model, 'openai', reportedOpen)) body.reasoning_effort = o.effort
-  }
+  const { url: u, headers: h, body, isAnthropic: an } = buildStreamRequest(e, sys, ms, availableTools, o)
   let res: Response
   try { res = await fetch(u, { method: 'POST', headers: h, body: JSON.stringify(body), signal: ac.signal }) }
-  catch (x: any) { throw Error(x?.name === 'AbortError' ? 'Stopped' : 'Network or CORS error contacting ' + (u.split('/')[2] || u)) }
-  if (!res.ok) throw Error(`HTTP ${res.status}: ${(await res.text().catch(() => '')).slice(0, 300) || res.statusText}`)
+  catch (x: any) {
+    if (x?.name === 'AbortError') throw withCode('Stopped', 'stopped')
+    throw withCode('Network or CORS error contacting ' + (u.split('/')[2] || u), 'cors', { retryable: true })
+  }
+  if (!res.ok) {
+    const snippet = (await res.text().catch(() => '')).slice(0, 300) || res.statusText
+    const msg = `HTTP ${res.status}: ${snippet}`
+    if (res.status === 401 || res.status === 403) throw withCode(msg, 'upstream_auth', { status: res.status })
+    if (res.status === 402) throw withCode(msg, 'billing', { status: res.status })
+    if (res.status === 429) throw withCode(msg, 'rate_limited', { status: res.status, retryable: true })
+    if (res.status === 404) throw withCode(msg, 'not_found', { status: res.status })
+    if (res.status === 400 || res.status === 422) throw withCode(msg, 'bad_request', { status: res.status })
+    if (res.status >= 500) throw withCode(msg, 'upstream_unavailable', { status: res.status, retryable: true })
+    throw withCode(msg, 'bad_response', { status: res.status })
+  }
   let all = '', tin = 0, tout = 0
   const calls = new Map<number, ToolCall>()
 
@@ -319,7 +404,7 @@ export async function stream(e: Ep, sys: string, ms: Wire[], on: (t: string) => 
   }
 
   const ev = (j: any) => {
-    if (j.error) throw Error(JSON.stringify(j.error).slice(0, 300))
+    if (j.error) throw withCode(JSON.stringify(j.error).slice(0, 300), 'bad_response')
     const snap = () => onToolDelta([...calls.values()].map((c) => ({ ...c })))
     if (an) {
       if (j.type === 'message_start') tin = j.message?.usage?.input_tokens ?? tin
@@ -361,14 +446,17 @@ export async function stream(e: Ep, sys: string, ms: Wire[], on: (t: string) => 
       const r = res.body!.getReader(), d = new TextDecoder()
       let buf = ''
       for (;;) {
-        const { done, value } = await r.read().catch((x: any) => { throw Error(x?.name === 'AbortError' ? 'Stopped' : 'Connection lost mid-reply') })
+        const { done, value } = await r.read().catch((x: any) => {
+          if (x?.name === 'AbortError') throw withCode('Stopped', 'stopped')
+          throw withCode('Connection lost mid-reply', 'network', { retryable: true })
+        })
         if (done) break
         buf += d.decode(value, { stream: true })
-        const L = buf.split('\n'); buf = L.pop()!
+        const { lines: L, rest } = splitSseBuffer(buf)
+        buf = rest
         for (const l of L) {
-          if (!l.startsWith('data:')) continue
-          const s = l.slice(5).trim(); if (!s || s === '[DONE]') continue
-          let j: any; try { j = JSON.parse(s) } catch { continue }
+          const j = parseSseLine(l)
+          if (j == null) continue
           ev(j)
         }
       }
@@ -378,7 +466,7 @@ export async function stream(e: Ep, sys: string, ms: Wire[], on: (t: string) => 
   }
   await flushRemaining()
   try {
-    if (!all && !calls.size) throw Error('Empty response')
+    if (!all && !calls.size) throw withCode('Empty response', 'empty_response')
   } catch (error) {
     throw withPartial(error)
   }

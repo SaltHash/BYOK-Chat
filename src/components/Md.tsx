@@ -38,7 +38,7 @@ export function UserText({ m }: { m: Msg }) {
         <Btn sm icon={Trash2} title="Delete" onClick={() => useS.getState().delMsg(m.id)} />
       </span>
       <div className={m.t.trimStart().startsWith('/') ? 'min-w-40 overflow-hidden rounded-xl border border-ac/40 bg-ac/5 shadow-sm' : 'whitespace-pre-wrap rounded-2xl bg-surf px-4 py-2.5'}>
-        {m.t.trimStart().startsWith('/') && <div className="border-b border-ac/20 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-ac">Command</div>}
+        {m.t.trimStart().startsWith('/') && <div className="border-b border-ac/20 px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-ac">Command</div>}
         <div className="whitespace-pre-wrap px-4 py-2.5">{m.t}</div>
       </div>
     </div>

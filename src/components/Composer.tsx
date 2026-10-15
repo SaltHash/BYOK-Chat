@@ -1,9 +1,10 @@
 import { useRef, useState } from 'react'
-import { Plus, FileUp, FileText, Image as ImageIcon, ArrowUp, Square, ChevronDown, ListMusic, Cpu, ScrollText, Settings, Search, X, TriangleAlert, Wrench } from 'lucide-react'
+import { Plus, FileUp, FileText, Image as ImageIcon, ArrowUp, Square, ChevronRight, ListMusic, Cpu, ScrollText, Settings, Search, X, TriangleAlert, Wrench } from 'lucide-react'
 import { useS, usable, modelsOf, modelNameOf, featOn, type Att } from '../store'
 import { CI, TOOLS } from '../meta'
+import { composerWidth } from '../layout'
 import { can, fmt, readAtt } from '../engine'
-import { Btn, Item, Pop, Seg, RangeSlider, cx, type Ic } from './ui'
+import { Btn, Item, Pop, Seg, RangeSlider, Toggle, cx, type Ic } from './ui'
 import { Notice } from './Extra'
 
 const chip = 'flex h-9 items-center gap-2 rounded-lg px-2.5 text-sm text-mu hover:bg-hov hover:text-tx'
@@ -33,7 +34,7 @@ function ModelMenu({ close, cfg }: { close: () => void; cfg: (t: string) => void
       {activeModel && efforts.length > 0 && <div className="shrink-0 border-b border-hov px-2.5 py-3" onClick={(e) => e.stopPropagation()}>
         <div className="mb-1 flex items-center justify-between text-xs"><span className="truncate pr-2 font-medium text-tx">Effort · {modelNameOf(activeEp!, activeModel).replace(/^~+/, '')}</span><span className="text-ac capitalize">{activeEffort}</span></div>
         <RangeSlider label={`${modelNameOf(activeEp!, activeModel).replace(/^~+/, '')} reasoning effort`} min={0} max={effortChoices.length - 1} step={1} value={effortIndex} valueText={effortChoices[effortIndex]} set={(n) => s.patch({ effort: { ...s.effort, [activeModel]: effortChoices[n] } })} className="mt-1 w-full" />
-        <div className="mt-1 flex justify-between text-[10px] capitalize text-mu"><span>{effortChoices[0]}</span><span>{effortChoices.at(-1)}</span></div>
+        <div className="mt-1 flex justify-between text-xs capitalize text-mu"><span>{effortChoices[0]}</span><span>{effortChoices.at(-1)}</span></div>
       </div>}
       <div className="min-h-0 flex-1 overflow-y-auto">
       {t === 'ep' && <Item icon={Cpu} on={!s.sel} sub="list order" onClick={() => { s.patch({ sel: null }); close() }}>All endpoints</Item>}
@@ -88,8 +89,8 @@ export function Composer({ cfg }: { cfg: (t: string) => void }) {
     let txtChars = att.reduce((a, x) => a + (x.text?.length ?? 0), 0)
     for (const f of [...l]) {
       const r = await readAtt(f, txtChars)
-      if (typeof r === 'string') s.patch({ notice: { t: r } })
-      else { out.push(r); txtChars += r.text?.length ?? 0 }
+      if (!r.ok) s.patch({ notice: { t: r.message } })
+      else { out.push(r.att); txtChars += r.att.text?.length ?? 0 }
     }
     setAtt((a) => [...a, ...out])
   }
@@ -111,7 +112,7 @@ export function Composer({ cfg }: { cfg: (t: string) => void }) {
     }
   }
   return (
-    <div className="mx-auto w-full max-w-3xl self-center px-4 pb-4">
+    <div className="mx-auto w-full self-center px-4 pb-4" style={{ maxWidth: composerWidth(s.prefs.chatWidth) }}>
       <Notice cfg={cfg} />
       <div className="relative rounded-2xl bg-surf p-3" onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); add(e.dataTransfer.files) }}>
         {menu && (
@@ -126,9 +127,9 @@ export function Composer({ cfg }: { cfg: (t: string) => void }) {
             {att.map((a, i) => a.kind === 'img' && a.data ? (
               <div key={i} className={cx('group/preview relative flex h-24 w-28 flex-col overflow-hidden rounded-lg bg-hov p-1.5 ring-1 ring-hov', bad(a) && 'ring-er')} title={a.name}>
                 <img src={`data:${a.mime || 'image/*'};base64,${a.data}`} alt={a.name} className="min-h-0 flex-1 rounded object-contain p-1" />
-                <span className="truncate px-1 text-[10px] text-mu" title={a.name}>{a.name}</span>
+                <span className="truncate px-1 text-xs text-mu" title={a.name}>{a.name}</span>
                 <button aria-label={`Remove ${a.name}`} onClick={() => setAtt(att.filter((_, j) => j !== i))} className="absolute right-1 top-1 grid size-5 place-items-center rounded-full bg-black/70 text-white opacity-0 transition-opacity group-hover/preview:opacity-100 focus:opacity-100"><X size={12} /></button>
-                {bad(a) && <span className="absolute left-1 right-1 top-7 rounded bg-er/90 px-1 py-0.5 text-center text-[9px] text-white"><TriangleAlert size={11} className="inline" /> Unsupported</span>}
+                {bad(a) && <span className="absolute left-1 right-1 top-7 rounded bg-er/90 px-1 py-0.5 text-center text-xs text-white"><TriangleAlert size={11} className="inline" /> Unsupported</span>}
               </div>
             ) : (
               <span key={i} title={bad(a) ? 'The selected model cannot process this file' : undefined} className={cx('inline-flex items-center gap-1.5 rounded-lg bg-hov py-1 pl-2 pr-1 text-xs', bad(a) && 'text-er')}>
@@ -165,14 +166,14 @@ export function Composer({ cfg }: { cfg: (t: string) => void }) {
               </>
             )}
           </Pop>
-          <Pop up w="w-80" scroll={false} trigger={() => (
+          <Pop up w="w-80" scroll={false} trigger={(o) => (
             <button className={chip}>
               {s.sel?.k === 'pl' && featOn(s, 'playlists') ? <ListMusic size={16} /> : <Cpu size={16} />}
-              <span className="max-w-40 truncate">{sel ? (s.sel?.model && s.sel.k === 'ep' ? modelNameOf(sel as any, s.sel.model) : sel.name) : 'All endpoints'}</span><ChevronDown size={14} />
+              <span className="max-w-40 truncate">{sel ? (s.sel?.model && s.sel.k === 'ep' ? modelNameOf(sel as any, s.sel.model) : sel.name) : 'All endpoints'}</span><ChevronRight size={14} className={cx('transition-transform', o && 'rotate-90')} />
             </button>
           )}>{(close) => <ModelMenu close={close} cfg={cfg} />}</Pop>
-          {featOn(s, 'prompts') && <Pop up trigger={() => (
-            <button className={chip}><ScrollText size={16} /><span className="max-w-32 truncate">{pr ? pr.name : 'No prompt'}</span>{s.globalPrompt?.on && <span className="size-1.5 shrink-0 rounded-full bg-ac" title="Global system prompt on" />}<ChevronDown size={14} /></button>
+          {featOn(s, 'prompts') && <Pop up trigger={(o) => (
+            <button className={chip}><ScrollText size={16} /><span className="max-w-32 truncate">{pr ? pr.name : 'No prompt'}</span>{s.globalPrompt?.on && <span className="size-1.5 shrink-0 rounded-full bg-ac" title="Global system prompt on" />}<ChevronRight size={14} className={cx('transition-transform', o && 'rotate-90')} /></button>
           )}>
             {(close) => {
               const g = s.globalPrompt ?? { on: false, text: '' }
@@ -183,15 +184,7 @@ export function Composer({ cfg }: { cfg: (t: string) => void }) {
                   <div className="mx-1 mb-1 mt-2 rounded-xl border border-ac/30 bg-ac/5 p-2.5">
                     <div className="flex items-center gap-2">
                       <span className="min-w-0 flex-1 text-sm font-medium">Global system prompt</span>
-                      <button
-                        role="switch"
-                        aria-checked={g.on}
-                        aria-label="Toggle global system prompt"
-                        onClick={() => s.patch({ globalPrompt: { ...g, on: !g.on } })}
-                        className={cx('relative h-6 w-11 shrink-0 rounded-full border transition-colors', g.on ? 'border-ac bg-ac shadow-[0_0_8px_color-mix(in_srgb,var(--ac)_60%,transparent)]' : 'border-mu/40 bg-surf')}
-                      >
-                        <span className={cx('absolute top-1/2 size-4 -translate-y-1/2 rounded-full transition-all', g.on ? 'left-[22px] bg-acx' : 'left-[3px] bg-mu')} />
-                      </button>
+                      <Toggle on={g.on} set={(on) => s.patch({ globalPrompt: { ...g, on } })} label="Toggle global system prompt" />
                     </div>
                     <p className="mt-1 text-xs leading-relaxed text-mu">{g.on ? (g.text.trim() ? 'On — applies to every message in every chat.' : 'On, but no text set yet — add one in Manage.') : 'Off — applies to every message in every chat when on.'}</p>
                     <Item icon={Settings} onClick={() => { close(); cfg('prompts') }}>Manage global…</Item>

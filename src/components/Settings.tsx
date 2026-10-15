@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { X, Plus, Trash2, ArrowUp, ArrowDown, ChevronDown, Eye, EyeOff, Play, ShieldCheck, Shield, Download, Upload, Check, CircleCheck, Cpu, Route, GripVertical, Server, ListMusic, ScrollText, Terminal, Wrench, Palette, FolderOpen, FileText, PanelRight, TrendingUp, Keyboard, Search, Brain, Pencil, Sparkles, RotateCcw, SlidersHorizontal, FlaskConical, Library, Database } from 'lucide-react'
-import { useS, PRE, THEMES, THEME_COLOR_KEYS, THEME_COLOR_LABELS, SEARCH_MODES, SEARCH_PROVIDERS, FEATURES, LIBRARY_ITEMS, FEATURE_TABS, FEATURE_WIDGETS, DEFAULT_LIBRARY_SHOW, DEFAULT_ADVANCED, featOn, normSearch, normAdvanced, modelsOf, modelNameOf, type Kind, type FeatureId } from '../store'
+import { X, Plus, Trash2, ArrowUp, ArrowDown, ChevronRight, Eye, EyeOff, Play, ShieldCheck, Shield, Download, Upload, Check, CircleCheck, Cpu, Route, GripVertical, Server, ListMusic, ScrollText, Terminal, Wrench, Palette, FolderOpen, FileText, PanelRight, TrendingUp, Keyboard, Search, Brain, Pencil, Sparkles, RotateCcw, SlidersHorizontal, FlaskConical, Library, Database } from 'lucide-react'
+import { useS, PRE, THEMES, DARK_THEMES, LIGHT_THEMES, THEME_COLOR_KEYS, THEME_COLOR_LABELS, SEARCH_MODES, SEARCH_PROVIDERS, FEATURES, LIBRARY_ITEMS, FEATURE_TABS, FEATURE_WIDGETS, DEFAULT_LIBRARY_SHOW, DEFAULT_ADVANCED, featOn, normSearch, normAdvanced, modelsOf, modelNameOf, type Kind, type FeatureId } from '../store'
 import { normSkills, resolveSkill, validateCustomSkill, enabledSkills, BUILTIN_SKILLS, SKILL_TOOL_NAME, type SkillState } from '../skills'
 import { TOOL_REGISTRY } from '../engine'
 import { CI, TOOLS, WIDGETS, KEYS } from '../meta'
 import { DataTab, StatsTab, KeysTab, TestRow, TestAllEndpoints } from './Extra'
-import { Btn, Field, Input, Area, Sel, Toggle, Seg, RangeSlider, Checkbox, HelpTip, Modal, Chip, cx, type Ic } from './ui'
+import { Btn, Field, Input, Area, Sel, Toggle, Seg, RangeSlider, Checkbox, HelpTip, Modal, Surface, Chip, cx, type Ic } from './ui'
 import { SortableList, type SortHandleProps, type SortItemApi } from './dnd'
+import { fetchModelCatalog, filterCatalogByEndpoint, prioritizeProviderRows, type CatalogEntry } from '../catalog'
 
 const TABS: [string, string, Ic][] = [
   ['features', 'Features', SlidersHorizontal],
@@ -63,7 +64,7 @@ export function Panel({ id, k, n, add, children }: { id: string; k?: Kind; n?: n
 export function Card({ icon: I, title, sub, right, open0, handle, children, muted }: { icon: Ic; title: ReactNode; sub?: string; right?: ReactNode; open0?: boolean; handle?: SortHandleProps | null; children: ReactNode; muted?: boolean }) {
   const [o, setO] = useState(!!open0)
   return (
-    <div className="rounded-xl bg-surf">
+    <Surface padded={false}>
       <div className="flex items-center gap-3 p-3">
         {handle && <span {...handle} title="Drag to reorder" className="dnd-handle -mr-1 cursor-grab text-mu"><GripVertical size={16} /></span>}
         <div role="button" tabIndex={0} onClick={() => setO(!o)} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setO(!o) } }} className="flex min-w-0 flex-1 cursor-pointer items-center gap-3 text-left">
@@ -71,10 +72,10 @@ export function Card({ icon: I, title, sub, right, open0, handle, children, mute
           <span className="min-w-0"><span className="block truncate font-medium">{title}</span>{sub && <span className="block truncate text-sm text-mu">{sub}</span>}</span>
         </div>
         {right}
-        <Btn sm icon={ChevronDown} title={o ? 'Collapse' : 'Expand'} onClick={() => setO(!o)} className={o ? 'rotate-180' : ''} />
+        <Btn sm icon={ChevronRight} title={o ? 'Collapse' : 'Expand'} onClick={() => setO(!o)} className={cx('transition-transform', o && 'rotate-90')} />
       </div>
       {o && <div className="space-y-4 px-3 pb-4">{children}</div>}
-    </div>
+    </Surface>
   )
 }
 
@@ -119,7 +120,7 @@ function Acts({ k, id }: { k: Kind; id: string }) {
 function ModelsEditor({ e, update }: { e: any; update: (p: object) => void }) {
   const refs = useRef<(HTMLInputElement | null)[]>([])
   const [picker, setPicker] = useState(false)
-  const [catalog, setCatalog] = useState<{ id: string; efforts: string[]; source: 'auto' | 'manual'; providerId: string; name: string; context?: number; inputPrice?: number; outputPrice?: number }[]>([])
+  const [catalog, setCatalog] = useState<CatalogEntry[]>([])
   const [catalogState, setCatalogState] = useState('')
   const [query, setQuery] = useState('')
   const [searchIdea, setSearchIdea] = useState<string | null>(null)
@@ -146,55 +147,11 @@ function ModelsEditor({ e, update }: { e: any; update: (p: object) => void }) {
   const indexOfRow = (rid: string) => rowIds.indexOf(rid)
   const loadCatalog = async () => {
     setPicker(true); setCatalogState('Loading documented models…')
-    const base = String(e.url || '').trim().replace(/\/+$/, '')
-    const headers = e.key ? { authorization: `Bearer ${e.key}` } : {}
-    const openRouterHeaders = /openrouter\.ai/i.test(base) && e.key ? headers : {}
-    const query = endpointId ? `?${endpointFilter === 'provider' ? 'providers' : 'model_authors'}=${encodeURIComponent(endpointId)}` : ''
-    const parseModels = (body: any) => {
-      const rows = Array.isArray(body?.data) ? body.data : Array.isArray(body?.models) ? body.models : Array.isArray(body?.model_catalog) ? body.model_catalog : Array.isArray(body) ? body : []
-      return rows.map((x: any) => {
-        const params = x.supported_parameters ?? []
-        const supportedEfforts = x.reasoning?.supported_efforts ?? x.supported_efforts ?? x.supported_reasoning_efforts
-        const efforts = Array.isArray(supportedEfforts) ? supportedEfforts.map(String) : []
-        const claimsReasoning = params.includes('reasoning') || params.includes('reasoning_effort') || x.supports_reasoning || x.supports_reasoning_effort
-        const effortKnown = efforts.length > 0 || (!claimsReasoning && (Array.isArray(x.supported_parameters) || x.supports_reasoning === false))
-        const id = String(x.id ?? x.model_id ?? x.model_name ?? '')
-        const name = String(x.name ?? x.display_name ?? '')
-        const providerId = String(x.provider ?? x.litellm_provider ?? x.provider_name ?? '')
-        const modelLabel = name.replace(/^~+/, '').replace(/^([^:]+):\s*/, (full, prefix: string) => [providerId, endpointId, e.name, id.split('/')[0]].some(owner => owner && owner.toLowerCase() === prefix.trim().toLowerCase()) ? '' : full)
-        const context = Number(x.context_length ?? x.context_window ?? x.max_input_tokens)
-        const inputPrice = Number(x.pricing?.prompt), outputPrice = Number(x.pricing?.completion)
-        const round2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100
-        return { id, efforts, source: effortKnown ? 'auto' as const : 'manual' as const, providerId, name: modelLabel, ...(context > 0 ? { context } : {}), ...(Number.isFinite(inputPrice) && inputPrice > 0 ? { inputPrice: round2(inputPrice * 1e6) } : {}), ...(Number.isFinite(outputPrice) && outputPrice > 0 ? { outputPrice: round2(outputPrice * 1e6) } : {}) }
-      }).filter((x: any) => x.id && !/batch/i.test(x.id) && !/batch/i.test(x.name))
-    }
     try {
-      let found: { id: string; efforts: string[]; source: 'auto' | 'manual'; providerId: string; name: string }[] = [], firstError = ''
-      try {
-        const r = await fetch(`https://openrouter.ai/api/v1/models${query}`, { headers: openRouterHeaders })
-        if (!r.ok) throw Error(`OpenRouter catalog HTTP ${r.status}`)
-        found = parseModels(await r.json())
-      } catch (err: any) { firstError = err?.message || 'OpenRouter lookup failed.' }
-      const generalProvider = ['Groq', 'Together', 'Fireworks', 'Ollama (local)', 'Other OpenAI-compatible'].includes(e.preset ?? '')
-      if (generalProvider && base) { try { const r = await fetch(`${base}/models`, { headers }); if (r.ok) found = parseModels(await r.json()) } catch { /* fall back to public catalogs */ } }
-      if (!found.length) {
-        try {
-          const r = await fetch('https://models.litellm.ai/model_catalog')
-          if (!r.ok) throw Error(`LiteLLM catalog HTTP ${r.status}`)
-          found = parseModels(await r.json())
-        } catch (err: any) {
-          if (base) try { const r = await fetch(`${base}/models`, { headers }); if (r.ok) found = parseModels(await r.json()) } catch { /* keep catalog error for the manual entry path */ }
-          if (!found.length) throw Error(`${firstError}; ${err?.message || 'LiteLLM lookup failed.'}`)
-        }
-      }
-      if (endpointId) found = found.filter((x) => endpointFilter === 'provider'
-        ? x.providerId.toLowerCase() === endpointId.toLowerCase() || (!x.id.includes('/') && x.id.toLowerCase().startsWith(`${endpointId.toLowerCase()}-`))
-        : x.id.toLowerCase().startsWith(`${endpointId.toLowerCase()}/`))
-      if (isOpenRouter) {
-        const providerRows = endpointId ? found.filter((x) => endpointFilter === 'provider' ? x.providerId.toLowerCase() === endpointId.toLowerCase() || (!x.id.includes('/') && x.id.toLowerCase().startsWith(`${endpointId.toLowerCase()}-`)) : x.id.toLowerCase().startsWith(`${endpointId.toLowerCase()}/`)) : found
-        const topCount = Math.min(providerRows.length, 10, Math.max(3, Math.floor(providerRows.length * 0.2)))
-        found = [...providerRows.slice(0, topCount), ...found.filter((x) => !providerRows.slice(0, topCount).includes(x))]
-      }
+      const { entries, error } = await fetchModelCatalog(e)
+      if (error && !entries.length) { setCatalogState(`${error} You can still enter a model ID below.`); return }
+      let found = endpointId ? filterCatalogByEndpoint(entries, endpointId, endpointFilter) : entries
+      if (isOpenRouter) found = prioritizeProviderRows(found, endpointId, endpointFilter)
       setCatalog(found)
       const detectedEntries = found.filter(x => models.includes(storedId(x.id)) && x.source === 'auto' && !e.modelEffortSource?.[storedId(x.id)])
       const detected = Object.fromEntries(detectedEntries.map(x => [storedId(x.id), x.efforts]))
@@ -237,7 +194,7 @@ function ModelsEditor({ e, update }: { e: any; update: (p: object) => void }) {
       }}
     />
     <button onClick={() => { setPicker(true); setSelectedModels([]); void loadCatalog() }} className="flex w-full items-center justify-center gap-2 rounded-lg border border-dashed border-hov py-2 text-sm text-mu hover:text-tx"><Plus size={14} />Add model</button>
-    {picker && <Modal close={() => setPicker(false)} keyboard={false}><div className="flex max-h-[82dvh] w-full max-w-xl flex-col gap-3 rounded-2xl bg-bg p-5 shadow-2xl">
+    {picker && <Modal close={() => setPicker(false)} keyboard={false}><div className="flex max-h-[80dvh] w-full max-w-xl flex-col gap-3 rounded-2xl bg-bg p-5 shadow-2xl">
       <div className="flex items-center justify-between"><div><h3 className="font-semibold">Choose a model</h3><p className="mt-0.5 text-xs text-mu">{e.name}{endpointId ? ` · ${endpointId}` : ''}</p></div><button onClick={() => setPicker(false)} className="grid size-8 place-items-center rounded-lg text-mu hover:bg-hov hover:text-tx" aria-label="Close model picker"><X size={16}/></button></div>
       <button onClick={loadCatalog} className="self-start rounded-lg bg-hov px-3 py-2 text-xs text-tx">{catalog.length ? 'Refresh model catalog' : 'Load available models'}</button>
       <p className="text-xs text-mu">{catalogState || 'Loads models from the provider API, then public catalogs when unavailable.'} Catalog entries may not be enabled on your endpoint.</p>
@@ -361,7 +318,7 @@ function Eps() {
                 </div>
               </Field>
               </section>
-              <details open={advanced.includes(e.id)} onToggle={(ev) => { const isOpen = ev.currentTarget.open; setAdvanced(current => isOpen ? [...new Set([...current, e.id])] : current.filter(id => id !== e.id)) }} className="rounded-xl bg-bg px-3"><summary className="flex cursor-pointer list-none items-center gap-2 py-3 text-sm font-medium text-mu"><span>Advanced connection settings</span><ChevronDown size={16} aria-hidden="true" className={cx('transition-transform', !advanced.includes(e.id) && '-rotate-90')} /></summary><div className="space-y-3 pb-3">
+              <details open={advanced.includes(e.id)} onToggle={(ev) => { const isOpen = ev.currentTarget.open; setAdvanced(current => isOpen ? [...new Set([...current, e.id])] : current.filter(id => id !== e.id)) }} className="rounded-xl bg-bg px-3"><summary className="flex cursor-pointer list-none items-center gap-2 py-3 text-sm font-medium text-mu"><span>Advanced connection settings</span><ChevronRight size={16} aria-hidden="true" className={cx('transition-transform', advanced.includes(e.id) && 'rotate-90')} /></summary><div className="space-y-3 pb-3">
                 <Field label="Base URL" hint="The format's path is appended to this URL."><Input value={e.url} set={(v) => { const match = presetForUrl(v); u({ url: v, ...(match ? { preset: match[0], endpointId: match[1][2], endpointFilter: match[1][3] } : { preset: '', endpointId: '', endpointFilter: 'author' }) }) }} placeholder="https://…/v1" /></Field>
                 <Field label="API format"><Seg v={e.type} set={(v) => u({ type: v })} opts={[[ 'openai', 'OpenAI-compatible'], ['anthropic', 'Anthropic Messages']]} /></Field>
                 <Field label="Endpoint ID" hint="Used to limit OpenRouter catalog suggestions to this brand or hosting provider."><Input value={e.endpointId ?? presetForUrl(e.url)?.[1][2] ?? ''} set={(endpointId) => u({ endpointId, endpointFilter: catalogPrefs(endpointId) })} placeholder="e.g. anthropic" /></Field>
@@ -751,7 +708,7 @@ function WidgetsTab() {
   )
 }
 
-const PAL: Record<string, string[]> = { plum: ['#120c16', '#17101c', '#dc8ad8'], claude: ['#171513', '#2B2621', '#D97757'], paper: ['#f1f1ec', '#fbfbf9', '#3b5bdb'], sepia: ['#ede2ca', '#f6eedd', '#9c4a1a'] }
+const PAL: Record<string, string[]> = { plum: ['#120c16', '#17101c', '#dc8ad8'], claude: ['#151413', '#1c1b1a', '#d97757'], nord: ['#3b4252', '#2e3440', '#88c0d0'], amoled: ['#0a0a0a', '#000000', '#3b82f6'], paper: ['#f1f1ec', '#fbfbf9', '#3b5bdb'], sepia: ['#ede2ca', '#f6eedd', '#9c4a1a'], porcelain: ['#f0f0ee', '#f8f8f7', '#4f46e5'], sand: ['#f3ead8', '#fbf7ef', '#b45309'] }
 
 function FontPicker({ value, set, options }: { value: string; set: (v: string) => void; options: [string, string][] }) {
   const [query, setQuery] = useState(value === 'system' ? '' : value)
@@ -787,26 +744,40 @@ function Look() {
   )
   return (
     <Panel id="look">
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
-        {Object.entries(THEMES).map(([k, n]) => (
-          <button key={k} onClick={() => s.patch({ theme: k as keyof typeof THEMES })} className={cx('space-y-2 rounded-xl bg-surf p-2 text-left text-sm', s.theme === k && 'ring-2 ring-ac')}>
-            <div className="flex h-16 overflow-hidden rounded-lg">
-              <div className="w-1/4" style={{ background: k === 'custom' ? s.customColors.side : PAL[k][0] }} />
-              <div className="flex-1 p-2" style={{ background: k === 'custom' ? s.customColors.bg : PAL[k][1] }}><div className="h-2 w-2/3 rounded" style={{ background: k === 'custom' ? s.customColors.ac : PAL[k][2] }} /></div>
-            </div>
-            <span className="flex items-center justify-between px-1">{n}{s.theme === k && <Check size={14} className="text-ac" />}</span>
-          </button>
-        ))}
+      <div className="rounded-xl bg-surf p-3 space-y-2">
+        <div className="text-sm font-medium">Appearance mode</div>
+        <div className="text-xs text-mu">Dark and light each keep their own theme and custom colors.</div>
+        <div className="mt-1"><Seg v={s.themeMode} set={(themeMode) => s.patch({ themeMode })} opts={[['dark', 'Dark'], ['light', 'Light']]} /></div>
       </div>
-      {s.theme === 'custom' && <div className="rounded-xl bg-surf p-3 space-y-3">
-        <div><div className="text-sm font-medium">Custom theme colors</div><div className="text-xs text-mu">Choose the colors used by every surface, text style, accent, and syntax highlight in the app.</div></div>
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
+        {[...(s.themeMode === 'light' ? LIGHT_THEMES : DARK_THEMES), 'custom'].map((k) => {
+          const n = THEMES[k as keyof typeof THEMES]
+          const active = (s.themeMode === 'light' ? s.themeLight : s.themeDark) === k
+          const custom = s.themeMode === 'light' ? s.customLightColors : s.customDarkColors
+          return (
+          <button key={k} onClick={() => s.patch(s.themeMode === 'light' ? { themeLight: k as typeof s.themeLight } : { themeDark: k as typeof s.themeDark })} className={cx('space-y-2 rounded-xl bg-surf p-2 text-left text-sm', active && 'ring-2 ring-ac')}>
+            <div className="flex h-16 overflow-hidden rounded-lg">
+              <div className="w-1/4" style={{ background: k === 'custom' ? custom.side : PAL[k][0] }} />
+              <div className="flex-1 p-2" style={{ background: k === 'custom' ? custom.bg : PAL[k][1] }}><div className="h-2 w-2/3 rounded" style={{ background: k === 'custom' ? custom.ac : PAL[k][2] }} /></div>
+            </div>
+            <span className="flex items-center justify-between px-1">{n}{active && <Check size={14} className="text-ac" />}</span>
+          </button>
+          )
+        })}
+      </div>
+      {((s.themeMode === 'light' ? s.themeLight : s.themeDark) === 'custom') && (() => {
+        const custom = s.themeMode === 'light' ? s.customLightColors : s.customDarkColors
+        const setCustom = (next: typeof custom) => s.patch(s.themeMode === 'light' ? { customLightColors: next } : { customDarkColors: next })
+        return <div className="rounded-xl bg-surf p-3 space-y-3">
+        <div><div className="text-sm font-medium">Custom theme colors ({s.themeMode === 'light' ? 'light' : 'dark'})</div><div className="text-xs text-mu">Saved separately for {s.themeMode === 'light' ? 'light' : 'dark'} mode — switching modes keeps each custom palette.</div></div>
         <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">{THEME_COLOR_KEYS.map((key) => <div key={key} className="relative flex items-center gap-2 rounded-lg bg-bg p-2 text-sm">
-          <button type="button" aria-label={`Choose ${THEME_COLOR_LABELS[key]} color`} aria-expanded={colorPicker === key} onClick={() => setColorPicker(colorPicker === key ? null : key)} className="size-9 shrink-0 rounded-lg border border-white/30 shadow-sm" style={{ backgroundColor: s.customColors[key] }} />
+          <button type="button" aria-label={`Choose ${THEME_COLOR_LABELS[key]} color`} aria-expanded={colorPicker === key} onClick={() => setColorPicker(colorPicker === key ? null : key)} className="size-9 shrink-0 rounded-lg border border-white/30 shadow-sm" style={{ backgroundColor: custom[key] }} />
           <span className="min-w-0 flex-1 leading-tight">{THEME_COLOR_LABELS[key]}</span>
-          <input aria-label={`${THEME_COLOR_LABELS[key]} hex color`} value={s.customColors[key]} onChange={(e) => { const value = e.target.value; if (/^#[\da-f]{0,6}$/i.test(value)) s.patch({ customColors: { ...s.customColors, [key]: value } }) }} onBlur={() => { if (!/^#[\da-f]{6}$/i.test(s.customColors[key])) s.patch({ customColors: { ...s.customColors, [key]: '#000000' } }) }} className="w-[5.2rem] rounded-md border border-white/20 bg-transparent px-1.5 py-1 font-mono text-xs uppercase" />
-          {colorPicker === key && <div className="settings-dropdown absolute left-2 top-full z-30 mt-1 w-56 rounded-xl bg-bg p-3"><label className="flex items-center justify-between gap-3 text-xs text-mu">Choose color<input type="color" aria-label={`Choose ${THEME_COLOR_LABELS[key]} color`} value={s.customColors[key]} onChange={(e) => s.patch({ customColors: { ...s.customColors, [key]: e.target.value } })} className="h-9 w-12 cursor-pointer rounded-md border border-hov bg-transparent p-1" /></label></div>}
+          <input aria-label={`${THEME_COLOR_LABELS[key]} hex color`} value={custom[key]} onChange={(e) => { const value = e.target.value; if (/^#[\da-f]{0,6}$/i.test(value)) setCustom({ ...custom, [key]: value }) }} onBlur={() => { if (!/^#[\da-f]{6}$/i.test(custom[key])) setCustom({ ...custom, [key]: '#000000' }) }} className="w-20 rounded-md border border-white/20 bg-transparent px-1.5 py-1 font-mono text-xs uppercase" />
+          {colorPicker === key && <div className="settings-dropdown absolute left-2 top-full z-30 mt-1 w-56 rounded-xl bg-bg p-3"><label className="flex items-center justify-between gap-3 text-xs text-mu">Choose color<input type="color" aria-label={`Choose ${THEME_COLOR_LABELS[key]} color`} value={custom[key]} onChange={(e) => setCustom({ ...custom, [key]: e.target.value })} className="h-9 w-12 cursor-pointer rounded-md border border-hov bg-transparent p-1" /></label></div>}
         </div>)}</div>
-      </div>}
+      </div>
+      })()}
       {row('showBy', 'Show which model answered', 'Label each reply with the endpoint and model that produced it.')}
       {row('showLog', 'Show model-use details', 'List every model called for a reply, including classifiers and failures.')}
       {row('showTps', 'Show generation speed', 'Show tokens per second below each reply.')}

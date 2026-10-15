@@ -115,7 +115,7 @@ function Code({ lang, code, children, bare }: { lang: string; code: string; chil
   const [ok, setOk] = useState(false)
   if (bare) {
     return (
-      <pre className="overflow-x-auto px-6 py-5 font-mono text-[13px] leading-6">{children}</pre>
+      <pre className="overflow-x-auto px-6 py-5 font-mono text-sm leading-6">{children}</pre>
     )
   }
   return (
@@ -126,7 +126,7 @@ function Code({ lang, code, children, bare }: { lang: string; code: string; chil
           {ok ? <Check size={13} /> : <Copy size={13} />}{ok ? 'Copied' : 'Copy'}
         </button>
       </div>
-      <pre className="overflow-x-auto px-4 py-3 font-mono text-[13px] leading-6">{children}</pre>
+      <pre className="overflow-x-auto px-4 py-3 font-mono text-sm leading-6">{children}</pre>
     </div>
   )
 }

@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Plus, Clock, Search, PanelLeftClose, Pin, Pencil, Trash2, MessageSquare, Server, ListMusic, ScrollText, Terminal, Wrench, Settings, Palette, Lock, PanelRight, Folder, FolderPlus, FolderMinus, ChevronRight, ChevronDown, Bookmark } from 'lucide-react'
-import { useS, THEMES, DEFAULT_LIBRARY_SHOW, featOn, type Chat, type FeatureId } from '../store'
+import { Plus, Clock, Search, PanelLeftClose, Pin, Pencil, Trash2, MessageSquare, Server, ListMusic, ScrollText, Terminal, Wrench, Settings, Palette, Lock, PanelRight, Folder, FolderPlus, FolderMinus, ChevronRight, Bookmark } from 'lucide-react'
+import { useS, THEMES, DARK_THEMES, LIGHT_THEMES, themeKeyOf, DEFAULT_LIBRARY_SHOW, featOn, type Chat, type FeatureId } from '../store'
+import { clampSidebarWidth } from '../layout'
 import { Btn, Confirm, cx } from './ui'
 import { DndPlaceholder, DndLiveRegion, showDragOverlay, moveDragOverlay, hideDragOverlay, measureBox, DND_ACTIVATION_PX, useFlipAnimate } from './dnd'
+import { dndDirection, insertionIndex } from '../dndShared'
 
 const act = 'grid size-7 place-items-center rounded-md text-mu hover:text-tx'
 
@@ -72,7 +74,9 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
   }, [menu])
   const k = q.toLowerCase()
   const L = s.chats.filter((c) => !k || c.title.toLowerCase().includes(k) || c.msgs.some((m) => m.t.toLowerCase().includes(k)))
-  const th = Object.keys(THEMES)
+  const th = s.themeMode === 'light' ? [...LIGHT_THEMES, 'custom'] : [...DARK_THEMES, 'custom']
+  const thCur = s.themeMode === 'light' ? s.themeLight : s.themeDark
+  const thNext = th[(th.indexOf(thCur) + 1) % th.length]
   const libFeature: Record<string, FeatureId> = { pls: 'playlists', prompts: 'prompts', cmds: 'commands', tools: 'tools', memory: 'memory', widgets: 'widgets' }
   const show = s.libraryShow ?? DEFAULT_LIBRARY_SHOW
   const lib: [string, string, typeof Server, number][] = [
@@ -117,14 +121,9 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
         const rr = row.getBoundingClientRect()
         mids.push(rr.top + rr.height / 2)
       }
-      const dir = d ? (clientY >= d.lastY ? 1 : -1) : 1
+      const dir = d ? dndDirection(clientY, d.lastY) : 1
       if (d) d.lastY = clientY
-      const bias = dir === 1 ? -4 : 4
-      let at = rows.length
-      for (let i = 0; i < mids.length; i++) {
-        if (clientY < mids[i] + bias) { at = i; break }
-      }
-      return { folder: key, at }
+      return { folder: key, at: insertionIndex(mids, clientY, dir) }
     }
     return null
   }
@@ -322,8 +321,9 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
     return mins >= 60 ? `${Math.ceil(mins / 60)}h left` : `${mins}m left`
   }
   const item = 'flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm hover:bg-surf'
+  const safeWidth = clampSidebarWidth(width)
   return (
-    <aside style={{ width }} className="z-20 flex w-72 min-w-0 shrink-0 flex-col gap-3 bg-side p-3 max-md:fixed max-md:inset-y-0">
+    <aside style={{ width: safeWidth, maxWidth: '90vw' }} className="z-20 flex min-w-0 shrink-0 flex-col gap-3 bg-side p-3 max-md:fixed max-md:inset-y-0">
       <div className="flex gap-2">
         <Btn v="solid" icon={s.prefs.temporaryByDefault ? Clock : Plus} title={s.prefs.temporaryByDefault ? 'New temporary chat' : 'New chat'} className="flex-1" onClick={() => s.newChat()}>{s.prefs.temporaryByDefault ? 'Temporary chat' : 'New chat'}</Btn>
         <Btn icon={s.prefs.temporaryByDefault ? Plus : Clock} title={s.prefs.temporaryByDefault ? 'New regular chat' : 'New temporary chat'} onClick={() => s.newChat(!s.prefs.temporaryByDefault)} />
@@ -341,7 +341,7 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
             <button onClick={() => s.patch({ chat: c.id })} className={cx('flex min-w-0 flex-1 items-center gap-2.5 px-2.5 py-2 text-left', s.chat === c.id && 'bg-hov')}>
               <Clock size={15} className="shrink-0 text-mu" /><span className="truncate">{c.title}</span>
             </button>
-            <span title={c.expiresAt ? `Deletes in ${timeLeft(c)}` : 'Deletes when you leave'} className="shrink-0 text-[11px] text-mu">{timeLeft(c)}</span>
+            <span title={c.expiresAt ? `Deletes in ${timeLeft(c)}` : 'Deletes when you leave'} className="shrink-0 text-xs text-mu">{timeLeft(c)}</span>
             <button title="Delete chat" onClick={() => setDeleteId(c.id)} className={cx(act, 'ml-1 hidden group-hover:grid hover:text-er')}><Trash2 size={14} /></button>
           </div>)}
           {!temporary.length && <p className="px-2.5 py-1 text-sm text-mu">No temporary chats.</p>}
@@ -361,9 +361,9 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
                   <button onClick={() => s.toggleFolder(f.id)} onDoubleClick={() => setFe(f.id)} className="flex min-w-0 flex-1 items-center gap-2 px-2.5 py-2 text-left">
                     <span className="relative grid shrink-0 place-items-center" aria-hidden="true">
                       <Folder size={20} className="text-mu" />
-                      <span className="absolute inset-0 flex items-center justify-center pt-[4px] text-[9px] font-semibold leading-none text-mu">{s.chats.filter((c) => c.folder === f.id).length}</span>
+                      <span className="absolute inset-0 flex items-center justify-center pt-[4px] text-xs font-semibold leading-none text-mu">{s.chats.filter((c) => c.folder === f.id).length}</span>
                     </span><span className="min-w-0 truncate">{f.name}<span className="sr-only"> ({s.chats.filter((c) => c.folder === f.id).length} chats)</span></span>
-                    {o ? <ChevronDown size={14} className="shrink-0 text-mu" /> : <ChevronRight size={14} className="shrink-0 text-mu" />}
+                    <ChevronRight size={14} className={cx('shrink-0 text-mu transition-transform', o && 'rotate-90')} />
                   </button>
                 )}
                 <span className="hidden group-hover:flex">
@@ -393,7 +393,7 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
       )}
       <div className="flex items-center gap-1">
         <Btn icon={Settings} className="flex-1 justify-start" onClick={() => cfg('eps')}>Settings</Btn>
-        <Btn icon={Palette} title={`Theme: ${THEMES[s.theme]}`} onClick={() => s.patch({ theme: th[(th.indexOf(s.theme) + 1) % th.length] as keyof typeof THEMES })} />
+        <Btn icon={Palette} title={`Theme: ${THEMES[themeKeyOf(s)]}`} onClick={() => s.patch(s.themeMode === 'light' ? { themeLight: thNext as typeof s.themeLight } : { themeDark: thNext as typeof s.themeDark })} />
       </div>
       <p className="flex items-center gap-1.5 px-1 text-xs text-mu"><Lock size={12} />Keys stay in this browser</p>
       {menu && (

@@ -144,6 +144,96 @@ export const workspaceSize = (s: string) => {
 }
 export const workspaceLines = (s: string) => (s ? s.split('\n').length : 0)
 
+/* ---- Shared live-workspace helpers (pure, unit-testable) ----
+ * These collapse the 4 duplicated writingPath / workspaceIds computations
+ * previously spread across Chat.tsx and Workspace.tsx. */
+
+export type LiveCallLike = { id: string; name?: string; arguments: string; result?: string }
+
+/** IDs of workspaces touched by completed tool rounds (args first, then result). */
+export function extractWorkspaceIds(calls: { name: string; arguments: string; result?: string }[]): string[] {
+  const ids: string[] = []
+  const seen = new Set<string>()
+  for (const c of calls) {
+    if (c.name !== WORKSPACE_TOOL) continue
+    let id: string | null = null
+    try { const a = JSON.parse(c.arguments || '{}'); if (a.workspaceId) id = String(a.workspaceId) } catch { /* ignore */ }
+    if (!id) try { const r = JSON.parse(c.result || '{}'); if (r.workspaceId) id = String(r.workspaceId) } catch { /* ignore */ }
+    if (id && !seen.has(id)) { seen.add(id); ids.push(id) }
+  }
+  return ids
+}
+
+/** Pending (not-yet-committed) live calls vs completed final calls. */
+export function pendingLiveCalls(
+  live: LiveCallLike[] | undefined,
+  finalCalls: { id: string }[],
+  tool = WORKSPACE_TOOL,
+): LiveCallLike[] {
+  const done = new Set(finalCalls.map((c) => c.id))
+  return (live ?? []).filter((c) => c.name === tool || !c.name).filter((c) => !c.id || !done.has(c.id))
+}
+
+/** Path of the file currently being written, or null when idle. */
+export function findWritingPath(
+  live: LiveCallLike[] | undefined,
+  toolRounds: { calls: WorkspaceCallLike[] }[] | undefined,
+  tool = WORKSPACE_TOOL,
+): string | null {
+  const finalCalls = (toolRounds ?? []).flatMap((r) => r.calls).filter((c) => c.name === tool)
+  const pending = pendingLiveCalls(live as LiveCallLike[] | undefined, finalCalls, tool)
+  if (!pending.length) return null
+  const groups = groupWorkspaceVersions(pending.map((c) => ({ ...c, name: tool })))
+  return groups[groups.length - 1]?.path ?? null
+}
+
+/** Last path across final + pending calls (used for the "Writing…" fallback in Chat). */
+export function findLastWorkspacePath(
+  live: LiveCallLike[] | undefined,
+  toolRounds: { calls: WorkspaceCallLike[] }[] | undefined,
+  tool = WORKSPACE_TOOL,
+): string | null {
+  const finalCalls = (toolRounds ?? []).flatMap((r) => r.calls).filter((c) => c.name === tool)
+  const pending = pendingLiveCalls(live as LiveCallLike[] | undefined, finalCalls, tool)
+  const all = [...pending.map((c) => ({ ...c, name: tool })), ...finalCalls.map((c) => ({ ...c })) as WorkspaceCallLike[]]
+  if (!all.length) return null
+  const groups = groupWorkspaceVersions(all)
+  return groups[groups.length - 1]?.path ?? null
+}
+
+export type FolderTreeNode<T extends { path: string }> = { files: T[]; folders: Set<string> }
+export type FolderTree<T extends { path: string }> = Record<string, FolderTreeNode<T>>
+
+/** Nested folder tree keyed by `/a/b` paths; root is `/`. Pure and shared by tile + panel. */
+export function buildFolderTree<T extends { path: string }>(files: T[]): FolderTree<T> {
+  const root: FolderTree<T> = { '/': { files: [], folders: new Set() } }
+  for (const f of files) {
+    const parts = f.path.split('/')
+    let current = '/'
+    for (let i = 0; i < parts.length - 1; i++) {
+      const next = current === '/' ? `/${parts[i]}` : `${current}/${parts[i]}`
+      if (!root[next]) root[next] = { files: [], folders: new Set() }
+      root[current].folders.add(parts[i])
+      current = next
+    }
+    root[current].files.push(f)
+  }
+  return root
+}
+
+/** Expanded-folder map for every ancestor of `filePath` (e.g. auto-follow). */
+export function expandedFoldersForPath(filePath: string | null | undefined): Record<string, boolean> {
+  if (!filePath) return {}
+  const parts = filePath.split('/')
+  const out: Record<string, boolean> = {}
+  let cur = '/'
+  for (let i = 0; i < parts.length - 1; i++) {
+    cur = cur === '/' ? `/${parts[i]}` : `${cur}/${parts[i]}`
+    out[cur] = true
+  }
+  return out
+}
+
 /* ============================================================================
  * Workspace (first-class entity) types and migration helpers
  * ============================================================================ */

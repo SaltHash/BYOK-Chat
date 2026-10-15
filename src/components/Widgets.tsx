@@ -1,22 +1,24 @@
 import { useState, type ReactNode } from 'react'
 import { Gauge, Activity, Layers, StickyNote, Bookmark, Plus, X, CornerDownLeft, Coins, Timer, ScrollText, Keyboard, Type, ListChecks, Check, GripVertical } from 'lucide-react'
 import { useS, modelsOf, uid, widgetOn } from '../store'
+import { clampWidgetWidth } from '../layout'
 import { fmtDuration, KEYS, WIDGETS } from '../meta'
 import { estimateHistoryTokens, fmt } from '../engine'
-import { Btn, cx, type Ic } from './ui'
+import { Btn, Surface, cx, type Ic } from './ui'
 import { SortableList, type SortHandleProps } from './dnd'
 
 const WidgetCard = ({ icon: I, t, handle, children }: { icon: Ic; t: string; handle: SortHandleProps; children: ReactNode }) => {
-  return <div className="space-y-3 rounded-xl bg-surf p-3">
+  return <Surface className="space-y-3">
     <div className="flex items-center gap-2 text-sm font-medium"><span {...handle} title="Drag to rearrange" className="dnd-handle cursor-grab text-mu"><GripVertical size={14} /></span><I size={16} className="text-ac" />{t}</div>
     {children}
-  </div>
+  </Surface>
 }
 const field = 'w-full rounded-lg bg-bg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ac/40'
 const SESSION_START = Date.now()
 
 export function Widgets({ width = 320 }: { width?: number }) {
   const s = useS()
+  const safeWidth = clampWidgetWidth(width)
   const [n, setN] = useState('')
   const [td, setTd] = useState('')
   const c = s.chats.find((x) => x.id === s.chat)
@@ -148,7 +150,7 @@ export function Widgets({ width = 320 }: { width?: number }) {
   }
 
   return (
-    <aside style={{ width }} className="z-10 flex w-80 min-w-0 shrink-0 flex-col gap-3 overflow-y-auto bg-side p-3 max-lg:hidden">
+    <aside style={{ width: safeWidth }} className="z-10 flex min-w-0 shrink-0 flex-col gap-3 overflow-y-auto bg-side p-3 max-lg:hidden">
       <div className="flex items-center justify-between px-1">
         <span className="text-sm font-medium">Widgets</span>
         <Btn sm icon={X} title="Close panel" onClick={() => s.patch({ rail: false })} />

@@ -270,15 +270,30 @@ test('OpenAI wire omits PDFs with a note instead of an image_url block', () => {
 
 test('readAtt rejects office, media, and archive files with guidance and caps text budgets', async () => {
   const file = (name, type, text = 'hello') => new File([text], name, { type })
-  assert.match(await readAtt(file('deck.docx', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document')), /Office documents/)
-  assert.match(await readAtt(file('song.mp3', 'audio/mpeg')), /not transcribed/)
-  assert.match(await readAtt(file('bundle.zip', 'application/zip')), /not unpacked/)
-  assert.match(await readAtt(file('notes.txt', 'text/plain'), 500000), /budget/)
+  const docx = await readAtt(file('deck.docx', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'))
+  assert.equal(docx.ok, false)
+  if (!docx.ok) {
+    assert.match(docx.message, /Office documents/)
+    assert.equal(docx.reason, 'office')
+  }
+  const song = await readAtt(file('song.mp3', 'audio/mpeg'))
+  assert.equal(song.ok, false)
+  if (!song.ok) assert.match(song.message, /not transcribed/)
+  const zip = await readAtt(file('bundle.zip', 'application/zip'))
+  assert.equal(zip.ok, false)
+  if (!zip.ok) assert.match(zip.message, /not unpacked/)
+  const budget = await readAtt(file('notes.txt', 'text/plain'), 500000)
+  assert.equal(budget.ok, false)
+  if (!budget.ok) assert.match(budget.message, /budget/)
   const big = await readAtt(file('big.md', 'text/markdown', 'y'.repeat(200005)))
-  assert.equal(big.kind, 'txt')
-  assert.match(big.text, /truncated at 200,000/)
+  assert.equal(big.ok, true)
+  if (big.ok) {
+    assert.equal(big.att.kind, 'txt')
+    assert.match(big.att.text ?? '', /truncated at 200,000/)
+  }
   const csv = await readAtt(file('data.csv', 'text/csv', 'a,b\n1,2'))
-  assert.equal(csv.kind, 'txt')
+  assert.equal(csv.ok, true)
+  if (csv.ok) assert.equal(csv.att.kind, 'txt')
 })
 
 test('prunePersisted compacts bulky tool results and workspace history', () => {
