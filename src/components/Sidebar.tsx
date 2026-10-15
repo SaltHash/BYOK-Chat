@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Plus, Clock, Search, PanelLeftClose, Pin, Pencil, Trash2, MessageSquare, Server, ListMusic, ScrollText, Terminal, Wrench, Settings, Palette, Lock, PanelRight, Folder, FolderPlus, FolderMinus, ChevronRight, ChevronDown, Bookmark, GripVertical } from 'lucide-react'
+import { Plus, Clock, Search, PanelLeftClose, Pin, Pencil, Trash2, MessageSquare, Server, ListMusic, ScrollText, Terminal, Wrench, Settings, Palette, Lock, PanelRight, Folder, FolderPlus, FolderMinus, ChevronRight, ChevronDown, Bookmark } from 'lucide-react'
 import { useS, THEMES, DEFAULT_LIBRARY_SHOW, featOn, type Chat, type FeatureId } from '../store'
 import { Btn, Confirm, cx } from './ui'
 import { DndPlaceholder, DndLiveRegion, showDragOverlay, moveDragOverlay, hideDragOverlay, measureBox, DND_ACTIVATION_PX, useFlipAnimate } from './dnd'
@@ -21,10 +21,11 @@ function Row({ c, mv, del, dnd, container, index }: { c: Chat; mv: (id: string, 
   const s = useS()
   const [ed, setEd] = useState(false)
   const dragging = dnd.activeId === c.id
+  const h = dnd.handle(c, container, index)
   return (
     <div ref={dnd.register(c.id)} data-chat-row={c.id}
-      className={cx('group flex items-center rounded-lg pr-1 text-sm', s.chat === c.id ? 'bg-hov' : 'hover:bg-surf', dragging && 'opacity-25')}>
-      <span {...dnd.handle(c, container, index)} title="Drag to move to a folder" className="dnd-handle grid shrink-0 cursor-grab place-items-center self-stretch px-1 text-mu/60 hover:text-mu"><GripVertical size={14} /></span>
+      {...h} title="Drag to move to a folder"
+      className={cx('dnd-handle group flex cursor-grab items-center rounded-lg pr-1 text-sm', s.chat === c.id ? 'bg-hov' : 'hover:bg-surf', dragging && 'opacity-25')}>
       {ed ? <Name v={c.title} save={(t) => s.rename(c.id, t)} done={() => setEd(false)} /> : (
         <button onDoubleClick={() => setEd(true)} onClick={() => s.patch({ chat: c.id })} className="flex min-w-0 flex-1 items-center gap-2.5 px-2.5 py-2 text-left">
           {c.pin ? <Pin size={15} className="shrink-0 text-ac" /> : c.temporary ? <Clock size={15} className="shrink-0 text-mu" /> : <MessageSquare size={15} className="shrink-0 text-mu" />}
@@ -354,13 +355,15 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
           if (k && !l.length) return null
           const o = f.open || !!k
           return (
-            <div key={f.id} ref={registerZone(f.id)} className={cx('rounded-lg', target?.folder === f.id && 'ring-2 ring-ac')}>
+            <div key={f.id} ref={registerZone(f.id)} className="rounded-lg">
               <div className="group flex items-center rounded-lg pr-1 text-sm hover:bg-surf">
                 {fe === f.id ? <Name v={f.name} save={(t) => s.renameFolder(f.id, t)} done={() => setFe('')} /> : (
                   <button onClick={() => s.toggleFolder(f.id)} onDoubleClick={() => setFe(f.id)} className="flex min-w-0 flex-1 items-center gap-2 px-2.5 py-2 text-left">
-                    {o ? <ChevronDown size={14} className="text-mu" /> : <ChevronRight size={14} className="text-mu" />}
-                    <Folder size={15} className="shrink-0 text-mu" /><span className="truncate">{f.name}</span>
-                    <span className="text-xs text-mu">{s.chats.filter((c) => c.folder === f.id).length}</span>
+                    <span className="relative grid shrink-0 place-items-center" aria-hidden="true">
+                      <Folder size={20} className="text-mu" />
+                      <span className="absolute inset-0 flex items-center justify-center pt-[4px] text-[9px] font-semibold leading-none text-mu">{s.chats.filter((c) => c.folder === f.id).length}</span>
+                    </span><span className="min-w-0 truncate">{f.name}<span className="sr-only"> ({s.chats.filter((c) => c.folder === f.id).length} chats)</span></span>
+                    {o ? <ChevronDown size={14} className="shrink-0 text-mu" /> : <ChevronRight size={14} className="shrink-0 text-mu" />}
                   </button>
                 )}
                 <span className="hidden group-hover:flex">
@@ -372,7 +375,7 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
             </div>
           )
         })}
-        <div ref={registerZone('')} className={cx('rounded-lg', target?.folder === '' && 'ring-2 ring-ac')}>
+        <div ref={registerZone('')} className="rounded-lg">
           <div className="px-2.5 pb-1 text-xs font-medium text-mu">Recent</div>
           {rows(free, '')}
           {!free.length && <p className="px-2.5 py-1 text-sm text-mu">{!s.chats.length ? 'No chats yet.' : k ? 'No chats match.' : 'Nothing here. Drop a chat to unfile it.'}</p>}
