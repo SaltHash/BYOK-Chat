@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
 import { DEFAULT_TOOLS, KEYS, TOOLS, WIDGETS } from './meta'
-import { est, redact, can, stream, wire, trimHistory, estimateHistoryTokens, runToolLoop, type ToolCall, type ToolResult, searchWeb, formatSearch, shouldSearchWeb } from './engine'
+import { est, redact, can, stream, wire, trimHistory, estimateHistoryTokens, runToolLoop, type ToolCall, type ToolResult, searchWeb, formatSearch } from './engine'
 import { DEFAULT_SKILL_STATE, normSkills, enabledSkills, getSkillInstructions, composeSystemPrompt, SKILL_TOOL_NAME, type SkillState, type ResolvedSkill } from './skills'
 import { migrateLegacyCanvasGroups, truncateWorkspaceContent, type Workspace, type WorkspaceFile, type WorkspaceRevision } from './workspace'
 
@@ -14,7 +14,7 @@ export type Cmd = { id: string; name: string; desc: string; in: 'text' | 'image'
 export type Try = { n: string; m: string; detail?: string; ms?: number; err?: string; tin?: number; tout?: number; at?: number }
 export type Att = { name: string; kind: 'img' | 'pdf' | 'txt'; size: string; mime?: string; data?: string; text?: string }
 export type FadeEvent = { text: string; at: number }
-export type Msg = { id: string; r: 'user' | 'assistant'; t: string; at?: number; fadeEvents?: FadeEvent[]; by?: string; tps?: number; log?: Try[]; att?: Att[]; err?: boolean; full?: string; ctx?: string[]; fx?: string; cmd?: string; alts?: Snap[]; ai?: number; historyTokens?: number; explicitTokens?: number; reasoning?: string; thinkingOn?: boolean; toolRounds?: { text: string; calls: ToolResult[] }[]; toolFinal?: string; sys?: string; workspaceIds?: string[] }
+export type Msg = { id: string; r: 'user' | 'assistant'; t: string; at?: number; fadeEvents?: FadeEvent[]; by?: string; tps?: number; log?: Try[]; att?: Att[]; err?: boolean; full?: string; ctx?: string[]; fx?: string; cmd?: string; alts?: Snap[]; ai?: number; historyTokens?: number; explicitTokens?: number; reasoning?: string; toolRounds?: { text: string; calls: ToolResult[] }[]; toolFinal?: string; sys?: string; workspaceIds?: string[] }
 export type Snap = { t: string; by?: string; tps?: number; log?: Try[]; err?: boolean; toolRounds?: { text: string; calls: ToolResult[] }[]; toolFinal?: string }
 export type Chat = { id: string; title: string; pin?: boolean; started?: boolean; folder?: string; msgs: Msg[]; temporary?: boolean; expiresAt?: number; titleAuto?: boolean }
 export type Folder = { id: string; name: string; open: boolean }
@@ -440,6 +440,9 @@ export const useS = create<S>()(
         set((st) => ({ busy: true, notice: null, chats: st.chats.map((c) => (c.id === id ? { ...c, msgs: [...c.msgs, { id: mid, r: 'assistant', t: '', at: Date.now(), by: '', log: [], ...(prev ? { alts: prev, ai: prev.length } : {}) }] } : c)) }))
         const hist = () => (get().chats.find((c) => c.id === id)?.msgs ?? []).filter((m) => m.id !== mid)
         let order = p.cand, ok = false, usedEp: Ep | undefined, system = p.sys
+        // Last partially-streamed reply kept when a stream aborts mid-reply,
+        // so a failed attempt never wipes what the model already sent.
+        let interrupted: { t: string; by: string; toolRounds: { text: string; calls: ToolResult[] }[] } | null = null
         // Context budgeting: the wire payload (not stored history) is trimmed
         // oldest-first so system + history fits the meter's limit minus a
         // reserve for the reply. The trim is reported in the process log.
@@ -501,7 +504,7 @@ export const useS = create<S>()(
             if (r.stopped) break
             let txt = ''
             const t0 = Date.now(), q = get().params, effort = get().effort[e.model] ?? ''
-            edit(id, mid, (m) => ({ ...m, by: `${e.name} · ${e.model}`, t: '', thinkingOn: !!effort && !['off', 'none', ''].includes(effort.toLowerCase?.() ?? effort) }))
+            edit(id, mid, (m) => ({ ...m, by: `${e.name} · ${e.model}`, t: '' }))
             const toolRounds: { text: string; calls: ToolResult[] }[] = []
             let responseTokensIn = 0, responseTokensOut = 0
             // Generation-speed accounting: start the clock when thinking ends
@@ -698,6 +701,21 @@ export const useS = create<S>()(
               const elapsed = Date.now() - t0
               const toolElapsed = toolRounds.reduce((total, round) => total + Math.max(0, ...round.calls.map((call) => call.ms ?? 0)), 0)
               log.push({ n: e.name, m: e.model, ms: Math.max(0, elapsed - toolElapsed), err: errText(e, x.message), at: Date.now() })
+              // Preserve whatever the model streamed before aborting. `on()`
+              // already wrote it into `txt` (flushed synchronously on error),
+              // with `error.partial` as fallback. Keep it on the message now
+              // so a later "No model responded" summary cannot wipe it.
+              const partial = (typeof x?.partial === 'string' && x.partial) || txt
+              if (partial && partial.trim()) {
+                const by = `${e.name} · ${e.model}`
+                interrupted = { t: partial, by, toolRounds: toolRounds.map((round) => ({ ...round })) }
+                if (typeof x?.tin === 'number' || typeof x?.tout === 'number') {
+                  const ptin = typeof x?.tin === 'number' ? x.tin : 0
+                  const ptout = typeof x?.tout === 'number' ? x.tout : est(partial)
+                  bump(ptin, ptout); addCost(e, e.model, ptin, ptout)
+                }
+                edit(id, mid, (m) => ({ ...m, t: partial, toolRounds: [...toolRounds] }))
+              }
               if (p.ex) break
             }
           }
@@ -705,7 +723,9 @@ export const useS = create<S>()(
         edit(id, mid, (m) => r.stopped
           ? { ...m, sys: system, log, by: m.by ? m.by + ' (stopped)' : 'Stopped', t: m.t || '(stopped before any text arrived)' }
           : ok ? { ...m, sys: system, log }
-          : { ...m, sys: system, log, err: true, by: 'No model responded', t: log.filter((x) => x.err).map((x) => `${x.n}${x.m ? ' · ' + x.m : ''}: ${x.err}`).join('\n') + hint(log) })
+          : interrupted
+            ? { ...m, sys: system, log, t: interrupted.t, toolRounds: interrupted.toolRounds, ...(interrupted.toolRounds.length ? { toolFinal: interrupted.t } : {}), by: `${interrupted.by} (interrupted)`, err: undefined }
+            : { ...m, sys: system, log, err: true, by: 'No model responded', t: log.filter((x) => x.err).map((x) => `${x.n}${x.m ? ' · ' + x.m : ''}: ${x.err}`).join('\n') + hint(log) })
         useLive.getState().clear(mid)
         if (prev) edit(id, mid, (m) => ({ ...m, alts: [...prev, snap(m)], ai: prev.length }))
         if (cur === r) { cur = null; set({ busy: false }) }
@@ -787,11 +807,6 @@ export const useS = create<S>()(
           const pre = plan(s, um)
           if (pre.err) return warn(pre.err)
           um.ctx = []
-          if (featOn(s, 'tools') && s.tools.search && shouldSearchWeb(text)) {
-            const sp = normSearch(s.search)
-            try { um.ctx.push(formatSearch(await searchWeb(text, { mode: sp.mode, provider: sp.provider, fallback: sp.fallback, apiKey: searchKeyOf(sp), zone: sp.zone }))) }
-            catch (x: any) { um.ctx.push(`Web search was unavailable: ${x?.message ?? 'unknown error'}. Answer without claiming live verification.`) }
-          }
           um.fx = att.filter((a) => a.kind === 'txt').map((a) => `\n\n[file: ${a.name}]\n${a.text ?? ''}`).join('')
           um.full = full(body(cmd, text), um.ctx, um.fx)
           const previous = s.chats.find((c) => c.id === s.chat)?.msgs ?? []

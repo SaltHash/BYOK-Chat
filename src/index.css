@@ -41,6 +41,52 @@
   box-shadow: var(--settings-dropdown-shadow, 0 10px 26px rgb(0 0 0 / 30%));
 }
 
+/* Drag-and-drop system: pointer overlay, wireframe placeholder, handles. */
+.dnd-handle {
+  touch-action: none;
+  cursor: grab;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.dnd-handle:active { cursor: grabbing; }
+.dnd-overlay {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 9999;
+  pointer-events: none;
+  filter: drop-shadow(0 14px 28px rgb(0 0 0 / 45%));
+  will-change: transform;
+}
+.dnd-overlay > * { pointer-events: none !important; }
+.dnd-placeholder {
+  background: rgb(0 0 0 / 20%);
+  border: none;
+  border-radius: 12px;
+  box-sizing: border-box;
+}
+[data-t="paper"] .dnd-placeholder, [data-t="sepia"] .dnd-placeholder {
+  background: var(--hov);
+}
+.dnd-lift {
+  scale: 1.015;
+  filter: drop-shadow(0 14px 28px rgb(0 0 0 / 45%));
+  position: relative;
+  z-index: 30;
+}
+.dnd-live {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+@media (prefers-reduced-motion: reduce) {
+  .dnd-overlay { filter: none; }
+  .dnd-lift { scale: none; filter: none; }
+}
+
 /* rendered markdown */
 @keyframes reply-in { from { opacity: 0; } to { opacity: 1; } }
 .animate-reply-in { animation: reply-in 180ms ease-out both; }

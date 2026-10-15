@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { X, Plus, Trash2, ArrowUp, ArrowDown, ChevronDown, Eye, EyeOff, Play, ShieldCheck, Shield, Download, Upload, Check, CircleCheck, Cpu, Route, GripVertical, Server, ListMusic, ScrollText, Terminal, Wrench, Palette, FolderOpen, FileText, PanelRight, TrendingUp, Keyboard, Search, Brain, Pencil, Sparkles, RotateCcw, SlidersHorizontal, FlaskConical, Library, Database } from 'lucide-react'
 import { useS, PRE, THEMES, THEME_COLOR_KEYS, THEME_COLOR_LABELS, SEARCH_MODES, SEARCH_PROVIDERS, FEATURES, LIBRARY_ITEMS, FEATURE_TABS, FEATURE_WIDGETS, DEFAULT_LIBRARY_SHOW, DEFAULT_ADVANCED, featOn, normSearch, normAdvanced, modelsOf, modelNameOf, type Kind, type FeatureId } from '../store'
 import { normSkills, resolveSkill, validateCustomSkill, enabledSkills, BUILTIN_SKILLS, SKILL_TOOL_NAME, type SkillState } from '../skills'
@@ -6,6 +6,7 @@ import { TOOL_REGISTRY } from '../engine'
 import { CI, TOOLS, WIDGETS, KEYS } from '../meta'
 import { DataTab, StatsTab, KeysTab, TestRow, TestAllEndpoints } from './Extra'
 import { Btn, Field, Input, Area, Sel, Toggle, Seg, RangeSlider, Checkbox, HelpTip, Modal, Chip, cx, type Ic } from './ui'
+import { SortableList, type SortHandleProps, type SortItemApi } from './dnd'
 
 const TABS: [string, string, Ic][] = [
   ['features', 'Features', SlidersHorizontal],
@@ -59,17 +60,12 @@ export function Panel({ id, k, n, add, children }: { id: string; k?: Kind; n?: n
   )
 }
 
-export function Card({ icon: I, title, sub, right, open0, dk, did, children, muted }: { icon: Ic; title: ReactNode; sub?: string; right?: ReactNode; open0?: boolean; dk?: Kind; did?: string; children: ReactNode; muted?: boolean }) {
+export function Card({ icon: I, title, sub, right, open0, handle, children, muted }: { icon: Ic; title: ReactNode; sub?: string; right?: ReactNode; open0?: boolean; handle?: SortHandleProps | null; children: ReactNode; muted?: boolean }) {
   const [o, setO] = useState(!!open0)
-  const [over, setOver] = useState(false)
-  const ref = useRef<HTMLDivElement>(null)
   return (
-    <div ref={ref} className={cx('rounded-xl bg-surf', over && 'ring-2 ring-ac')}
-      onDragOver={dk ? (e) => { e.preventDefault(); setOver(true) } : undefined}
-      onDragLeave={() => setOver(false)}
-      onDrop={dk ? (e) => { e.preventDefault(); setOver(false); const [k, f] = e.dataTransfer.getData('text/plain').split(':'); if (k === dk && f && did && f !== did) useS.getState().reorder(dk, f, did) } : undefined}>
+    <div className="rounded-xl bg-surf">
       <div className="flex items-center gap-3 p-3">
-        {dk && <span draggable title="Drag to reorder" onDragStart={(e) => { e.dataTransfer.setData('text/plain', dk + ':' + did); if (ref.current) e.dataTransfer.setDragImage(ref.current, 24, 24) }} className="-mr-1 cursor-grab text-mu"><GripVertical size={16} /></span>}
+        {handle && <span {...handle} title="Drag to reorder" className="dnd-handle -mr-1 cursor-grab text-mu"><GripVertical size={16} /></span>}
         <div role="button" tabIndex={0} onClick={() => setO(!o)} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setO(!o) } }} className="flex min-w-0 flex-1 cursor-pointer items-center gap-3 text-left">
           <span className={cx('grid size-9 shrink-0 place-items-center rounded-lg bg-hov', muted ? 'text-mu' : 'text-ac')}><I size={18} /></span>
           <span className="min-w-0"><span className="block truncate font-medium">{title}</span>{sub && <span className="block truncate text-sm text-mu">{sub}</span>}</span>
@@ -79,6 +75,20 @@ export function Card({ icon: I, title, sub, right, open0, dk, did, children, mut
       </div>
       {o && <div className="space-y-4 px-3 pb-4">{children}</div>}
     </div>
+  )
+}
+
+/** Vertical reorder list for settings cards with continuous spatial reflow. */
+function SortableCards({ k, ids, label, renderCard }: { k: Kind; ids: string[]; label: string; renderCard: (id: string, handle: SortHandleProps) => ReactNode }) {
+  const reorder = useS((s) => s.reorder)
+  return (
+    <SortableList
+      ids={ids}
+      onCommit={(from, to) => { if (from !== to) reorder(k, ids[from], ids[to]) }}
+      label={label}
+      className="space-y-3"
+      renderItem={(id, api: SortItemApi) => renderCard(id, api.handleProps(`Reorder ${label}`))}
+    />
   )
 }
 
@@ -108,8 +118,6 @@ function Acts({ k, id }: { k: Kind; id: string }) {
 
 function ModelsEditor({ e, update }: { e: any; update: (p: object) => void }) {
   const refs = useRef<(HTMLInputElement | null)[]>([])
-  const [drag, setDrag] = useState(-1)
-  const [over, setOver] = useState(-1)
   const [picker, setPicker] = useState(false)
   const [catalog, setCatalog] = useState<{ id: string; efforts: string[]; source: 'auto' | 'manual'; providerId: string; name: string; context?: number; inputPrice?: number; outputPrice?: number }[]>([])
   const [catalogState, setCatalogState] = useState('')
@@ -130,7 +138,12 @@ function ModelsEditor({ e, update }: { e: any; update: (p: object) => void }) {
     return () => document.removeEventListener('keydown', dismiss, true)
   }, [picker])
   const setModels = (next: string[]) => update({ models: next, model: next.find((m) => m.trim())?.trim() ?? '' })
-  const reorder = (to: number) => { if (drag < 0 || drag === to) return; const next = [...models]; next.splice(to, 0, next.splice(drag, 1)[0]); setModels(next); setDrag(-1) }
+  // Stable row identities (value + occurrence) so rows keep their content across reorders.
+  const rowIds = useMemo(() => {
+    const seen = new Map<string, number>()
+    return models.map((m) => { const n = (seen.get(m) ?? 0) + 1; seen.set(m, n); return `${n}#${m}` })
+  }, [models])
+  const indexOfRow = (rid: string) => rowIds.indexOf(rid)
   const loadCatalog = async () => {
     setPicker(true); setCatalogState('Loading documented models…')
     const base = String(e.url || '').trim().replace(/\/+$/, '')
@@ -200,9 +213,18 @@ function ModelsEditor({ e, update }: { e: any; update: (p: object) => void }) {
     setPicker(false); setQuery(''); setSearchIdea(null)
   }
   return <div className="space-y-2">
-    {models.map((model, i) => <div key={i} className="rounded-xl bg-bg p-2">
-      <div onDragOver={(ev) => { ev.preventDefault(); ev.stopPropagation(); setOver(i) }} onDragLeave={(ev) => { ev.stopPropagation(); setOver(-1) }} onDrop={(ev) => { ev.preventDefault(); ev.stopPropagation(); reorder(i); setOver(-1) }} className={cx('grid grid-cols-[auto_auto_minmax(0,1fr)_minmax(0,1fr)_auto] items-center gap-2', drag === i && 'opacity-40', over === i && 'ring-2 ring-ac')}>
-      <span draggable title="Drag to reorder" onDragStart={(ev) => { ev.stopPropagation(); setDrag(i) }} onDragEnd={(ev) => { ev.stopPropagation(); setDrag(-1); setOver(-1) }} className="cursor-grab text-mu"><GripVertical size={16} /></span>
+    <SortableList
+      ids={rowIds}
+      onCommit={(from, to) => { if (from === to) return; const next = [...models]; const [x] = next.splice(from, 1); next.splice(to, 0, x); setModels(next) }}
+      label="Model"
+      className="space-y-2"
+      renderItem={(rid, api) => {
+        const i = indexOfRow(rid)
+        if (i < 0) return null
+        const model = models[i] ?? ''
+        return <div className="rounded-xl bg-bg p-2">
+      <div className="grid grid-cols-[auto_auto_minmax(0,1fr)_minmax(0,1fr)_auto] items-center gap-2">
+      <span {...api.handleProps(`Reorder model ${i + 1}`)} title="Drag to reorder" className="dnd-handle cursor-grab text-mu"><GripVertical size={16} /></span>
       <span className="grid size-7 shrink-0 place-items-center rounded-lg bg-hov text-xs text-mu">{i + 1}</span>
       <input ref={(el) => { refs.current[i] = el }} value={model} onChange={(ev) => { const next = [...models]; next[i] = ev.target.value; setModels(next) }} onKeyDown={(ev) => {
         if (ev.key === 'Enter') { ev.preventDefault(); if (i < models.length - 1) refs.current[i + 1]?.focus(); else if (model.trim()) { setModels([...models, '']); setTimeout(() => refs.current[i + 1]?.focus(), 0) } }
@@ -211,7 +233,9 @@ function ModelsEditor({ e, update }: { e: any; update: (p: object) => void }) {
       <button title="Remove model" onClick={() => setModels(models.filter((_, j) => j !== i))} className="grid size-7 place-items-center rounded-md text-mu hover:bg-hov hover:text-er"><Trash2 size={14} /></button>
       </div>
       {!!model && e.modelEffortSource?.[model] !== 'auto' && <div className="ml-8 mt-1 flex flex-wrap items-center gap-2 text-xs text-mu"><span>Reasoning effort support:</span>{(['low','medium','high','xhigh','max','minimal','none'] as const).map(level => { const levels: string[] = e.modelEfforts?.[model] ?? []; const checked = levels.includes(level); return <button key={level} type="button" role="checkbox" aria-checked={checked} onClick={() => update({ modelEfforts: { ...e.modelEfforts, [model]: checked ? levels.filter(x => x !== level) : [...new Set([...levels, level])] }, modelEffortSource: { ...e.modelEffortSource, [model]: 'manual' } })} className="inline-flex items-center gap-1.5 capitalize"><span className={cx('grid size-4 place-items-center rounded border transition-colors', checked ? 'border-ac bg-ac text-acx' : 'border-mu bg-surf')}>{checked && <Check size={12} strokeWidth={3}/>}</span>{level}</button> })}<span className="opacity-70">(manual)</span></div>}
-    </div>)}
+    </div>
+      }}
+    />
     <button onClick={() => { setPicker(true); setSelectedModels([]); void loadCatalog() }} className="flex w-full items-center justify-center gap-2 rounded-lg border border-dashed border-hov py-2 text-sm text-mu hover:text-tx"><Plus size={14} />Add model</button>
     {picker && <Modal close={() => setPicker(false)} keyboard={false}><div className="flex max-h-[82dvh] w-full max-w-xl flex-col gap-3 rounded-2xl bg-bg p-5 shadow-2xl">
       <div className="flex items-center justify-between"><div><h3 className="font-semibold">Choose a model</h3><p className="mt-0.5 text-xs text-mu">{e.name}{endpointId ? ` · ${endpointId}` : ''}</p></div><button onClick={() => setPicker(false)} className="grid size-8 place-items-center rounded-lg text-mu hover:bg-hov hover:text-tx" aria-label="Close model picker"><X size={16}/></button></div>
@@ -311,10 +335,12 @@ function Eps() {
   }
   return (
     <Panel id="eps" k="eps" n={eps.length} add="Add endpoint">
-      {eps.map((e) => {
+      <SortableCards k="eps" ids={eps.map((x) => x.id)} label="Endpoint" renderCard={(eid, handle) => {
+        const e = eps.find((x) => x.id === eid)
+        if (!e) return null
         const u = (p: object) => upd('eps', e.id, p)
         return (
-          <Card key={e.id} dk="eps" did={e.id} icon={Server} title={editingName === e.id
+          <Card handle={handle} icon={Server} title={editingName === e.id
             ? <input autoFocus value={e.name} onChange={(ev) => u({ name: ev.target.value })} onBlur={() => setEditingName('')} onKeyDown={(ev) => { if (ev.key === 'Enter' || ev.key === 'Escape') setEditingName('') }} onClick={(ev) => ev.stopPropagation()} aria-label="Endpoint name" className="w-full min-w-0 rounded-md bg-bg px-2 py-1 font-medium outline-none focus:ring-2 focus:ring-ac/40" />
             : <span className="inline-flex min-w-0 items-center gap-1.5"><span className="truncate">{e.name}</span><button type="button" title="Rename endpoint" aria-label="Rename endpoint" onClick={(ev) => { ev.stopPropagation(); setEditingName(e.id) }} className="grid size-6 shrink-0 place-items-center rounded text-mu hover:bg-hov hover:text-tx"><Pencil size={13}/></button></span>} sub={e.model || 'No model id'} open0={!e.model && !e.key} right={<Toggle on={e.on} set={(v) => u({ on: v })} />}>
             <div className="space-y-3">
@@ -372,7 +398,7 @@ function Eps() {
             <Acts k="eps" id={e.id} />
           </Card>
         )
-      })}
+      }} />
       {!!eps.length && <TestAllEndpoints eps={eps} />}
     </Panel>
   )
@@ -391,43 +417,56 @@ function Prompts() {
         </Field>
         <Field label="Global system prompt" hint="Write one from scratch, or copy an existing prompt above."><Area rows={6} value={g.text} set={(v) => setG({ text: v })} /></Field>
       </Card>
-      {prompts.map((p) => (
-        <Card key={p.id} dk="prompts" did={p.id} icon={ScrollText} title={p.name} sub={p.text.slice(0, 70)}>
+      <SortableCards k="prompts" ids={prompts.map((x) => x.id)} label="Prompt" renderCard={(pid, handle) => {
+        const p = prompts.find((x) => x.id === pid)
+        if (!p) return null
+        return (
+        <Card handle={handle} icon={ScrollText} title={p.name} sub={p.text.slice(0, 70)}>
           <Field label="Name"><Input value={p.name} set={(v) => upd('prompts', p.id, { name: v })} /></Field>
           <Field label="System prompt"><Area rows={6} value={p.text} set={(v) => upd('prompts', p.id, { text: v })} /></Field>
           <Acts k="prompts" id={p.id} />
         </Card>
-      ))}
+        )
+      }} />
     </Panel>
   )
 }
 
 function Pls() {
   const { pls, eps, upd } = useS()
-  const [drag, setDrag] = useState(-1)
   return (
     <Panel id="pls" k="pls" n={pls.length} add="Add playlist">
-      {pls.map((p) => {
+      <SortableCards k="pls" ids={pls.map((x) => x.id)} label="Playlist" renderCard={(plid, handle) => {
+        const p = pls.find((x) => x.id === plid)
+        if (!p) return null
         const u = (x: object) => upd('pls', p.id, x)
-        const dnd = (i: number, j: number) => { if (i < 0 || i === j) return; const a = [...p.e]; a.splice(j, 0, a.splice(i, 1)[0]); u({ e: a }); setDrag(-1) }
         return (
-          <Card key={p.id} dk="pls" did={p.id} icon={ListMusic} title={p.name} sub={`${p.e.length} entries${p.cls ? ' · classifier' : ''}`}>
+          <Card handle={handle} icon={ListMusic} title={p.name} sub={`${p.e.length} entries${p.cls ? ' · classifier' : ''}`}>
             <Field label="Name"><Input value={p.name} set={(v) => u({ name: v })} /></Field>
             <Field label="System prompt" hint="Optional. Used when this playlist is selected and no prompt override is chosen."><Area value={p.sys} set={(v) => u({ sys: v })} /></Field>
             <Field label="Models" hint="Each entry is one model from an endpoint. Tried top to bottom until one responds without error.">
               <div className="space-y-1.5">
-                {p.e.map((ref, i) => {
-                  const [id, model] = ref.includes('::') ? [ref.slice(0, ref.indexOf('::')), ref.slice(ref.indexOf('::') + 2)] : [ref, '']
-                  const e = eps.find((x) => x.id === id)
-                  return (
-                    <div key={ref} draggable onDragStart={() => setDrag(i)} onDragOver={(e) => e.preventDefault()} onDrop={() => dnd(drag, i)} className={cx('flex items-center gap-2 rounded-lg bg-bg px-2 py-1.5 text-sm', drag === i && 'opacity-40')}>
-                      <GripVertical size={16} className="text-mu" /><span className="w-5 text-mu">{i + 1}</span><Cpu size={15} className="text-mu" />
-                      <span className="flex-1 truncate">{e?.name ?? 'Removed endpoint'}<span className="ml-2 text-mu">{model || 'All models'}</span></span>
-                      
-                      <Btn sm icon={X} title="Remove entry" onClick={() => u({ e: p.e.filter((x) => x !== ref) })} />
-                    </div>
-                  )
-                })}
+                <SortableList
+                  ids={(() => { const seen = new Map<string, number>(); return p.e.map((r) => { const n = (seen.get(r) ?? 0) + 1; seen.set(r, n); return `${p.id}#${n}#${r}` }) })()}
+                  onCommit={(from, to) => { if (from === to) return; const a = [...p.e]; const [x] = a.splice(from, 1); a.splice(to, 0, x); u({ e: a }) }}
+                  label="Playlist entry"
+                  className="space-y-1.5"
+                  renderItem={(iid, entryApi) => {
+                    const idsNow: string[] = (() => { const seen = new Map<string, number>(); return p.e.map((r) => { const n = (seen.get(r) ?? 0) + 1; seen.set(r, n); return `${p.id}#${n}#${r}` }) })()
+                    const i = idsNow.indexOf(iid)
+                    const ref = p.e[i]
+                    if (i < 0 || ref == null) return null
+                    const [id, model] = ref.includes('::') ? [ref.slice(0, ref.indexOf('::')), ref.slice(ref.indexOf('::') + 2)] : [ref, '']
+                    const e = eps.find((x) => x.id === id)
+                    return (
+                      <div className="flex items-center gap-2 rounded-lg bg-bg px-2 py-1.5 text-sm">
+                        <span {...entryApi.handleProps('Reorder playlist entry')} title="Drag to reorder" className="dnd-handle cursor-grab text-mu"><GripVertical size={16} /></span><span className="w-5 text-mu">{i + 1}</span><Cpu size={15} className="text-mu" />
+                        <span className="flex-1 truncate">{e?.name ?? 'Removed endpoint'}<span className="ml-2 text-mu">{model || 'All models'}</span></span>
+                        <Btn sm icon={X} title="Remove entry" onClick={() => u({ e: p.e.filter((x) => x !== ref) })} />
+                      </div>
+                    )
+                  }}
+                />
                 <Sel value="" set={(v) => v && u({ e: [...p.e, v] })} opts={[['', 'Add model…'], ...eps.flatMap((ep) => modelsOf(ep).map((model) => [`${ep.id}::${model}`, `${ep.name} · ${model}`] as [string, string])).filter(([ref]) => !p.e.includes(ref))]} />
               </div>
             </Field>
@@ -443,7 +482,7 @@ function Pls() {
             <Acts k="pls" id={p.id} />
           </Card>
         )
-      })}
+      }} />
     </Panel>
   )
 }
@@ -452,10 +491,12 @@ function Cmds() {
   const { cmds, pls, upd } = useS()
   return (
     <Panel id="cmds" k="cmds" n={cmds.length} add="Add command">
-      {cmds.map((c) => {
+      <SortableCards k="cmds" ids={cmds.map((x) => x.id)} label="Command" renderCard={(cid, handle) => {
+        const c = cmds.find((x) => x.id === cid)
+        if (!c) return null
         const u = (x: object) => upd('cmds', c.id, x)
         return (
-          <Card key={c.id} dk="cmds" did={c.id} icon={CI[c.in]} title={'/' + c.name} sub={c.desc || c.in} right={<Toggle on={c.on} set={(v) => u({ on: v })} />}>
+          <Card handle={handle} icon={CI[c.in]} title={'/' + c.name} sub={c.desc || c.in} right={<Toggle on={c.on} set={(v) => u({ on: v })} />}>
             <div className="grid gap-4 sm:grid-cols-2">
               <Field label="Name" hint="Typed after /"><Input value={c.name} set={(v) => u({ name: v.replace(/[^\w-]/g, '') })} /></Field>
               <Field label="Description"><Input value={c.desc} set={(v) => u({ desc: v })} /></Field>
@@ -469,7 +510,7 @@ function Cmds() {
             <Acts k="cmds" id={c.id} />
           </Card>
         )
-      })}
+      }} />
     </Panel>
   )
 }

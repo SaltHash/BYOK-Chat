@@ -214,11 +214,6 @@ function M({ m, last, onOpenWorkspace, selectedWorkspaceId }: { m: Msg; last: bo
           </ol>
         </div>
       )}
-      {(m.thinkingOn && busy && last && !!m.t) && (
-        <div className="reply-thinking" role="status" aria-label="Thinking">
-          <span className="size-3 animate-pulse rounded-full bg-ac" />
-        </div>
-      )}
       <div className={cx('leading-7', m.err && 'text-er')}>
         {m.err ? (
           <div className="space-y-3 rounded-xl border border-er/30 bg-er/10 p-4">
@@ -242,12 +237,16 @@ function M({ m, last, onOpenWorkspace, selectedWorkspaceId }: { m: Msg; last: bo
             <span className="reply-dots" aria-hidden="true"><i /><i /><i /></span>
             <span className="ml-2 text-mu">Writing {writingPath}…</span>
           </span>
-        ) : (
-          <span className="reply-thinking" role="status" aria-label="Waiting for a reply">
-            <span className="reply-dots" aria-hidden="true"><i /><i /><i /></span>
-            <span className="ml-2 text-mu">Thinking…</span>
-          </span>
-        )}
+        ) : (() => {
+          const names = ((live ?? []) as { name?: string }[]).map((t) => t.name ?? '')
+          const status = names.includes('search') ? 'Searching…' : names.includes('use_skill') ? 'Checking skills…' : 'Thinking…'
+          return (
+            <span className="reply-thinking" role="status" aria-label={status === 'Thinking…' ? 'Waiting for a reply' : status}>
+              <span className="reply-dots" aria-hidden="true"><i /><i /><i /></span>
+              <span className="ml-2 text-mu">{status}</span>
+            </span>
+          )
+        })()}
       </div>
       {/* Workspace tiles for this message — shown above message controls but below content */}
       {(() => {

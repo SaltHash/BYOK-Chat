@@ -1,25 +1,14 @@
-import { useState, type CSSProperties, type DragEvent, type ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
 import { Gauge, Activity, Layers, StickyNote, Bookmark, Plus, X, CornerDownLeft, Coins, Timer, ScrollText, Keyboard, Type, ListChecks, Check, GripVertical } from 'lucide-react'
 import { useS, modelsOf, uid, widgetOn } from '../store'
 import { fmtDuration, KEYS, WIDGETS } from '../meta'
 import { estimateHistoryTokens, fmt } from '../engine'
 import { Btn, cx, type Ic } from './ui'
+import { SortableList, type SortHandleProps } from './dnd'
 
-const W = ({ icon: I, t, id, style, children }: { icon: Ic; t: string; id: string; style?: CSSProperties; children: ReactNode }) => {
-  const [over, setOver] = useState(false)
-  const drop = (e: DragEvent<HTMLDivElement>) => {
-    e.preventDefault(); e.stopPropagation(); setOver(false)
-    const from = e.dataTransfer.getData('text/plain')
-    if (!from || from === id) return
-    const prefs = useS.getState().widgetPrefs
-    const order = [...new Set([...(prefs.widgetOrder ?? []), ...WIDGETS.map(([k]) => k)])]
-    const a = order.indexOf(from), b = order.indexOf(id)
-    if (a < 0 || b < 0) return
-    order.splice(b, 0, order.splice(a, 1)[0])
-    useS.getState().patch({ widgetPrefs: { ...prefs, widgetOrder: order } })
-  }
-  return <div style={style} onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); setOver(true) }} onDragLeave={() => setOver(false)} onDrop={drop} className={cx('space-y-3 rounded-xl bg-surf p-3', over && 'ring-2 ring-ac')}>
-    <div className="flex items-center gap-2 text-sm font-medium"><span draggable title="Drag to rearrange" onDragStart={(e) => { e.dataTransfer.setData('text/plain', id); e.dataTransfer.effectAllowed = 'move' }} className="cursor-grab text-mu"><GripVertical size={14} /></span><I size={16} className="text-ac" />{t}</div>
+const WidgetCard = ({ icon: I, t, handle, children }: { icon: Ic; t: string; handle: SortHandleProps; children: ReactNode }) => {
+  return <div className="space-y-3 rounded-xl bg-surf p-3">
+    <div className="flex items-center gap-2 text-sm font-medium"><span {...handle} title="Drag to rearrange" className="dnd-handle cursor-grab text-mu"><GripVertical size={14} /></span><I size={16} className="text-ac" />{t}</div>
     {children}
   </div>
 }
@@ -34,6 +23,7 @@ export function Widgets({ width = 320 }: { width?: number }) {
   const w = Object.fromEntries(WIDGETS.map(([k]) => [k, widgetOn(s, k)])) as Record<string, boolean>
   const wp = { contextLimit: 128000, showDisabledEndpoints: true, scratchRows: 6, snippetLimit: 20, costDecimals: 4, activePromptsOnly: false, charsPerToken: 4, hideDoneTodos: false, ...s.widgetPrefs }
   const widgetOrder = [...new Set([...(wp.widgetOrder ?? []), ...WIDGETS.map(([k]) => k)])]
+  const visible = widgetOrder.filter((k) => w[k])
   const sysLen = (s.globalPrompt?.on ? s.globalPrompt.text : '') + (s.prompts.find((p) => p.id === s.pr)?.text ?? '')
   const tok = estimateHistoryTokens(c?.msgs ?? [], sysLen, Math.max(1, wp.charsPerToken))
   const overBudget = tok > wp.contextLimit
@@ -45,20 +35,30 @@ export function Widgets({ width = 320 }: { width?: number }) {
   const usageText = (tin: number, tout: number) => wp.usageFormat.replaceAll('{in}', tin.toLocaleString()).replaceAll('{out}', tout.toLocaleString())
   const lr = [...(c?.msgs ?? [])].reverse().find((m) => m.r === 'assistant' && m.log?.length)
   const won = lr?.log?.find((t) => !t.err && t.ms != null)
-  return (
-    <aside style={{ width }} className="z-10 flex w-80 min-w-0 shrink-0 flex-col gap-3 overflow-y-auto bg-side p-3 max-lg:hidden">
-      <div className="flex items-center justify-between px-1">
-        <span className="text-sm font-medium">Widgets</span>
-        <Btn sm icon={X} title="Close panel" onClick={() => s.patch({ rail: false })} />
-      </div>
-      {w.ctx && (
-        <W id="ctx" style={{ order: widgetOrder.indexOf('ctx') }} icon={Gauge} t="Context meter">
+
+  const commitWidgets = (from: number, to: number) => {
+    if (from === to) return
+    const nextVisible = [...visible]
+    const [x] = nextVisible.splice(from, 1)
+    nextVisible.splice(to, 0, x)
+    // Preserve hidden widgets in their existing slots; only permute visible ones.
+    const queue = [...nextVisible]
+    const visSet = new Set(visible)
+    const order = widgetOrder.map((k) => (visSet.has(k) ? queue.shift()! : k))
+    s.patch({ widgetPrefs: { ...wp, widgetOrder: order } })
+  }
+
+  const renderWidget = (id: string, api: { handleProps: (label?: string) => SortHandleProps }) => {
+    const handle = (t: string) => api.handleProps(`Reorder ${t} widget`)
+    switch (id) {
+      case 'ctx': return (
+        <WidgetCard handle={handle('Context meter')} icon={Gauge} t="Context meter">
           <div className="h-2 overflow-hidden rounded-full bg-bg"><div className="h-full bg-ac" style={{ width: Math.min(100, tok / (wp.contextLimit / 100)) + '%' }} /></div>
           <p className="text-xs text-mu">About {tok.toLocaleString()} of {wp.contextLimit.toLocaleString()} tokens (estimate){overBudget ? ' — over budget: oldest messages are trimmed from requests until it fits' : ''}</p>
-        </W>
-      )}
-      {w.eps && (
-        <W id="eps" style={{ order: widgetOrder.indexOf('eps') }} icon={Activity} t="Endpoint status">
+        </WidgetCard>
+      )
+      case 'eps': return (
+        <WidgetCard handle={handle('Endpoint status')} icon={Activity} t="Endpoint status">
           {s.eps.filter((e) => wp.showDisabledEndpoints || e.on).map((e) => (
             <div key={e.id} className="flex items-start gap-2 text-sm">
               <span className={cx('mt-1.5 size-2 shrink-0 rounded-full', e.on ? 'bg-ac' : 'bg-mu/40')} />
@@ -66,22 +66,22 @@ export function Widgets({ width = 320 }: { width?: number }) {
               <span className="max-w-40 text-right text-xs text-mu">{e.on ? modelsOf(e).join(e.modelsMode === 'playlist' ? ' → ' : ', ') : 'disabled'}</span>
             </div>
           ))}
-        </W>
-      )}
-      {w.usage && (
-        <W id="usage" style={{ order: widgetOrder.indexOf('usage') }} icon={Layers} t="Usage">
+        </WidgetCard>
+      )
+      case 'usage': return (
+        <WidgetCard handle={handle('Usage')} icon={Layers} t="Usage">
           {wp.usageMode === 'success' ? [...grouped].map(([name, x]) => <div key={name} className="flex items-center gap-2 text-sm"><span className="flex-1 truncate">{name}</span><span className="text-xs text-ac">{x.ok} ok</span><span className="text-xs text-er">{x.bad} failed</span></div>) : [...grouped].map(([name, x]) => <div key={name} className="flex items-center gap-2 text-sm"><span className="flex-1 truncate">{name}</span><span className="text-xs text-mu">{usageText(x.tin, x.tout)}</span></div>)}
           {wp.usageTotal && <div className="border-t border-hov pt-2 text-xs"><span className="text-mu">Total usage</span><span className="float-right font-medium">{wp.usageMode === 'tokens' ? usageText([...grouped.values()].reduce((a, x) => a + x.tin, 0), [...grouped.values()].reduce((a, x) => a + x.tout, 0)) : `${[...grouped.values()].reduce((a, x) => a + x.ok, 0)} ok · ${[...grouped.values()].reduce((a, x) => a + x.bad, 0)} fails`}</span></div>}
           {!grouped.size && <p className="text-xs text-mu">No usage in this period.</p>}
-        </W>
-      )}
-      {w.pad && (
-        <W id="pad" style={{ order: widgetOrder.indexOf('pad') }} icon={StickyNote} t="Scratchpad">
+        </WidgetCard>
+      )
+      case 'pad': return (
+        <WidgetCard handle={handle('Scratchpad')} icon={StickyNote} t="Scratchpad">
           <textarea rows={wp.scratchRows} value={s.pad} onChange={(e) => s.patch({ pad: e.target.value })} placeholder="Notes that stay next to the chat" className={cx(field, 'resize-y')} />
-        </W>
-      )}
-      {w.snips && (
-        <W id="snips" style={{ order: widgetOrder.indexOf('snips') }} icon={Bookmark} t="Snippets">
+        </WidgetCard>
+      )
+      case 'snips': return (
+        <WidgetCard handle={handle('Snippets')} icon={Bookmark} t="Snippets">
           <div className="flex gap-1.5">
             <input value={n} onChange={(e) => setN(e.target.value)} placeholder="New snippet" className={field} />
             <Btn v="soft" icon={Plus} title="Save snippet" onClick={() => { if (n.trim()) { s.patch({ snips: [n.trim(), ...s.snips] }); setN('') } }} />
@@ -93,45 +93,45 @@ export function Widgets({ width = 320 }: { width?: number }) {
               <Btn sm icon={X} title="Remove" onClick={() => s.patch({ snips: s.snips.filter((_, j) => j !== i) })} />
             </div>
           ))}
-        </W>
-      )}
-      {w.cost && (
-        <W id="cost" style={{ order: widgetOrder.indexOf('cost') }} icon={Coins} t="Cost estimate">
+        </WidgetCard>
+      )
+      case 'cost': return (
+        <WidgetCard handle={handle('Cost estimate')} icon={Coins} t="Cost estimate">
           <p className="text-sm">{'≈ $' + (s.stats.cost ?? 0).toFixed(wp.costDecimals)} <span className="text-xs text-mu">all-time priced usage</span></p>
           <p className="text-xs text-mu">Set input and output rates per model in Settings → Endpoints. Unpriced usage is excluded.</p>
-        </W>
-      )}
-      {w.last && (
-        <W id="last" style={{ order: widgetOrder.indexOf('last') }} icon={Timer} t="Last reply">
+        </WidgetCard>
+      )
+      case 'last': return (
+        <WidgetCard handle={handle('Last reply')} icon={Timer} t="Last reply">
           {lr ? (
             <div className="space-y-1 text-sm">
               <div className="truncate">{lr.by}</div>
               <div className="text-xs text-mu">{lr.log!.length} model{lr.log!.length > 1 ? 's' : ''} used · {lr.log!.filter((t) => t.err).length} failed{wp.lastSpeed && won ? ` · ${fmtDuration(won.ms ?? 0, wp.timeUnit)}` : ''}{wp.lastSpeed && lr.tps != null ? ` · ${lr.tps} tokens/s` : ''}</div>
             </div>
           ) : <p className="text-xs text-mu">No replies yet.</p>}
-        </W>
-      )}
-      {w.prompts && (
-        <W id="prompts" style={{ order: widgetOrder.indexOf('prompts') }} icon={ScrollText} t="Prompt picker">
+        </WidgetCard>
+      )
+      case 'prompts': return (
+        <WidgetCard handle={handle('Prompt picker')} icon={ScrollText} t="Prompt picker">
           {s.prompts.filter((p) => !wp.activePromptsOnly || p.id === s.pr).length ? s.prompts.filter((p) => !wp.activePromptsOnly || p.id === s.pr).map((p) => (
             <button key={p.id} onClick={() => s.patch({ pr: s.pr === p.id ? '' : p.id })} className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm hover:bg-bg">
               <span className="flex-1 truncate">{p.name}</span>{s.pr === p.id && <Check size={14} className="text-ac" />}
             </button>
           )) : <p className="text-xs text-mu">No saved prompts.</p>}
-        </W>
-      )}
-      {w.keys && (
-        <W id="keys" style={{ order: widgetOrder.indexOf('keys') }} icon={Keyboard} t="Shortcuts">
-          {KEYS.filter(([id]) => wp.shortcuts.includes(id)).map(([id, l, d]) => <div key={id} className="flex items-center justify-between gap-2 text-sm"><span className="truncate">{l}</span><kbd className="rounded-md bg-hov px-1.5 py-0.5 text-xs">{fmt(s.keys[id] ?? d)}</kbd></div>)}
-        </W>
-      )}
-      {w.draft && (
-        <W id="draft" style={{ order: widgetOrder.indexOf('draft') }} icon={Type} t="Draft counter">
+        </WidgetCard>
+      )
+      case 'keys': return (
+        <WidgetCard handle={handle('Shortcuts')} icon={Keyboard} t="Shortcuts">
+          {KEYS.filter(([kid]) => wp.shortcuts.includes(kid)).map(([kid, l, d]) => <div key={kid} className="flex items-center justify-between gap-2 text-sm"><span className="truncate">{l}</span><kbd className="rounded-md bg-hov px-1.5 py-0.5 text-xs">{fmt(s.keys[kid] ?? d)}</kbd></div>)}
+        </WidgetCard>
+      )
+      case 'draft': return (
+        <WidgetCard handle={handle('Draft counter')} icon={Type} t="Draft counter">
           <p className="text-sm">{s.draft.length.toLocaleString()} characters · {s.draft.trim() ? s.draft.trim().split(/\s+/).length : 0} words · about {Math.ceil(s.draft.length / Math.max(1, wp.charsPerToken))} tokens</p>
-        </W>
-      )}
-      {w.todo && (
-        <W id="todo" style={{ order: widgetOrder.indexOf('todo') }} icon={ListChecks} t="Checklist">
+        </WidgetCard>
+      )
+      case 'todo': return (
+        <WidgetCard handle={handle('Checklist')} icon={ListChecks} t="Checklist">
           <input value={td} onChange={(e) => setTd(e.target.value)} placeholder="Add a task, press Enter" className={field}
             onKeyDown={(e) => { if (e.key === 'Enter' && td.trim()) { s.patch({ todos: [...s.todos, { id: uid(), t: td.trim(), done: false }] }); setTd('') } }} />
           {s.todos.filter((x) => !wp.hideDoneTodos || !x.done).map((x) => (
@@ -141,8 +141,26 @@ export function Widgets({ width = 320 }: { width?: number }) {
               <Btn sm icon={X} title="Remove" onClick={() => s.patch({ todos: s.todos.filter((y) => y.id !== x.id) })} />
             </div>
           ))}
-        </W>
-      )}
+        </WidgetCard>
+      )
+      default: return null
+    }
+  }
+
+  return (
+    <aside style={{ width }} className="z-10 flex w-80 min-w-0 shrink-0 flex-col gap-3 overflow-y-auto bg-side p-3 max-lg:hidden">
+      <div className="flex items-center justify-between px-1">
+        <span className="text-sm font-medium">Widgets</span>
+        <Btn sm icon={X} title="Close panel" onClick={() => s.patch({ rail: false })} />
+      </div>
+      <SortableList
+        ids={visible}
+        onCommit={commitWidgets}
+        label="Widget"
+        describe={(id) => WIDGETS.find(([k]) => k === id)?.[1] ?? id}
+        className="flex flex-col gap-3"
+        renderItem={renderWidget}
+      />
     </aside>
   )
 }
