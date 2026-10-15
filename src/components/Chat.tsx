@@ -9,6 +9,8 @@ import { Header } from './Header'
 import { Tutorial } from './Extra'
 import { Md, UserText } from './Md'
 import { WorkspaceTile, WorkspacePanel } from './Workspace'
+import { SourcesPanel, scrollToSource } from './Sources'
+import { collectMessageSources, linkifyCitations, parseSearchEvidence } from '../citations'
 import { findLastWorkspacePath, findWritingPath, extractWorkspaceIds, type WorkspaceCallLike } from '../workspace'
 
 function toolStep(name: string, rawArgs: string, result?: string) {
@@ -25,11 +27,36 @@ function toolStep(name: string, rawArgs: string, result?: string) {
     const path = typeof args.path === 'string' ? args.path : 'file'
     const workspaceId = typeof args.workspaceId === 'string' ? args.workspaceId : ''
     const wsLabel = workspaceId ? ` (ws:${workspaceId.slice(0, 8)})` : ''
-    return `Workspace file · ${action}: ${clip(path, 80)}${wsLabel}`
+    const batch = Array.isArray(args.files) ? args.files.length : 0
+    const what = batch ? `batch: ${action} ${clip(path, 60)} + ${batch} more` : `${action}: ${clip(path, 80)}`
+    return `Workspace file · ${what}${wsLabel}`
   }
   if (name === 'search') {
     const responses = result?.match(/\[Source [^\]]+\]/g)?.length
-    return `Web search · query: “${clip(query || 'missing query')}”${responses == null ? '' : ` (${responses} responses)`}`
+    let meta = ''
+    try {
+      if (result) {
+        const parsed = parseSearchEvidence(result)
+        const bits = [`${parsed.sources.length || responses || 0} sources`]
+        if (parsed.provider) bits.push(parsed.provider)
+        if (parsed.query) bits.push(`“${clip(parsed.query, 60)}”`)
+        else if (query) bits.push(`“${clip(query, 60)}”`)
+        meta = ` (${bits.join(' · ')})`
+      }
+    } catch { /* fall back to the query-only label */ }
+    return `Web search · query: “${clip(query || 'missing query')}”${responses == null ? '' : meta || ` (${responses} responses)`}`
+  }
+  if (name === 'fetch_page') {
+    let label = ''
+    try {
+      const j = JSON.parse(result ?? '')
+      const title = typeof j?.title === 'string' ? j.title : ''
+      const url = typeof j?.url === 'string' ? j.url : (typeof args.url === 'string' ? args.url : '')
+      let host = ''
+      try { host = new URL(url).hostname.replace(/^www\./, '') } catch { /* keep empty */ }
+      label = [title ? `“${clip(title, 70)}”` : '', host].filter(Boolean).join(' · ') || clip(String(args.url ?? 'page'), 80)
+    } catch { label = clip(String(args.url ?? 'page'), 80) }
+    return `Page reader · ${label || 'page'}`
   }
   if (name === 'time') return 'Checked the current date and time'
   if (name === 'date') return 'Checked the current date'
@@ -108,7 +135,7 @@ function MessageActions({ calls }: { calls: { id: string; name: string; argument
   </div>
 }
 
-function M({ m, last, onOpenWorkspace, selectedWorkspaceId }: { m: Msg; last: boolean; onOpenWorkspace: (mid: string, workspaceId: string, filePath?: string) => void; selectedWorkspaceId?: string | null }) {
+function M({ m, last, onOpenWorkspace, selectedWorkspaceId, cfg }: { m: Msg; last: boolean; onOpenWorkspace: (mid: string, workspaceId: string, filePath?: string) => void; selectedWorkspaceId?: string | null; cfg: (t: string) => void }) {
   const { prefs, busy, advanced, features, workspaces } = useS()
   const adv = featOn({ features }, 'advanced') ? advanced : undefined
   const [sysOpen, setSysOpen] = useState(false)
@@ -120,22 +147,45 @@ function M({ m, last, onOpenWorkspace, selectedWorkspaceId }: { m: Msg; last: bo
   const togglePayload = (k: string) => setExpanded((v) => ({ ...v, [k]: !v[k] }))
   const live = useLive((s) => s.tools[m.id])
   const [showRawErr, setShowRawErr] = useState(false)
+  // Jump-to-message from ranked sidebar search: scroll + temporary highlight.
+  const flash = useS((st) => st.flashMsg === m.id)
+  useEffect(() => {
+    if (!flash) return
+    document.getElementById(`msg-${m.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    const t = setTimeout(() => { if (useS.getState().flashMsg === m.id) useS.getState().patch({ flashMsg: null }) }, 2500)
+    return () => clearTimeout(t)
+  }, [flash, m.id])
   const [log, setLog] = useState(false)
   const [thinkingOpen, setThinkingOpen] = useState(false)
   const [ok, setOk] = useState(false)
+  const [srcOpen, setSrcOpen] = useState<boolean | null>(null)
+  const [srcFlash, setSrcFlash] = useState<string | null>(null)
+  const searchPrefs = useS((s) => s.search)
+  const sources = useMemo(() => collectMessageSources(m.toolRounds), [m.toolRounds])
+  const displayText = m.toolFinal ?? m.t
+  const citedText = useMemo(() => linkifyCitations(displayText, sources), [displayText, sources])
+  const cites = searchPrefs?.citeStyle === 'links' ? undefined : sources.length ? {
+    sources,
+    onCite: (citeId: string) => {
+      setSrcOpen(true)
+      setSrcFlash(citeId.toUpperCase())
+      window.setTimeout(() => scrollToSource(m.id, citeId), 60)
+      window.setTimeout(() => setSrcFlash((v) => (v === citeId.toUpperCase() ? null : v)), 1800)
+    },
+  } : undefined
   const writingPath = useMemo(
     () => findLastWorkspacePath(live as { id: string; name?: string; arguments: string }[] | undefined, m.toolRounds),
     [m.toolRounds, live],
   )
   if (m.r === 'user')
     return (
-      <div className="ml-auto max-w-[85%] space-y-2">
+      <div id={`msg-${m.id}`} className={cx('ml-auto max-w-[85%] space-y-2 rounded-xl p-1', flash && 'ring-2 ring-ac')}>
         <div className="flex flex-wrap justify-end gap-1.5">{m.att?.map((a) => <Chip key={a.name} icon={Paperclip}>{a.name}</Chip>)}</div>
         {m.t && <UserText m={m} />}
       </div>
     )
   return (
-    <div className="group space-y-2">
+    <div id={`msg-${m.id}`} className={cx('group space-y-2 rounded-xl p-1', flash && 'ring-2 ring-ac')}>
       {prefs.showBy && (
         <div className="flex flex-wrap items-center gap-2 text-sm text-mu">
           <span className={cx('inline-flex items-center gap-1.5', m.err && 'text-er')}>{m.err ? <TriangleAlert size={14} /> : <Cpu size={14} />}{m.by}</span>
@@ -215,6 +265,13 @@ function M({ m, last, onOpenWorkspace, selectedWorkspaceId }: { m: Msg; last: bo
               <TriangleAlert size={18} /> Model Error{m.by ? ` · ${m.by}` : ''}
             </div>
             <div className="text-sm text-er/90">{m.t || 'HTTP 500 — Internal error encountered.'}</div>
+            {(m.log ?? []).some((t) => t.errCode === 'tool_limit' || /Tool execution limit/i.test(t.err ?? '')) && (
+              <div>
+                <button onClick={() => cfg('tools')} className="rounded-lg bg-ac px-3 py-1.5 text-sm font-medium text-acx hover:opacity-90 transition-opacity">
+                  Raise tool limit
+                </button>
+              </div>
+            )}
             <button onClick={() => setShowRawErr(!showRawErr)} className="rounded-lg bg-er/20 px-3 py-1.5 text-sm font-medium text-er hover:bg-er/30 transition-colors">
               {showRawErr ? 'Hide raw error' : 'Show raw error'}
             </button>
@@ -224,7 +281,7 @@ function M({ m, last, onOpenWorkspace, selectedWorkspaceId }: { m: Msg; last: bo
           </div>
         ) : m.t ? (
           <div className="inline">
-            <Md t={m.t} fadeEvents={m.fadeEvents} fade={prefs.fade} />
+            <Md t={citedText} fadeEvents={m.fadeEvents} fade={prefs.fade} cites={cites} />
           </div>
         ) : writingPath ? (
           <span className="reply-thinking" role="status" aria-label={`Writing ${writingPath}`}>
@@ -233,7 +290,7 @@ function M({ m, last, onOpenWorkspace, selectedWorkspaceId }: { m: Msg; last: bo
           </span>
         ) : (() => {
           const names = ((live ?? []) as { name?: string }[]).map((t) => t.name ?? '')
-          const status = names.includes('search') ? 'Searching…' : names.includes('use_skill') ? 'Checking skills…' : 'Thinking…'
+          const status = names.includes('search') ? 'Searching…' : names.includes('fetch_page') ? 'Reading page…' : names.includes('use_skill') ? 'Checking skills…' : 'Thinking…'
           return (
             <span className="reply-thinking" role="status" aria-label={status === 'Thinking…' ? 'Waiting for a reply' : status}>
               <span className="reply-dots" aria-hidden="true"><i /><i /><i /></span>
@@ -267,6 +324,19 @@ function M({ m, last, onOpenWorkspace, selectedWorkspaceId }: { m: Msg; last: bo
           </div>
         ) : null
       })()}
+      {/* Sources drawer: below workspaces, above the message options. */}
+      {!m.err && (
+        <SourcesPanel
+          msgId={m.id}
+          text={displayText}
+          sources={sources}
+          defaultOpen={!!searchPrefs?.sourcesOpen}
+          strict={!!searchPrefs?.strictCitations}
+          open={srcOpen ?? undefined}
+          onToggle={setSrcOpen}
+          flash={srcFlash}
+        />
+      )}
       {(m.toolRounds ?? []).length > 0 && <MessageActions calls={(m.toolRounds ?? []).flatMap((round) => round.calls)} />}
       {prefs.showTps && m.tps != null && !m.err && <div className="text-xs text-mu">{m.by} · {m.tps.toLocaleString()} tokens/s</div>}
       <div className={cx('flex items-center gap-0.5 transition-opacity', m.alts && m.alts.length > 1 ? '' : 'opacity-0 group-hover:opacity-100')}>
@@ -379,7 +449,7 @@ export function Chat({ side, toggle, cfg, pal }: { side: boolean; toggle: () => 
           <div ref={box} onScroll={(e) => { const b = e.currentTarget; stick.current = b.scrollHeight - b.scrollTop - b.clientHeight < 80 }} className="min-h-0 flex-1 overflow-y-auto" style={{ WebkitMaskImage: 'linear-gradient(to bottom, black calc(100% - 32px), rgba(0,0,0,0.1) 100%)', maskImage: 'linear-gradient(to bottom, black calc(100% - 32px), rgba(0,0,0,0.1) 100%)' }}>
             {c && c.msgs.length ? (
               <div className="mx-auto space-y-8 px-4 py-6" style={{ maxWidth: CHAT_WIDTH[s.prefs.chatWidth] }}>
-                {c.msgs.map((m, i) => <M key={m.id} m={m} last={i === c.msgs.length - 1} onOpenWorkspace={(mid, wsId, filePath) => setWorkspacePanel({ mid, workspaceId: wsId, initialFilePath: filePath })} selectedWorkspaceId={workspacePanel?.mid === m.id ? selectedRevId : null} />)}
+                {c.msgs.map((m, i) => <M key={m.id} m={m} cfg={cfg} last={i === c.msgs.length - 1} onOpenWorkspace={(mid, wsId, filePath) => setWorkspacePanel({ mid, workspaceId: wsId, initialFilePath: filePath })} selectedWorkspaceId={workspacePanel?.mid === m.id ? selectedRevId : null} />)}
               </div>
             ) : !s.eps.some(usable) ? (
               <Tutorial cfg={cfg} />

@@ -2,14 +2,15 @@ import { lazy, Suspense, useState } from 'react'
 import { Check, Copy, GitBranch, Pencil, Trash2 } from 'lucide-react'
 import { useS, type FadeEvent, type Msg } from '../store'
 import { Btn } from './ui'
+import type { CiteMap } from './Rich'
 
 // The full renderer (tables, math, highlighting) loads on first use to keep the first paint light.
 const Rich = lazy(() => import('./Rich'))
 
-export function Md({ t, fadeEvents = [], fade = 0, bare = false }: { t: string; fadeEvents?: FadeEvent[]; fade?: number; bare?: boolean }) {
+export function Md({ t, fadeEvents = [], fade = 0, bare = false, cites }: { t: string; fadeEvents?: FadeEvent[]; fade?: number; bare?: boolean; cites?: CiteMap }) {
   return (
     <Suspense fallback={<p className="whitespace-pre-wrap">{t}</p>}>
-      <Rich t={t} fadeEvents={fadeEvents} fade={fade} bare={bare} />
+      <Rich t={t} fadeEvents={fadeEvents} fade={fade} bare={bare} cites={cites} />
     </Suspense>
   )
 }

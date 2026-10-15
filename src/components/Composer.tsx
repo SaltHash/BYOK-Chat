@@ -1,9 +1,10 @@
 import { useRef, useState } from 'react'
-import { Plus, FileUp, FileText, Image as ImageIcon, ArrowUp, Square, ChevronRight, ListMusic, Cpu, ScrollText, Settings, Search, X, TriangleAlert, Wrench } from 'lucide-react'
-import { useS, usable, modelsOf, modelNameOf, featOn, type Att } from '../store'
+import { Plus, FileUp, FileText, Image as ImageIcon, ArrowUp, Square, ChevronRight, ListMusic, Cpu, ScrollText, Settings, Search, X, TriangleAlert, Wrench, Link as LinkIcon, ScanText } from 'lucide-react'
+import { useS, usable, modelsOf, modelNameOf, featOn, normDocs, type Att } from '../store'
 import { CI, TOOLS } from '../meta'
 import { composerWidth } from '../layout'
-import { can, fmt, readAtt } from '../engine'
+import { can, fmt, readAtts, ocrImage, fetchPage } from '../engine'
+import { fitDoc } from '../docs'
 import { Btn, Item, Pop, Seg, RangeSlider, Toggle, cx, type Ic } from './ui'
 import { Notice } from './Extra'
 
@@ -75,24 +76,55 @@ export function Composer({ cfg }: { cfg: (t: string) => void }) {
   const menu: { k: string; icon: Ic; label: string; hint: string; pick: () => void }[] | null = /^\/\S*$/.test(v) && featOn(s, 'commands')
     ? s.cmds.filter((c) => c.on && c.name.startsWith(v.slice(1))).map((c) => ({ k: c.id, icon: CI[c.in], label: '/' + c.name, hint: c.desc || c.in, pick: () => s.patch({ draft: '/' + c.name + ' ' }) }))
     : tw && featOn(s, 'tools')
-      ? TOOLS.filter((t) => t[3].startsWith(tw.toLowerCase())).map((t) => ({ k: t[0], icon: t[2], label: t[3].split('(')[0], hint: s.tools[t[0]] ? t[4] : 'Off. Enable in Settings → Tools', pick: () => s.patch({ draft: v.slice(0, v.length - tw.length) + '@' + t[0] + (/^(calc|count|json|base64|search|random|hash)$/.test(t[0]) ? '(' : ' ') }) }))
+      ? TOOLS.filter((t) => t[3].startsWith(tw.toLowerCase())).map((t) => ({ k: t[0], icon: t[2], label: t[3].split('(')[0], hint: s.tools[t[0]] ? t[4] : 'Off. Enable in Settings → Tools', pick: () => s.patch({ draft: v.slice(0, v.length - tw.length) + '@' + t[0] + (/^(calc|count|json|base64|search|fetch_page|random|hash)$/.test(t[0]) ? '(' : ' ') }) }))
       : null
   const hl = Math.min(hi, Math.max((menu?.length ?? 1) - 1, 0))
   const sel = s.sel ? (s.sel.k === 'pl' ? s.pls : s.eps).find((x) => x.id === s.sel!.id) : undefined
   const ep = s.sel?.k === 'ep' ? s.eps.find((e) => e.id === s.sel!.id) : undefined
   const pr = s.prompts.find((p) => p.id === s.pr)
-  const bad = (a: Att) => !!ep && a.kind !== 'txt' && !can(ep, a.kind)
+  const bad = (a: Att) => !!ep && !a.text && (a.kind === 'media' || ((a.kind === 'img' || a.kind === 'pdf') && !can(ep, a.kind)))
   const pick = (accept: string) => { if (fi.current) { fi.current.accept = accept; fi.current.click() } }
   const add = async (l: FileList | null) => {
     if (!l) return
-    const out: Att[] = []
-    let txtChars = att.reduce((a, x) => a + (x.text?.length ?? 0), 0)
-    for (const f of [...l]) {
-      const r = await readAtt(f, txtChars)
-      if (!r.ok) s.patch({ notice: { t: r.message } })
-      else { out.push(r.att); txtChars += r.att.text?.length ?? 0 }
-    }
-    setAtt((a) => [...a, ...out])
+    const dp = normDocs(s.docPrefs)
+    const txtChars = att.reduce((a, x) => a + (x.text?.length ?? 0), 0)
+    const { atts, notices } = await readAtts(l, txtChars, dp)
+    if (notices.length) s.patch({ notice: { t: notices.join('\n') } })
+    if (atts.length) setAtt((a) => [...a, ...atts])
+  }
+  const [urlOpen, setUrlOpen] = useState(false)
+  const [urlVal, setUrlVal] = useState('')
+  const [urlBusy, setUrlBusy] = useState(false)
+  const addUrl = async () => {
+    const u = urlVal.trim()
+    if (!u || urlBusy) return
+    setUrlBusy(true)
+    try {
+      const page = await fetchPage(u)
+      const txtChars = att.reduce((a, x) => a + (x.text?.length ?? 0), 0)
+      const { text } = fitDoc(page.text, Math.min(normDocs(s.docPrefs).perFileChars, 200000))
+      if (txtChars + text.length > 500000) { s.patch({ notice: { t: 'Page not attached: the message text budget is full.' } }); return }
+      setAtt((a) => [...a, { name: (page.title || u).slice(0, 80), kind: 'txt', size: `${Math.round(text.length / 1024)} KB`, source: 'url', text: `[from URL: ${page.url}]\n${text}` }])
+      setUrlVal(''); setUrlOpen(false)
+    } catch (x: any) { s.patch({ notice: { t: `Could not attach that page: ${String(x?.message ?? x)}` } }) }
+    finally { setUrlBusy(false) }
+  }
+  const [ocrBusy, setOcrBusy] = useState<number | null>(null)
+  const ocrOne = async (i: number) => {
+    const a = att[i]
+    if (!a || a.kind !== 'img' || !a.data || a.text || ocrBusy != null) return
+    const dp = normDocs(s.docPrefs)
+    const vex = s.eps.find((e) => e.id === dp.ocrEp && usable(e) && can(e, 'img'))
+      ?? s.eps.find((e) => usable(e) && can(e, 'img'))
+      ?? (ep && can(ep, 'img') ? ep : undefined)
+    if (!vex) { s.patch({ notice: { t: 'No usable vision-capable endpoint for transcription. Add one in Settings → Endpoints.', tab: 'eps', label: 'Open endpoints' } }); return }
+    setOcrBusy(i)
+    try {
+      const model = vex.id === dp.ocrEp && dp.ocrModel ? dp.ocrModel : vex.model
+      const text = await ocrImage(vex, model, a)
+      setAtt((list) => list.map((x, j) => j === i ? { ...x, text: `[ocr: transcribed from ${x.name}]\n${text}`, source: 'ocr' } : x))
+    } catch (x: any) { s.patch({ notice: { t: `Transcription failed: ${String(x?.message ?? x)}` } }) }
+    finally { setOcrBusy(null) }
   }
   const ready = !!v.trim() || att.length > 0
   const submit = async () => {
@@ -125,18 +157,26 @@ export function Composer({ cfg }: { cfg: (t: string) => void }) {
         {att.length > 0 && (
           <div className="mb-2 flex flex-wrap gap-2">
             {att.map((a, i) => a.kind === 'img' && a.data ? (
-              <div key={i} className={cx('group/preview relative flex h-24 w-28 flex-col overflow-hidden rounded-lg bg-hov p-1.5 ring-1 ring-hov', bad(a) && 'ring-er')} title={a.name}>
+              <div key={i} className={cx('group/preview relative flex h-24 w-28 flex-col overflow-hidden rounded-lg bg-hov p-1.5 ring-1 ring-hov', bad(a) && 'ring-er')} title={a.text ? `${a.name} · transcribed text attached` : a.name}>
                 <img src={`data:${a.mime || 'image/*'};base64,${a.data}`} alt={a.name} className="min-h-0 flex-1 rounded object-contain p-1" />
-                <span className="truncate px-1 text-xs text-mu" title={a.name}>{a.name}</span>
+                <span className="truncate px-1 text-xs text-mu" title={a.name}>{a.text ? '✓ ' : ''}{a.name}</span>
+                {!a.text && <button aria-label={`Transcribe text from ${a.name}`} title="Transcribe image text with a vision model" onClick={() => ocrOne(i)} disabled={ocrBusy != null} className="absolute bottom-6 left-1 grid size-5 place-items-center rounded-full bg-black/70 text-white opacity-0 transition-opacity group-hover/preview:opacity-100 focus:opacity-100 disabled:opacity-40"><ScanText size={12} /></button>}
                 <button aria-label={`Remove ${a.name}`} onClick={() => setAtt(att.filter((_, j) => j !== i))} className="absolute right-1 top-1 grid size-5 place-items-center rounded-full bg-black/70 text-white opacity-0 transition-opacity group-hover/preview:opacity-100 focus:opacity-100"><X size={12} /></button>
                 {bad(a) && <span className="absolute left-1 right-1 top-7 rounded bg-er/90 px-1 py-0.5 text-center text-xs text-white"><TriangleAlert size={11} className="inline" /> Unsupported</span>}
               </div>
             ) : (
-              <span key={i} title={bad(a) ? 'The selected model cannot process this file' : undefined} className={cx('inline-flex items-center gap-1.5 rounded-lg bg-hov py-1 pl-2 pr-1 text-xs', bad(a) && 'text-er')}>
-                {bad(a) ? <TriangleAlert size={13} /> : <FileText size={13} />}{a.name}<span className="text-mu">{a.size}</span>
+              <span key={i} title={bad(a) ? 'The selected model cannot process this file' : (a.source ? `${a.name} · ${a.source}${a.pages ? ` · ${a.pages} pages` : ''}${a.text ? ` · ${Math.round(a.text.length / 1024)} KB text` : ''}` : undefined)} className={cx('inline-flex items-center gap-1.5 rounded-lg bg-hov py-1 pl-2 pr-1 text-xs', bad(a) && 'text-er')}>
+                {bad(a) ? <TriangleAlert size={13} /> : <FileText size={13} />}{a.text && a.kind !== 'txt' ? '✓ ' : ''}{a.name}<span className="text-mu">{a.size}</span>
                 <button onClick={() => setAtt(att.filter((_, j) => j !== i))} className="grid size-5 place-items-center rounded hover:bg-surf"><X size={12} /></button>
               </span>
             ))}
+          </div>
+        )}
+        {urlOpen && (
+          <div className="mb-2 flex gap-2">
+            <input autoFocus value={urlVal} onChange={(e) => setUrlVal(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') addUrl(); if (e.key === 'Escape') setUrlOpen(false) }} placeholder="https://… — attach the page text as a document" className="h-9 min-w-0 flex-1 rounded-lg bg-hov px-3 text-sm outline-none" />
+            <Btn v="solid" disabled={!urlVal.trim() || urlBusy} onClick={addUrl}>{urlBusy ? 'Reading…' : 'Attach'}</Btn>
+            <Btn v="soft" onClick={() => setUrlOpen(false)}>Cancel</Btn>
           </div>
         )}
         <textarea
@@ -162,6 +202,7 @@ export function Composer({ cfg }: { cfg: (t: string) => void }) {
             {(close) => (
               <>
                 <Item icon={FileUp} onClick={() => { pick(''); close() }}>Upload a file</Item>
+                <Item icon={LinkIcon} onClick={() => { setUrlOpen(true); close() }}>Attach page from URL</Item>
                 <Item icon={Wrench} onClick={() => { close(); cfg('tools') }}>Manage tools…</Item>
               </>
             )}

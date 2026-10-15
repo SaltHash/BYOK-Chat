@@ -12,6 +12,13 @@ import 'katex/dist/katex.min.css'
 import { Check, Copy } from 'lucide-react'
 import { cx } from './ui'
 import type { FadeEvent } from '../store'
+import type { CiteSource } from '../citations'
+
+export type CiteMap = { sources: CiteSource[]; onCite?: (citeId: string) => void }
+
+const normCiteUrl = (u: string) => {
+  try { return new URL(u).toString().replace(/\/$/, '').toLowerCase() } catch { return u.replace(/\/$/, '').toLowerCase() }
+}
 
 /* ---- pre-processing for syntax the parser does not know ---- */
 const FENCE = /(```[\s\S]*?```|~~~[\s\S]*?~~~)/
@@ -131,7 +138,7 @@ function Code({ lang, code, children, bare }: { lang: string; code: string; chil
   )
 }
 
-const makeC = (bare: boolean): any => ({
+const makeC = (bare: boolean, cites?: CiteMap): any => ({
   h1: E('h1', 'mb-3 mt-6 text-2xl font-semibold'),
   h2: E('h2', 'mb-2 mt-5 text-xl font-semibold'),
   h3: E('h3', 'mb-2 mt-4 text-lg font-semibold'),
@@ -149,11 +156,37 @@ const makeC = (bare: boolean): any => ({
   li: E('li', 'pl-1 [&>ol]:my-1 [&>p]:my-1 [&>ul]:my-1'),
   input: ({ type, checked }: any) => (type === 'checkbox'
     ? <span role="checkbox" aria-label="Task complete" aria-checked={!!checked} aria-disabled="true" className={cx('mr-2 inline-grid size-4 translate-y-0.5 place-items-center rounded border', checked ? 'border-ac bg-ac text-acx' : 'border-mu/60 bg-bg text-transparent')}>{checked && <Check size={12} strokeWidth={3} />}</span> : null),
-  a: ({ node, href, children, ...p }: any) => (/^#/.test(href ?? '')
+  a: ({ node, href, children, ...p }: any) => {
+    // Citation links ([S1] pointing at a known source) render as pills that
+    // jump to the Sources entry below (description first); the entry itself
+    // carries the Open-website button. Everything else stays a normal link.
+    if (cites?.sources.length) {
+      const label = Array.isArray(children) ? children.map((c) => (typeof c === 'string' ? c : '')).join('').trim() : (typeof children === 'string' ? children.trim() : '')
+      const m = /^(S\d+)$/i.exec(label)
+      if (m) {
+        const hit = cites.sources.find((s) => s.citeId.toUpperCase() === m[1].toUpperCase() && normCiteUrl(s.url) === normCiteUrl(href ?? ''))
+          ?? cites.sources.find((s) => normCiteUrl(s.url) === normCiteUrl(href ?? ''))
+        if (hit) {
+          return (
+            <button
+              type="button"
+              onClick={() => cites.onCite?.(hit.citeId)}
+              title={`${hit.title} — ${hit.host}. Jump to source.`}
+              aria-label={`Jump to source ${hit.citeId}: ${hit.title}`}
+              className="mx-0.5 inline-grid min-h-6 min-w-6 place-items-center rounded-md bg-ac/15 px-1.5 font-mono text-xs font-semibold text-ac underline decoration-ac/40 underline-offset-2 hover:bg-ac/25"
+            >
+              {hit.citeId.replace(/^S/i, '')}
+            </button>
+          )
+        }
+      }
+    }
+    return (/^#/.test(href ?? '')
     ? <a {...p} href={href} className={link}>
       {children}
     </a>
-    : <a {...p} href={href} target="_blank" rel="noopener noreferrer nofollow" className={link}>{children}</a>),
+    : <a {...p} href={href} target="_blank" rel="noopener noreferrer nofollow" className={link}>{children}</a>)
+  },
   img: ({ node, src, alt, title }: any) => <img src={src} alt={alt} title={title} loading="lazy" referrerPolicy="no-referrer" className="my-3 max-h-96 max-w-full rounded-xl bg-surf" />,
   table: ({ children }: any) => <div className="my-4 overflow-x-auto rounded-xl bg-surf"><table className="w-full border-collapse text-sm">{children}</table></div>,
   thead: E('thead', 'bg-hov text-left'),
@@ -172,7 +205,7 @@ const makeC = (bare: boolean): any => ({
   },
 })
 
-export default memo(function Rich({ t, fadeEvents = [], fade = 0, bare = false }: { t: string; fadeEvents?: FadeEvent[]; fade?: number; bare?: boolean }) {
+export default memo(function Rich({ t, fadeEvents = [], fade = 0, bare = false, cites }: { t: string; fadeEvents?: FadeEvent[]; fade?: number; bare?: boolean; cites?: CiteMap }) {
   const src = useMemo(() => pre(t), [t])
   const [, refresh] = useState(0)
   useEffect(() => {
@@ -188,7 +221,7 @@ export default memo(function Rich({ t, fadeEvents = [], fade = 0, bare = false }
       <ReactMarkdown
         remarkPlugins={[[remarkGfm, { singleTilde: false }], remarkMath, remarkBreaks, remarkEmoji, fadeFragments(fadeEvents, fade)]}
         rehypePlugins={[rehypeRaw, [rehypeSanitize, schema], [rehypeKatex, { throwOnError: false, strict: 'ignore', errorColor: 'var(--er)' }], [rehypeHighlight, { detect: false, ignoreMissing: true }]]}
-        components={makeC(bare)}
+        components={makeC(bare, cites)}
       >
         {src}
       </ReactMarkdown>

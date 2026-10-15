@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Plus, Clock, Search, PanelLeftClose, Pin, Pencil, Trash2, MessageSquare, Server, ListMusic, ScrollText, Terminal, Wrench, Settings, Palette, Lock, PanelRight, Folder, FolderPlus, FolderMinus, ChevronRight, Bookmark } from 'lucide-react'
-import { useS, THEMES, DARK_THEMES, LIGHT_THEMES, themeKeyOf, DEFAULT_LIBRARY_SHOW, featOn, type Chat, type FeatureId } from '../store'
+import { Plus, Clock, Search, PanelLeftClose, Pin, Pencil, Trash2, MessageSquare, Server, ListMusic, ScrollText, Terminal, Wrench, Settings, Palette, Lock, PanelRight, Folder, FolderPlus, FolderMinus, ChevronRight, Bookmark, Download } from 'lucide-react'
+import { useS, chatMd, dl, THEMES, DARK_THEMES, LIGHT_THEMES, themeKeyOf, DEFAULT_LIBRARY_SHOW, featOn, type Chat, type FeatureId } from '../store'
+import { searchChats } from '../recall'
 import { clampSidebarWidth } from '../layout'
 import { Btn, Confirm, cx } from './ui'
 import { DndPlaceholder, DndLiveRegion, showDragOverlay, moveDragOverlay, hideDragOverlay, measureBox, DND_ACTIVATION_PX, useFlipAnimate } from './dnd'
@@ -36,6 +37,13 @@ function Row({ c, mv, del, dnd, container, index }: { c: Chat; mv: (id: string, 
       )}
       <span className="hidden group-hover:flex">
         <button title="Rename" onClick={() => setEd(true)} className={act}><Pencil size={14} /></button>
+        <button title="Export this chat (.md + .json)" onClick={() => {
+          const chat = useS.getState().chats.find((x) => x.id === c.id)
+          if (!chat) return
+          const base = chat.title.replace(/[^\w-]+/g, '_')
+          dl(`${base}.md`, chatMd(chat), 'text/markdown')
+          dl(`${base}.json`, JSON.stringify({ v: 4, chats: [chat] }, null, 1), 'application/json')
+        }} className={act}><Download size={14} /></button>
         <button title="Move to folder" onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); mv(c.id, r.left, r.bottom + 4) }} className={act}><Folder size={14} /></button>
         <button title={c.pin ? 'Unpin' : 'Pin'} onClick={() => s.chatOp(c.id, 'pin')} className={act}><Pin size={14} /></button>
         <button title="Delete chat (hold Shift to skip confirmation)" onClick={(e) => del(c.id, e.shiftKey)} className={cx(act, 'hover:text-er')}><Trash2 size={14} /></button>
@@ -74,6 +82,13 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
   }, [menu])
   const k = q.toLowerCase()
   const L = s.chats.filter((c) => !k || c.title.toLowerCase().includes(k) || c.msgs.some((m) => m.t.toLowerCase().includes(k)))
+  // Ranked message search (BM25): one hit per chat with a text snippet.
+  // Jump-to-message sets flashMsg, which Chat highlights and scrolls to.
+  const hits = useMemo(() => (k ? searchChats(s.chats, q, 30) : []), [s.chats, q, k])
+  const jump = (chatId: string, msgId: string | null) => {
+    s.patch({ chat: chatId, flashMsg: msgId })
+    if (typeof window !== 'undefined' && window.innerWidth < 768) toggle()
+  }
   const th = s.themeMode === 'light' ? [...LIGHT_THEMES, 'custom'] : [...DARK_THEMES, 'custom']
   const thCur = s.themeMode === 'light' ? s.themeLight : s.themeDark
   const thNext = th[(th.indexOf(thCur) + 1) % th.length]
@@ -334,6 +349,27 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
         <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search titles and messages" className="h-9 w-full rounded-lg bg-surf pl-9 pr-3 text-sm outline-none focus:ring-2 focus:ring-ac/40" />
       </div>
       <nav ref={navRef} data-dnd-scroll="" className="-mx-1 flex-1 space-y-3 overflow-y-auto px-1">
+        {k ? (
+          <div>
+            <div className="px-2.5 pb-1 text-xs font-medium text-mu">{hits.length ? `Top matches (${hits.length})` : 'No matches'}</div>
+            {hits.map((h) => {
+              const c = s.chats.find((x) => x.id === h.chatId)
+              if (!c) return null
+              return (
+                <button key={h.chatId} onClick={() => jump(h.chatId, h.msgId)} className={cx('block w-full rounded-lg px-2.5 py-2 text-left text-sm hover:bg-surf', s.chat === h.chatId && 'bg-hov')}>
+                  <span className="flex items-center gap-2">
+                    {c.pin ? <Pin size={13} className="shrink-0 text-ac" /> : c.temporary ? <Clock size={13} className="shrink-0 text-mu" /> : <MessageSquare size={13} className="shrink-0 text-mu" />}
+                    <span className="min-w-0 flex-1 truncate font-medium">{c.title}</span>
+                  </span>
+                  {(h.pre || h.match) && (
+                    <span className="mt-1 block truncate text-xs text-mu">{h.pre}<mark className="rounded bg-ac/25 px-0.5 text-tx">{h.match}</mark>{h.post}</span>
+                  )}
+                </button>
+              )
+            })}
+          </div>
+        ) : (
+        <>
         {!!pinned.length && <div><div className="px-2.5 pb-1 text-xs font-medium text-mu">Pinned</div>{rows(pinned, 'pinned')}</div>}
         <div className="rounded-lg">
           <div className="px-2.5 pb-1 text-xs font-medium text-mu">Temporary chats</div>
@@ -361,7 +397,7 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
                   <button onClick={() => s.toggleFolder(f.id)} onDoubleClick={() => setFe(f.id)} className="flex min-w-0 flex-1 items-center gap-2 px-2.5 py-2 text-left">
                     <span className="relative grid shrink-0 place-items-center" aria-hidden="true">
                       <Folder size={20} className="text-mu" />
-                      <span className="absolute inset-0 flex items-center justify-center pt-[4px] text-xs font-semibold leading-none text-mu">{s.chats.filter((c) => c.folder === f.id).length}</span>
+                      <span className="absolute inset-0 flex items-center justify-center pt-[1px] text-[9px] font-semibold leading-none text-mu">{s.chats.filter((c) => c.folder === f.id).length}</span>
                     </span><span className="min-w-0 truncate">{f.name}<span className="sr-only"> ({s.chats.filter((c) => c.folder === f.id).length} chats)</span></span>
                     <ChevronRight size={14} className={cx('shrink-0 text-mu transition-transform', o && 'rotate-90')} />
                   </button>
@@ -380,6 +416,8 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
           {rows(free, '')}
           {!free.length && <p className="px-2.5 py-1 text-sm text-mu">{!s.chats.length ? 'No chats yet.' : k ? 'No chats match.' : 'Nothing here. Drop a chat to unfile it.'}</p>}
         </div>
+        </>
+        )}
       </nav>
       {featOn(s, 'library') && (
       <div className="space-y-0.5">

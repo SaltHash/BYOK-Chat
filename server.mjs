@@ -2,6 +2,8 @@ import { createServer } from 'node:http'
 import { readFile, stat } from 'node:fs/promises'
 import { extname, resolve, sep } from 'node:path'
 import { boundedInt, normalizeMode, normalizeFallback, normalizeProvider, providerLabel, providerNeedsKey, apiKeyFor, resolveApiKey, resolveZone, apiBaseUrlFor, runSearxng, runApiSearch, SEARCH_API_PROVIDERS } from './server/search.mjs'
+import { routeSync } from './server/sync.mjs'
+import { fetchPageText } from './server/extract.mjs'
 
 const port = Number(process.env.PORT || 8787)
 const root = resolve(process.env.STATIC_DIR || 'dist')
@@ -163,10 +165,36 @@ async function search(req, res) {
   }
 }
 
+const extractTimeoutMs = boundedInt(process.env.EXTRACT_TIMEOUT_MS, 8000, 1000, 30000)
+const extractLimit = new Map()
+
+async function extract(req, res) {
+  if (req.method !== 'GET') return send(res, 405, { error: 'Method not allowed' }, { allow: 'GET' })
+  if (!allowedOrigin(req)) return send(res, 403, { error: 'Cross-origin request refused' })
+  const ip = req.socket.remoteAddress || 'unknown'
+  const now = Date.now(), entry = extractLimit.get(ip)
+  if (entry && now - entry.start < 60_000 && entry.count >= 30) return send(res, 429, { error: 'Reader limit reached. Try again in a minute.' }, { 'retry-after': '60' })
+  const url = new URL(req.url || '/', 'http://localhost')
+  const target = (url.searchParams.get('url') || '').trim().slice(0, 2000)
+  if (!target) return send(res, 400, { error: 'Missing url parameter' })
+  if (!entry || now - entry.start >= 60_000) extractLimit.set(ip, { start: now, count: 1 }); else entry.count++
+  try {
+    const data = await fetchPageText(target, { timeoutMs: extractTimeoutMs })
+    return send(res, 200, { ...data, fetchedAt: new Date().toISOString() }, { 'cache-control': 'private, max-age=300' })
+  } catch (e) {
+    const code = e.code || 'upstream_unavailable'
+    const status = code === 'bad_url' || code === 'bad_type' ? 400 : code === 'timeout' || code === 'network' ? 503 : e.status === 404 ? 404 : 502
+    console.error(`[extract] code=${code} upstream=${e.status ?? 0} urlChars=${target.length}`)
+    return send(res, status, { error: e.message || 'Could not read the page.', code, retryable: e.retryable === true })
+  }
+}
+
 const server = createServer(async (req, res) => {
   const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`)
   if (url.pathname === '/api/health') return send(res, 200, searchStatus())
   if (url.pathname === '/api/search') return search(req, res)
+  if (url.pathname === '/api/extract') return extract(req, res)
+  if (url.pathname.startsWith('/api/sync/')) return routeSync(req, res, send)
   if (req.method !== 'GET' && req.method !== 'HEAD') return send(res, 405, { error: 'Method not allowed' }, { allow: 'GET, HEAD' })
   let path = decodeURIComponent(url.pathname)
   if (path === '/') path = '/index.html'

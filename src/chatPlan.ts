@@ -47,9 +47,14 @@ export function planRequest(s: PlanState, um: Msg, defaultFeatures: Record<Featu
   else if (sel && s.sel!.k === 'ep') { pool = [sel as Ep]; ex = true; tgt = (sel as Ep).name }
   else if (sel) { pl = sel as Pl; pool = playlistEntries(s, pl); tgt = 'playlist ' + pl.name }
   else { pool = s.eps; tgt = 'your endpoints' }
-  const need = [...new Set((um.att ?? []).filter((a) => a.kind !== 'txt').map((a) => a.kind as 'img' | 'pdf'))]
+  // Attachments with extracted text (txt, PDF text layer, Office docs,
+  // transcripts, OCR) travel inline and need no native capability — only
+  // imageless binaries (images/PDFs/media without text) constrain the pool.
+  const need = [...new Set((um.att ?? []).filter((a) => (a.kind === 'img' || a.kind === 'pdf' || (a as { kind: string }).kind === 'media') && !a.text).map((a) => a.kind as 'img' | 'pdf' | 'media'))]
   const ready = pool.filter(usable)
-  const cand = ready.filter((e) => need.every((n) => can(e, n))).flatMap((e) => modelsOf(e)
+  // Media without a transcript is unreadable by every endpoint, so it
+  // constrains the pool to nothing (the error message says what to do).
+  const cand = ready.filter((e) => need.every((n) => n !== 'media' && can(e, n))).flatMap((e) => modelsOf(e)
     .filter((model) => !(s.sel?.k === 'ep' && s.sel.id === e.id && s.sel.model) || s.sel?.model === model)
     .map((model) => ({ ...e, model })))
   const scoped = F.prompts ? cmd?.sys || s.prompts.find((x) => x.id === s.pr)?.text || (pl && !cmd ? pl.sys : '') || '' : ''
@@ -62,7 +67,7 @@ export function planRequest(s: PlanState, um: Msg, defaultFeatures: Record<Featu
   let err: Notice = null
   if (!s.eps.length) err = { t: 'You have not added a model endpoint yet. Open Settings → Endpoints, choose a provider preset, paste your API key and the model id, then press Test connection. After that, send your message again.', tab: 'eps', label: 'Add an endpoint' }
   else if (!ready.length) err = { t: ex ? `${tgt} is disabled or incomplete. An endpoint must be enabled and have a base URL and a model id.` : `No endpoint in ${tgt} is ready. Enable one and make sure it has a base URL and a model id.`, tab: pl ? 'pls' : 'eps', label: 'Fix endpoints' }
-  else if (!cand.length) err = { t: `Not sent: no ready endpoint in ${tgt} can process ${need.map((n) => (n === 'img' ? 'images' : 'PDFs')).join(' and ')}. Your attachments are still in the message box. Choose a compatible endpoint or model.`, tab: 'eps', label: 'Open endpoints' }
+  else if (!cand.length) err = { t: `Not sent: no ready endpoint in ${tgt} can process ${need.map((n) => (n === 'img' ? 'images' : n === 'media' ? 'audio or video' : 'PDFs')).join(' and ')}. Your attachments are still in the message box. Choose a compatible endpoint or model.`, tab: 'eps', label: 'Open endpoints' }
   else if (s.sel && !sel && (s.sel.k === 'ep' || F.playlists)) err = { t: `The selected ${s.sel.k === 'pl' ? 'playlist' : 'endpoint'} is no longer available. Choose another model${s.sel.k === 'pl' ? ' or playlist' : ''}, then send again.`, tab: s.sel.k === 'pl' ? 'pls' : 'eps', label: 'Fix selection' }
   return { cmd, pl, ex, sys, cand, err, tgt, skills }
 }

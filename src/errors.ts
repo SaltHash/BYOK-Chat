@@ -18,6 +18,7 @@ export type ErrorCode =
   | 'upstream_unavailable'
   | 'empty_response'
   | 'stopped'
+  | 'tool_limit'
   | 'unknown'
 
 export type CodedError = Error & { code?: ErrorCode; retryable?: boolean; status?: number }
@@ -54,6 +55,7 @@ export const classifyModelError = (message: unknown): ErrorCode => {
   if (/HTTP 400|HTTP 422|Bad Request/i.test(t)) return 'bad_request'
   if (/HTTP 5\d\d/i.test(t)) return 'upstream_unavailable'
   if (/Empty response/i.test(t)) return 'empty_response'
+  if (/Tool execution limit/i.test(t)) return 'tool_limit'
   if (/timed out|timeout|AbortError/i.test(t)) return 'timeout'
   return 'unknown'
 }
@@ -73,6 +75,7 @@ const HINTS: Record<ErrorCode, string> = {
   upstream_unavailable: '\n\nThe provider is temporarily unavailable. Wait a moment and try again.',
   empty_response: '\n\nThe model returned an empty response. Try again.',
   stopped: '',
+  tool_limit: '\n\nThe model hit the tool execution limit. Raise it in Settings → Tools, then regenerate.',
   unknown: '',
 }
 

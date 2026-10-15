@@ -1,12 +1,13 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { Info, X, Server, Play, MessageSquare, Keyboard, ArrowUp, ArrowDown, MessagesSquare, RotateCcw, Download, Upload, FileText, Trash2, CircleCheck, CircleX, Gauge } from 'lucide-react'
-import { useS, dl, BLANK, THEMES, themePatch, DEFAULT_FEATURES, modelsOf, modelNameOf, normSearch, normAdvanced, normFeatureOrder, featOn, errText, storageUsage, QUOTA_FLAG, type Ep, type Kind, type FeatureId } from '../store'
+import { useS, dl, BLANK, THEMES, themePatch, DEFAULT_FEATURES, modelsOf, modelNameOf, normSearch, normAdvanced, normFeatureOrder, normDocs, featOn, errText, storageUsage, QUOTA_FLAG, type Ep, type Kind, type FeatureId } from '../store'
 import { normSkills } from '../skills'
 import { combo, fmt, rec as R, testEp } from '../engine'
 import { KEYS, TOOLS } from '../meta'
 import { Btn, Toggle, Checkbox, Confirm, Modal, Surface, cx, type Ic } from './ui'
 import { Panel } from './Settings'
 import { detectAvailableCategories, buildExportPayload } from '../configIO'
+import { SyncBox, EncryptedBackupBox } from './SyncBox'
 
 export function Notice({ cfg }: { cfg: (t: string) => void }) {
   const n = useS((s) => s.notice), patch = useS((s) => s.patch)
@@ -194,19 +195,34 @@ export function KeysTab() {
 function StorageBox() {
   const s = useS()
   const [info, setInfo] = useState<{ localBytes: number; quota?: number; usage?: number } | null>(null)
+  const [durable, setDurable] = useState<{ localBytes: number; durableBytes: number; opfs: boolean; backend: string } | null>(null)
   const [quotaFull, setQuotaFull] = useState(false)
   const [note, setNote] = useState('')
+  const refresh = () => {
+    void storageUsage().then(setInfo)
+    void import('../storage/durable').then(({ durableUsage }) => durableUsage().then(setDurable).catch(() => {}))
+    try { setQuotaFull(localStorage.getItem(QUOTA_FLAG) != null) } catch { /* ignore */ }
+  }
   useEffect(() => {
     let live = true
     void storageUsage().then((v) => { if (live) setInfo(v) })
+    void import('../storage/durable').then(({ durableUsage }) => durableUsage().then((v) => { if (live) setDurable(v) }).catch(() => {}))
     try { setQuotaFull(localStorage.getItem(QUOTA_FLAG) != null) } catch { /* ignore */ }
-    return () => { live = false }
+    // Background compaction every 5 min: prune durable + clear quota flag.
+    const timer = setInterval(() => {
+      void import('../storage/boot').then(({ compactDurable }) => compactDurable(useS.getState().chats as never).catch(() => null))
+    }, 300_000)
+    return () => { live = false; clearInterval(timer) }
   }, [s.chats, s.workspaces])
   const kb = (n: number) => n < 1024 * 1024 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1024 / 1024).toFixed(2)} MB`
+  const desc = info ? `Settings ~${kb(info.localBytes)}${durable ? ` · durable chats/workspaces ~${kb(durable.durableBytes)} (${durable.backend}${durable.opfs ? '+OPFS' : ''})` : ''}.` : 'Measure how much app data this browser holds.'
   return (
-    <Box icon={Gauge} t="Browser storage" d={info ? `This browser holds about ${kb(info.localBytes)} of app data.` : 'Measure how much app data this browser holds.'}>
-      <Btn v="soft" onClick={() => { void storageUsage().then(setInfo); try { setQuotaFull(localStorage.getItem(QUOTA_FLAG) != null) } catch { /* ignore */ } }}>Refresh</Btn>
-      <Btn v="soft" onClick={() => { setNote(s.compactStorage()); void storageUsage().then(setInfo) }}>Compact</Btn>
+    <Box icon={Gauge} t="Browser storage" d={desc}>
+      <Btn v="soft" onClick={refresh}>Refresh</Btn>
+      <Btn v="soft" onClick={() => { setNote(s.compactStorage()); refresh() }}>Compact</Btn>
+      <Btn v="soft" onClick={() => {
+        void import('../storage/boot').then(({ compactDurable }) => compactDurable(useS.getState().chats as never).then((r) => setNote(`Durable compaction: ${(r.freedChars / 1024).toFixed(1)} KB freed${r.droppedChats ? `, ${r.droppedChats} expired chats removed` : ''}.`)).catch(() => setNote('Durable compaction failed.')))
+      }}>Compact durable</Btn>
       {quotaFull && <span className="basis-full text-xs text-er">The last save did not fit: settings were kept and bulky history was compacted automatically. Use Compact or delete old chats to free space.</span>}
       {note && <span className="basis-full text-xs text-mu">{note}</span>}
     </Box>
@@ -228,6 +244,22 @@ export function DataTab() {
   const [merge, setMerge] = useState(true)
   const [cf, setCf] = useState(0)
   const [msg, setMsg] = useState('')
+  useEffect(() => {
+    const f = (e: Event) => {
+      const j = (e as CustomEvent).detail
+      if (!j || typeof j !== 'object') return
+      try {
+        const has = detectAvailableCategories(j, THEMES)
+        setAvailable(has)
+        setImports(Object.fromEntries(categories.map(([id]) => [id, (has as Record<string, boolean>)[id]])) as Record<Category, boolean>)
+        setFileData(j)
+        setMerge(true)
+        setMsg('')
+      } catch { setMsg('Import failed: that file is not a valid configuration export.') }
+    }
+    window.addEventListener('byok:import-backup', f)
+    return () => window.removeEventListener('byok:import-backup', f)
+  }, [])
   const exp = () => {
     const data = buildExportPayload(s as Parameters<typeof buildExportPayload>[0], exports, withKeys, normSkills, normSearch)
     dl('chat-config.json', JSON.stringify(data, null, 1), 'application/json')
@@ -271,7 +303,7 @@ export function DataTab() {
         ...(imports.prompts ? { prompts: m('prompts', st.prompts), ...(typeof j.pr === 'string' ? { pr: j.pr } : {}), ...(j.globalPrompt && typeof j.globalPrompt === 'object' ? { globalPrompt: { on: j.globalPrompt.on === true, text: typeof j.globalPrompt.text === 'string' ? j.globalPrompt.text : '' } } : {}) } : {}),
         ...(imports.pls ? { pls: m('pls', st.pls) } : {}), ...(imports.cmds ? { cmds: m('cmds', st.cmds) } : {}),
         ...(imports.skills && Array.isArray(j.skills) ? { skills: normSkills(merge ? [...(st as any).skills ?? [], ...j.skills] : j.skills).skills } : {}),
-        ...(imports.memory ? { ...(Array.isArray(j.memories) ? { memories: merge ? [...st.memories.filter((x) => !validMemories.some((y: any) => y.id === x.id)), ...validMemories] : validMemories } : {}), ...(j.memoryPrefs && typeof j.memoryPrefs === 'object' ? { memoryPrefs: { ...st.memoryPrefs, ...(merge ? {} : { enabled: false, intent: 'balanced', recall: 'contextual', classifierEp: '', classifierModel: '' }), ...Object.fromEntries(Object.entries(j.memoryPrefs).filter(([k]) => ['enabled', 'intent', 'recall', 'classifierEp', 'classifierModel'].includes(k))) } } : {}) } : {}),
+        ...(imports.memory ? { ...(Array.isArray(j.memories) ? { memories: merge ? [...st.memories.filter((x) => !validMemories.some((y: any) => y.id === x.id)), ...validMemories] : validMemories } : {}), ...(j.memoryPrefs && typeof j.memoryPrefs === 'object' ? { memoryPrefs: { ...st.memoryPrefs, ...(merge ? {} : { enabled: false, intent: 'balanced', recall: 'contextual', method: 'local', classifierEp: '', classifierModel: '' }), ...Object.fromEntries(Object.entries(j.memoryPrefs).filter(([k]) => ['enabled', 'intent', 'recall', 'method', 'classifierEp', 'classifierModel'].includes(k))) } } : {}) } : {}),
         ...(imports.keys ? { keys: merge ? { ...st.keys, ...cleanStrings(j.keys) } : cleanStrings(j.keys) } : {}),
         ...(imports.appearance ? { ...(j.themeMode === 'dark' || j.themeMode === 'light' ? { themeMode: j.themeMode } : {}), ...(j.themeDark in THEMES ? { themeDark: j.themeDark } : {}), ...(j.themeLight in THEMES ? { themeLight: j.themeLight } : {}), ...(j.customDarkColors && typeof j.customDarkColors === 'object' ? { customDarkColors: merge ? { ...st.customDarkColors, ...j.customDarkColors } : j.customDarkColors } : {}), ...(j.customLightColors && typeof j.customLightColors === 'object' ? { customLightColors: merge ? { ...st.customLightColors, ...j.customLightColors } : j.customLightColors } : {}), ...(j.theme in THEMES ? themePatch(st, j.theme) : {}), ...(j.customColors && typeof j.customColors === 'object' ? { customDarkColors: merge ? { ...st.customDarkColors, ...j.customColors } : j.customColors } : {}), ...(j.prefs && typeof j.prefs === 'object' ? { prefs: merge ? { ...st.prefs, ...j.prefs } : { ...st.prefs, ...j.prefs } } : {}) } : {}),
         ...(imports.features ? { ...(j.features && typeof j.features === 'object' ? { features: merge ? { ...st.features, ...cleanFeatures(j.features) } : { ...DEFAULT_FEATURES, ...cleanFeatures(j.features) } } : {}), ...(j.libraryShow && typeof j.libraryShow === 'object' ? { libraryShow: merge ? { ...st.libraryShow, ...j.libraryShow } : j.libraryShow } : {}), ...(Array.isArray(j.featureOrder) ? { featureOrder: normFeatureOrder(merge ? [...st.featureOrder ?? [], ...j.featureOrder] : j.featureOrder) } : {}), ...(j.advanced && typeof j.advanced === 'object' ? { advanced: normAdvanced(merge ? { ...st.advanced, ...j.advanced } : j.advanced) } : {}) } : {}),
@@ -282,9 +314,10 @@ export function DataTab() {
           for (const p of Object.keys(current.keys)) keys[p] = merge ? ((incoming.keys as Record<string, string>)[p] || current.keys[p as keyof typeof current.keys] || '') : ((incoming.keys as Record<string, string>)[p] || '')
           return { search: { ...incoming, keys } }
         })() : {}) } : {}),
-        ...(imports.tuning ? { ...(j.params && typeof j.params === 'object' ? { params: { ...st.params, ...Object.fromEntries(Object.entries(j.params).filter(([k]) => ['def', 'temp', 'topp', 'max'].includes(k))) } } : {}), ...(j.effort && typeof j.effort === 'object' ? { effort: merge ? { ...st.effort, ...cleanStrings(j.effort) } : cleanStrings(j.effort) } : {}), ...(j.workspacePrefs && typeof j.workspacePrefs === 'object' ? { workspacePrefs: { ...st.workspacePrefs, ...Object.fromEntries(Object.entries(j.workspacePrefs).filter(([k]) => ['defaultView'].includes(k))) } } : {}) } : {}),
+        ...(imports.tuning ? { ...(j.params && typeof j.params === 'object' ? { params: { ...st.params, ...Object.fromEntries(Object.entries(j.params).filter(([k]) => ['def', 'temp', 'topp', 'max', 'maxToolRounds', 'highToolsUnlocked'].includes(k))) } } : {}), ...(j.effort && typeof j.effort === 'object' ? { effort: merge ? { ...st.effort, ...cleanStrings(j.effort) } : cleanStrings(j.effort) } : {}), ...(j.workspacePrefs && typeof j.workspacePrefs === 'object' ? { workspacePrefs: { ...st.workspacePrefs, ...Object.fromEntries(Object.entries(j.workspacePrefs).filter(([k]) => ['defaultView'].includes(k))) } } : {}), ...(j.docPrefs && typeof j.docPrefs === 'object' ? { docPrefs: normDocs(merge ? { ...st.docPrefs, ...j.docPrefs } : j.docPrefs) } : {}) } : {}),
         ...(imports.widgets ? { widgets: merge ? { ...st.widgets, ...cleanBools(j.widgets) } : cleanBools(j.widgets), widgetPrefs: j.widgetPrefs ? (merge ? { ...st.widgetPrefs, ...j.widgetPrefs } : { ...st.widgetPrefs, ...j.widgetPrefs }) : st.widgetPrefs } : {}),
         ...(imports.stats && j.stats && typeof j.stats === 'object' ? { stats: merge ? { ...st.stats, ...j.stats } : j.stats } : {}),
+        ...(imports.stats && j.routeStats && typeof j.routeStats === 'object' && !Array.isArray(j.routeStats) ? { routeStats: merge ? { ...st.routeStats, ...j.routeStats } : j.routeStats } : {}),
         ...(imports.chats ? { chats, folders, chat: chats.some((c) => c.id === st.chat) ? st.chat : chats[0]?.id ?? '', ...(Array.isArray(j.todos) ? { todos: merge ? [...st.todos.filter((x) => !validTodos.some((y: any) => y.id === x.id)), ...validTodos] : validTodos } : {}), ...(Array.isArray(j.snips) ? { snips: merge ? [...st.snips, ...j.snips.filter((x: any) => typeof x === 'string')] : j.snips.filter((x: any) => typeof x === 'string') } : {}), ...(typeof j.pad === 'string' ? { pad: merge && st.pad ? st.pad : j.pad } : {}) } : {}),
       }})
       setFileData(null)
@@ -293,6 +326,8 @@ export function DataTab() {
   }
   return (
     <Panel id="data">
+      <SyncBox />
+      <EncryptedBackupBox buildJson={() => JSON.stringify(buildExportPayload(s as Parameters<typeof buildExportPayload>[0], exports, withKeys, normSkills, normSearch), null, 1)} />
       <Box icon={Download} t="Export configuration" d="Choose which settings and chat history to include in a JSON backup.">
         <Btn v="soft" onClick={() => setCf(3)}>Export</Btn>
       </Box>

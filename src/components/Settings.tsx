@@ -1,13 +1,15 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { X, Plus, Trash2, ArrowUp, ArrowDown, ChevronRight, Eye, EyeOff, Play, ShieldCheck, Shield, Download, Upload, Check, CircleCheck, Cpu, Route, GripVertical, Server, ListMusic, ScrollText, Terminal, Wrench, Palette, FolderOpen, FileText, PanelRight, TrendingUp, Keyboard, Search, Brain, Pencil, Sparkles, RotateCcw, SlidersHorizontal, FlaskConical, Library, Database } from 'lucide-react'
-import { useS, PRE, THEMES, DARK_THEMES, LIGHT_THEMES, THEME_COLOR_KEYS, THEME_COLOR_LABELS, SEARCH_MODES, SEARCH_PROVIDERS, FEATURES, LIBRARY_ITEMS, FEATURE_TABS, FEATURE_WIDGETS, DEFAULT_LIBRARY_SHOW, DEFAULT_ADVANCED, featOn, normSearch, normAdvanced, modelsOf, modelNameOf, type Kind, type FeatureId } from '../store'
+import { X, Plus, Trash2, ArrowUp, ArrowDown, ChevronRight, Eye, EyeOff, Play, ShieldCheck, Shield, Download, Upload, Check, CircleCheck, Cpu, Route, GripVertical, Server, ListMusic, ScrollText, Terminal, Wrench, Palette, FolderOpen, FileText, PanelRight, TrendingUp, Keyboard, Search, Brain, Pencil, Sparkles, RotateCcw, SlidersHorizontal, FlaskConical, Library, Database, Lock, LockOpen, LayoutTemplate, Share2 } from 'lucide-react'
+import { useS, PRE, THEMES, DARK_THEMES, LIGHT_THEMES, THEME_COLOR_KEYS, THEME_COLOR_LABELS, SEARCH_MODES, SEARCH_PROVIDERS, FEATURES, LIBRARY_ITEMS, FEATURE_TABS, FEATURE_WIDGETS, DEFAULT_LIBRARY_SHOW, DEFAULT_ADVANCED, featOn, normSearch, normAdvanced, normDocs, usable, modelsOf, modelNameOf, TOOL_ROUNDS_DEFAULT, TOOL_ROUNDS_MIN, TOOL_ROUNDS_BASE_MAX, TOOL_ROUNDS_MAX, toolRoundLimitOf, isToolRoundsUnlimited, type Kind, type FeatureId, type DocPrefs } from '../store'
 import { normSkills, resolveSkill, validateCustomSkill, enabledSkills, BUILTIN_SKILLS, SKILL_TOOL_NAME, type SkillState } from '../skills'
-import { TOOL_REGISTRY } from '../engine'
+import { findDuplicatePairs, mergeMemory } from '../recall'
+import { TOOL_REGISTRY, can } from '../engine'
 import { CI, TOOLS, WIDGETS, KEYS } from '../meta'
 import { DataTab, StatsTab, KeysTab, TestRow, TestAllEndpoints } from './Extra'
-import { Btn, Field, Input, Area, Sel, Toggle, Seg, RangeSlider, Checkbox, HelpTip, Modal, Surface, Chip, cx, type Ic } from './ui'
+import { Btn, Field, Input, Area, Sel, Toggle, Seg, RangeSlider, Checkbox, HelpTip, Modal, Surface, Chip, Pop, Item, cx, type Ic } from './ui'
 import { SortableList, type SortHandleProps, type SortItemApi } from './dnd'
 import { fetchModelCatalog, filterCatalogByEndpoint, prioritizeProviderRows, type CatalogEntry } from '../catalog'
+import { WORKSPACE_TEMPLATES } from '../workspace'
 
 const TABS: [string, string, Ic][] = [
   ['features', 'Features', SlidersHorizontal],
@@ -391,8 +393,32 @@ function Prompts() {
 
 function Pls() {
   const { pls, eps, upd } = useS()
+  const routingMode = useS((s) => s.prefs.routingMode ?? 'ordered')
+  const routeStats = useS((s) => s.routeStats ?? {})
+  const statRows = Object.entries(routeStats)
+    .map(([key, st]) => {
+      const [epId, ...rest] = key.split('::')
+      const e = eps.find((x) => x.id === epId)
+      return { key, name: e ? `${e.name} · ${rest.join('::')}` : key, ...st, avg: st.calls ? Math.round(st.ms / st.calls) : 0 }
+    })
+    .sort((a, b) => b.calls - a.calls)
   return (
     <Panel id="pls" k="pls" n={pls.length} add="Add playlist">
+      <Card icon={Route} title="Routing mode" sub="How multi-model requests try models">
+        <Field label="Candidate order" hint="Ordered tries list order. Fastest tries the quickest-measured models first (new models go first until measured). Cheapest tries the lowest input price first (models without a price go last). A playlist classifier, when set, still picks first; the mode orders the rest.">
+          <Seg v={routingMode} set={(v) => useS.getState().patch({ prefs: { ...useS.getState().prefs, routingMode: v as typeof routingMode } })} opts={[['ordered', 'Ordered'], ['fastest', 'Fastest'], ['cheapest', 'Cheapest']]} />
+        </Field>
+        <div className="space-y-1">
+          <div className="flex items-center justify-between"><span className="text-sm font-medium">Observed performance</span><Btn v="soft" disabled={!statRows.length} onClick={() => useS.getState().patch({ routeStats: {} })}>Reset</Btn></div>
+          {!statRows.length && <p className="text-xs text-mu">No attempts recorded yet. Averages appear here after replies run.</p>}
+          {statRows.slice(0, 12).map((r) => (
+            <div key={r.key} className="flex items-center gap-2 rounded-lg bg-bg px-2.5 py-1.5 text-xs">
+              <span className="min-w-0 flex-1 truncate">{r.name}</span>
+              <span className="text-mu">{r.calls} tries · {r.fails} failed · ~{r.avg} ms</span>
+            </div>
+          ))}
+        </div>
+      </Card>
       <SortableCards k="pls" ids={pls.map((x) => x.id)} label="Playlist" renderCard={(plid, handle) => {
         const p = pls.find((x) => x.id === plid)
         if (!p) return null
@@ -429,7 +455,7 @@ function Pls() {
             </Field>
             <div className="space-y-3 rounded-xl bg-bg p-3">
               <div className="flex items-center gap-2 text-sm font-medium"><Route size={16} className="text-ac" />Classifier routing</div>
-              <Field label="Classifier endpoint" hint="Must reply with JSON only. Output that fails validation, or names a model outside this playlist, is ignored.">
+              <Field label="Classifier endpoint" hint="Must reply with JSON only. Output that fails validation, or names a model outside this playlist, is ignored. Decisions are cached per request for an hour.">
                 <Sel value={p.cls} set={(v) => u({ cls: v })} opts={[['', 'None, use list order'], ...eps.map((e) => [e.id, e.name] as [string, string])]} />
               </Field>
               {p.cls && eps.find((e) => e.id === p.cls) && <Field label="Classifier model"><Sel value={p.clsModel ?? ""} set={(v) => u({ clsModel: v })} opts={[["", "Default model"], ...modelsOf(eps.find((e) => e.id === p.cls)!).map((model) => [model, modelNameOf(eps.find((e) => e.id === p.cls)!, model) + " · " + model] as [string, string])]} /></Field>}
@@ -472,6 +498,78 @@ function Cmds() {
   )
 }
 
+function ToolLimitCard() {
+  const s = useS()
+  const p = s.params as { maxToolRounds?: unknown; highToolsUnlocked?: unknown }
+  const unlocked = p?.highToolsUnlocked === true
+  const unlimited = isToolRoundsUnlimited(p)
+  const limit = toolRoundLimitOf(p)
+  const sliderMax = unlocked ? TOOL_ROUNDS_MAX + 1 : TOOL_ROUNDS_BASE_MAX
+  const sliderVal = unlimited ? TOOL_ROUNDS_MAX + 1 : Math.max(TOOL_ROUNDS_MIN, Math.min(sliderMax, limit))
+  const [warn, setWarn] = useState(false)
+  const set = (maxToolRounds: number) => s.patch({ params: { ...s.params, maxToolRounds } })
+  const relock = () => {
+    const cur = toolRoundLimitOf({ ...p, highToolsUnlocked: true })
+    s.patch({ params: { ...s.params, highToolsUnlocked: false, maxToolRounds: Number.isFinite(cur) ? Math.min(cur, TOOL_ROUNDS_BASE_MAX) : TOOL_ROUNDS_DEFAULT } })
+  }
+  return (
+    <Card icon={Wrench} title="Tool execution limit" sub={unlimited ? 'Unlimited (unlocked)' : `${sliderVal} round${sliderVal === 1 ? '' : 's'}${unlimited ? '' : ` · max ${sliderMax === TOOL_ROUNDS_BASE_MAX ? TOOL_ROUNDS_BASE_MAX : `${TOOL_ROUNDS_MAX} + unlimited`}`}`} open0>
+      <div className="flex items-center gap-2">
+        <div className="min-w-0 flex-1">
+          <RangeSlider label="Tool execution limit" min={TOOL_ROUNDS_MIN} max={sliderMax} step={1} value={sliderVal} valueText={unlimited ? 'Unlimited' : `${sliderVal} rounds`} set={(n) => set(n > TOOL_ROUNDS_MAX ? 0 : Math.round(n))} />
+        </div>
+        <span aria-live="polite" className="w-24 shrink-0 text-right text-sm text-mu">{unlimited ? 'Unlimited' : `${sliderVal} rounds`}</span>
+        <Btn sm icon={unlocked ? LockOpen : Lock} title={unlocked ? 'Lock back to 32 rounds' : 'Unlock up to 64 rounds plus unlimited'} onClick={() => (unlocked ? relock() : setWarn(true))} />
+      </div>
+      <p className="text-xs text-mu">
+        {unlocked
+          ? 'Higher limits unlocked: the top tick is unlimited. Each round is another billed model request; a looping model can run long, cost tokens, and outgrow context. Press Stop any time.'
+          : `Caps sequential model → tool → model rounds at ${TOOL_ROUNDS_BASE_MAX} or fewer. Unlock for up to ${TOOL_ROUNDS_MAX}, plus an unlimited top tick.`}
+      </p>
+      {warn && (
+        <Modal close={() => setWarn(false)}>
+          <div className="w-full max-w-sm space-y-4 rounded-2xl bg-bg p-5">
+            <div className="flex items-center gap-2 font-semibold"><Lock size={18} className="text-ac" />Unlock higher tool limits?</div>
+            <p className="text-sm text-mu">Above {TOOL_ROUNDS_BASE_MAX} rounds (up to {TOOL_ROUNDS_MAX}, plus unlimited) a looping model can run for a long time, burn through tokens, and grow the context until requests fail. Only raise this for long tool chains you trust. You can stop any reply with Stop.</p>
+            <div className="flex justify-end gap-2">
+              <Btn v="soft" onClick={() => setWarn(false)}>Cancel</Btn>
+              <Btn v="solid" onClick={() => { s.patch({ params: { ...s.params, highToolsUnlocked: true } }); setWarn(false) }}>Unlock higher limits</Btn>
+            </div>
+          </div>
+        </Modal>
+      )}
+    </Card>
+  )
+}
+
+function DocumentsCard() {
+  const s = useS()
+  const d = normDocs(s.docPrefs)
+  const set = (p: Partial<DocPrefs>) => s.patch({ docPrefs: { ...d, ...p } })
+  const visionEps = s.eps.filter((e) => usable(e) && can(e, 'img'))
+  const ocrEp = s.eps.find((e) => e.id === d.ocrEp)
+  return (
+    <Card icon={FileText} title="Documents" sub="PDF text, Office files, archives, transcripts, image OCR" open0>
+      <div className="flex items-center justify-between gap-3"><div><div className="text-sm font-medium">Extract PDF text</div><div className="text-xs text-mu">Read the text layer of PDFs so every endpoint (not just Anthropic) can use them. Scanned pages still need OCR or a vision endpoint.</div></div><Toggle on={d.pdfText} set={(pdfText) => set({ pdfText })} /></div>
+      <div className="flex items-center justify-between gap-3"><div><div className="text-sm font-medium">Read Office documents</div><div className="text-xs text-mu">Extract text from .docx, .odt, .rtf, .pptx and first-sheet .xlsx locally. Legacy .doc/.xls/.ppt still need conversion.</div></div><Toggle on={d.office} set={(office) => set({ office })} /></div>
+      <div className="flex items-center justify-between gap-3"><div><div className="text-sm font-medium">Unpack archives</div><div className="text-xs text-mu">Expand .zip and .gz attachments into individual files (up to 25 entries). Pair .vtt/.srt transcripts with matching audio/video automatically.</div></div><Toggle on={d.archives} set={(archives) => set({ archives })} /></div>
+      <Field label="Image text extraction (OCR)" hint="Auto transcribes images only when no usable endpoint takes images natively. Always transcribes every image. Uses your own vision endpoint; results are cached.">
+        <Seg v={d.ocr} set={(ocr) => set({ ocr })} opts={[['off', 'Off'], ['auto', 'Auto'], ['always', 'Always']]} />
+      </Field>
+      {d.ocr !== 'off' && (
+        <div className="space-y-2 rounded-lg bg-bg p-3">
+          <Field label="OCR vision endpoint"><Sel value={d.ocrEp} set={(ocrEp) => set({ ocrEp, ocrModel: '' })} opts={[['', 'First vision-capable endpoint'], ...visionEps.map((e) => [e.id, e.name] as [string, string])]} /></Field>
+          {ocrEp && <Field label="OCR model"><Sel value={d.ocrModel} set={(ocrModel) => set({ ocrModel })} opts={[['', 'Endpoint default'], ...modelsOf(ocrEp).map((m) => [m, m] as [string, string])]} /></Field>}
+          {!visionEps.length && <p className="text-xs text-er">No usable vision-capable endpoint yet. Add one in Settings → Endpoints for OCR to work.</p>}
+        </div>
+      )}
+      <Field label="Text per document" hint="Character budget for each extracted document. The message-wide text budget still applies.">
+        <Sel value={String(d.perFileChars)} set={(v) => set({ perFileChars: Number(v) })} opts={[['15000', '15k characters'], ['30000', '30k characters'], ['60000', '60k characters'], ['100000', '100k characters'], ['200000', '200k characters (max)']]} />
+      </Field>
+    </Card>
+  )
+}
+
 function Tools() {
   const s = useS()
   const [ask, setAsk] = useState<string | null>(null)
@@ -495,6 +593,8 @@ function Tools() {
   }
   return (
     <Panel id="tools">
+      <ToolLimitCard />
+      <DocumentsCard />
       {TOOLS.filter(([k]) => k !== 'memory').map(([k, n, I, u, d, p]) => (
         <Card key={k} icon={I} title={n} sub={u} right={
           <>
@@ -531,6 +631,15 @@ function Tools() {
             <p className="text-xs text-mu">{searchReady === null ? 'Checking search service…' : search.mode === 'api' ? (ownKey ? `Using your ${health?.apiProviders?.[search.provider]?.label ?? 'API'} key${search.fallback ? ', with SearXNG as the fallback' : ', without fallback'}.` : `No ${health?.apiProviders?.[search.provider]?.label ?? 'API'} key in this browser yet.${search.fallback ? ' SearXNG will be used until you paste one.' : ' Paste a key or switch the mode to SearXNG.'}`) : `Using SearXNG${search.fallback ? `, with ${health?.apiProviders?.[search.provider]?.label ?? 'your API provider'} as the fallback` : ', without fallback'}.`}{` When allowed, messages about current or recent information can use web results. You can also write @search(query).`}</p>
             <p className="text-xs text-mu">Server keys (TINYFISH_API_KEY, YOU_API_KEY, EXA_API_KEY, FIRECRAWL_API_KEY, BRIGHTDATA_API_KEY) still work as a shared fallback when this browser sends no key. Fallback target: {otherLabel}.</p>
             <p className="text-xs text-mu">{providerHint[search.provider]}</p>
+            <div className="space-y-3 rounded-xl bg-surf p-3">
+              <div className="text-sm font-medium">Sources & transparency</div>
+              <Field label="Inline citations" hint="Pills jump to the Sources list below the reply (description first, Open button inside). Links render as plain markdown links.">
+                <Seg v={search.citeStyle} set={(citeStyle) => setSearch({ citeStyle })} opts={[['pills', 'Pills'], ['links', 'Links']]} />
+              </Field>
+              <div className="flex items-center justify-between gap-3"><div><div className="text-sm font-medium">Expand Sources by default</div><div className="text-xs text-mu">Show the source list open on every grounded reply instead of behind the Sources button.</div></div><Toggle on={search.sourcesOpen} set={(sourcesOpen) => setSearch({ sourcesOpen })} /></div>
+              <div className="flex items-center justify-between gap-3"><div><div className="text-sm font-medium">Page reader</div><div className="text-xs text-mu">Let the model open a search result for a full excerpt via fetch_page (same-origin /api/extract, public pages only). Turn off to keep grounding to snippets.</div></div><Toggle on={search.reader} set={(reader) => setSearch({ reader })} /></div>
+              <div className="flex items-center justify-between gap-3"><div><div className="text-sm font-medium">Strict citation warnings</div><div className="text-xs text-mu">Flag grounded replies that cite nothing, or cite unknown source ids.</div></div><Toggle on={search.strictCitations} set={(strictCitations) => setSearch({ strictCitations })} /></div>
+            </div>
           </div>}
         </Card>
       ))}
@@ -635,12 +744,24 @@ function MemoryTab() {
   const s = useS(), mp = s.memoryPrefs
   const [draft, setDraft] = useState('')
   const [category, setCategory] = useState('General')
+  const [dupes, setDupes] = useState<{ a: string; b: string; score: number }[] | null>(null)
   const setPrefs = (p: Partial<typeof mp>) => s.patch({ memoryPrefs: { ...mp, ...p } })
   const addMemory = () => {
     const text = draft.trim(); if (!text) return
     const now = Date.now()
-    s.patch({ memories: [...s.memories, { id: Math.random().toString(36).slice(2, 9), text, category: category.trim() || 'General', createdAt: now, updatedAt: now }] })
+    const { memories, merged, id } = mergeMemory(s.memories, { id: Math.random().toString(36).slice(2, 9), text, category: category.trim() || 'General', createdAt: now, updatedAt: now })
+    s.patch({ memories })
     setDraft('')
+    if (merged) s.patch({ notice: { t: `Merged into an existing near-duplicate memory instead of storing a copy.` } })
+    void id
+  }
+  const mergePair = (a: string, b: string) => {
+    const A = s.memories.find((m) => m.id === a), B = s.memories.find((m) => m.id === b)
+    if (!A || !B) return
+    const kept = A.text.length >= B.text.length ? A : B
+    const dropped = kept === A ? B : A
+    s.patch({ memories: s.memories.filter((m) => m.id !== dropped.id).map((m) => m.id === kept.id ? { ...m, category: kept.category, updatedAt: Date.now() } : m) })
+    setDupes((d) => (d ?? []).filter((p) => p.a !== a && p.b !== b && p.a !== b && p.b !== a))
   }
   return <Panel id="memory">
     <div className="rounded-xl bg-surf p-4 space-y-3">
@@ -648,15 +769,35 @@ function MemoryTab() {
       <Field label="Memory mode" hint="Intentional stores explicit remember requests. Balanced also stores important disclosures. Aggressive includes smaller details and preferences.">
         <Seg v={mp.intent} set={(intent) => setPrefs({ intent })} opts={[["intentional", "Intentional"], ["balanced", "Balanced"], ["aggressive", "Aggressive"]]} />
       </Field>
-      <Field label="Recall mode" hint="Contextual and Specific use the classifier below, which must return JSON with memory IDs.">
+      <Field label="Recall method" hint="Local rank picks memories on this device with no model calls (fast, free, offline). Classifier call asks a model to choose, and costs a request per reply.">
+        <Seg v={mp.method ?? 'local'} set={(method) => setPrefs({ method })} opts={[["local", "Local rank"], ["classifier", "Classifier call"]]} />
+      </Field>
+      <Field label="Recall mode" hint="Holistic sends every memory. Contextual and Specific rank to the most relevant ones.">
         <Seg v={mp.recall} set={(recall) => setPrefs({ recall })} opts={[["holistic", "Holistic"], ["contextual", "Contextual"], ["specific", "Specific"]]} />
       </Field>
-      {mp.recall !== 'holistic' && <div className="space-y-2 rounded-lg bg-bg p-3"><Field label="Recall classifier endpoint"><Sel value={mp.classifierEp} set={(classifierEp) => setPrefs({ classifierEp, classifierModel: '' })} opts={[["", "Choose endpoint…"], ...s.eps.map((e) => [e.id, e.name] as [string, string])]} /></Field>
+      {(mp.method ?? 'local') === 'classifier' && mp.recall !== 'holistic' && <div className="space-y-2 rounded-lg bg-bg p-3"><Field label="Recall classifier endpoint"><Sel value={mp.classifierEp} set={(classifierEp) => setPrefs({ classifierEp, classifierModel: '' })} opts={[["", "Choose endpoint…"], ...s.eps.map((e) => [e.id, e.name] as [string, string])]} /></Field>
         {mp.classifierEp && s.eps.find((e) => e.id === mp.classifierEp) && <Field label="Classifier model"><Sel value={mp.classifierModel} set={(classifierModel) => setPrefs({ classifierModel })} opts={[["", "Endpoint default"], ...modelsOf(s.eps.find((e) => e.id === mp.classifierEp)!).map((m) => [m, m] as [string, string])]} /></Field>}
-        <p className="text-xs text-mu">The classifier is prompted for strict JSON and any response containing unknown memory IDs is rejected.</p></div>}
+        <p className="text-xs text-mu">The classifier is prompted for strict JSON and any response containing unknown memory IDs is rejected. Decisions are cached per question for an hour.</p></div>}
     </div>
-    <div className="rounded-xl bg-surf p-4 space-y-3"><div className="font-medium">Add a memory</div><Area rows={2} value={draft} set={setDraft} placeholder="A short fact, preference, or reminder…" /><div className="flex gap-2"><Input value={category} set={setCategory} placeholder="Category" /><Btn v="solid" icon={Plus} onClick={addMemory}>Add memory</Btn></div></div>
-    <div className="flex items-center justify-between"><div className="text-sm font-medium">Stored memories ({s.memories.length})</div><Btn v="danger" icon={Trash2} disabled={!s.memories.length} onClick={() => { if (window.confirm('Delete all stored memories?')) s.patch({ memories: [] }) }}>Delete all</Btn></div>
+    <div className="rounded-xl bg-surf p-4 space-y-3"><div className="font-medium">Add a memory</div><Area rows={2} value={draft} set={setDraft} placeholder="A short fact, preference, or reminder…" /><div className="flex gap-2"><Input value={category} set={setCategory} placeholder="Category" /><Btn v="solid" icon={Plus} onClick={addMemory}>Add memory</Btn></div>
+      <p className="text-xs text-mu">New memories merge into near-duplicates automatically instead of piling up copies.</p></div>
+    <div className="flex items-center justify-between"><div className="text-sm font-medium">Stored memories ({s.memories.length})</div><div className="flex gap-2"><Btn v="soft" disabled={s.memories.length < 2} onClick={() => setDupes(findDuplicatePairs(s.memories))}>Check duplicates</Btn><Btn v="danger" icon={Trash2} disabled={!s.memories.length} onClick={() => { if (window.confirm('Delete all stored memories?')) s.patch({ memories: [] }) }}>Delete all</Btn></div></div>
+    {dupes && (
+      <div className="rounded-xl bg-surf p-4 space-y-2">
+        <div className="text-sm font-medium">{dupes.length ? `${dupes.length} near-duplicate pair${dupes.length === 1 ? '' : 's'}` : 'No near-duplicates found.'}</div>
+        {dupes.map((p) => {
+          const A = s.memories.find((m) => m.id === p.a), B = s.memories.find((m) => m.id === p.b)
+          if (!A || !B) return null
+          return (
+            <div key={`${p.a}-${p.b}`} className="space-y-1 rounded-lg bg-bg p-3 text-sm">
+              <p><span className="text-mu">A · {A.category}:</span> {A.text}</p>
+              <p><span className="text-mu">B · {B.category}:</span> {B.text}</p>
+              <div className="flex items-center justify-between"><span className="text-xs text-mu">{Math.round(p.score * 100)}% similar</span><Btn v="soft" onClick={() => mergePair(p.a, p.b)}>Merge (keep longer)</Btn></div>
+            </div>
+          )
+        })}
+      </div>
+    )}
     {s.memories.map((m) => <div key={m.id} className="rounded-xl bg-surf p-3 space-y-2"><div className="flex gap-2"><Input value={m.category} set={(category) => s.patch({ memories: s.memories.map((x) => x.id === m.id ? { ...x, category, updatedAt: Date.now() } : x) })} placeholder="Category" /><Btn v="danger" icon={Trash2} title="Delete memory" onClick={() => s.patch({ memories: s.memories.filter((x) => x.id !== m.id) })}>Delete</Btn></div><Area rows={2} value={m.text} set={(text) => s.patch({ memories: s.memories.map((x) => x.id === m.id ? { ...x, text, updatedAt: Date.now() } : x) })} /></div>)}
     {!s.memories.length && <p className="rounded-xl bg-surf p-4 text-sm text-mu">No memories stored yet. Add one here or enable memory and choose a mode.</p>}
   </Panel>
@@ -726,6 +867,53 @@ function FontPicker({ value, set, options }: { value: string; set: (v: string) =
       {!matches.length && query.trim() && <p className="px-2.5 py-2 text-xs text-mu">Press Enter to use “{query.trim()}”.</p>}
     </div>}
   </div>
+}
+
+function TitleModelPicker() {
+  const s = useS()
+  const [q, setQ] = useState('')
+  const ep = s.eps.find((e) => e.id === s.prefs.titleEp)
+  const label = !s.prefs.titleEp
+    ? 'Default (model that answered)'
+    : !ep ? 'Default (endpoint removed)'
+    : s.prefs.titleModel && modelsOf(ep).includes(s.prefs.titleModel)
+      ? `${ep.name} · ${modelNameOf(ep, s.prefs.titleModel)}`
+      : `${ep.name} · ${modelNameOf(ep, ep.model)}`
+  const pick = (titleEp: string, titleModel: string) => s.patch({ prefs: { ...s.prefs, titleEp, titleModel } })
+  const query = q.toLowerCase()
+  const L = s.eps.filter((x) => !query || x.name.toLowerCase().includes(query) || modelsOf(x).some((m) => m.toLowerCase().includes(query)))
+  const primary = s.prefs.modelPrimary ?? 'name'
+  const secondary = s.prefs.modelSecondary ?? 'none'
+  return (
+    <div className="rounded-xl bg-surf p-3 space-y-2">
+      <div className="text-sm font-medium">Title generation model</div>
+      <div className="text-xs text-mu">Choose a model to generate chat names, or leave on default (uses the responding model).</div>
+      <Pop w="w-full" trigger={() => (
+        <span className="flex h-9 w-full items-center gap-2 rounded-lg bg-bg px-3 text-sm hover:ring-2 hover:ring-ac/40"><Cpu size={16} className="shrink-0 text-mu" /><span className="min-w-0 flex-1 truncate text-left">{label}</span><ChevronRight size={14} className="shrink-0 rotate-90 text-mu" /></span>
+      )}>
+        {(close) => (
+          <div className="flex max-h-80 flex-col overflow-hidden">
+            <div className="p-1.5 pb-0"><input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search endpoints or models" className="h-9 w-full rounded-lg bg-surf px-3 text-sm outline-none" /></div>
+            <div className="min-h-0 flex-1 overflow-y-auto p-1.5">
+              <Item icon={Cpu} on={!s.prefs.titleEp} onClick={() => { pick('', ''); setQ(''); close() }}>Default (model that answered)</Item>
+              {L.map((x) => (
+                <div key={x.id}>
+                  <div className="px-3 pb-1 pt-2 text-xs font-semibold uppercase tracking-wide text-mu">{x.name}</div>
+                  {modelsOf(x).map((model) => {
+                    const alias = modelNameOf(x, model)
+                    const title = (primary === 'name' ? alias : model).replace(/^~+/, '')
+                    const sub = secondary === 'provider' ? x.name : secondary === 'none' || secondary === primary ? '' : (secondary === 'name' ? alias : model).replace(/^~+/, '')
+                    return <Item key={model} icon={Cpu} off={x.on === false} on={s.prefs.titleEp === x.id && (s.prefs.titleModel || x.model) === model} sub={sub} onClick={() => { pick(x.id, model); setQ(''); close() }}>{title}</Item>
+                  })}
+                </div>
+              ))}
+              {!L.length && <p className="px-2.5 py-3 text-sm text-mu">No endpoints match.</p>}
+            </div>
+          </div>
+        )}
+      </Pop>
+    </div>
+  )
 }
 
 function Look() {
@@ -842,13 +1030,7 @@ function Look() {
         <Field label="Heading font"><FontPicker value={s.prefs.fontHeader} set={(fontHeader) => s.patch({ prefs: { ...s.prefs, fontHeader } })} options={FONT_OPTIONS} /></Field>
         <Field label="Monospace font"><FontPicker value={s.prefs.fontMono} set={(fontMono) => s.patch({ prefs: { ...s.prefs, fontMono } })} options={MONO_OPTIONS} /></Field>
       </div>
-      <div className="rounded-xl bg-surf p-3 space-y-2">
-        <div className="text-sm font-medium">Title generation model</div>
-        <div className="text-xs text-mu">Choose a model to generate chat names, or leave on default (uses the responding model).</div>
-        <Sel value={s.prefs.titleEp} set={(v) => s.patch({ prefs: { ...s.prefs, titleEp: v, titleModel: "" } })} opts={[['', 'Default (model that answered)'], ...s.eps.map((e) => [e.id, e.name] as [string, string])]} />
-        {s.prefs.titleEp && s.eps.find((e) => e.id === s.prefs.titleEp) && <Sel value={s.prefs.titleModel ?? ""} set={(titleModel) => s.patch({ prefs: { ...s.prefs, titleModel } })} opts={[["", "Default model for this endpoint"], ...modelsOf(s.eps.find((e) => e.id === s.prefs.titleEp)!).map((m) => [m, modelNameOf(s.eps.find((e) => e.id === s.prefs.titleEp)!, m) + " · " + m] as [string, string])]} />}
-
-      </div>
+      <TitleModelPicker />
     </Panel>
   )
 }
@@ -878,7 +1060,51 @@ function AdvancedTab() {
   )
 }
 
-const VIEWS: Record<string, () => ReactNode> = { features: FeaturesTab, eps: Eps, prompts: Prompts, skills: SkillsTab, pls: Pls, cmds: Cmds, workspace: () => <Panel id="workspace"><div className="space-y-3"><Field label="Default view"><Seg v={useS(s=>s.workspacePrefs?.defaultView ?? 'pinned')} set={(v) => useS.getState().patch({ workspacePrefs: { ...useS.getState().workspacePrefs, defaultView: v as any } })} opts={[['pinned','Pinned'],['latest','Latest']]} /></Field><Field label="Auto-open panel"><Toggle on={useS(s=>s.workspacePrefs?.autoOpen ?? true)} set={(v) => useS.getState().patch({ workspacePrefs: { ...useS.getState().workspacePrefs, autoOpen: v } })} /></Field><Field label="Auto-follow file"><Toggle on={useS(s=>s.workspacePrefs?.autoFollow ?? true)} set={(v) => useS.getState().patch({ workspacePrefs: { ...useS.getState().workspacePrefs, autoFollow: v } })} /></Field></div></Panel>, tools: Tools, memory: MemoryTab, widgets: WidgetsTab, look: Look, stats: StatsTab, keys: KeysTab, data: DataTab, adv: AdvancedTab }
+function WorkspaceTab() {
+  const wp = useS((s) => s.workspacePrefs ?? { defaultView: 'latest', autoOpen: true, autoFollow: true })
+  const set = (p: Partial<typeof wp>) => useS.getState().patch({ workspacePrefs: { ...useS.getState().workspacePrefs, ...p } })
+  const [gistToken, setGistToken] = useState(() => { try { return localStorage.getItem('byok.gist.token') ?? '' } catch { return '' } })
+  const [showToken, setShowToken] = useState(false)
+  const draft = useS((s) => s.draft)
+  return (
+    <Panel id="workspace">
+      <div className="space-y-3">
+        <Field label="Default view"><Seg v={wp.defaultView ?? 'pinned'} set={(defaultView) => set({ defaultView: defaultView as typeof wp.defaultView })} opts={[['pinned', 'Pinned'], ['latest', 'Latest']]} /></Field>
+        <div className="flex items-center justify-between gap-3"><div><div className="text-sm font-medium">Auto-open panel</div><div className="text-xs text-mu">Open the side panel when the AI starts writing files.</div></div><Toggle on={wp.autoOpen ?? true} set={(autoOpen) => set({ autoOpen })} /></div>
+        <div className="flex items-center justify-between gap-3"><div><div className="text-sm font-medium">Auto-follow file</div><div className="text-xs text-mu">Select the file the AI is writing automatically.</div></div><Toggle on={wp.autoFollow ?? true} set={(autoFollow) => set({ autoFollow })} /></div>
+      </div>
+      <Card icon={LayoutTemplate} title="Project templates" sub="Starter file sets the model can scaffold with template + createNew">
+        <div className="space-y-2">
+          {WORKSPACE_TEMPLATES.map((t) => (
+            <div key={t.id} className="rounded-xl bg-bg p-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="font-mono text-sm font-medium">{t.id}</span>
+                <span className="text-sm">{t.name}</span>
+                <span className="ml-auto text-xs text-mu">{t.files.length} files</span>
+                <Btn v="soft" onClick={() => {
+                  const st = useS.getState()
+                  st.patch({ draft: `${draft ? `${draft}\n` : ''}Scaffold a "${t.name}" project (${t.files.map((f) => f.path).join(', ')}). Call workspace_upsert once with createNew:true, a workspaceName, template:"${t.id}", and a revisionName, then refine the files.` })
+                }}>Draft prompt</Btn>
+              </div>
+              <p className="mt-1 text-xs text-mu">{t.description}</p>
+              <p className="mt-1 font-mono text-xs text-mu">{t.files.map((f) => f.path).join(' · ')}</p>
+            </div>
+          ))}
+        </div>
+      </Card>
+      <Card icon={Share2} title="GitHub Gist sharing" sub="Optional personal token, stored only here">
+        <Field label="Gist token (classic, gist scope)" hint="Only used when you press Share in a workspace panel. Leave empty to disable sharing.">
+          <div className="relative">
+            <Input type={showToken ? 'text' : 'password'} value={gistToken} set={(v) => { setGistToken(v); try { v ? localStorage.setItem('byok.gist.token', v) : localStorage.removeItem('byok.gist.token') } catch { /* ignore */ } }} placeholder="ghp_…" />
+            <button onClick={() => setShowToken(!showToken)} title="Show or hide token" className="absolute right-2 top-1/2 -translate-y-1/2 text-mu hover:text-tx">{showToken ? <EyeOff size={16} /> : <Eye size={16} />}</button>
+          </div>
+        </Field>
+      </Card>
+    </Panel>
+  )
+}
+
+const VIEWS: Record<string, () => ReactNode> = { features: FeaturesTab, eps: Eps, prompts: Prompts, skills: SkillsTab, pls: Pls, cmds: Cmds, workspace: WorkspaceTab, tools: Tools, memory: MemoryTab, widgets: WidgetsTab, look: Look, stats: StatsTab, keys: KeysTab, data: DataTab, adv: AdvancedTab }
 
 export function Settings({ tab, setTab }: { tab: string; setTab: (t: string) => void }) {
   const features = useS((s) => s.features)

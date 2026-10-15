@@ -201,6 +201,19 @@ test('workspace_upsert executes locally, coerces bad paths, and truncates oversi
   assert.match((await executeTool({ id: 'ws-7', name: 'workspace_upsert', arguments: '{}' }, {})).result, /disabled/)
 })
 
+test('workspace_upsert validates patch, batch and template arguments locally', async () => {
+  const base = { action: 'patch', workspaceId: 'ws-1', revisionName: 'Fix', path: 'a.py', content: '@@ -1,1 +1,1 @@\n-x\n+y\n' }
+  const patch = await executeTool({ id: 'ws-p', name: 'workspace_upsert', arguments: JSON.stringify(base) }, enabled)
+  assert.match(patch.result, /"status":"ready"/)
+  assert.match(patch.result, /"action":"patch"/)
+  const batch = await executeTool({ id: 'ws-b', name: 'workspace_upsert', arguments: JSON.stringify({ ...base, action: 'update', files: [{ path: 'b.py', content: 'x' }, { path: 'c.py', action: 'delete' }] }) }, enabled)
+  assert.match(batch.result, /"status":"ready"/)
+  assert.match((await executeTool({ id: 'ws-bad', name: 'workspace_upsert', arguments: JSON.stringify({ ...base, files: [{ path: 'b.py', action: 'explode' }] }) }, enabled)).result, /unsupported files entry action/)
+  assert.match((await executeTool({ id: 'ws-many', name: 'workspace_upsert', arguments: JSON.stringify({ ...base, files: Array.from({ length: 17 }, (_, i) => ({ path: `f${i}.py` })) }) }, enabled)).result, /at most 16 entries/)
+  const tpl = await executeTool({ id: 'ws-t', name: 'workspace_upsert', arguments: JSON.stringify({ action: 'create', createNew: true, workspaceName: 'W', revisionName: 'Scaffold', path: 'README.md', template: 'static-site' }) }, enabled)
+  assert.match(tpl.result, /"status":"ready"/)
+})
+
 test('streaming tool deltas fire per chunk with the accumulated workspace arguments', async () => {
   const original = globalThis.fetch
   globalThis.fetch = async () => new Response([
@@ -241,7 +254,7 @@ test('runToolLoop forwards live tool deltas to its callback', async () => {
   } finally { globalThis.fetch = originalFetch; globalThis.requestAnimationFrame = originalRaf }
 })
 
-const { estimateHistoryTokens, trimHistory, readAtt } = await import('./engine.ts')
+const { estimateHistoryTokens, trimHistory, readAtt, readAtts } = await import('./engine.ts')
 const { prunePersisted } = await import('./store.ts')
 
 test('trimHistory drops oldest-first, always keeps the latest message, and fits the budget', () => {
@@ -262,26 +275,34 @@ test('OpenAI wire omits PDFs with a note instead of an image_url block', () => {
   const ow = wire(openai, [pdf])
   assert.equal(ow.length, 1)
   assert.equal(typeof ow[0].content, 'string')
-  assert.match(ow[0].content, /cannot process PDFs/)
+  assert.match(ow[0].content, /omitted: no readable text layer/)
   const aw = wire(anthropic, [pdf])
   assert.equal(typeof aw[0].content, 'object')
   assert.ok(aw[0].content.some((c) => c.type === 'document'))
 })
 
-test('readAtt rejects office, media, and archive files with guidance and caps text budgets', async () => {
+test('readAtt extracts documents, accepts media, and caps text budgets', async () => {
   const file = (name, type, text = 'hello') => new File([text], name, { type })
+  // Corrupt .docx still fails with guidance (extraction attempted first).
   const docx = await readAtt(file('deck.docx', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'))
   assert.equal(docx.ok, false)
   if (!docx.ok) {
-    assert.match(docx.message, /Office documents/)
+    assert.match(docx.message, /could not be read|Office documents/)
     assert.equal(docx.reason, 'office')
   }
+  const rtf = await readAtt(file('note.rtf', 'application/rtf', '{\\rtf1\\ansi Hello\\par World}'))
+  assert.equal(rtf.ok, true)
+  if (rtf.ok) {
+    assert.equal(rtf.att.kind, 'txt')
+    assert.equal(rtf.att.source, 'rtf')
+    assert.match(rtf.att.text ?? '', /Hello/)
+  }
   const song = await readAtt(file('song.mp3', 'audio/mpeg'))
-  assert.equal(song.ok, false)
-  if (!song.ok) assert.match(song.message, /not transcribed/)
+  assert.equal(song.ok, true)
+  if (song.ok) assert.equal(song.att.kind, 'media')
   const zip = await readAtt(file('bundle.zip', 'application/zip'))
   assert.equal(zip.ok, false)
-  if (!zip.ok) assert.match(zip.message, /not unpacked/)
+  if (!zip.ok) assert.match(zip.message, /expand automatically|not unpacked/)
   const budget = await readAtt(file('notes.txt', 'text/plain'), 500000)
   assert.equal(budget.ok, false)
   if (!budget.ok) assert.match(budget.message, /budget/)
@@ -294,6 +315,29 @@ test('readAtt rejects office, media, and archive files with guidance and caps te
   const csv = await readAtt(file('data.csv', 'text/csv', 'a,b\n1,2'))
   assert.equal(csv.ok, true)
   if (csv.ok) assert.equal(csv.att.kind, 'txt')
+})
+
+test('readAtts pairs transcripts with media and reports notices', async () => {
+  const file = (name, type, text = 'hello') => new File([text], name, { type })
+  const { atts, notices } = await readAtts(
+    [file('talk.mp3', 'audio/mpeg', 'x'), file('talk.vtt', 'text/vtt', 'WEBVTT\n00:00 hello')],
+    0,
+  )
+  assert.equal(atts.length, 1)
+  assert.equal(atts[0].kind, 'media')
+  assert.match(atts[0].text ?? '', /transcript of talk\.mp3/)
+  assert.ok(notices.some((n) => /Paired transcript/))
+})
+
+test('OpenAI wire inlines PDF text instead of an omission note', () => {
+  const pdf = { id: 'u', r: 'user', t: 'read this', full: 'read this\n\n[file: doc.pdf]\n[payload]\nbody text', att: [{ name: 'doc.pdf', kind: 'pdf', size: '1 KB', mime: 'application/pdf', data: 'AAA', text: '[payload]\nbody text' }] }
+  const ow = wire(openai, [pdf])
+  assert.equal(ow.length, 1)
+  assert.equal(typeof ow[0].content, 'string')
+  assert.doesNotMatch(ow[0].content, /omitted/)
+  const scanned = { id: 'u', r: 'user', t: 'read this', att: [{ name: 'scan.pdf', kind: 'pdf', size: '1 KB', mime: 'application/pdf', data: 'AAA', source: 'pdf-scanned' }] }
+  const ow2 = wire(openai, [scanned])
+  assert.match(ow2[0].content, /omitted/)
 })
 
 test('prunePersisted compacts bulky tool results and workspace history', () => {

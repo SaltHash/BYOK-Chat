@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Archive, Check, Copy, ChevronRight, Download, FileCode, FileJson, FileText, FileType, Globe, Image, Music, Video, Braces, Terminal, Database, Cog, Hash, PenTool, LayoutTemplate, Sparkles, File, Files, Folder, FolderOpen, Pencil, X, type LucideIcon } from 'lucide-react'
+import { Archive, Check, Copy, ChevronRight, Download, FileCode, FileJson, FileText, FileType, Globe, Image, Music, Video, Braces, Terminal, Database, Cog, Hash, PenTool, LayoutTemplate, Sparkles, File, Files, Folder, FolderOpen, Pencil, X, Diff as DiffIcon, Trash2, Send, Share2, Save, type LucideIcon } from 'lucide-react'
 import { strToU8, zipSync } from 'fflate'
-import { useS, type Msg } from '../store'
+import { useS, uid, type Msg } from '../store'
 import { clampWorkspaceSplit } from '../layout'
 import type { ToolCall } from '../engine'
 import { Md } from './Md'
-import { Btn, cx } from './ui'
-import { WORKSPACE_MAX_FILES, buildZipEntries, workspaceLines, workspaceSize, buildFolderTree, expandedFoldersForPath, extractWorkspaceIds, findWritingPath, groupWorkspaceVersions, sanitizePath, zipFilename, type Workspace, type WorkspaceRevision } from '../workspace'
+import { Btn, Confirm, Field, Input, Toggle, cx } from './ui'
+import { WORKSPACE_MAX_FILES, buildZipEntries, workspaceLines, workspaceSize, buildFolderTree, expandedFoldersForPath, extractWorkspaceIds, findWritingPath, groupWorkspaceVersions, sanitizePath, zipFilename, diffLines, diffStat, changedFilesBetween, sanitizeHtmlPreview, previewKindFor, parseCsvPreview, type Workspace, type WorkspaceRevision } from '../workspace'
 
 const fence = (lang: string, code: string) => {
   const runs = code.match(/`{3,}/g)
@@ -76,6 +76,79 @@ export function downloadAllFiles(groups: { path: string; versions: { action: str
   for (const e of zipPaths) obj[e.path] = strToU8(e.content)
   saveBlob(`${rootName || zipFilename(entries).replace(/\.zip$/, '')}.zip`, new Blob([zipSync(obj)], { type: 'application/zip' }))
 }
+
+/* Line diff renderer (shared by the per-file Diff tab and compare mode). */
+export function DiffView({ oldText, newText, maxLines = 2000 }: { oldText: string; newText: string; maxLines?: number }) {
+  const lines = useMemo(() => diffLines(oldText, newText), [oldText, newText])
+  const { added, removed } = diffStat(lines)
+  const shown = lines.slice(0, maxLines)
+  if (!added && !removed) return <p className="px-4 py-3 text-sm text-mu">No changes.</p>
+  return (
+    <div className="py-2 font-mono text-xs leading-5">
+      <p className="px-4 pb-2 text-mu">+{added} −{removed}</p>
+      {shown.map((l, i) => (
+        <div key={i} className={cx('flex gap-2 overflow-x-auto whitespace-pre px-4', l.type === 'add' && 'bg-ac/10 text-tx', l.type === 'del' && 'bg-er/10 text-tx', l.type === 'same' && 'text-mu')}>
+          <span aria-hidden="true" className="w-3 shrink-0 select-none text-mu">{l.type === 'add' ? '+' : l.type === 'del' ? '−' : ' '}</span>
+          <span className="min-w-0">{l.text || ' '}</span>
+        </div>
+      ))}
+      {lines.length > shown.length && <p className="px-4 pt-2 text-mu">Showing {shown.length} of {lines.length} changed lines.</p>}
+    </div>
+  )
+}
+
+/* Rich previews: sandboxed HTML iframe, rendered Markdown, SVG image, CSV table. */
+export function FilePreview({ path, language, content }: { path: string; language: string; content: string }) {
+  const kind = previewKindFor(path, language)
+  const [svgUrl, setSvgUrl] = useState<string | null>(null)
+  useEffect(() => {
+    if (kind !== 'svg') return
+    const url = URL.createObjectURL(new Blob([content], { type: 'image/svg+xml' }))
+    setSvgUrl(url)
+    return () => URL.revokeObjectURL(url)
+  }, [kind, content])
+  if (kind === 'html') {
+    return <iframe title={`Preview of ${path}`} sandbox="" srcDoc={sanitizeHtmlPreview(content)} className="min-h-64 w-full flex-1 bg-white" />
+  }
+  if (kind === 'svg' && svgUrl) {
+    return <div className="grid min-h-64 flex-1 place-items-center overflow-auto bg-white p-4"><img src={svgUrl} alt={path} className="max-h-full max-w-full" /></div>
+  }
+  if (kind === 'markdown') {
+    return <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3"><Md t={content} /></div>
+  }
+  if (kind === 'csv') {
+    const rows = parseCsvPreview(content)
+    if (!rows.length) return <p className="px-4 py-3 text-sm text-mu">No rows to preview.</p>
+    return (
+      <div className="min-h-0 flex-1 overflow-auto px-4 py-3">
+        <table className="w-full border-collapse text-xs">
+          <thead><tr>{rows[0].map((c, i) => <th key={i} className="border border-hov bg-surf px-2 py-1 text-left font-semibold">{c}</th>)}</tr></thead>
+          <tbody>{rows.slice(1).map((r, i) => <tr key={i}>{r.map((c, j) => <td key={j} className="border border-hov px-2 py-1">{c}</td>)}</tr>)}</tbody>
+        </table>
+      </div>
+    )
+  }
+  return null
+}
+
+/* Optional GitHub Gist export: plain fetch with the user's own token
+ * (BYOK-style, stored only in this browser). No new dependencies. */
+export async function exportGist(token: string, description: string, pub: boolean, files: { path: string; content: string }[]): Promise<string> {
+  const t = token.trim()
+  if (!t) throw Error('Paste a GitHub personal access token (classic, gist scope) first.')
+  if (!files.length) throw Error('Nothing to share.')
+  const r = await fetch('https://api.github.com/gists', {
+    method: 'POST',
+    headers: { accept: 'application/vnd.github+json', authorization: `Bearer ${t}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ description: description || 'Workspace export', public: pub, files: Object.fromEntries(files.map((f) => [f.path.replace(/\//g, '-'), { content: f.content }])) }),
+  })
+  const data = await r.json().catch(() => ({}))
+  if (!r.ok) throw Error(data?.message ? `GitHub: ${data.message}` : `GitHub returned HTTP ${r.status}.`)
+  if (typeof data?.html_url !== 'string') throw Error('GitHub returned an unexpected response.')
+  return data.html_url
+}
+
+export const gistTokenKey = 'byok.gist.token'
 
 /* Shared folder/file tree used by both the compact tile and the side panel.
  * `variant` preserves each caller's styling; recursion + sorting live here once. */
@@ -161,6 +234,32 @@ export function WorkspaceTile({ msg, live, workspace, selectedRevisionId, onOpen
 
   const [expandedFolders, setExpandedFolders] = useState<Record<string, boolean>>({})
   const [selectedPath, setSelectedPath] = useState<string | null>(null)
+  const [renaming, setRenaming] = useState(false)
+  const [nameDraft, setNameDraft] = useState(workspace.name)
+
+  const revIdx = workspace.revisions.findIndex((r) => r.id === revision.id)
+  const prevRev = revIdx > 0 ? workspace.revisions[revIdx - 1] : null
+  const changeStat = useMemo(() => {
+    if (!prevRev) return null
+    const prevMap = new Map(prevRev.files.map((f) => [f.path, f.content]))
+    let added = 0, removed = 0
+    for (const f of revision.files) {
+      const old = prevMap.get(f.path)
+      if (old == null) added += f.content.split('\n').length
+      else if (old !== f.content) { const s = diffStat(diffLines(old, f.content)); added += s.added; removed += s.removed }
+    }
+    for (const f of prevRev.files) if (!revision.files.some((x) => x.path === f.path)) removed += f.content.split('\n').length
+    return added + removed > 0 ? { added, removed } : null
+  }, [prevRev, revision])
+
+  const saveName = () => {
+    const name = nameDraft.trim().slice(0, 80)
+    if (name && name !== workspace.name) {
+      const st = useS.getState(), ws = st.workspaces[workspace.id]
+      if (ws) st.patch({ workspaces: { ...st.workspaces, [workspace.id]: { ...ws, name } } })
+    }
+    setRenaming(false)
+  }
 
   // Auto-expand only folders leading to writing file; mirror panel
   useEffect(() => {
@@ -178,9 +277,17 @@ export function WorkspaceTile({ msg, live, workspace, selectedRevisionId, onOpen
     <section aria-label="Workspace files" className="space-y-2 rounded-xl border border-hov bg-surf/50 p-3">
       <div className="flex items-center gap-2 text-sm">
         <Files size={15} className="shrink-0 text-ac" />
-        <span className="truncate font-medium">{workspace.name}</span>
+        {renaming ? (
+          <input autoFocus value={nameDraft} onChange={(e) => setNameDraft(e.target.value)} onBlur={saveName} onKeyDown={(e) => { if (e.key === 'Enter') saveName(); if (e.key === 'Escape') setRenaming(false) }} className="min-w-0 flex-1 rounded-md bg-bg px-2 py-1 text-sm outline-none focus:ring-2 focus:ring-ac/40" />
+        ) : (
+          <>
+            <span className="truncate font-medium">{workspace.name}</span>
+            <button title="Rename workspace" onClick={() => { setNameDraft(workspace.name); setRenaming(true) }} className="grid size-6 shrink-0 place-items-center rounded-md text-mu hover:bg-hov hover:text-tx"><Pencil size={12} /></button>
+          </>
+        )}
         <span className="text-xs text-mu">· {total} file{total === 1 ? '' : 's'}</span>
         <span className="text-xs text-mu">· {revision.name}</span>
+        {changeStat && <span className="shrink-0 font-mono text-xs text-mu" title="Changed lines vs the previous revision">+{changeStat.added} −{changeStat.removed}</span>}
         {isLive && writingPath && (
           <span className="inline-flex min-w-0 shrink items-center gap-1.5 text-xs text-mu ml-auto">
             <span className="size-1.5 shrink-0 animate-pulse rounded-full bg-ac" />
@@ -204,7 +311,7 @@ export function WorkspaceTile({ msg, live, workspace, selectedRevisionId, onOpen
           <WorkspaceRevisionPicker
             workspace={workspace}
             selectedId={selectedRevisionId}
-            onSelect={onSelectRevision}
+            onSelect={onSelectRevision ?? (() => {})}
             className="flex-1"
           />
         )}
@@ -261,12 +368,16 @@ export function WorkspacePanel({ msg, live, workspace, selectedRevisionId, setSe
   const busy = useS((s) => s.busy)
   const workspacePrefs = useS((s) => s.workspacePrefs ?? { defaultView: 'latest', autoOpen: true, autoFollow: true })
   const storedSplit = useS((s) => s.prefs.workspaceSplit)
-  const [pinned, setPinned] = useState<Record<string, number>>({})
-  const [edits, setEdits] = useState<Record<string, { content: string; language: string }[]>>({})
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState('')
+  const [confirmDelete, setConfirmDelete] = useState(false)
   const [selectedFilePath, setSelectedFilePath] = useState<string | null>(null)
   const [expandedFolders, setExpandedFolders] = useState<Record<string, boolean>>({})
+  const [view, setView] = useState<'code' | 'preview' | 'diff'>('code')
+  const [diffBaseId, setDiffBaseId] = useState<string | null>(null)
+  const [renaming, setRenaming] = useState(false)
+  const [nameDraft, setNameDraft] = useState(workspace.name)
+  const [gistOpen, setGistOpen] = useState(false)
   const split = clampWorkspaceSplit(storedSplit)
   const setSplit = (v: number) => {
     const st = useS.getState()
@@ -275,13 +386,14 @@ export function WorkspacePanel({ msg, live, workspace, selectedRevisionId, setSe
   const initialPathRef = useRef(initialFilePath)
 
   const revision = workspace.revisions.find(r => r.id === selectedRevisionId) ?? workspace.revisions[workspace.revisions.length - 1]
+  const revIdx = workspace.revisions.findIndex(r => r.id === revision.id)
   const { groups, total, isLive } = useWorkspaceFiles(msg, live)
 
   // Determine the file currently being written by the AI
   const writingPath = useMemo(() => findWritingPath(live, msg.toolRounds), [msg.toolRounds, live])
 
-  // Exit edit mode whenever the followed file changes (e.g. AI starts writing another file).
-  useEffect(() => { setEditing(false) }, [revision.id])
+  // Exit edit mode whenever the revision changes.
+  useEffect(() => { setEditing(false); setDiffBaseId(null) }, [revision.id])
 
   // Set initial file path from prop (only on mount)
   useEffect(() => {
@@ -320,16 +432,92 @@ export function WorkspacePanel({ msg, live, workspace, selectedRevisionId, setSe
     }
   }
 
+  const saveLocalEdit = () => {
+    const st = useS.getState()
+    const ws = st.workspaces[workspace.id]
+    const file = revision.files.find(f => f.path === selectedFilePath) ?? revision.files[0]
+    if (!ws || !file) return
+    const latest = ws.revisions[ws.revisions.length - 1]
+    const next: WorkspaceRevision = {
+      id: uid(),
+      name: 'Local edit',
+      msgId: msg.id,
+      files: latest.files.map((f) => (f.path === file.path ? { ...f, content: draft } : f)),
+      createdAt: Date.now(),
+    }
+    st.patch({
+      workspaces: { ...st.workspaces, [ws.id]: { ...ws, revisions: [...ws.revisions, next] } },
+      selectedRevision: { ...st.selectedRevision, [ws.id]: next.id },
+    })
+    setSelectedRevisionId(next.id)
+    setEditing(false)
+  }
+
+  const deleteLocalFile = () => {
+    const st = useS.getState()
+    const ws = st.workspaces[workspace.id]
+    if (!ws || !selectedFilePath) return
+    const latest = ws.revisions[ws.revisions.length - 1]
+    const next: WorkspaceRevision = {
+      id: uid(),
+      name: `Removed ${base(selectedFilePath)}`,
+      msgId: msg.id,
+      files: latest.files.filter((f) => f.path !== selectedFilePath),
+      createdAt: Date.now(),
+    }
+    st.patch({
+      workspaces: { ...st.workspaces, [ws.id]: { ...ws, revisions: [...ws.revisions, next] } },
+      selectedRevision: { ...st.selectedRevision, [ws.id]: next.id },
+    })
+    setSelectedRevisionId(next.id)
+    setSelectedFilePath(next.files[0]?.path ?? null)
+    setConfirmDelete(false)
+  }
+
+  const askAboutFile = () => {
+    if (busy || !selectedFile) return
+    const clipped = selectedFile.content.length > 8000 ? selectedFile.content.slice(0, 8000) + '\n…[truncated]' : selectedFile.content
+    void send(`About \`${selectedFile.path}\` in workspace "${workspace.name}" (workspaceId "${workspace.id}"):\n${fence(selectedFile.language, clipped)}\n\nReply with your thoughts, and apply any changes I ask for with workspace_upsert calls against that workspaceId.`, [])
+  }
+
+  const saveName = () => {
+    const name = nameDraft.trim().slice(0, 80)
+    const st = useS.getState(), ws = st.workspaces[workspace.id]
+    if (name && ws && name !== ws.name) st.patch({ workspaces: { ...st.workspaces, [workspace.id]: { ...ws, name } } })
+    setRenaming(false)
+  }
+
   // Build folder tree for expandable folders
   const folderTree = useMemo(() => buildFolderTree(files), [files])
 
   const selectedFile = files.find(f => f.path === selectedFilePath) ?? files[0]
+  const kind = selectedFile ? previewKindFor(selectedFile.path, selectedFile.language) : 'code'
+  const canPreview = kind !== 'code'
+
+  // Diff base: explicit older revision, else the nearest earlier revision
+  // that also contains this file (whole-file add when there is none).
+  const olderRevs = workspace.revisions.slice(0, Math.max(0, revIdx))
+  const diffBaseRev = (diffBaseId ? workspace.revisions.find((r) => r.id === diffBaseId) : undefined)
+    ?? [...olderRevs].reverse().find((r) => selectedFile && r.files.some((f) => f.path === selectedFile.path))
+    ?? null
+  const diffBaseContent = selectedFile ? diffBaseRev?.files.find((f) => f.path === selectedFile.path)?.content ?? '' : ''
+  const revChanges = useMemo(
+    () => (diffBaseRev ? changedFilesBetween(diffBaseRev.files, revision.files).filter((c) => c.status !== 'same') : []),
+    [diffBaseRev, revision],
+  )
 
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex items-center gap-2 border-b border-hov px-3 py-2">
         <Files size={15} className="shrink-0 text-ac" />
-        <span className="min-w-0 flex-1 truncate text-sm font-medium">{workspace.name} · {total} file{total === 1 ? '' : 's'}</span>
+        {renaming ? (
+          <input autoFocus value={nameDraft} onChange={(e) => setNameDraft(e.target.value)} onBlur={saveName} onKeyDown={(e) => { if (e.key === 'Enter') saveName(); if (e.key === 'Escape') setRenaming(false) }} className="min-w-0 flex-1 rounded-md bg-bg px-2 py-1 text-sm outline-none focus:ring-2 focus:ring-ac/40" />
+        ) : (
+          <>
+            <span className="min-w-0 flex-1 truncate text-sm font-medium">{workspace.name} · {total} file{total === 1 ? '' : 's'}</span>
+            <Btn sm icon={Pencil} title="Rename workspace" onClick={() => { setNameDraft(workspace.name); setRenaming(true) }} />
+          </>
+        )}
         <WorkspaceRevisionPicker
           workspace={workspace}
           selectedId={selectedRevisionId}
@@ -337,6 +525,7 @@ export function WorkspacePanel({ msg, live, workspace, selectedRevisionId, setSe
           className="w-48"
         />
         {isLive && <span className="inline-flex shrink-0 items-center gap-1.5 text-xs text-mu"><span className="size-1.5 animate-pulse rounded-full bg-ac" />Writing…</span>}
+        <Btn sm icon={Share2} title="Share via GitHub Gist (optional token)" onClick={() => setGistOpen(true)} />
         <Btn sm icon={X} title="Close workspace panel" onClick={() => { setSelectedFilePath(null); onClose(); }} />
       </div>
       <div role="tree" aria-label="Workspace files" className="min-h-0 overflow-y-auto border-b border-hov px-2 py-2" style={{ flex: `0 0 ${split * 100}%` }}>
@@ -372,12 +561,65 @@ export function WorkspacePanel({ msg, live, workspace, selectedRevisionId, setSe
               <span className="text-xs text-mu">{workspaceLines(selectedFile.content)} lines · {workspaceSize(selectedFile.content)}</span>
               {selectedFile.path === writingPath && <span className="ml-auto inline-flex items-center gap-1.5 text-xs text-ac"><span className="size-1.5 animate-pulse rounded-full bg-ac" />Writing…</span>}
               <span className="flex-1" />
+              <div role="tablist" aria-label="File view" className="inline-flex items-center gap-1 rounded-lg bg-codeh p-0.5">
+                {(['code', 'preview', 'diff'] as const).filter((v) => v !== 'preview' || canPreview).map((v) => (
+                  <button key={v} role="tab" aria-selected={view === v} onClick={() => setView(v)} className={cx('rounded-md px-2 py-1 text-xs capitalize', view === v ? 'bg-hov text-tx' : 'text-mu hover:text-tx')}>
+                    {v === 'code' ? 'Code' : v === 'preview' ? 'Preview' : 'Diff'}
+                  </button>
+                ))}
+              </div>
               <Btn sm icon={Download} title="Download file" onClick={() => downloadOne(selectedFile.path, selectedFile.content)} />
-              <Btn sm icon={Pencil} title="Edit locally" onClick={() => { setDraft(selectedFile.content); setEditing(true) }} />
+              <Btn sm icon={Pencil} title="Edit locally" onClick={() => { setDraft(selectedFile.content); setEditing(true); setView('code') }} />
               <Btn sm icon={Copy} title="Copy file" onClick={() => copy(selectedFile.content)} />
+              <Btn sm icon={Send} title="Ask about this file in chat" onClick={askAboutFile} />
+              <Btn sm icon={Trash2} title="Delete file" onClick={() => setConfirmDelete(true)} />
             </div>
+            {view === 'diff' && (
+              <div className="flex flex-wrap items-center gap-2 px-4 pt-2 text-xs text-mu">
+                <DiffIcon size={13} className="shrink-0" />
+                <span>vs</span>
+                <select
+                  value={diffBaseRev?.id ?? ''}
+                  onChange={(e) => setDiffBaseId(e.target.value || null)}
+                  className="max-w-56 truncate rounded-md bg-codeh px-1.5 py-1 text-xs outline-none"
+                  aria-label="Compare against revision"
+                >
+                  {!diffBaseRev && <option value="">No earlier version</option>}
+                  {olderRevs.map((r, i) => <option key={r.id} value={r.id}>{r.name} (v{i + 1})</option>)}
+                </select>
+                {revChanges.length > 0 && (
+                  <span className="flex flex-wrap gap-1">
+                    {revChanges.slice(0, 8).map((c) => (
+                      <button
+                        key={c.path}
+                        onClick={() => { setSelectedFilePath(c.path); setExpandedFolders((prev) => ({ ...prev, ...expandedFoldersForPath(c.path) })) }}
+                        title={`${c.path} · ${c.status}`}
+                        className={cx('rounded px-1.5 py-0.5 font-mono', c.path === selectedFile.path ? 'bg-ac/20 text-tx' : 'bg-codeh hover:text-tx', c.status === 'added' && 'text-ac', c.status === 'removed' && 'text-er')}
+                      >
+                        {c.status === 'added' ? '+' : c.status === 'removed' ? '−' : '~'}{base(c.path)}
+                      </button>
+                    ))}
+                    {revChanges.length > 8 && <span>+{revChanges.length - 8} more</span>}
+                  </span>
+                )}
+              </div>
+            )}
             <div className="min-h-0 flex-1 overflow-y-auto">
-              <Md t={fence(selectedFile.language, selectedFile.content)} bare />
+              {editing ? (
+                <div className="flex h-full min-h-0 flex-col gap-2 p-4">
+                  <textarea autoFocus value={draft} onChange={(e) => setDraft(e.target.value)} spellCheck={false} className="min-h-0 flex-1 resize-none rounded-lg bg-bg p-3 font-mono text-sm outline-none focus:ring-2 focus:ring-ac/40" />
+                  <div className="flex justify-end gap-2">
+                    <Btn v="soft" onClick={() => setEditing(false)}>Cancel</Btn>
+                    <Btn v="solid" icon={Save} onClick={saveLocalEdit}>Save as new revision</Btn>
+                  </div>
+                </div>
+              ) : view === 'preview' && canPreview ? (
+                <FilePreview path={selectedFile.path} language={selectedFile.language} content={selectedFile.content} />
+              ) : view === 'diff' ? (
+                <DiffView oldText={diffBaseContent} newText={selectedFile.content} />
+              ) : (
+                <Md t={fence(selectedFile.language, selectedFile.content)} bare />
+              )}
             </div>
           </div>
         )}
@@ -385,6 +627,54 @@ export function WorkspacePanel({ msg, live, workspace, selectedRevisionId, setSe
           <p className="px-3 pt-2 text-sm text-mu">No files in this revision.</p>
         )}
 
+      </div>
+      {confirmDelete && selectedFile && (
+        <Confirm title="Delete this file?" text={`"${selectedFile.path}" is removed in a new "Removed" revision. The model can recreate it later.`} ok="Delete file" close={() => setConfirmDelete(false)} run={deleteLocalFile} />
+      )}
+      {gistOpen && <GistModal workspace={workspace} revision={revision} close={() => setGistOpen(false)} />}
+    </div>
+  )
+}
+
+/* Optional Gist sharing dialog. The token is the user's own (BYOK-style) and
+ * stays in this browser; nothing is sent anywhere until they press Share. */
+function GistModal({ workspace, revision, close }: { workspace: Workspace; revision: WorkspaceRevision; close: () => void }) {
+  const [token, setToken] = useState(() => { try { return localStorage.getItem(gistTokenKey) ?? '' } catch { return '' } })
+  const [desc, setDesc] = useState(workspace.name)
+  const [pub, setPub] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [result, setResult] = useState<string | null>(null)
+  const [error, setError] = useState('')
+  const share = async () => {
+    setBusy(true); setError(''); setResult(null)
+    try {
+      const url = await exportGist(token, desc, pub, revision.files)
+      try { localStorage.setItem(gistTokenKey, token) } catch { /* ignore */ }
+      setResult(url)
+    } catch (x: any) { setError(String(x?.message ?? x)) }
+    finally { setBusy(false) }
+  }
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center bg-black/50 p-4" onMouseDown={(e) => { if (e.target === e.currentTarget) close() }}>
+      <div role="dialog" aria-modal="true" aria-label="Share workspace via Gist" className="w-full max-w-md space-y-4 rounded-2xl border border-hov bg-bg p-5">
+        <div className="flex items-center gap-2 font-semibold"><Share2 size={18} className="text-ac" />Share via GitHub Gist</div>
+        <p className="text-sm text-mu">Optional: shares the {revision.files.length} file{revision.files.length === 1 ? '' : 's'} of “{revision.name}” as a gist. Needs a classic personal access token with the <b>gist</b> scope; it stays in this browser.</p>
+        <Field label="GitHub token (gist scope)">
+          <Input type="password" value={token} set={setToken} placeholder="ghp_…" />
+        </Field>
+        <Field label="Gist description">
+          <Input value={desc} set={setDesc} placeholder={workspace.name} />
+        </Field>
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-sm font-medium">Public gist</span>
+          <Toggle on={pub} set={setPub} label="Public gist" />
+        </div>
+        {error && <p className="text-sm text-er">{error}</p>}
+        {result && <p className="text-sm">Shared: <a href={result} target="_blank" rel="noopener noreferrer nofollow" className="text-ac underline">{result}</a></p>}
+        <div className="flex justify-end gap-2">
+          <Btn v="soft" onClick={close}>Close</Btn>
+          <Btn v="solid" icon={Share2} disabled={busy || !token.trim()} onClick={share}>{busy ? 'Sharing…' : 'Share'}</Btn>
+        </div>
       </div>
     </div>
   )

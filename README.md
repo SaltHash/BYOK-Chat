@@ -89,8 +89,48 @@ npm start
 
 Set `PORT` if the host assigns a port. The Node server serves `dist/` and exposes same-origin `/api/search` and `/api/health` routes. Configure the host to run `npm run build` during deployment and `npm start` as its web process. Ensure the backend can reach SearXNG through a private route and keep the SearXNG port bound to loopback or a private container network.
 
-The search toggle in Settings → Tools allows automatic grounding for questions that request browsing, research, verification, or current information; it does not search ordinary messages. `@search(query)` runs an explicit search. Results are deduplicated, selected across domains, capped, and sent as snippets with stable source IDs and URLs. Retrieved text is marked as untrusted evidence in the prompt. The model is asked to cite sources using Markdown links. Full-page extraction is not implemented. Other tools are local browser helpers and remain individually permissioned. The browser does not expose a shell or arbitrary server execution to models.
+## Durable storage and device sync
+
+Settings stay in `localStorage` (`byok.v1`). Chats, workspaces, and attachment bytes mirror to IndexedDB, with large blobs in OPFS where available (`src/storage/durable.ts`). Migration is automatic in place: the first boot copies existing history to durable storage, restores attachment bytes after reload, and keeps working when `localStorage` was quota-pruned. The storage meter in Settings → Data controls shows settings vs durable usage with Compact actions, plus background compaction every 5 minutes and per-chat `.md` + `.json` export from the sidebar.
+
+Token sync links two devices with one super-long token (`byok1-<id>-<secret>`, `src/storage/sync.ts`). Generate it on device A, paste it on device B, then Push/Pull from Settings → Data controls. Payloads carry `{ v, storeVersion }` and older apps migrate automatically; newer payloads show a warning instead of breaking. The server stores only `sha256(secret)` plus the payload:
+
+- `POST /api/sync/push` `{ token, payload }` → `{ ok, updatedAt, backend }`
+- `GET /api/sync/pull?token=…` (or POST) → `{ payload, storeVersion, exportVersion, updatedAt }`
+- `GET /api/sync/status` → `{ backend: 'neon' | 'memory', configured }`
+
+Set `DATABASE_URL` to a Neon Postgres URL for persistence (apply `server/neon-schema.sql` first; RLS is deny-by-default so only the API service role touches `sync_states`). Without it the server uses in-memory storage for dev. Payloads are unencrypted on the server; use the optional password box for AES-GCM-256 + PBKDF2 encrypted file backups (`src/storage/backupCrypto.ts`). Auto-push after each reply is optional and best-effort.
+
+The search toggle in Settings → Tools allows automatic grounding for questions that request browsing, research, verification, or current information; it does not search ordinary messages. `@search(query)` runs an explicit search. Results are deduplicated, selected across domains, capped, and sent as snippets with stable source IDs and URLs. Retrieved text is marked as untrusted evidence in the prompt. The model is asked to cite every factual claim inline as `[S1]`, `[S2]`, etc.
+
+## Grounded replies: citations, Sources, page reader
+
+Each assistant reply collects its successful `search` calls into one deduped source list (`src/citations.ts`), renumbered `S1…Sn` in first-seen order. Bare `[S1]` / `[Source S1]` tokens in the reply are linkified before rendering; in Pills mode (Settings → Tools → Sources & transparency) they render as numbered pills that jump to the matching entry in the Sources list below the reply. Links mode renders plain markdown links instead.
+
+Every grounded reply shows a **Sources** button below the workspaces and above the message options. Expanding it lists each source with its truncated snippet, host, engine, and query, plus per-source actions: **Open** (new tab), **Read page** (full excerpt via the reader), **Copy link**, **Copy cite**. Unknown ids and uncited grounded replies are flagged, with optional strict warnings.
+
+`GET /api/extract?url=…` reads one public `http(s)` page through the backend (SSRF-blocked private hosts, 8s timeout via `EXTRACT_TIMEOUT_MS`, 1.5MB HTML cap, 12k-character excerpt, 10-minute cache) and backs both the `fetch_page` model tool and the per-source Read page button. The process log shows each search as `Web search · query (N sources · provider)` and each read as `Page reader · title · host`; the live status reads Searching… / Reading page…. Related settings (citation style, expand-by-default, page reader on/off, strict warnings) live in Settings → Tools → Web search → Sources & transparency.
+
+## Documents: PDFs, Office, archives, transcripts, OCR
+
+Attachments are read locally (`src/docs.ts`, no new dependencies): PDF text layers, `.docx` / `.odt` / `.rtf` / `.pptx` / first-sheet `.xlsx`, `.zip` / `.gz` expansion (up to 25 entries), and audio/video with transcript pairing. Extracted text travels inline as `[file: name]` blocks so every endpoint can read it — PDFs no longer show `[omitted]` on OpenAI endpoints, and only scanned PDFs without a text layer still need Anthropic native reading or OCR. Pair a `.vtt` / `.srt` transcript with a matching audio/video name, or paste a page URL with Attach page from URL.
+
+Image text extraction is opt-in (Settings → Tools → Documents): Auto transcribes images only when no usable endpoint takes images natively; Always transcribes every image; a per-image button transcribes on demand. Transcription uses your own vision endpoint (configurable OCR endpoint/model, cached per image). Per-document budgets (15k–200k chars, default 60k) sit under the message-wide text budget. Legacy `.doc` / `.xls` / `.ppt`, `.7z` / `.tar` / `.rar`, and oversized files still report guidance instead of silent failure.
+
+## Workspaces: previews, diffs, patches, templates
+
+The model writes file artifacts with `workspace_upsert`, now with cheaper operations: `patch` applies a small unified diff (fuzzy context matching, precise rejection errors), `files[]` batches several changes into one revision, and `template` (`static-site`, `python-script`, `markdown-notes`) scaffolds a starter project with `createNew` — all validated locally before anything is stored (`src/workspace.ts`, no external compute). Up to 16 files per workspace.
+
+The side panel adds Code / Preview / Diff tabs per file: sandboxed HTML previews (scripts, frames, and event handlers stripped, iframe fully sandboxed), rendered Markdown, SVG images, and CSV tables. The Diff tab compares against the previous version or any older revision, with a changed-files summary to jump between. Tiles show `+added −removed` line stats, workspaces rename inline, and you can edit or delete files yourself (saved as Local edit revisions the model keeps building on), ask about a file in chat, or share a revision as a GitHub Gist with your own optional token (Settings → Workspace, stored only in this browser). Project templates are catalogued in Settings → Workspace with one-click scaffold prompts.
+
+## Recall, search, and smart routing
+
+Memory recall runs on-device by default (`src/recall.ts`, BM25 ranking, no model calls, works offline): Holistic sends everything, Contextual keeps the top 8 relevant entries, Specific the top 4 above a relevance floor. The legacy classifier-call method remains selectable in Settings → Memory. New memories merge into near-duplicates automatically (token overlap), and Check duplicates lists the rest with one-click merges. The process log records which entries were picked and why.
+
+The sidebar search ranks every chat with the same engine — title hits first, then the best matching message with a snippet — and jumping to a result opens the chat, scrolls to the message, and highlights it briefly.
+
+Routing learns from experience: every attempt records latency and failures per endpoint + model (Settings → Playlists shows the table, resettable, backed up with stats). The routing mode orders candidates by list order (default), observed speed (untried models go first), or input price (unpriced last); a playlist classifier, when set, still picks first and its decisions are cached per request for an hour. The process log notes reorderings and cache hits.
 
 ## Checks
 
-Run the SearXNG search helper tests with `node --test` and create a production build with `npm run build`. Search provider tests live in `server/search.test.mjs`.
+Run the SearXNG search helper tests with `node --test` and create a production build with `npm run build`. Search provider tests live in `server/search.test.mjs`, citation tests in `src/citations.test.mjs`, reader tests in `server/extract.test.mjs`, document parser tests in `src/docs.test.mjs`, recall and routing tests in `src/recall.test.mjs`.

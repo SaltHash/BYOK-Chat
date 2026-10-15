@@ -1,12 +1,16 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { DEFAULT_TOOLS, KEYS, WIDGETS } from './meta'
-import { est, redact, stream, wire, trimHistory, estimateHistoryTokens, runToolLoop, type ToolCall, type ToolResult, searchWeb, formatSearch } from './engine'
+import { est, redact, stream, wire, trimHistory, estimateHistoryTokens, runToolLoop, type ToolCall, type ToolResult, searchWeb, formatSearch, fetchPage, formatPage, can, ocrImage } from './engine'
 import { DEFAULT_SKILL_STATE, normSkills, enabledSkills, getSkillInstructions, composeSystemPrompt, SKILL_TOOL_NAME, type SkillState, type ResolvedSkill } from './skills'
 import { hintForLog, getErrorCode, classifyModelError, type ErrorCode } from './errors'
 import { usable, modelsOf, modelNameOf } from './models'
 import { splitEntry, playlistEntries, applyCommandTemplate, composeFullInput, planRequest } from './chatPlan'
-import { migrateLegacyCanvasGroups, truncateWorkspaceContent, type Workspace, type WorkspaceFile, type WorkspaceRevision } from './workspace'
+import { migrateLegacyCanvasGroups, applyWorkspaceCall, type Workspace, type WorkspaceRevision } from './workspace'
+import { BLANK_DOCS, normDocs, type DocPrefs } from './docs'
+export { BLANK_DOCS, normDocs, type DocPrefs }
+import { rankMemories, mergeMemory, RouteCache, orderEndpoints, recordRoute, type RouteStat, type RoutingMode } from './recall'
+export type { RouteStat, RoutingMode }
 import { QUOTA_FLAG, prunePersisted, storageUsage, persistStorage } from './persistence'
 
 export { QUOTA_FLAG, prunePersisted, storageUsage }
@@ -24,7 +28,7 @@ export type Command = { id: string; name: string; desc: string; in: 'text' | 'im
 export type Cmd = Command
 export type Attempt = { n: string; m: string; detail?: string; ms?: number; err?: string; errCode?: ErrorCode; tin?: number; tout?: number; at?: number }
 export type Try = Attempt
-export type Attachment = { name: string; kind: 'img' | 'pdf' | 'txt'; size: string; mime?: string; data?: string; text?: string }
+export type Attachment = { name: string; kind: 'img' | 'pdf' | 'txt' | 'media'; size: string; mime?: string; data?: string; text?: string; source?: string; pages?: number }
 export type Att = Attachment
 export type FadeEvent = { text: string; at: number }
 export type Message = { id: string; r: 'user' | 'assistant'; t: string; at?: number; fadeEvents?: FadeEvent[]; by?: string; tps?: number; log?: Attempt[]; att?: Attachment[]; err?: boolean; full?: string; ctx?: string[]; fx?: string; cmd?: string; alts?: Snap[]; ai?: number; historyTokens?: number; explicitTokens?: number; reasoning?: string; toolRounds?: { text: string; calls: ToolResult[] }[]; toolFinal?: string; sys?: string; workspaceIds?: string[] }
@@ -139,6 +143,25 @@ export const CREATIVITY_PROMPT_TEXT = 'You are a creativity-focused assistant. F
 export const CONCISE_PROMPT_TEXT = 'Answer briefly and directly. Skip preamble.'
 export const uid = () => Math.random().toString(36).slice(2, 9)
 
+/* Tool-loop round cap. `maxToolRounds` of 0 means unlimited; otherwise 1..64.
+ * Values above BASE_MAX require an explicit unlock in Settings → Tools. */
+export const TOOL_ROUNDS_DEFAULT = 8
+export const TOOL_ROUNDS_MIN = 1
+export const TOOL_ROUNDS_BASE_MAX = 32
+export const TOOL_ROUNDS_MAX = 64
+export const toolRoundLimitOf = (p: { maxToolRounds?: unknown; highToolsUnlocked?: unknown } | null | undefined): number => {
+  const raw = Number((p as { maxToolRounds?: unknown } | null | undefined)?.maxToolRounds)
+  if (raw === 0) {
+    return (p as { highToolsUnlocked?: unknown } | null | undefined)?.highToolsUnlocked === true ? Infinity : TOOL_ROUNDS_DEFAULT
+  }
+  if (!Number.isFinite(raw)) return TOOL_ROUNDS_DEFAULT
+  const unlocked = (p as { highToolsUnlocked?: unknown } | null | undefined)?.highToolsUnlocked === true
+  const cap = unlocked ? TOOL_ROUNDS_MAX : TOOL_ROUNDS_BASE_MAX
+  return Math.max(TOOL_ROUNDS_MIN, Math.min(cap, Math.floor(raw) || TOOL_ROUNDS_DEFAULT))
+}
+export const isToolRoundsUnlimited = (p: { maxToolRounds?: unknown; highToolsUnlocked?: unknown } | null | undefined): boolean =>
+  Number(p?.maxToolRounds) === 0 && p?.highToolsUnlocked === true
+
 /* Ephemeral per-reply streaming tool calls (live canvas preview). Deliberately
    outside the persisted store: cleared when each reply completes. */
 type Live = { tools: Record<string, ToolCall[]>; set: (mid: string, calls: ToolCall[]) => void; clear: (mid: string) => void }
@@ -169,10 +192,11 @@ export const exportChat = () => {
 
 export type SearchMode = 'api' | 'searxng'
 export type SearchProvider = 'tinyfish' | 'you' | 'exa' | 'firecrawl' | 'brightdata'
+export type CiteStyle = 'pills' | 'links'
 export const SEARCH_MODES: [SearchMode, string][] = [['api', 'API'], ['searxng', 'SearXNG']]
 export const SEARCH_PROVIDERS: [SearchProvider, string][] = [['tinyfish', 'TinyFish'], ['you', 'You.com'], ['exa', 'Exa'], ['firecrawl', 'Firecrawl'], ['brightdata', 'Bright Data']]
-export type SearchPrefs = { mode: SearchMode; provider: SearchProvider; fallback: boolean; keys: Record<SearchProvider, string>; zone: string }
-export const BLANK_SEARCH: SearchPrefs = { mode: 'api', provider: 'tinyfish', fallback: true, keys: { tinyfish: '', you: '', exa: '', firecrawl: '', brightdata: '' }, zone: '' }
+export type SearchPrefs = { mode: SearchMode; provider: SearchProvider; fallback: boolean; keys: Record<SearchProvider, string>; zone: string; citeStyle: CiteStyle; sourcesOpen: boolean; reader: boolean; strictCitations: boolean }
+export const BLANK_SEARCH: SearchPrefs = { mode: 'api', provider: 'tinyfish', fallback: true, keys: { tinyfish: '', you: '', exa: '', firecrawl: '', brightdata: '' }, zone: '', citeStyle: 'pills', sourcesOpen: false, reader: true, strictCitations: false }
 const SEARCH_VALID_MODES: SearchMode[] = ['api', 'searxng']
 const SEARCH_VALID_PROVIDERS: SearchProvider[] = ['tinyfish', 'you', 'exa', 'firecrawl', 'brightdata']
 export const normSearch = (v: any): SearchPrefs => {
@@ -185,6 +209,10 @@ export const normSearch = (v: any): SearchPrefs => {
     fallback: typeof v?.fallback === 'boolean' ? v.fallback : true,
     keys,
     zone: typeof v?.zone === 'string' ? v.zone : '',
+    citeStyle: v?.citeStyle === 'links' ? 'links' : 'pills',
+    sourcesOpen: v?.sourcesOpen === true,
+    reader: v?.reader !== false,
+    strictCitations: v?.strictCitations === true,
   }
 }
 export const searchKeyOf = (s: any) => String(s?.keys?.[s?.provider] ?? '').trim()
@@ -205,14 +233,17 @@ type S = {
   customDarkColors: ThemeColors
   customLightColors: ThemeColors
   setupDone: boolean
-  prefs: { showBy: boolean; showLog: boolean; showTps: boolean; enterSends: boolean; autoTitle: boolean; temporaryByDefault: boolean; showModelPricing: boolean; titleEp: string; titleModel?: string; fade: number; tempHours: number; fontBody: string; fontMono: string; fontHeader: string; modelPrimary: 'id' | 'name'; modelSecondary: 'none' | 'provider' | 'id' | 'name'; modelDisplay?: 'none' | 'name' | 'provider' | 'both'; paletteMax: number; chatWidth: 'narrow' | 'standard' | 'wide'; settingsWidth: number; settingsHeight: number; modelPickerHeight: number; sidebarWidth?: number; widgetWidth?: number; workspaceWidth?: number; workspaceSplit?: number; modalBlur: number; settingsOpacity: number; routingMode?: 'ordered' | 'classified' }
+  prefs: { showBy: boolean; showLog: boolean; showTps: boolean; enterSends: boolean; autoTitle: boolean; temporaryByDefault: boolean; showModelPricing: boolean; titleEp: string; titleModel?: string; fade: number; tempHours: number; fontBody: string; fontMono: string; fontHeader: string; modelPrimary: 'id' | 'name'; modelSecondary: 'none' | 'provider' | 'id' | 'name'; modelDisplay?: 'none' | 'name' | 'provider' | 'both'; paletteMax: number; chatWidth: 'narrow' | 'standard' | 'wide'; settingsWidth: number; settingsHeight: number; modelPickerHeight: number; sidebarWidth?: number; widgetWidth?: number; workspaceWidth?: number; workspaceSplit?: number; modalBlur: number; settingsOpacity: number; routingMode?: RoutingMode }
   widgets: Record<string, boolean>; widgetPrefs: { usageGroup: 'endpoint' | 'model'; usageMode: 'success' | 'tokens'; usageFormat: string; usageTotal: boolean; usagePeriod: 'session' | 'day' | 'week' | 'custom' | 'all'; usageFrom?: string; usageTo?: string; lastSpeed: boolean; timeUnit: 'ms' | 's' | 'auto'; widgetOrder: string[]; shortcuts: string[]; contextLimit: number; showDisabledEndpoints: boolean; scratchRows: number; snippetLimit: number; costDecimals: number; activePromptsOnly: boolean; charsPerToken: number; hideDoneTodos: boolean }; rail: boolean; pad: string; snips: string[]
-  params: { def: boolean; temp: number; topp: number; max: number }; effort: Record<string, string>
+  params: { def: boolean; temp: number; topp: number; max: number; maxToolRounds: number; highToolsUnlocked: boolean }; effort: Record<string, string>
   workspacePrefs: WorkspacePrefs
   advanced: AdvancedPrefs
   stats: Stats; keys: Record<string, string>
-  memories: Memory[]; memoryPrefs: { enabled: boolean; intent: 'intentional' | 'balanced' | 'aggressive'; recall: 'holistic' | 'contextual' | 'specific'; classifierEp: string; classifierModel: string }
+  memories: Memory[]; memoryPrefs: { enabled: boolean; intent: 'intentional' | 'balanced' | 'aggressive'; recall: 'holistic' | 'contextual' | 'specific'; method: 'local' | 'classifier'; classifierEp: string; classifierModel: string }
+  docPrefs: DocPrefs
   folders: Folder[]; price: { in: number; out: number }; todos: { id: string; t: string; done: boolean }[]
+  routeStats: Record<string, RouteStat>
+  flashMsg: string | null
   draft: string; busy: boolean; notice: Notice
   /* Workspace (first-class entity) */
   workspaces: Record<string, Workspace>
@@ -283,6 +314,11 @@ export const previewSysFor = (msgId: string): string | null => {
 type Run = { stopped: boolean; ctl: AbortController | null }
 let cur: Run | null = null
 
+/* Classifier routing decisions are cached per playlist + request (TTL 1h):
+ * repeat questions skip the extra model call. */
+const routeCache = new RouteCache()
+export const __routeCache = routeCache
+
 export const useS = create<S>()(
   persist(
     (set, get) => {
@@ -337,6 +373,12 @@ export const useS = create<S>()(
         const c = selected ? { ...selected, model: pl.clsModel && modelsOf(selected).includes(pl.clsModel) ? pl.clsModel : selected.model } : undefined
         if (!c) { log.push({ n: 'Classifier', m: '', err: 'endpoint is missing, disabled or incomplete; using list order' }); return cand }
         const ids = [...new Set(cand.map((e) => e.model))], t0 = Date.now()
+        const cached = routeCache.get(pl.id, q)
+        if (cached && ids.includes(cached)) {
+          log.push({ n: c.name + ' (classifier)', m: c.model, detail: `Reused a cached routing decision for this request (${ids.length} allowed model IDs).`, ms: 0, at: Date.now() })
+          const f = cand.find((e) => e.model === cached)!
+          return [f, ...cand.filter((e) => e !== f)]
+        }
         try {
           r.ctl = new AbortController()
           const x = await stream(c, `Choose the best model for the user's request. ${pl.rule || ''}\nAllowed model ids: ${JSON.stringify(ids)}\nReply with only JSON: {"model":"<one allowed id>"}`, [{ role: 'user', content: q.slice(0, 4000) }], () => {}, r.ctl, { cap: 200 })
@@ -344,6 +386,7 @@ export const useS = create<S>()(
           addCost(c, c.model, x.tin, x.tout)
           const j = JSON.parse(x.text.match(/\{[\s\S]*\}/)?.[0] ?? '')
           if (!j || typeof j !== 'object' || Object.keys(j).join() !== 'model' || !ids.includes(j.model)) throw Error('output rejected (wrong shape, or an id outside this playlist): ' + x.text.slice(0, 80))
+          routeCache.set(pl.id, q, j.model)
           log.push({ n: c.name + ' (classifier)', m: c.model, detail: `Compared the request (${q.slice(0, 4000).length} characters) against ${ids.length} allowed model IDs using playlist rule${pl.rule ? `: “${pl.rule.slice(0, 180)}${pl.rule.length > 180 ? '…' : ''}”` : ' (no custom rule)'}.`, ms: Date.now() - t0, tin: x.tin, tout: x.tout, at: Date.now() })
           const f = cand.find((e) => e.model === j.model)!
           return [f, ...cand.filter((e) => e !== f)]
@@ -399,22 +442,35 @@ export const useS = create<S>()(
         if (memOn && memoryState.memories.length) {
           let selectedMemories = memoryState.memories
           const availableCount = selectedMemories.length
-          if (mp.recall !== 'holistic') {
-            const ce = memoryState.eps.find((e) => e.id === mp.classifierEp && usable(e))
-            if (ce) try {
-              const classifier = { ...ce, model: mp.classifierModel && modelsOf(ce).includes(mp.classifierModel) ? mp.classifierModel : ce.model }
-              const classifierPrompt = `Select relevant stored memories. Return strict JSON only: {"memory_ids":["id"]}. Use only supplied ids. ${mp.recall === 'contextual' ? 'Include somewhat relevant memories.' : 'Include only memories directly applicable to the request.'}`
-              const classifierInput = { question: um.full ?? um.t, memories: selectedMemories.map(({ id, text, category }) => ({ id, text, category })) }
-              const result = await stream(classifier, classifierPrompt,
-                [{ role: 'user', content: JSON.stringify(classifierInput) }], () => {}, new AbortController(), { cap: 300 })
-              const j = JSON.parse(result.text.match(/\{[\s\S]*\}/)?.[0] ?? '')
-              if (!Array.isArray(j.memory_ids) || j.memory_ids.some((id: unknown) => typeof id !== 'string' || !selectedMemories.some((m) => m.id === id))) throw Error('Invalid memory ids')
-              const ids = new Set(j.memory_ids); selectedMemories = selectedMemories.filter((m) => ids.has(m.id))
-              memoryTrace = `Memory recall used ${mp.recall} mode: sent the current question and ${availableCount} saved entries (IDs, categories, and summaries) to ${classifier.name} · ${classifier.model}; accepted ${selectedMemories.length} matching IDs.`
-            } catch { selectedMemories = []; memoryTrace = `Memory recall used ${mp.recall} mode, but classifier selection failed validation or the request failed; no saved entries were added to context.` }
-            else { selectedMemories = []; memoryTrace = `Memory recall used ${mp.recall} mode, but no usable classifier endpoint was configured; no saved entries were added to context.` }
-          } else {
+          const method = mp.method === 'classifier' ? 'classifier' : 'local'
+          if (mp.recall === 'holistic') {
             memoryTrace = `Memory recall used holistic mode: all ${availableCount} saved entries were added to context.`
+          } else if (method === 'local') {
+            selectedMemories = rankMemories(selectedMemories, um.full ?? um.t, mp.recall)
+            memoryTrace = `Memory recall used ${mp.recall} mode with local ranking: picked ${selectedMemories.length} of ${availableCount} saved entries for the current question (no model call).`
+          } else {
+            const memKey = `memory:${selectedMemories.map((m) => m.id).join(',')}`
+            const cached = routeCache.get(memKey, um.full ?? um.t)
+            const cachedIds = cached ? cached.split(',').filter((id) => selectedMemories.some((m) => m.id === id)) : null
+            if (cachedIds) {
+              selectedMemories = selectedMemories.filter((m) => cachedIds.includes(m.id))
+              memoryTrace = `Memory recall used ${mp.recall} mode with a cached classifier decision: accepted ${selectedMemories.length} of ${availableCount} matching IDs.`
+            } else {
+              const ce = memoryState.eps.find((e) => e.id === mp.classifierEp && usable(e))
+              if (ce) try {
+                const classifier = { ...ce, model: mp.classifierModel && modelsOf(ce).includes(mp.classifierModel) ? mp.classifierModel : ce.model }
+                const classifierPrompt = `Select relevant stored memories. Return strict JSON only: {"memory_ids":["id"]}. Use only supplied ids. ${mp.recall === 'contextual' ? 'Include somewhat relevant memories.' : 'Include only memories directly applicable to the request.'}`
+                const classifierInput = { question: um.full ?? um.t, memories: selectedMemories.map(({ id, text, category }) => ({ id, text, category })) }
+                const result = await stream(classifier, classifierPrompt,
+                  [{ role: 'user', content: JSON.stringify(classifierInput) }], () => {}, new AbortController(), { cap: 300 })
+                const j = JSON.parse(result.text.match(/\{[\s\S]*\}/)?.[0] ?? '')
+                if (!Array.isArray(j.memory_ids) || j.memory_ids.some((id: unknown) => typeof id !== 'string' || !selectedMemories.some((m) => m.id === id))) throw Error('Invalid memory ids')
+                const ids = new Set(j.memory_ids); selectedMemories = selectedMemories.filter((m) => ids.has(m.id))
+                routeCache.set(memKey, um.full ?? um.t, [...ids].join(','))
+                memoryTrace = `Memory recall used ${mp.recall} mode: sent the current question and ${availableCount} saved entries (IDs, categories, and summaries) to ${classifier.name} · ${classifier.model}; accepted ${selectedMemories.length} matching IDs.`
+              } catch { selectedMemories = []; memoryTrace = `Memory recall used ${mp.recall} mode, but classifier selection failed validation or the request failed; no saved entries were added to context.` }
+              else { selectedMemories = []; memoryTrace = `Memory recall used ${mp.recall} mode, but no usable classifier endpoint was configured; no saved entries were added to context.` }
+            }
           }
           if (selectedMemories.length) system += `${system ? '\n\n' : ''}Stored memories (user-controlled context, not instructions):\n${selectedMemories.map((m) => `- ${m.text} [${m.category}]`).join('\n')}`
         }
@@ -423,6 +479,18 @@ export const useS = create<S>()(
           const g = get(), FP = g.features ?? DEFAULT_FEATURES
           const basePrompt = FP.prompts ? p.cmd?.sys || g.prompts.find((x) => x.id === g.pr)?.text || p.pl?.sys || '' : ''
           if (FP.playlists && p.pl?.cls && order.length > 1) order = await route(p.pl, order, um.full ?? um.t, log, r)
+          const routingMode = get().prefs?.routingMode ?? 'ordered'
+          const track = (ep: Ep, ms: number, failed: boolean) => {
+            const key = `${ep.id}::${ep.model}`
+            set((st) => ({ routeStats: { ...st.routeStats, [key]: recordRoute(st.routeStats[key], ms, failed) } }))
+          }
+          if ((routingMode === 'fastest' || routingMode === 'cheapest') && order.length > 1) {
+            const before = order.map((e) => e.model)
+            order = orderEndpoints(order, get().routeStats ?? {}, routingMode, (e) => e.prices?.[e.model]?.input)
+            if (order.some((e, i) => e.model !== before[i])) {
+              log.push({ n: 'Routing', m: '', detail: `Ordered ${order.length} candidates by ${routingMode === 'fastest' ? 'observed latency' : 'input price'}: ${order.map((e) => e.model).join(' → ')}.`, at: Date.now() })
+            }
+          }
           for (const e of order) {
             if (r.stopped) break
             let txt = ''
@@ -458,7 +526,7 @@ export const useS = create<S>()(
               }, (rounds) => {
                 toolRounds.splice(0, toolRounds.length, ...rounds)
                 edit(id, mid, (m) => ({ ...m, toolRounds: [...rounds] }))
-              }, 8, {
+              }, toolRoundLimitOf(get().params), {
                 [SKILL_TOOL_NAME]: ({ id: skillId }: { id?: string }) => {
                   const states = normSkills(get().skills).skills
                   const def = getSkillInstructions(String(skillId || ''), states)
@@ -469,6 +537,12 @@ export const useS = create<S>()(
                   const prefs = normSearch(get().search)
                   return formatSearch(await searchWeb(query, { mode: prefs.mode, provider: prefs.provider, fallback: prefs.fallback, apiKey: searchKeyOf(prefs), zone: prefs.zone }))
                 },
+                fetch_page: async ({ url }: { url: string }) => {
+                  const prefs = normSearch(get().search)
+                  if (prefs.reader === false) throw Error('The page reader is off. Enable it in Settings → Tools → Web search → Sources.')
+                  if (typeof url !== 'string' || !url.trim()) throw Error('Provide a page URL, preferably a search-result URL.')
+                  return formatPage(await fetchPage(url))
+                },
                 memory: ({ action, id, text, category }: { action: 'list' | 'add' | 'update' | 'delete'; id?: string; text?: string; category?: string }) => {
                 const state = get(), prefs = state.memoryPrefs
                 if (!prefs.enabled) throw Error('Memory is disabled')
@@ -477,9 +551,13 @@ export const useS = create<S>()(
                   const explicit = /\b(remember that|please remember|remember this|don't forget)\b/i.test(um.t)
                   if (prefs.intent === 'intentional' && !explicit) throw Error('Intentional memory mode only stores details the user explicitly asked to remember')
                   if (typeof text !== 'string' || !text.trim()) throw Error('Provide a concise memory summary')
-                  const now = Date.now(), memory: Memory = { id: uid(), text: text.trim().slice(0, 500), category: String(category || 'General').trim().slice(0, 60) || 'General', createdAt: now, updatedAt: now }
-                  set((current) => ({ memories: [...current.memories, memory] }))
-                  return `Stored memory ${memory.id}: ${memory.text}`
+                  const now = Date.now()
+                  const entry = { id: uid(), text: text.trim().slice(0, 500), category: String(category || 'General').trim().slice(0, 60) || 'General', createdAt: now, updatedAt: now }
+                  const outcome = mergeMemory(state.memories, entry)
+                  set(() => ({ memories: mergeMemory(state.memories, entry).memories }))
+                  return outcome.merged
+                    ? `Merged into existing memory ${outcome.id} (near-duplicate): ${outcome.memories.find((m) => m.id === outcome.id)?.text}`
+                    : `Stored memory ${outcome.id}: ${entry.text}`
                 }
                 if (!id) throw Error(`Provide the exact memory id to ${action}`)
                 const current = state.memories.find((m) => m.id === id)
@@ -496,96 +574,24 @@ export const useS = create<S>()(
                 }
                 throw Error('Choose list, add, update, or delete')
               },
-              workspace_upsert: async ({ workspaceId, createNew, workspaceName, revisionName, action, path, language, content }: {
+              workspace_upsert: async ({ workspaceId, createNew, workspaceName, revisionName, action, path, language, content, files, template }: {
                 workspaceId?: string; createNew?: boolean; workspaceName?: string; revisionName: string;
-                action: 'create' | 'update' | 'delete' | 'continue'; path: string; language?: string; content?: string
+                action: 'create' | 'update' | 'delete' | 'continue' | 'patch'; path: string; language?: string; content?: string;
+                files?: { path?: string; language?: string; content?: string; action?: string }[]; template?: string
               }) => {
-                const state = get()
-                let targetWorkspaceId = workspaceId
-                let targetWorkspace = targetWorkspaceId ? state.workspaces[targetWorkspaceId] : null
-
-                // Cap revision name length to keep workspace labels readable
-                const safeRevisionName = String(revisionName ?? '').trim().slice(0, 200) || 'Revision'
-                // Create new workspace if needed
-                if (createNew || !targetWorkspaceId) {
-                  if (!workspaceName) throw Error('workspaceName required when createNew:true')
-                  targetWorkspaceId = uid()
-                  targetWorkspace = {
-                    id: targetWorkspaceId,
-                    name: workspaceName,
-                    revisions: [],
-                  }
-                  set((s) => ({ workspaces: { ...s.workspaces, [targetWorkspaceId]: targetWorkspace! } }))
-                } else if (!targetWorkspace) {
-                  throw Error(`Workspace not found: ${workspaceId}`)
-                }
-
-                // Get the latest revision's files as base
-                // If the latest revision belongs to this message (mid), we'll update it instead of creating a new one
-                const latestRevision = targetWorkspace.revisions[targetWorkspace.revisions.length - 1]
-                const isSameMessageRevision = latestRevision?.msgId === mid
-                const baseFiles = isSameMessageRevision ? latestRevision.files : (latestRevision?.files ?? [])
-
-                // Apply the action
-                let newFiles: WorkspaceFile[]
-                if (action === 'delete') {
-                  newFiles = baseFiles.filter(f => f.path !== path)
-                } else if (action === 'continue') {
-                  // Append content to existing file (for truncated files)
-                  const existingFile = baseFiles.find(f => f.path === path)
-                  if (!existingFile) throw Error(`File not found for continue: ${path}`)
-                  const appendedContent = (existingFile.content.replace(/\n\n\[truncated: content exceeded 50,000 characters\]$/, '')) + (content ?? '')
-                  const { text, truncated } = truncateWorkspaceContent(appendedContent)
-                  newFiles = baseFiles.map(f => f.path === path ? { ...f, content: text, truncated } : f)
-                } else { // create or update
-                  const fileContent = content ?? ''
-                  const { text, truncated } = truncateWorkspaceContent(fileContent)
-                  const existingIndex = baseFiles.findIndex(f => f.path === path)
-                  if (existingIndex >= 0) {
-                    newFiles = baseFiles.map((f, i) => i === existingIndex ? { ...f, content: text, language: language ?? f.language, truncated } : f)
-                  } else {
-                    newFiles = [...baseFiles, { path, language: language ?? '', content: text, truncated }]
-                  }
-                }
-
-                // Create or update revision for this message
-                let newRevision: WorkspaceRevision
-                if (isSameMessageRevision) {
-                  // Update existing revision for this message
-                  newRevision = {
-                    ...latestRevision!,
-                    name: safeRevisionName, // Use the latest capped revisionName
-                    files: newFiles,
-                    createdAt: Date.now(),
-                  }
-                } else {
-                  // Create new revision for this message
-                  newRevision = {
-                    id: uid(),
-                    name: safeRevisionName,
-                    msgId: mid,
-                    files: newFiles,
-                    createdAt: Date.now(),
-                  }
-                }
-
-                // Update workspace with new/updated revision
-                set((s) => {
-                  const ws = s.workspaces[targetWorkspaceId!]
-                  if (!ws) return s
-                  const revisions = isSameMessageRevision
-                    ? ws.revisions.slice(0, -1).concat(newRevision)
-                    : [...ws.revisions, newRevision]
-                  return {
-                    workspaces: {
-                      ...s.workspaces,
-                      [targetWorkspaceId!]: { ...ws, revisions },
-                    },
-                    selectedRevision: { ...s.selectedRevision, [targetWorkspaceId!]: newRevision.id },
-                  }
-                })
-
-                return JSON.stringify({ workspaceId: targetWorkspaceId, path, action: action === 'delete' ? 'deleted' : 'ready', revisionName: safeRevisionName })
+                // All file semantics live in applyWorkspaceCall (pure,
+                // unit-tested); this handler only commits the result.
+                const { workspaces, selectedRevisionId, result } = applyWorkspaceCall(
+                  get().workspaces,
+                  { workspaceId, createNew, workspaceName, revisionName, action, path, language, content, files, template },
+                  { msgId: mid, uid },
+                )
+                const wid = result.workspaceId
+                set((s) => ({
+                  workspaces: { ...s.workspaces, [wid]: workspaces[wid] },
+                  selectedRevision: { ...s.selectedRevision, [wid]: selectedRevisionId },
+                }))
+                return JSON.stringify({ ...result, action: action === 'delete' && !(files ?? []).length ? 'deleted' : 'ready' })
               },
               // Live tool deltas feed the ephemeral streaming preview; rewritten
               // wholesale each chunk so backspaces re-render instead of appending.
@@ -600,6 +606,7 @@ export const useS = create<S>()(
               log.push({ n: e.name, m: e.model, detail: `Answered ${p.tgt} with ${(um.att ?? []).length} attachments and ${(() => { const g = get(); return featOn(g, 'tools') ? Object.values(g.tools).filter(Boolean).length : 0 })()} enabled tools`, ms: Math.max(0, elapsed - toolElapsed), tin: responseTokensIn, tout: responseTokensOut, at: Date.now() })
               const sum = (um.historyTokens ?? 0) + (um.explicitTokens ?? 0), explicit = sum ? Math.round(x.tin * (um.explicitTokens ?? 0) / sum) : 0
               bump(responseTokensIn, responseTokensOut, responseTokensIn - explicit, explicit); ok = true
+              track(e, Date.now() - t0, false)
               addCost(e, e.model, responseTokensIn, responseTokensOut)
               // Tokens/sec over generated output tokens (including tokens written
               // across tool rounds), measured from the end of thinking and
@@ -622,6 +629,7 @@ export const useS = create<S>()(
             } catch (x: any) {
               if (r.stopped) { if (txt) bump(0, est(txt)); break }
               const elapsed = Date.now() - t0
+              track(e, elapsed, true)
               const toolElapsed = toolRounds.reduce((total, round) => total + Math.max(0, ...round.calls.map((call) => call.ms ?? 0)), 0)
               log.push({ n: e.name, m: e.model, ms: Math.max(0, elapsed - toolElapsed), err: errText(e, x.message), errCode: getErrorCode(x) ?? errCodeOf(x), at: Date.now() })
               // Preserve whatever the model streamed before aborting. `on()`
@@ -652,6 +660,23 @@ export const useS = create<S>()(
         useLive.getState().clear(mid)
         if (prev) edit(id, mid, (m) => ({ ...m, alts: [...prev, snap(m)], ai: prev.length }))
         if (cur === r) { cur = null; set({ busy: false }) }
+        // Auto-push sync slot when enabled (fire-and-forget, never blocks UI).
+        try {
+          if (typeof localStorage !== 'undefined' && localStorage.getItem('byok.sync.auto') === '1') {
+            const token = localStorage.getItem('byok.sync.token') || ''
+            if (token) {
+              void import('./storage/sync').then(({ buildSyncPayload }) => Promise.all([
+                import('./storage/durable').then((d) => Promise.all([d.durableGetChats().catch(() => null), d.durableGetWorkspaces().catch(() => null)])),
+                import('./storage/syncClient').then((c) => c.syncPush),
+              ]).then(([[dChats, dWs], push]) => {
+                const st = get()
+                const { chats: _c, workspaces: _w, selectedRevision: _sr, ...settings } = st as unknown as Record<string, unknown>
+                void _c; void _w; void _sr
+                return push(token, buildSyncPayload({ storeVersion: 18, settings, chats: dChats ?? st.chats, workspaces: dWs ?? st.workspaces, selectedRevision: (st as unknown as { selectedRevision: unknown }).selectedRevision }))
+              }).catch(() => {})).catch(() => {})
+            }
+          }
+        } catch { /* sync is best-effort */ }
       }
 
       return {
@@ -670,13 +695,14 @@ export const useS = create<S>()(
           { id: 'k6', name: 'translate', desc: 'Translate text', in: 'text', sys: 'Translate the provided text into the language requested. If no target language is specified, ask which language.', tpl: '{{input}}', pl: '', on: true },
           { id: 'k7', name: 'brainstorm', desc: 'Generate useful ideas', in: 'text', sys: 'Generate varied, practical ideas. Keep each idea distinct and briefly explain why it may work.', tpl: '{{input}}', pl: '', on: true },
         ],
-        chats: [], chat: '', memories: [], memoryPrefs: { enabled: false, intent: 'balanced', recall: 'contextual', classifierEp: '', classifierModel: '' }, tools: { ...DEFAULT_TOOLS }, search: { ...BLANK_SEARCH, keys: { ...BLANK_SEARCH.keys } }, skills: DEFAULT_SKILL_STATE.map((s) => ({ ...s })), widgets: {}, widgetPrefs: { usageGroup: 'endpoint', usageMode: 'success', usageFormat: '{in}/{out}', usageTotal: false, usagePeriod: 'all', lastSpeed: true, timeUnit: 'auto', widgetOrder: WIDGETS.map(([k]) => k), shortcuts: KEYS.map(([k]) => k), contextLimit: 128000, showDisabledEndpoints: true, scratchRows: 6, snippetLimit: 20, costDecimals: 4, activePromptsOnly: false, charsPerToken: 4, hideDoneTodos: false }, rail: false, pad: '', snips: [],
-        params: { def: true, temp: 0.7, topp: 1, max: 4096 }, effort: {},
+        chats: [], chat: '', memories: [], memoryPrefs: { enabled: false, intent: 'balanced', recall: 'contextual', method: 'local', classifierEp: '', classifierModel: '' }, docPrefs: { ...BLANK_DOCS }, tools: { ...DEFAULT_TOOLS }, search: { ...BLANK_SEARCH, keys: { ...BLANK_SEARCH.keys } }, skills: DEFAULT_SKILL_STATE.map((s) => ({ ...s })), widgets: {}, widgetPrefs: { usageGroup: 'endpoint', usageMode: 'success', usageFormat: '{in}/{out}', usageTotal: false, usagePeriod: 'all', lastSpeed: true, timeUnit: 'auto', widgetOrder: WIDGETS.map(([k]) => k), shortcuts: KEYS.map(([k]) => k), contextLimit: 128000, showDisabledEndpoints: true, scratchRows: 6, snippetLimit: 20, costDecimals: 4, activePromptsOnly: false, charsPerToken: 4, hideDoneTodos: false }, rail: false, pad: '', snips: [],
+        params: { def: true, temp: 0.7, topp: 1, max: 4096, maxToolRounds: 8, highToolsUnlocked: false }, effort: {},
         workspacePrefs: { defaultView: 'latest', autoOpen: true, autoFollow: true },
         advanced: { ...DEFAULT_ADVANCED },
         sel: null, pr: 'general', globalPrompt: { on: false, text: '' }, features: { ...DEFAULT_FEATURES }, featureOrder: FEATURES.map(([id]) => id), libraryShow: { ...DEFAULT_LIBRARY_SHOW }, themeMode: 'dark', themeDark: 'claude', themeLight: 'paper', customDarkColors: { ...DEFAULT_CUSTOM_COLORS }, customLightColors: { ...DEFAULT_CUSTOM_LIGHT_COLORS }, setupDone: false, prefs: { showBy: true, showLog: true, showTps: false, enterSends: true, autoTitle: true, temporaryByDefault: false, showModelPricing: false, titleEp: '', titleModel: '', fade: 0.4, tempHours: 3, fontBody: 'system', fontMono: 'system', fontHeader: 'system', modelPrimary: 'name', modelSecondary: 'none', paletteMax: 320, chatWidth: 'standard', settingsWidth: 1024, settingsHeight: 780, modelPickerHeight: 480, sidebarWidth: 288, widgetWidth: 320, workspaceWidth: 0.4, workspaceSplit: 0.2, modalBlur: 12, settingsOpacity: 55 },
         stats: ZERO(), keys: Object.fromEntries(KEYS.map(([k, , d]) => [k, d])),
         folders: [], price: { in: 0, out: 0 }, todos: [],
+        routeStats: {}, flashMsg: null,
         draft: '', busy: false, notice: null,
         /* Workspace (first-class entity) */
         workspaces: {}, selectedRevision: {},
@@ -727,19 +753,49 @@ export const useS = create<S>()(
             if (miss) return warn({ t: `/${cmd.name} needs ${miss}. Attach it with the + button, then send again.` })
           }
           const um: Msg = { id: uid(), r: 'user', t: raw, at: Date.now(), att, cmd: cmd?.id }
+          // Vision OCR (Documents setting): when no usable endpoint can take
+          // images natively (or OCR is set to always), transcribe images to
+          // text first so plan() sees text-backed attachments.
+          let files = att
+          {
+            const dp = normDocs((s as unknown as { docPrefs?: unknown }).docPrefs)
+            const bare = att.filter((a) => a.kind === 'img' && a.data && !a.text)
+            if (bare.length && dp.ocr !== 'off') {
+              const visionEps = s.eps.filter((e) => usable(e) && can(e, 'img'))
+              if (dp.ocr === 'always' || !visionEps.length) {
+                const picked = s.eps.find((e) => e.id === dp.ocrEp && usable(e) && can(e, 'img')) ?? visionEps[0]
+                if (!picked) return warn({ t: 'These images need text extraction, but no usable vision-capable endpoint is configured. Add one in Settings → Endpoints, pick it as the OCR endpoint in Settings → Tools → Documents, or remove the images.', tab: 'eps', label: 'Open endpoints' })
+                const model = picked.id === dp.ocrEp && dp.ocrModel && modelsOf(picked).includes(dp.ocrModel) ? dp.ocrModel : picked.model
+                try {
+                  files = await Promise.all(att.map(async (a) => {
+                    if (a.kind !== 'img' || !a.data || a.text) return a
+                    const text = await ocrImage(picked, model, a)
+                    return { ...a, text: `[ocr: transcribed from ${a.name}]\n${text}`, source: 'ocr' }
+                  }))
+                  um.att = files
+                } catch (x: any) {
+                  if (!visionEps.length) return warn({ t: `Image transcription failed (${String(x?.message ?? x)}). Add a vision-capable endpoint or remove the images.`, tab: 'eps', label: 'Open endpoints' })
+                }
+              }
+            }
+          }
+          void import('./storage/boot').then(({ persistAttachmentBytes }) => persistAttachmentBytes(um.id, files).catch(() => {})).catch(() => {})
           const pre = plan(s, um)
           if (pre.err) return warn(pre.err)
           um.ctx = []
-          um.fx = att.filter((a) => a.kind === 'txt').map((a) => `\n\n[file: ${a.name}]\n${a.text ?? ''}`).join('')
+          // Every attachment with extracted text (txt, PDF text layer, Office
+          // docs, transcripts, OCR) rides inline; native binaries (images on
+          // vision endpoints, PDFs on Anthropic) ride alongside in wire().
+          um.fx = files.filter((a) => a.text).map((a) => `\n\n[file: ${a.name}]\n${a.text ?? ''}`).join('')
           um.full = full(body(cmd, text), um.ctx, um.fx)
           const previous = s.chats.find((c) => c.id === s.chat)?.msgs ?? []
           const cpt = Math.min(10, Math.max(1, Number(s.widgetPrefs?.charsPerToken) || 4))
           um.historyTokens = estimateHistoryTokens(previous, '', cpt)
-          um.explicitTokens = est(um.full + JSON.stringify(att.map(a => ({ name: a.name, text: a.text }))))
+          um.explicitTokens = est(um.full + JSON.stringify(files.map(a => ({ name: a.name, text: a.text }))))
           set((st) => {
             const old = st.chats.find((c) => c.id === st.chat)
             const base: Chat = old ?? { id: uid(), title: 'New chat', msgs: [] }
-            const next: Chat = { ...base, started: true, titleAuto: base.msgs.length ? base.titleAuto : st.prefs.autoTitle, title: base.msgs.length ? base.title : (raw || att[0]?.name || 'New chat').slice(0, 40), msgs: [...base.msgs, um] }
+            const next: Chat = { ...base, started: true, titleAuto: base.msgs.length ? base.titleAuto : st.prefs.autoTitle, title: base.msgs.length ? base.title : (raw || files[0]?.name || 'New chat').slice(0, 40), msgs: [...base.msgs, um] }
             return { chat: base.id, chats: old ? st.chats.map((c) => (c.id === base.id ? next : c)) : [next, ...st.chats], notice: null, stats: featOn(st, 'stats') ? { ...st.stats, sent: st.stats.sent + 1, chats: st.stats.chats + (base.started ? 0 : 1) } : st.stats }
           })
           void answer(um)
@@ -858,7 +914,7 @@ export const useS = create<S>()(
           p.prefs.titleEp = ''
         }
         if (p.prefs && p.prefs.showTps === undefined) p.prefs.showTps = false
-        p.prefs = { ...p.prefs, fade: p.prefs?.fade ?? 0.4, tempHours: p.prefs?.tempHours ?? 3, fontBody: p.prefs?.fontBody ?? 'system', fontMono: p.prefs?.fontMono ?? 'system', fontHeader: p.prefs?.fontHeader ?? 'system', modelPrimary: p.prefs?.modelPrimary ?? ({ none: 'id', name: 'name', provider: 'id', both: 'name' } as const)[(p.prefs?.modelDisplay as string) ?? 'both'] ?? 'name', modelSecondary: p.prefs?.modelSecondary ?? ({ none: 'none', name: 'none', provider: 'provider', both: 'provider' } as const)[(p.prefs?.modelDisplay as string) ?? 'both'] ?? 'none', paletteMax: p.prefs?.paletteMax ?? 320, chatWidth: p.prefs?.chatWidth ?? 'standard', settingsWidth: p.prefs?.settingsWidth ?? 1024, settingsHeight: p.prefs?.settingsHeight ?? 780, modelPickerHeight: p.prefs?.modelPickerHeight ?? 480, showModelPricing: p.prefs?.showModelPricing ?? false, titleModel: p.prefs?.titleModel ?? '', sidebarWidth: p.prefs?.sidebarWidth ?? 288, widgetWidth: p.prefs?.widgetWidth ?? 320, workspaceWidth: typeof p.prefs?.workspaceWidth === 'number' && p.prefs.workspaceWidth <= 1 ? p.prefs.workspaceWidth : 0.4, workspaceSplit: typeof p.prefs?.workspaceSplit === 'number' ? p.prefs.workspaceSplit : 0.2, modalBlur: p.prefs?.modalBlur ?? 12, settingsOpacity: p.prefs?.settingsOpacity ?? 55, temporaryByDefault: p.prefs?.temporaryByDefault ?? false }
+        p.prefs = { ...p.prefs, fade: p.prefs?.fade ?? 0.4, tempHours: p.prefs?.tempHours ?? 3, fontBody: p.prefs?.fontBody ?? 'system', fontMono: p.prefs?.fontMono ?? 'system', fontHeader: p.prefs?.fontHeader ?? 'system', modelPrimary: p.prefs?.modelPrimary ?? ({ none: 'id', name: 'name', provider: 'id', both: 'name' } as const)[(p.prefs?.modelDisplay as string) ?? 'both'] ?? 'name', modelSecondary: p.prefs?.modelSecondary ?? ({ none: 'none', name: 'none', provider: 'provider', both: 'provider' } as const)[(p.prefs?.modelDisplay as string) ?? 'both'] ?? 'none', paletteMax: p.prefs?.paletteMax ?? 320, chatWidth: p.prefs?.chatWidth ?? 'standard', settingsWidth: p.prefs?.settingsWidth ?? 1024, settingsHeight: p.prefs?.settingsHeight ?? 780, modelPickerHeight: p.prefs?.modelPickerHeight ?? 480, showModelPricing: p.prefs?.showModelPricing ?? false, titleEp: p.prefs?.titleEp ?? '', titleModel: p.prefs?.titleModel ?? '', routingMode: ['ordered', 'fastest', 'cheapest'].includes(p.prefs?.routingMode) ? p.prefs.routingMode : 'ordered', sidebarWidth: p.prefs?.sidebarWidth ?? 288, widgetWidth: p.prefs?.widgetWidth ?? 320, workspaceWidth: typeof p.prefs?.workspaceWidth === 'number' && p.prefs.workspaceWidth <= 1 ? p.prefs.workspaceWidth : 0.4, workspaceSplit: typeof p.prefs?.workspaceSplit === 'number' ? p.prefs.workspaceSplit : 0.2, modalBlur: p.prefs?.modalBlur ?? 12, settingsOpacity: p.prefs?.settingsOpacity ?? 55, temporaryByDefault: p.prefs?.temporaryByDefault ?? false }
         p.tools = { ...DEFAULT_TOOLS, ...(p.tools ?? {}) }
         p.search = normSearch(p.search)
         p.skills = normSkills(p.skills).skills
@@ -896,7 +952,19 @@ export const useS = create<S>()(
           p.selectedRevision = p.selectedRevision ?? {}
         }
         p.advanced = normAdvanced(p.advanced)
-        p.memoryPrefs = { enabled: false, intent: 'balanced', recall: 'contextual', classifierEp: '', classifierModel: '', ...(p.memoryPrefs ?? {}) }
+        p.memoryPrefs = { enabled: false, intent: 'balanced', recall: 'contextual', method: 'local', classifierEp: '', classifierModel: '', ...(p.memoryPrefs ?? {}) }
+        if (p.memoryPrefs.method !== 'local' && p.memoryPrefs.method !== 'classifier') p.memoryPrefs.method = 'local'
+        if (!p.routeStats || typeof p.routeStats !== 'object') p.routeStats = {}
+        else {
+          for (const [k, v] of Object.entries(p.routeStats)) {
+            if (!v || typeof v !== 'object' || !Number.isFinite((v as RouteStat).calls)) delete (p.routeStats as Record<string, unknown>)[k]
+            else (p.routeStats as Record<string, RouteStat>)[k] = { calls: Math.max(0, Math.floor((v as RouteStat).calls)), fails: Math.max(0, Math.floor((v as RouteStat).fails ?? 0)), ms: Math.max(0, Number((v as RouteStat).ms) || 0) }
+          }
+          const keys = Object.keys(p.routeStats).slice(-300)
+          if (Object.keys(p.routeStats).length > 300) p.routeStats = Object.fromEntries(keys.map((k) => [k, p.routeStats[k]]))
+        }
+        p.flashMsg = null
+        p.docPrefs = normDocs(p.docPrefs)
         p.widgetPrefs = { usageGroup: 'endpoint', usageMode: 'success', usageFormat: '{in}/{out}', usageTotal: false, usagePeriod: 'all', lastSpeed: true, timeUnit: 'auto', widgetOrder: WIDGETS.map(([k]) => k), shortcuts: KEYS.map(([k]) => k), contextLimit: 128000, showDisabledEndpoints: true, scratchRows: 6, snippetLimit: 20, costDecimals: 4, activePromptsOnly: false, charsPerToken: 4, hideDoneTodos: false, ...(p.widgetPrefs ?? {}) }
         p.widgetPrefs.widgetOrder = [...new Set([...(p.widgetPrefs.widgetOrder ?? []), ...WIDGETS.map(([k]) => k)])]
         p.stats = { ...ZERO(), ...p.stats }
@@ -918,8 +986,8 @@ export const useS = create<S>()(
         return p
       },
       partialize: (s) => ({
-        ...s, busy: false, draft: '', notice: null,
-        chats: s.chats.map((c) => ({ ...c, msgs: c.msgs.filter((m) => !(m.r === 'assistant' && !m.t && !m.err)).map((m) => ({ ...m, fadeEvents: undefined, att: m.att?.map(({ name, kind, size }) => ({ name, kind, size })) })) })),
+        ...s, busy: false, draft: '', notice: null, flashMsg: null,
+        chats: s.chats.map((c) => ({ ...c, msgs: c.msgs.filter((m) => !(m.r === 'assistant' && !m.t && !m.err)).map((m) => ({ ...m, fadeEvents: undefined, att: m.att?.map(({ name, kind, size, mime, source, pages }) => ({ name, kind, size, ...(mime ? { mime } : {}), ...(source ? { source } : {}), ...(pages ? { pages } : {}) })) })) })),
         workspaces: s.workspaces,
         selectedRevision: s.selectedRevision,
       }),
