@@ -17,7 +17,7 @@
 
 /* c2..c5 are the syntax colors for strings, numbers, titles and types in each theme */
 [data-t=plum] { color-scheme: dark; --bg:#17101c; --side:#120c16; --surf:#211828; --hov:#2c2036; --tx:#f3eaf7; --mu:#a893b4; --ac:#dc8ad8; --acx:#1b1020; --er:#ff8fa3; --code:#100b15; --codeh:#2f2040; --c2:#9fe3c5; --c3:#f2b98b; --c4:#8fb9ff; --c5:#c7a6ff }
-[data-t=graphite] { color-scheme: dark; --bg:#141414; --side:#0e0e0e; --surf:#1e1e1e; --hov:#292929; --tx:#ececec; --mu:#979797; --ac:#8ab4f8; --acx:#0f1624; --er:#ff8a80; --code:#0a0a0a; --codeh:#262626; --c2:#a6d9a6; --c3:#efb27c; --c4:#e8c47f; --c5:#c0a6ff }
+[data-t=claude] { color-scheme: dark; --bg:#171513; --side:#1D1A17; --surf:#2B2621; --hov:#3B332C; --tx:#F3EAE0; --mu:#C6B7A8; --ac:#D97757; --acx:#211A16; --er:#D98278; --code:#24201C; --codeh:#332C26; --c2:#91A987; --c3:#D8AC70; --c4:#91AAA9; --c5:#A39485 }
 [data-t=paper] { color-scheme: light; --bg:#fbfbf9; --side:#f1f1ec; --surf:#efefe9; --hov:#e4e4dc; --tx:#1d1d1b; --mu:#6f6f66; --ac:#3b5bdb; --acx:#ffffff; --er:#c92a2a; --code:#e6e5dd; --codeh:#d3d2c6; --c2:#2b8a3e; --c3:#d9480f; --c4:#7048e8; --c5:#0b7285 }
 [data-t=sepia] { color-scheme: light; --bg:#f6eedd; --side:#ede2ca; --surf:#ebdfc6; --hov:#e1d3b3; --tx:#3b2f1e; --mu:#85734f; --ac:#9c4a1a; --acx:#fff8ea; --er:#a61e1e; --code:#e7dabb; --codeh:#d6c59d; --c2:#547a2b; --c3:#a8571c; --c4:#6b3f9e; --c5:#1f6f6b }
 [data-t=custom] { color-scheme: dark; --bg:#17101c; --side:#120c16; --surf:#211828; --hov:#2c2036; --tx:#f3eaf7; --mu:#a893b4; --ac:#dc8ad8; --acx:#1b1020; --er:#ff8fa3; --code:#100b15; --codeh:#2f2040; --c2:#9fe3c5; --c3:#f2b98b; --c4:#8fb9ff; --c5:#c7a6ff }
@@ -53,8 +53,8 @@
     tri-pulse 2s ease-in-out infinite; }
 /* vertices: A=top, B=bottom-right, C=bottom-left. A->B->C->A is counterclockwise. */
 .reply-dots i:nth-child(1) { animation-delay: 0s, 0s; }
-.reply-dots i:nth-child(2) { animation-delay: -2s, -.666s; }
-.reply-dots i:nth-child(3) { animation-delay: -4s, -1.333s; }
+.reply-dots i:nth-child(2) { animation-delay: -2s, -1.333s; }
+.reply-dots i:nth-child(3) { animation-delay: -4s, -0.666s; }
 @keyframes tri-pulse { 0%, 100% { opacity:.65; transform:scale(.92); } 50% { opacity:.95; transform:scale(1.05); } }
 /* 6s cycle = 3 x (1.5s hold + 0.5s move). Moves use easing via per-keyframe timing. */
 @keyframes tri-orbit {

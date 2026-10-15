@@ -44,11 +44,12 @@ function ModelMenu({ close, cfg }: { close: () => void; cfg: (t: string) => void
             : <>
               <div className="px-3 pb-1 pt-2 text-xs font-semibold uppercase tracking-wide text-mu">{x.name}</div>
               {modelsOf(x).map((model) => {
-                const showName = s.prefs.modelDisplay === 'name' || s.prefs.modelDisplay === 'both'
-                const showProvider = s.prefs.modelDisplay === 'provider' || s.prefs.modelDisplay === 'both'
+                const primary = s.prefs.modelPrimary ?? 'name'
+                const secondary = s.prefs.modelSecondary ?? 'none'
                 const alias = modelNameOf(x, model)
-                const title = (s.prefs.modelDisplay === 'provider' ? x.name : s.prefs.modelDisplay === 'none' ? model : alias).replace(/^~+/, '')
-                return <Item key={model} icon={Cpu} off={x.on === false} on={s.sel?.id === x.id && s.sel.model === model} sub={s.prefs.modelDisplay === 'both' ? x.name : ''} onClick={() => { s.patch({ sel: { k: 'ep', id: x.id, model } }); close() }}>{title}</Item>
+                const title = (primary === 'name' ? alias : model).replace(/^~+/, '')
+                const sub = secondary === 'provider' ? x.name : secondary === 'none' || secondary === primary ? '' : (secondary === 'name' ? alias : model).replace(/^~+/, '')
+                return <Item key={model} icon={Cpu} off={x.on === false} on={s.sel?.id === x.id && s.sel.model === model} sub={sub} onClick={() => { s.patch({ sel: { k: 'ep', id: x.id, model } }); close() }}>{title}</Item>
               })}
             </>}
         </div>
@@ -84,7 +85,12 @@ export function Composer({ cfg }: { cfg: (t: string) => void }) {
   const add = async (l: FileList | null) => {
     if (!l) return
     const out: Att[] = []
-    for (const f of [...l]) { const r = await readAtt(f); if (typeof r === 'string') s.patch({ notice: { t: r } }); else out.push(r) }
+    let txtChars = att.reduce((a, x) => a + (x.text?.length ?? 0), 0)
+    for (const f of [...l]) {
+      const r = await readAtt(f, txtChars)
+      if (typeof r === 'string') s.patch({ notice: { t: r } })
+      else { out.push(r); txtChars += r.text?.length ?? 0 }
+    }
     setAtt((a) => [...a, ...out])
   }
   const ready = !!v.trim() || att.length > 0

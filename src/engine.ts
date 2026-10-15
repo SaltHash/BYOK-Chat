@@ -1,10 +1,41 @@
 import type { Ep, Att, Msg } from './store'
 import { TOOLS } from './meta'
-import { CANVAS_MAX_CONTENT, CANVAS_TRUNC_MARKER, sanitizePath } from './canvas'
+import { WORKSPACE_MAX_CONTENT, WORKSPACE_TRUNC_MARKER, sanitizePath } from './workspace'
 
 export const est = (s: string) => Math.ceil(s.length / 4)
 export const redact = (e: Ep, s: unknown) => String(s).split(e.key || '\u0000').join('•••').replace(/\b(sk|gsk|pk|xai|AIza)[-\w]{12,}/g, '•••')
 export const can = (e: Ep, k: 'img' | 'pdf') => k === 'img' || e.type === 'anthropic'
+
+/* ---- Context budgeting ----
+ * wire() used to send the entire chat history unbounded, so long chats fail
+ * with provider context errors. Estimate with the same chars-per-token scale
+ * the context meter uses, then drop oldest-first (always keeping the latest
+ * message) until system + history fits in limit - reserve. */
+export const DEFAULT_CONTEXT_LIMIT = 128000
+export const DEFAULT_CONTEXT_RESERVE = 8000
+export const estimateTokens = (text: string, charsPerToken = 4) =>
+  Math.ceil(String(text ?? '').length / Math.max(1, charsPerToken))
+const msgSize = (m: Msg, charsPerToken: number) =>
+  estimateTokens(JSON.stringify({ t: m.t, full: (m as any).full, fx: (m as any).fx, ctx: (m as any).ctx, att: (m.att ?? []).map((a) => ({ name: a.name, text: (a as any).text ?? '' })), toolRounds: m.toolRounds ?? [] }), charsPerToken)
+export function estimateHistoryTokens(msgs: Msg[], sys = '', charsPerToken = 4): number {
+  return estimateTokens(sys, charsPerToken) + msgs.reduce((a, m) => a + msgSize(m, charsPerToken), 0)
+}
+export function trimHistory(msgs: Msg[], opts: { limit?: number; reserve?: number; charsPerToken?: number; sys?: string } = {}): { msgs: Msg[]; dropped: number; estimated: number; budget: number } {
+  const limit = Math.max(1000, Math.floor(Number(opts.limit) || DEFAULT_CONTEXT_LIMIT))
+  const reserve = Math.max(0, Math.floor(Number(opts.reserve) || 0))
+  const cpt = Math.min(10, Math.max(1, Number(opts.charsPerToken) || 4))
+  const budget = Math.max(1000, limit - reserve)
+  const sys = String(opts.sys ?? '')
+  let estimated = estimateHistoryTokens(msgs, sys, cpt)
+  if (estimated <= budget || msgs.length <= 1) return { msgs, dropped: 0, estimated, budget }
+  // Drop oldest-first, never dropping the latest message (the active request).
+  let start = 0
+  while (start < msgs.length - 1 && estimated > budget) {
+    estimated -= msgSize(msgs[start], cpt)
+    start++
+  }
+  return { msgs: msgs.slice(start), dropped: start, estimated, budget }
+}
 
 /* key bindings */
 export const rec = { on: false }
@@ -61,13 +92,17 @@ export const TOOL_REGISTRY: Record<string, ToolSpec> = {
   } },
   prompt_chip: { description: 'Offer an optional follow-up button when it would help continue the answer. Omit it for simple acknowledgements or urgent requests. Use a short label and a clear follow-up request.', parameters: { type: 'object', properties: { label: textArg('Button label.'), prompt: textArg('Follow-up request to send when selected.') }, required: ['label', 'prompt'], additionalProperties: false }, run: ({ label }) => `Follow-up ready: ${label}` },
   inline_poll: { description: 'Ask a focused multiple-choice question in a custom card below your answer. Use 2–6 concise options as either plain strings or objects with label and prompt. For strings, use the same text as the follow-up prompt. Use mode single or multiple.', parameters: { type: 'object', properties: { question: textArg('The question shown above the choices.'), mode: { type: 'string', enum: ['single', 'multiple'], description: 'Whether the user may choose one option or several.' }, options: { type: 'array', minItems: 2, maxItems: 6, items: { anyOf: [{ type: 'string' }, { type: 'object', properties: { label: textArg('Visible choice label.'), prompt: textArg('Follow-up prompt sent for this choice.') }, required: ['label', 'prompt'], additionalProperties: false }] } } }, required: ['question', 'options'], additionalProperties: false }, run: ({ question }) => `Choice card ready: ${question}` },
-  canvas_upsert: { description: 'Create, update, or delete a downloadable file artifact shown in a side panel beside the chat, with preview and zip download. Before calling, write the file path in your reply text (for example: Writing src/app.py…). Use action create, update, or delete, a relative path such as src/app.py, a language such as python, and the full file content. Keep each file under 50,000 characters and use at most 8 files per reply.', parameters: { type: 'object', properties: { action: { type: 'string', enum: ['create', 'update', 'delete'], description: 'File action.' }, path: textArg('Relative path inside the download bundle, e.g. src/app.py.'), language: textArg('Programming language for syntax highlighting, e.g. python.'), content: textArg('Full file content. Omitted for delete.'), label: textArg('Optional short label for the file.') }, required: ['action', 'path'], additionalProperties: false }, run: ({ action, path, content }) => {
-    if (action !== 'create' && action !== 'update' && action !== 'delete') throw Error('action must be create, update, or delete')
+  workspace_upsert: { description: 'Create, update, or delete a file artifact in a Workspace (preview shown beside the reply, with versioning and a dedicated download button). Do not give download links in your text — use the panel button instead. Before calling, write the file path in your reply text (for example: Writing src/app.py…). Provide workspaceId to append to an existing workspace, or createNew with workspaceName to start a new one. Always supply a human-readable revisionName (e.g. "Add auth form"). When naming a workspace, prefer readability-first names (for example, "Habit Tracker" instead of "habit-tracker"). Action: create, update, delete, or continue (appends to a truncated file).', parameters: { type: 'object', properties: { workspaceId: textArg('Existing workspace ID to append to.'), createNew: { type: 'boolean', description: 'Create a new workspace (requires workspaceName).' }, workspaceName: textArg('Name for the new workspace (required if createNew).'), revisionName: textArg('Human-readable name for this revision, e.g. "Add auth form". Required.'), action: { type: 'string', enum: ['create', 'update', 'delete', 'continue'], description: 'File action.' }, path: textArg('Relative path inside the download bundle, e.g. src/app.py.'), language: textArg('Programming language for syntax highlighting, e.g. python.'), content: textArg('Full file content. Omitted for delete.') }, required: ['revisionName', 'action', 'path'], additionalProperties: false }, run: ({ action, path, content, workspaceId, createNew, workspaceName, revisionName }) => {
+    if (action !== 'create' && action !== 'update' && action !== 'delete' && action !== 'continue') throw Error('action must be create, update, delete, or continue')
+    if (!workspaceId && !createNew) throw Error('Must provide workspaceId or createNew:true')
+    if (createNew && !workspaceName) throw Error('workspaceName required when createNew:true')
+    if (!revisionName) throw Error('revisionName is required')
     const p = sanitizePath(path)
+    if (!p || p === 'file.txt') throw Error('path resolved to an invalid or empty name after sanitization')
     let body = typeof content === 'string' ? content : ''
-    if (body.length > CANVAS_MAX_CONTENT) body = body.slice(0, CANVAS_MAX_CONTENT) + CANVAS_TRUNC_MARKER
+    if (body.length > WORKSPACE_MAX_CONTENT) body = body.slice(0, WORKSPACE_MAX_CONTENT) + WORKSPACE_TRUNC_MARKER
     void body
-    return action === 'delete' ? `Canvas deleted: ${p}` : `Canvas ready: ${p}`
+    return JSON.stringify({ status: action === 'delete' ? 'deleted' : 'ready', path: p, action })
   } },
 }
 
@@ -130,14 +165,32 @@ export function shouldSearchWeb(text: string) {
 }
 /* attachments */
 const sz = (n: number) => (n < 1e6 ? Math.ceil(n / 1e3) + ' KB' : (n / 1e6).toFixed(1) + ' MB')
-export async function readAtt(f: File): Promise<Att | string> {
-  const img = f.type.startsWith('image/'), pdf = f.type === 'application/pdf'
-  const txt = /^text\/|json|xml|javascript|yaml/.test(f.type) || /\.(txt|md|csv|json|jsx?|tsx?|py|html|css|xml|ya?ml|log|toml|sh|sql|rs|go|java|cpp?|h)$/i.test(f.name)
-  if (!img && !pdf && !txt) return `${f.name}: unsupported type (${f.type || 'unknown'}). Attach images, PDFs or text files.`
+export const ATT_TXT_LIMIT = 200000
+export const ATT_TOTAL_TXT_BUDGET = 500000
+const TXT_EXT = /\.(txt|md|markdown|csv|tsv|json|jsonl|jsx?|tsx?|py|html?|css|scss|xml|ya?ml|toml|ini|env|log|sql|sh|rs|go|java|cpp?|h|hpp|rb|php|swift|kt|scala|r|pl|vue|svelte|astro)$/i
+const isTxtFile = (f: File) =>
+  /^text\//.test(f.type) || /json|xml|javascript|yaml|toml|csv/.test(f.type) || TXT_EXT.test(f.name)
+export async function readAtt(f: File, existingTxtChars = 0): Promise<Att | string> {
+  const img = f.type.startsWith('image/'), pdf = f.type === 'application/pdf' || (/\.pdf$/i.test(f.name) && !f.type)
+  // Office binaries, archives, and media cannot be processed: reject with
+  // guidance instead of attaching unreadable bytes. Checked before text
+  // sniffing because e.g. .docx MIME types contain "xml".
+  if (!img && !pdf) {
+    if (/officedocument|msword|ms-excel|ms-powerpoint|opendocument|\.(docx?|xlsx?|pptx?|odt|ods|odp|rtf)$/i.test(f.type + ' ' + f.name))
+      return `${f.name}: Office documents are not processed directly. Export it as PDF or copy the text into a .txt/.md file, then attach that.`
+    if (/^(audio|video)\//.test(f.type) || /\.(mp3|wav|m4a|ogg|flac|mp4|mov|webm|mkv)$/i.test(f.name))
+      return `${f.name}: audio and video are not transcribed in this app. Attach a text transcript instead.`
+    if (/\.zip$|\.tar|\.gz$|\.7z$|^(application\/(zip|x-tar|gzip|x-7z-compressed))/.test(f.type + ' ' + f.name))
+      return `${f.name}: archives are not unpacked. Attach the individual text, image, or PDF files instead.`
+  }
+  if (!img && !pdf && !isTxtFile(f)) {
+    return `${f.name}: unsupported type (${f.type || 'unknown'}). Attach images, PDFs or text files.`
+  }
   if (f.size > 2e7) return `${f.name} is over 20 MB and was not attached.`
-  if (txt && !img) {
+  if (!img && !pdf) {
+    if (existingTxtChars >= ATT_TOTAL_TXT_BUDGET) return `${f.name} was not attached: the message already carries ~${Math.round(existingTxtChars / 1000)}k characters of text files (budget ${ATT_TOTAL_TXT_BUDGET / 1000}k).`
     let t = await f.text()
-    if (t.length > 2e5) t = t.slice(0, 2e5) + '\n[truncated at 200,000 characters]'
+    if (t.length > ATT_TXT_LIMIT) t = t.slice(0, ATT_TXT_LIMIT) + `\n[truncated at ${ATT_TXT_LIMIT.toLocaleString()} characters]`
     return { name: f.name, kind: 'txt', size: sz(f.size), text: t }
   }
   const d = await new Promise<string>((res) => { const x = new FileReader(); x.onload = () => res(String(x.result)); x.onerror = () => res(''); x.readAsDataURL(f) })
@@ -168,7 +221,12 @@ export function wire(e: Ep, msgs: Msg[]): Wire[] {
     const c: any[] = []
     for (const a of x.att ?? []) {
       if (a.kind === 'txt') continue
-      if (!can(e, a.kind)) { t += `\n[${a.name} omitted: this model cannot process it]`; continue }
+      // PDFs only ride natively on Anthropic document blocks. Everywhere else
+      // they are omitted with a note — never coerced into an image_url, which
+      // providers reject. Unknown kinds are omitted the same way.
+      if (a.kind === 'pdf' && e.type !== 'anthropic') { t += `\n[${a.name} omitted: this model cannot process PDFs; use an Anthropic endpoint or attach the text instead]`; continue }
+      if (a.kind !== 'img' && a.kind !== 'pdf') { t += `\n[${a.name} omitted: this model cannot process it]`; continue }
+      if (!can(e, a.kind as 'img' | 'pdf')) { t += `\n[${a.name} omitted: this model cannot process it]`; continue }
       if (!a.data) { t += `\n[${a.name}: not retained after reload]`; continue }
       c.push(e.type === 'anthropic'
         ? { type: a.kind === 'img' ? 'image' : 'document', source: { type: 'base64', media_type: a.mime, data: a.data } }

@@ -2,7 +2,7 @@ import { useState, type CSSProperties, type DragEvent, type ReactNode } from 're
 import { Gauge, Activity, Layers, StickyNote, Bookmark, Plus, X, CornerDownLeft, Coins, Timer, ScrollText, Keyboard, Type, ListChecks, Check, GripVertical } from 'lucide-react'
 import { useS, modelsOf, uid, widgetOn } from '../store'
 import { fmtDuration, KEYS, WIDGETS } from '../meta'
-import { fmt } from '../engine'
+import { estimateHistoryTokens, fmt } from '../engine'
 import { Btn, cx, type Ic } from './ui'
 
 const W = ({ icon: I, t, id, style, children }: { icon: Ic; t: string; id: string; style?: CSSProperties; children: ReactNode }) => {
@@ -34,7 +34,9 @@ export function Widgets({ width = 320 }: { width?: number }) {
   const w = Object.fromEntries(WIDGETS.map(([k]) => [k, widgetOn(s, k)])) as Record<string, boolean>
   const wp = { contextLimit: 128000, showDisabledEndpoints: true, scratchRows: 6, snippetLimit: 20, costDecimals: 4, activePromptsOnly: false, charsPerToken: 4, hideDoneTodos: false, ...s.widgetPrefs }
   const widgetOrder = [...new Set([...(wp.widgetOrder ?? []), ...WIDGETS.map(([k]) => k)])]
-  const tok = Math.round((c?.msgs.reduce((a, m) => a + m.t.length, 0) ?? 0) / Math.max(1, wp.charsPerToken))
+  const sysLen = (s.globalPrompt?.on ? s.globalPrompt.text : '') + (s.prompts.find((p) => p.id === s.pr)?.text ?? '')
+  const tok = estimateHistoryTokens(c?.msgs ?? [], sysLen, Math.max(1, wp.charsPerToken))
+  const overBudget = tok > wp.contextLimit
   const now = Date.now(), periodStart = wp.usagePeriod === 'session' ? SESSION_START : wp.usagePeriod === 'day' ? now - 86400000 : wp.usagePeriod === 'week' ? now - 7 * 86400000 : wp.usagePeriod === 'custom' ? (wp.usageFrom ? new Date(wp.usageFrom).getTime() : 0) : 0
   const events = s.chats.flatMap((chat) => chat.msgs.flatMap((msg) => (msg.log ?? []).map((log) => ({ ...log, at: log.at ?? msg.at ?? 0 }))))
     .filter((x) => x.at >= periodStart && (wp.usagePeriod !== 'custom' || !wp.usageTo || x.at <= new Date(wp.usageTo).getTime() + 86400000))
@@ -52,7 +54,7 @@ export function Widgets({ width = 320 }: { width?: number }) {
       {w.ctx && (
         <W id="ctx" style={{ order: widgetOrder.indexOf('ctx') }} icon={Gauge} t="Context meter">
           <div className="h-2 overflow-hidden rounded-full bg-bg"><div className="h-full bg-ac" style={{ width: Math.min(100, tok / (wp.contextLimit / 100)) + '%' }} /></div>
-          <p className="text-xs text-mu">About {tok.toLocaleString()} of {wp.contextLimit.toLocaleString()} tokens (estimate)</p>
+          <p className="text-xs text-mu">About {tok.toLocaleString()} of {wp.contextLimit.toLocaleString()} tokens (estimate){overBudget ? ' — over budget: oldest messages are trimmed from requests until it fits' : ''}</p>
         </W>
       )}
       {w.eps && (

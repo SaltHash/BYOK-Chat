@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { X, Plus, Trash2, ArrowUp, ArrowDown, ChevronDown, Eye, EyeOff, Play, ShieldCheck, Shield, Download, Upload, Check, CircleCheck, Cpu, Route, GripVertical, Server, ListMusic, ScrollText, Terminal, Wrench, Palette, Database, FileText, PanelRight, TrendingUp, Keyboard, Search, Brain, Pencil, Sparkles, RotateCcw, SlidersHorizontal, FlaskConical, Library } from 'lucide-react'
-import { useS, PRE, THEMES, THEME_COLOR_KEYS, THEME_COLOR_LABELS, SEARCH_MODES, SEARCH_PROVIDERS, GLOBAL_PROMPT_PRESETS, FEATURES, LIBRARY_ITEMS, FEATURE_TABS, FEATURE_WIDGETS, DEFAULT_LIBRARY_SHOW, DEFAULT_ADVANCED, featOn, normSearch, normAdvanced, modelsOf, modelNameOf, type Kind, type FeatureId } from '../store'
+import { X, Plus, Trash2, ArrowUp, ArrowDown, ChevronDown, Eye, EyeOff, Play, ShieldCheck, Shield, Download, Upload, Check, CircleCheck, Cpu, Route, GripVertical, Server, ListMusic, ScrollText, Terminal, Wrench, Palette, FolderOpen, FileText, PanelRight, TrendingUp, Keyboard, Search, Brain, Pencil, Sparkles, RotateCcw, SlidersHorizontal, FlaskConical, Library, Database } from 'lucide-react'
+import { useS, PRE, THEMES, THEME_COLOR_KEYS, THEME_COLOR_LABELS, SEARCH_MODES, SEARCH_PROVIDERS, FEATURES, LIBRARY_ITEMS, FEATURE_TABS, FEATURE_WIDGETS, DEFAULT_LIBRARY_SHOW, DEFAULT_ADVANCED, featOn, normSearch, normAdvanced, modelsOf, modelNameOf, type Kind, type FeatureId } from '../store'
 import { normSkills, resolveSkill, validateCustomSkill, enabledSkills, BUILTIN_SKILLS, SKILL_TOOL_NAME, type SkillState } from '../skills'
 import { TOOL_REGISTRY } from '../engine'
 import { CI, TOOLS, WIDGETS, KEYS } from '../meta'
@@ -10,7 +10,7 @@ import { Btn, Field, Input, Area, Sel, Toggle, Seg, RangeSlider, Checkbox, HelpT
 const TABS: [string, string, Ic][] = [
   ['features', 'Features', SlidersHorizontal],
   ['eps', 'Endpoints', Server], ['prompts', 'Prompts', ScrollText], ['skills', 'Skills', Sparkles], ['pls', 'Playlists', ListMusic],
-  ['cmds', 'Commands', Terminal], ['tools', 'Tools', Wrench], ['memory', 'Memory', Brain], ['widgets', 'Widgets', PanelRight], ['look', 'Appearance', Palette], ['keys', 'Shortcuts', Keyboard], ['stats', 'Stats', TrendingUp], ['data', 'Data controls', Database], ['adv', 'Advanced', FlaskConical],
+  ['cmds', 'Commands', Terminal], ['workspace', 'Workspace', FolderOpen], ['tools', 'Tools', Wrench], ['memory', 'Memory', Brain], ['widgets', 'Widgets', PanelRight], ['look', 'Appearance', Palette], ['keys', 'Shortcuts', Keyboard], ['stats', 'Stats', TrendingUp], ['data', 'Data controls', Database], ['adv', 'Advanced', FlaskConical],
 ]
 /** Tabs hidden while their owning feature is disabled. */
 export const visibleTabs = (features?: Record<FeatureId, boolean>) => {
@@ -59,7 +59,7 @@ export function Panel({ id, k, n, add, children }: { id: string; k?: Kind; n?: n
   )
 }
 
-export function Card({ icon: I, title, sub, right, open0, dk, did, children }: { icon: Ic; title: ReactNode; sub?: string; right?: ReactNode; open0?: boolean; dk?: Kind; did?: string; children: ReactNode }) {
+export function Card({ icon: I, title, sub, right, open0, dk, did, children, muted }: { icon: Ic; title: ReactNode; sub?: string; right?: ReactNode; open0?: boolean; dk?: Kind; did?: string; children: ReactNode; muted?: boolean }) {
   const [o, setO] = useState(!!open0)
   const [over, setOver] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
@@ -71,7 +71,7 @@ export function Card({ icon: I, title, sub, right, open0, dk, did, children }: {
       <div className="flex items-center gap-3 p-3">
         {dk && <span draggable title="Drag to reorder" onDragStart={(e) => { e.dataTransfer.setData('text/plain', dk + ':' + did); if (ref.current) e.dataTransfer.setDragImage(ref.current, 24, 24) }} className="-mr-1 cursor-grab text-mu"><GripVertical size={16} /></span>}
         <div role="button" tabIndex={0} onClick={() => setO(!o)} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setO(!o) } }} className="flex min-w-0 flex-1 cursor-pointer items-center gap-3 text-left">
-          <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-hov text-ac"><I size={18} /></span>
+          <span className={cx('grid size-9 shrink-0 place-items-center rounded-lg bg-hov', muted ? 'text-mu' : 'text-ac')}><I size={18} /></span>
           <span className="min-w-0"><span className="block truncate font-medium">{title}</span>{sub && <span className="block truncate text-sm text-mu">{sub}</span>}</span>
         </div>
         {right}
@@ -257,7 +257,7 @@ function FeaturesTab() {
       {order.map((id) => {
         const [, label, desc] = byId(id)
         return (
-        <Card key={id} icon={iconFor(id)} title={label} sub={F[id] ? 'On' : 'Off'} right={<span className="flex items-center gap-1"><Btn sm icon={ArrowUp} title={`Move ${label} up`} disabled={order.indexOf(id) === 0} onClick={() => move(id, -1)} /><Btn sm icon={ArrowDown} title={`Move ${label} down`} disabled={order.indexOf(id) === order.length - 1} onClick={() => move(id, 1)} /><Toggle on={!!F[id]} set={(on) => toggle(id, on)} /></span>}>
+        <Card key={id} icon={iconFor(id)} title={label} sub={F[id] ? 'On' : 'Off'} muted={!F[id]} right={<span className="flex items-center gap-1"><Btn sm icon={ArrowUp} title={`Move ${label} up`} disabled={order.indexOf(id) === 0} onClick={() => move(id, -1)} /><Btn sm icon={ArrowDown} title={`Move ${label} down`} disabled={order.indexOf(id) === order.length - 1} onClick={() => move(id, 1)} /><Toggle on={!!F[id]} set={(on) => toggle(id, on)} /></span>}>
           <p className="text-sm text-mu">{desc}</p>
           {id === 'library' && !!F[id] && (
             <Field label="Library entries" hint="Choose which shortcuts appear in the sidebar library.">
@@ -386,17 +386,10 @@ function Prompts() {
     <Panel id="prompts" k="prompts" n={prompts.length} add="Add prompt">
       <Card icon={ScrollText} title="Global system prompt" sub={g.on ? (g.text.trim() ? 'On · applies to every message in every chat' : 'On · no text yet') : 'Off by default'} open0>
         <div className="flex items-center justify-between gap-3"><div><div className="text-sm font-medium">Apply to every message</div><div className="text-xs text-mu">Prepended to the system prompt in every chat, alongside the per-chat prompt.</div></div><Toggle on={g.on} set={(on) => setG({ on })} /></div>
-        <Field label="Start from a preset" hint="Fills the box below; you can edit it afterwards.">
-          <div className="flex flex-wrap gap-1.5">
-            {GLOBAL_PROMPT_PRESETS.map((p) => (
-              <button key={p.id} onClick={() => setG({ text: p.text })} className="rounded-lg bg-bg px-2.5 py-1.5 text-xs font-medium hover:bg-hov">{p.name}</button>
-            ))}
-          </div>
-        </Field>
         <Field label="Or pick an existing prompt" hint="Copies its text into the global box.">
           <Sel value="" set={(v) => { const p = prompts.find((x) => x.id === v); if (p) setG({ text: p.text }) }} opts={[['', 'Choose a prompt…'], ...prompts.map((p) => [p.id, p.name] as [string, string])]} />
         </Field>
-        <Field label="Global system prompt" hint="Write one from scratch, or use a preset or existing prompt above."><Area rows={6} value={g.text} set={(v) => setG({ text: v })} /></Field>
+        <Field label="Global system prompt" hint="Write one from scratch, or copy an existing prompt above."><Area rows={6} value={g.text} set={(v) => setG({ text: v })} /></Field>
       </Card>
       {prompts.map((p) => (
         <Card key={p.id} dk="prompts" did={p.id} icon={ScrollText} title={p.name} sub={p.text.slice(0, 70)}>
@@ -513,9 +506,10 @@ function Tools() {
         }>
           <p className="text-sm">{d}</p>
           <p className="text-sm text-mu">Permission: {p}</p>
-          {k === 'canvas_upsert' && <div className="space-y-3 rounded-xl bg-bg p-3">
-            <div className="flex items-center justify-between gap-3"><div><div className="text-sm font-medium">Open canvas panel automatically</div><div className="text-xs text-mu">Show the side panel beside the chat as soon as a file starts streaming.</div></div><Toggle on={s.canvasPrefs?.autoOpen ?? true} set={(autoOpen) => s.patch({ canvasPrefs: { autoOpen, autoClose: s.canvasPrefs?.autoClose ?? false } })} /></div>
-            <div className="flex items-center justify-between gap-3"><div><div className="text-sm font-medium">Auto-close when the response finishes</div><div className="text-xs text-mu">Close the side panel when the reply completes. Off leaves the last file open.</div></div><Toggle on={s.canvasPrefs?.autoClose ?? false} set={(autoClose) => s.patch({ canvasPrefs: { autoOpen: s.canvasPrefs?.autoOpen ?? true, autoClose } })} /></div>
+          {k === 'workspace_upsert' && <div className="space-y-3 rounded-xl bg-bg p-3">
+            <div className="flex items-center justify-between gap-3"><div><div className="text-sm font-medium">Default view for workspace tiles</div><div className="text-xs text-mu">Pinned shows the revision created by each message. Latest shows the most recent revision with a dropdown to go back.</div></div><Seg v={s.workspacePrefs?.defaultView ?? 'pinned'} set={(defaultView) => s.patch({ workspacePrefs: { ...s.workspacePrefs, defaultView } })} opts={[['pinned', 'Pinned'], ['latest', 'Latest']]} /></div>
+            <div className="flex items-center justify-between gap-3"><div><div className="text-sm font-medium">Auto-open workspace panel</div><div className="text-xs text-mu">Automatically open the side panel when the AI starts writing files.</div></div><Toggle on={s.workspacePrefs?.autoOpen ?? true} set={(autoOpen) => s.patch({ workspacePrefs: { ...s.workspacePrefs, autoOpen } })} /></div>
+            <div className="flex items-center justify-between gap-3"><div><div className="text-sm font-medium">Auto-follow active file</div><div className="text-xs text-mu">When the AI switches to writing a different file, automatically select it in the panel.</div></div><Toggle on={s.workspacePrefs?.autoFollow ?? true} set={(autoFollow) => s.patch({ workspacePrefs: { ...s.workspacePrefs, autoFollow } })} /></div>
           </div>}
           {k === 'search' && <div className="space-y-3 rounded-xl bg-bg p-3">
             <Field label="Search mode" hint="API uses your own provider key below. SearXNG uses your self-hosted instance.">
@@ -716,7 +710,7 @@ function WidgetsTab() {
   )
 }
 
-const PAL: Record<string, string[]> = { plum: ['#120c16', '#17101c', '#dc8ad8'], graphite: ['#0e0e0e', '#141414', '#8ab4f8'], paper: ['#f1f1ec', '#fbfbf9', '#3b5bdb'], sepia: ['#ede2ca', '#f6eedd', '#9c4a1a'] }
+const PAL: Record<string, string[]> = { plum: ['#120c16', '#17101c', '#dc8ad8'], claude: ['#171513', '#2B2621', '#D97757'], paper: ['#f1f1ec', '#fbfbf9', '#3b5bdb'], sepia: ['#ede2ca', '#f6eedd', '#9c4a1a'] }
 
 function FontPicker({ value, set, options }: { value: string; set: (v: string) => void; options: [string, string][] }) {
   const [query, setQuery] = useState(value === 'system' ? '' : value)
@@ -779,9 +773,17 @@ function Look() {
       {row('autoTitle', 'Auto-generate chat names', 'Automatically generate a concise title after the first reply.')}
       {row('temporaryByDefault', 'New chats are temporary by default', 'New chats are deleted after the retention period, or when you leave if retention is set to Immediate.')}
       <div className="rounded-xl bg-surf p-3 space-y-2">
-        <div className="text-sm font-medium">Model picker labels</div>
-        <div className="text-xs text-mu">Choose which name details appear next to each model. Models remain grouped under their endpoint.</div>
-        <Seg v={s.prefs.modelDisplay} set={(modelDisplay) => s.patch({ prefs: { ...s.prefs, modelDisplay } })} opts={[["none", "Neither"], ["name", "Model name"], ["provider", "Provider"], ["both", "Name + provider"]]} />
+        <div className="text-sm font-medium">Model picker main label</div>
+        <div className="text-xs text-mu">The main identifier shown on the left of each model.</div>
+        <Seg v={s.prefs.modelPrimary ?? 'name'} set={(modelPrimary) => {
+          const secondary = s.prefs.modelSecondary ?? 'none'
+          s.patch({ prefs: { ...s.prefs, modelPrimary, modelSecondary: secondary === modelPrimary ? (modelPrimary === 'name' ? 'id' : 'name') : secondary } })
+        }} opts={[["id", "Model ID"], ["name", "Model name"]]} />
+      </div>
+      <div className="rounded-xl bg-surf p-3 space-y-2">
+        <div className="text-sm font-medium">Model picker secondary label</div>
+        <div className="text-xs text-mu">The detail shown on the right of each model.</div>
+        <Seg v={s.prefs.modelSecondary ?? 'none'} set={(modelSecondary) => s.patch({ prefs: { ...s.prefs, modelSecondary } })} opts={(s.prefs.modelPrimary ?? 'name') === 'name' ? [["provider", "Provider"], ["id", "Model ID"], ["none", "None"]] : [["provider", "Provider"], ["name", "Model name"], ["none", "None"]]} />
       </div>
       <div className="rounded-xl bg-surf p-3 space-y-2">
         <div className="text-sm font-medium">Command palette height</div>
@@ -864,7 +866,7 @@ function AdvancedTab() {
   )
 }
 
-const VIEWS: Record<string, () => ReactNode> = { features: FeaturesTab, eps: Eps, prompts: Prompts, skills: SkillsTab, pls: Pls, cmds: Cmds, tools: Tools, memory: MemoryTab, widgets: WidgetsTab, look: Look, stats: StatsTab, keys: KeysTab, data: DataTab, adv: AdvancedTab }
+const VIEWS: Record<string, () => ReactNode> = { features: FeaturesTab, eps: Eps, prompts: Prompts, skills: SkillsTab, pls: Pls, cmds: Cmds, workspace: () => <Panel id="workspace"><div className="space-y-3"><Field label="Default view"><Seg v={useS(s=>s.workspacePrefs?.defaultView ?? 'pinned')} set={(v) => useS.getState().patch({ workspacePrefs: { ...useS.getState().workspacePrefs, defaultView: v as any } })} opts={[['pinned','Pinned'],['latest','Latest']]} /></Field><Field label="Auto-open panel"><Toggle on={useS(s=>s.workspacePrefs?.autoOpen ?? true)} set={(v) => useS.getState().patch({ workspacePrefs: { ...useS.getState().workspacePrefs, autoOpen: v } })} /></Field><Field label="Auto-follow file"><Toggle on={useS(s=>s.workspacePrefs?.autoFollow ?? true)} set={(v) => useS.getState().patch({ workspacePrefs: { ...useS.getState().workspacePrefs, autoFollow: v } })} /></Field></div></Panel>, tools: Tools, memory: MemoryTab, widgets: WidgetsTab, look: Look, stats: StatsTab, keys: KeysTab, data: DataTab, adv: AdvancedTab }
 
 export function Settings({ tab, setTab }: { tab: string; setTab: (t: string) => void }) {
   const features = useS((s) => s.features)

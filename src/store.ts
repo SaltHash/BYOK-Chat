@@ -1,8 +1,9 @@
 import { create } from 'zustand'
 import { persist, createJSONStorage } from 'zustand/middleware'
 import { DEFAULT_TOOLS, KEYS, TOOLS, WIDGETS } from './meta'
-import { est, redact, can, stream, wire, runToolLoop, type ToolCall, type ToolResult, searchWeb, formatSearch, shouldSearchWeb } from './engine'
+import { est, redact, can, stream, wire, trimHistory, estimateHistoryTokens, runToolLoop, type ToolCall, type ToolResult, searchWeb, formatSearch, shouldSearchWeb } from './engine'
 import { DEFAULT_SKILL_STATE, normSkills, enabledSkills, getSkillInstructions, composeSystemPrompt, SKILL_TOOL_NAME, type SkillState, type ResolvedSkill } from './skills'
+import { migrateLegacyCanvasGroups, truncateWorkspaceContent, type Workspace, type WorkspaceFile, type WorkspaceRevision } from './workspace'
 
 export type Kind = 'eps' | 'prompts' | 'pls' | 'cmds'
 export type ModelPrice = { input: number; output: number; source?: 'manual' | 'openrouter' }
@@ -13,13 +14,17 @@ export type Cmd = { id: string; name: string; desc: string; in: 'text' | 'image'
 export type Try = { n: string; m: string; detail?: string; ms?: number; err?: string; tin?: number; tout?: number; at?: number }
 export type Att = { name: string; kind: 'img' | 'pdf' | 'txt'; size: string; mime?: string; data?: string; text?: string }
 export type FadeEvent = { text: string; at: number }
-export type Msg = { id: string; r: 'user' | 'assistant'; t: string; at?: number; fadeEvents?: FadeEvent[]; by?: string; tps?: number; log?: Try[]; att?: Att[]; err?: boolean; full?: string; ctx?: string[]; fx?: string; cmd?: string; alts?: Snap[]; ai?: number; historyTokens?: number; explicitTokens?: number; reasoning?: string; thinkingOn?: boolean; toolRounds?: { text: string; calls: ToolResult[] }[]; toolFinal?: string; sys?: string }
+export type Msg = { id: string; r: 'user' | 'assistant'; t: string; at?: number; fadeEvents?: FadeEvent[]; by?: string; tps?: number; log?: Try[]; att?: Att[]; err?: boolean; full?: string; ctx?: string[]; fx?: string; cmd?: string; alts?: Snap[]; ai?: number; historyTokens?: number; explicitTokens?: number; reasoning?: string; thinkingOn?: boolean; toolRounds?: { text: string; calls: ToolResult[] }[]; toolFinal?: string; sys?: string; workspaceIds?: string[] }
 export type Snap = { t: string; by?: string; tps?: number; log?: Try[]; err?: boolean; toolRounds?: { text: string; calls: ToolResult[] }[]; toolFinal?: string }
 export type Chat = { id: string; title: string; pin?: boolean; started?: boolean; folder?: string; msgs: Msg[]; temporary?: boolean; expiresAt?: number; titleAuto?: boolean }
 export type Folder = { id: string; name: string; open: boolean }
 export type Notice = { t: string; tab?: string; label?: string } | null
 export type Stats = { tin: number; tout: number; historyIn: number; explicitIn: number; sent: number; chats: number; since: number; cost: number }
 export type Memory = { id: string; text: string; category: string; createdAt: number; updatedAt: number }
+
+/* Workspace (first-class entity) */
+export type WorkspaceViewDefault = 'pinned' | 'latest'
+export type WorkspacePrefs = { defaultView: WorkspaceViewDefault; autoOpen: boolean; autoFollow: boolean }
 
 /* Advanced debugging aids. All off by default; only take effect while the
    `advanced` feature is enabled. */
@@ -39,11 +44,11 @@ export const normFeatureOrder = (v: any): FeatureId[] => {
 
 /* Feature kill-switches. A disabled feature must not be used by the AI or the
    program in any capacity until turned back on. `library` is off by default. */
-export type FeatureId = 'prompts' | 'skills' | 'tools' | 'playlists' | 'commands' | 'stats' | 'memory' | 'widgets' | 'shortcuts' | 'library' | 'advanced'
+export type FeatureId = 'prompts' | 'skills' | 'tools' | 'playlists' | 'commands' | 'stats' | 'memory' | 'widgets' | 'shortcuts' | 'library' | 'advanced' | 'workspace' | 'routing'
 export const FEATURES: [FeatureId, string, string][] = [
   ['prompts', 'Prompts', 'Per-chat system prompts and the global system prompt. Off hides the prompt picker everywhere.'],
   ['skills', 'Skills', 'Skill catalogs the model can load on demand with use_skill.'],
-  ['tools', 'Tools', 'Every model tool: @-mentions, web search, canvas files. The AI cannot call any tool while off.'],
+  ['tools', 'Tools', 'Every model tool: @-mentions, web search, workspace files. The AI cannot call any tool while off.'],
   ['playlists', 'Playlists', 'Ordered model lists and classifier routing. Off leaves endpoint-only model selection.'],
   ['commands', 'Commands', 'Slash commands, their templates, and the home-screen command shortcuts.'],
   ['stats', 'Stats', 'Token, message, and cost totals. Turning off asks whether to delete existing totals.'],
@@ -51,15 +56,16 @@ export const FEATURES: [FeatureId, string, string][] = [
   ['widgets', 'Widgets', 'The side widget panel and every widget inside it.'],
   ['shortcuts', 'Shortcuts', 'Every keyboard shortcut, plus the shortcut cheat-sheet widget.'],
   ['library', 'Library', 'The sidebar shortcut list below your chats.'],
-  ['advanced', 'Advanced', 'Debugging aids: verbose errors, hidden tools, and the full system prompt. Off by default.'],
+  ['workspace', 'Workspace', 'Workspace file panel and workspace settings.'],
+  ['routing', 'Routing', 'Playlist classifier routing and routing rules.'],
 ]
-export const DEFAULT_FEATURES: Record<FeatureId, boolean> = { prompts: true, skills: true, tools: true, playlists: true, commands: true, stats: true, memory: true, widgets: true, shortcuts: true, library: false, advanced: false }
+export const DEFAULT_FEATURES: Record<FeatureId, boolean> = { prompts: true, skills: true, tools: true, playlists: true, commands: true, stats: true, memory: true, widgets: true, shortcuts: true, library: false, advanced: false, workspace: true, routing: true }
 export const LIBRARY_ITEMS: [string, string][] = [['eps', 'Endpoints'], ['pls', 'Playlists'], ['prompts', 'Prompts'], ['cmds', 'Commands'], ['tools', 'Tools'], ['memory', 'Memory'], ['widgets', 'Widgets']]
 export const DEFAULT_LIBRARY_SHOW: Record<string, boolean> = { eps: true, pls: true, prompts: true, cmds: true, tools: true, memory: true, widgets: true }
 /** Widgets that belong to a feature and must go dark with it. */
 export const FEATURE_WIDGETS: Partial<Record<FeatureId, string[]>> = { prompts: ['prompts'], shortcuts: ['keys'], stats: ['usage', 'cost', 'last'] }
 /** Settings tabs hidden while their feature is off. */
-export const FEATURE_TABS: Partial<Record<FeatureId, string[]>> = { prompts: ['prompts'], skills: ['skills'], tools: ['tools'], playlists: ['pls'], commands: ['cmds'], stats: ['stats'], memory: ['memory'], widgets: ['widgets'], shortcuts: ['keys'], advanced: ['adv'] }
+export const FEATURE_TABS: Partial<Record<FeatureId, string[]>> = { prompts: ['prompts'], skills: ['skills'], tools: ['tools'], playlists: ['pls'], commands: ['cmds'], stats: ['stats'], memory: ['memory'], widgets: ['widgets'], shortcuts: ['keys'], advanced: ['adv'], workspace: ['workspace'], routing: ['routing'] }
 export const featOn = (s: { features?: Record<FeatureId, boolean> } | null | undefined, f: FeatureId): boolean => s?.features?.[f] ?? DEFAULT_FEATURES[f]
 /** Whether a widget may render: widgets feature on, its owning feature on, and itself enabled. */
 export const widgetOn = (s: { features?: Record<FeatureId, boolean>; widgets: Record<string, boolean> }, id: string): boolean => {
@@ -70,7 +76,7 @@ export const widgetOn = (s: { features?: Record<FeatureId, boolean>; widgets: Re
   return !!s.widgets[id]
 }
 
-export const THEMES = { plum: 'Plum', graphite: 'Graphite', paper: 'Paper', sepia: 'Sepia', custom: 'Custom' }
+export const THEMES = { plum: 'Plum', claude: 'Claude', paper: 'Paper', sepia: 'Sepia', custom: 'Custom' }
 export const THEME_COLOR_KEYS = ['bg', 'side', 'surf', 'hov', 'tx', 'mu', 'ac', 'acx', 'er', 'code', 'codeh', 'c2', 'c3', 'c4', 'c5'] as const
 export type ThemeColorKey = typeof THEME_COLOR_KEYS[number]
 export type ThemeColors = Record<ThemeColorKey, string>
@@ -92,14 +98,9 @@ export const PRE: Record<string, ['openai' | 'anthropic', string, string, 'autho
   OpenRouter: ['openai', 'https://openrouter.ai/api/v1', '', 'author'],
   'Other OpenAI-compatible': ['openai', '', '', 'author'],
 }
-export const GENERAL_PROMPT_TEXT = 'You are a helpful general-purpose assistant. Follow the user\u2019s instructions carefully and answer directly. Be clear, accurate, and concise, adapting the level of detail to what the request needs. Reason step by step when a problem calls for it, and distinguish what you know from what you infer. Ask a brief clarifying question only when it would materially change your answer.'
+export const GENERAL_PROMPT_TEXT = 'You are a helpful general-purpose assistant. Follow the user\u2019s instructions carefully and answer directly. Be clear, accurate, and concise, adapting the level of detail to what the request needs. Reason step by step when a problem calls for it, and distinguish what you know from what you infer. Ask a brief clarifying question only when it would materially change your answer. Never present invented content as fact, and never fabricate sources, quotes, or capabilities. Write naturally, like a thoughtful person speaking plainly: use varied, concrete language and avoid stock phrases, filler transitions, and cliches. Never use em dashes (—); use commas, periods, colons, or parentheses instead. This applies even when summarizing, structuring, or formatting: no em dashes anywhere in your reply.'
 export const CREATIVITY_PROMPT_TEXT = 'You are a creativity-focused assistant. Favor original ideas, imaginative angles, and unconventional approaches over the most obvious answer. Explore multiple possibilities, make surprising but useful connections between seemingly unrelated concepts, and write richly and expressively when the task calls for it. Adapt to the user\u2019s requested style, tone, genre, and constraints, and experiment freely within them. Stay factually honest: never present invented content as fact, and never fabricate sources, evidence, quotes, or capabilities.'
 export const CONCISE_PROMPT_TEXT = 'Answer briefly and directly. Skip preamble.'
-export const GLOBAL_PROMPT_PRESETS: { id: string; name: string; text: string }[] = [
-  { id: 'g-concise', name: 'Concise', text: 'Answer briefly and directly. Skip preamble and keep formatting minimal unless asked otherwise.' },
-  { id: 'g-thorough', name: 'Thorough', text: 'Answer in detail with clear structure. Explain your reasoning, cover edge cases, and use headings and examples where they help.' },
-  { id: 'g-coder', name: 'Careful coder', text: 'You are a careful software engineer. Write correct, idiomatic code, explain key decisions briefly, and never invent APIs. When unsure, say so instead of guessing.' },
-]
 export const uid = () => Math.random().toString(36).slice(2, 9)
 export const usable = (e: Ep) => e.on && !!e.model.trim() && /^https?:\/\//i.test(e.url.trim())
 
@@ -166,15 +167,18 @@ type S = {
   theme: keyof typeof THEMES
   customColors: ThemeColors
   setupDone: boolean
-  prefs: { showBy: boolean; showLog: boolean; showTps: boolean; enterSends: boolean; autoTitle: boolean; temporaryByDefault: boolean; showModelPricing: boolean; titleEp: string; titleModel?: string; fade: number; tempHours: number; fontBody: string; fontMono: string; fontHeader: string; modelDisplay: 'none' | 'name' | 'provider' | 'both'; paletteMax: number; chatWidth: 'narrow' | 'standard' | 'wide'; settingsWidth: number; settingsHeight: number; modelPickerHeight: number; sidebarWidth?: number; widgetWidth?: number; canvasWidth?: number; modalBlur: number; settingsOpacity: number }
+  prefs: { showBy: boolean; showLog: boolean; showTps: boolean; enterSends: boolean; autoTitle: boolean; temporaryByDefault: boolean; showModelPricing: boolean; titleEp: string; titleModel?: string; fade: number; tempHours: number; fontBody: string; fontMono: string; fontHeader: string; modelPrimary: 'id' | 'name'; modelSecondary: 'none' | 'provider' | 'id' | 'name'; modelDisplay?: 'none' | 'name' | 'provider' | 'both'; paletteMax: number; chatWidth: 'narrow' | 'standard' | 'wide'; settingsWidth: number; settingsHeight: number; modelPickerHeight: number; sidebarWidth?: number; widgetWidth?: number; workspaceWidth?: number; modalBlur: number; settingsOpacity: number; routingMode?: 'ordered' | 'classified' }
   widgets: Record<string, boolean>; widgetPrefs: { usageGroup: 'endpoint' | 'model'; usageMode: 'success' | 'tokens'; usageFormat: string; usageTotal: boolean; usagePeriod: 'session' | 'day' | 'week' | 'custom' | 'all'; usageFrom?: string; usageTo?: string; lastSpeed: boolean; timeUnit: 'ms' | 's' | 'auto'; widgetOrder: string[]; shortcuts: string[]; contextLimit: number; showDisabledEndpoints: boolean; scratchRows: number; snippetLimit: number; costDecimals: number; activePromptsOnly: boolean; charsPerToken: number; hideDoneTodos: boolean }; rail: boolean; pad: string; snips: string[]
   params: { def: boolean; temp: number; topp: number; max: number }; effort: Record<string, string>
-  canvasPrefs: { autoOpen: boolean; autoClose: boolean }
+  workspacePrefs: WorkspacePrefs
   advanced: AdvancedPrefs
   stats: Stats; keys: Record<string, string>
   memories: Memory[]; memoryPrefs: { enabled: boolean; intent: 'intentional' | 'balanced' | 'aggressive'; recall: 'holistic' | 'contextual' | 'specific'; classifierEp: string; classifierModel: string }
   folders: Folder[]; price: { in: number; out: number }; todos: { id: string; t: string; done: boolean }[]
   draft: string; busy: boolean; notice: Notice
+  /* Workspace (first-class entity) */
+  workspaces: Record<string, Workspace>
+  selectedRevision: Record<string, string>
   patch: (p: Partial<S>) => void
   add: (k: Kind) => void
   upd: (k: Kind, id: string, p: object) => void
@@ -188,6 +192,7 @@ type S = {
   delMsg: (id: string) => void
   editMsg: (id: string, t: string) => void
   resetStats: () => void
+  compactStorage: () => string
   rename: (id: string, t: string) => void
   reorder: (k: Kind, from: string, to: string) => void
   addFolder: () => string
@@ -288,10 +293,71 @@ export const previewSysFor = (msgId: string): string | null => {
 
 type Run = { stopped: boolean; ctl: AbortController | null }
 let cur: Run | null = null
+export const QUOTA_FLAG = 'byok.v1:quota-full'
+const isQuotaError = (x: any) => x && (x.name === 'QuotaExceededError' || x.code === 22 || /quota/i.test(String(x?.message ?? '')))
+/* Shrink a serialized persist payload so it fits localStorage: keep settings,
+   keep chats, but drop the bulkiest regenerable/derived fields (old tool
+   results, reasoning traces, workspace history beyond the latest revisions). */
+export const prunePersisted = (raw: string): string | null => {
+  try {
+    const v = JSON.parse(raw)
+    const s = v?.state ?? v
+    if (!s || typeof s !== 'object') return null
+    const cap = (t: unknown, n: number) => typeof t === 'string' && t.length > n ? t.slice(0, n) + `\n[compacted: kept ${n.toLocaleString()} of ${t.length.toLocaleString()} characters]` : t
+    if (Array.isArray(s.chats)) s.chats = s.chats.map((c: any) => ({
+      ...c,
+      msgs: (c.msgs ?? []).map((m: any) => ({
+        ...m,
+        fadeEvents: undefined,
+        reasoning: typeof m.reasoning === 'string' && m.reasoning.length > 5000 ? m.reasoning.slice(0, 5000) + '\n[compacted]' : m.reasoning,
+        toolRounds: (m.toolRounds ?? []).map((r: any) => ({
+          ...r,
+          calls: (r.calls ?? []).map((call: any) => ({ ...call, result: cap(call.result, 5000) })),
+        })),
+      })),
+    }))
+    if (s.workspaces && typeof s.workspaces === 'object') {
+      for (const ws of Object.values(s.workspaces) as any[]) {
+        if (Array.isArray(ws.revisions) && ws.revisions.length > 2) ws.revisions = ws.revisions.slice(-2)
+        for (const rev of ws.revisions ?? []) for (const f of rev.files ?? []) f.content = cap(f.content, 20000)
+      }
+    }
+    return JSON.stringify(v?.state ? { ...v, state: s } : s)
+  } catch { return null }
+}
+export const storageUsage = async (): Promise<{ localBytes: number; quota?: number; usage?: number }> => {
+  let localBytes = 0
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i)
+      if (!k || (!k.startsWith('byok.v1') && k !== QUOTA_FLAG)) continue
+      localBytes += (k.length + (localStorage.getItem(k) ?? '').length) * 2
+    }
+  } catch { /* blocked storage */ }
+  try {
+    const e: any = await (navigator as any)?.storage?.estimate?.()
+    if (e && typeof e === 'object') return { localBytes, quota: e.quota, usage: e.usage }
+  } catch { /* unavailable */ }
+  return { localBytes }
+}
 const storage = createJSONStorage(() => ({
-  getItem: (k: string) => { try { return localStorage.getItem(k) } catch { return null } },
-  setItem: (k: string, v: string) => { try { localStorage.setItem(k, v) } catch { /* storage full or blocked */ } },
-  removeItem: (k: string) => { try { localStorage.removeItem(k) } catch { /* ignore */ } },
+  getItem: (k: string) => { try { localStorage.removeItem(QUOTA_FLAG); return localStorage.getItem(k) } catch { return null } },
+  setItem: (k: string, v: string) => {
+    try { localStorage.setItem(k, v); localStorage.removeItem(QUOTA_FLAG) }
+    catch (x) {
+      // localStorage (~5MB) overflows on long chats with txt attachments and
+      // workspace revisions. Retry once with a compacted payload; if that
+      // still fails, keep the last good value and flag it for the Data tab.
+      const pruned = prunePersisted(v)
+      if (pruned && pruned.length < v.length) {
+        try { localStorage.setItem(k, pruned); localStorage.removeItem(QUOTA_FLAG); return }
+        catch { /* fall through to flag */ }
+      }
+      try { localStorage.setItem(QUOTA_FLAG, String(Date.now())) } catch { /* ignore */ }
+      if (!isQuotaError(x)) throw x
+    }
+  },
+  removeItem: (k: string) => { try { localStorage.removeItem(k); localStorage.removeItem(QUOTA_FLAG) } catch { /* ignore */ } },
 }))
 
 export const useS = create<S>()(
@@ -374,6 +440,29 @@ export const useS = create<S>()(
         set((st) => ({ busy: true, notice: null, chats: st.chats.map((c) => (c.id === id ? { ...c, msgs: [...c.msgs, { id: mid, r: 'assistant', t: '', at: Date.now(), by: '', log: [], ...(prev ? { alts: prev, ai: prev.length } : {}) }] } : c)) }))
         const hist = () => (get().chats.find((c) => c.id === id)?.msgs ?? []).filter((m) => m.id !== mid)
         let order = p.cand, ok = false, usedEp: Ep | undefined, system = p.sys
+        // Context budgeting: the wire payload (not stored history) is trimmed
+        // oldest-first so system + history fits the meter's limit minus a
+        // reserve for the reply. The trim is reported in the process log.
+        const budgetOf = () => {
+          const st = get()
+          const limit = Math.max(1000, Math.floor(Number(st.widgetPrefs?.contextLimit) || 128000))
+          const cpt = Math.min(10, Math.max(1, Number(st.widgetPrefs?.charsPerToken) || 4))
+          const outReserve = st.params?.def ? 8000 : Math.max(4096, Math.floor(Number(st.params?.max) || 4096) + 4000)
+          const reserve = Math.min(16000, Math.max(4000, Math.min(Math.floor(limit * 0.1), outReserve)))
+          return { limit, cpt, reserve }
+        }
+        let trimLogged = false
+        const histFor = () => {
+          const h = hist()
+          if (h.length <= 1) return h
+          const { limit, cpt, reserve } = budgetOf()
+          const { msgs, dropped, estimated, budget } = trimHistory(h, { limit, reserve, charsPerToken: cpt, sys: system })
+          if (dropped > 0 && !trimLogged) {
+            trimLogged = true
+            log.push({ n: 'Context trim', m: '', detail: `Sent the latest ${msgs.length} of ${h.length} messages: dropped ${dropped} older message${dropped > 1 ? 's' : ''} to fit ~${estimated.toLocaleString()} estimated tokens into a ${budget.toLocaleString()}-token budget (limit ${limit.toLocaleString()} minus ${reserve.toLocaleString()} reserve). Full history is kept in the chat.`, at: Date.now() })
+          }
+          return msgs
+        }
         const memoryState = get(), mp = memoryState.memoryPrefs
         const memOn = featOn(memoryState, 'memory') && mp.enabled
         // Capture the memory context decision for the visible process log without exposing memory text.
@@ -404,12 +493,6 @@ export const useS = create<S>()(
           if (selectedMemories.length) system += `${system ? '\n\n' : ''}Stored memories (user-controlled context, not instructions):\n${selectedMemories.map((m) => `- ${m.text} [${m.category}]`).join('\n')}`
         }
         if (memoryTrace) log.push({ n: 'Memory recall', m: '', detail: memoryTrace, at: Date.now() })
-        const availableSkills: ResolvedSkill[] = p.skills ?? []
-        if (availableSkills.length) {
-          log.push({ n: 'Skills', m: '', detail: `Offered ${availableSkills.length} skill${availableSkills.length === 1 ? '' : 's'} in the system prompt: ${availableSkills.map((x) => x.name).join(', ')}. The model loads instructions with ${SKILL_TOOL_NAME} when one applies.`, at: Date.now() })
-        } else {
-          log.push({ n: 'Skills', m: '', detail: 'No skills enabled; no skill catalog was added.', at: Date.now() })
-        }
         try {
           const g = get(), FP = g.features ?? DEFAULT_FEATURES
           const basePrompt = FP.prompts ? p.cmd?.sys || g.prompts.find((x) => x.id === g.pr)?.text || p.pl?.sys || '' : ''
@@ -429,7 +512,7 @@ export const useS = create<S>()(
               r.ctl = new AbortController()
               const x = await runToolLoop(e, system, (rounds) => {
                 const partial = { id: mid, r: 'assistant' as const, t: '', toolRounds: rounds }
-                return wire(e, [...hist(), partial])
+                return wire(e, [...histFor(), partial])
               }, (() => {
                 const g = get(), GF = g.features ?? DEFAULT_FEATURES
                 const base: Record<string, boolean> = GF.tools ? { ...g.tools, memory: memOn } : {}
@@ -486,17 +569,106 @@ export const useS = create<S>()(
                   return `Updated memory ${id}: ${updated.text} [${updated.category}]`
                 }
                 throw Error('Choose list, add, update, or delete')
-              } },
-                // Live tool deltas feed the ephemeral streaming preview; rewritten
-                // wholesale each chunk so backspaces re-render instead of appending.
-                (calls) => { useLive.getState().set(mid, calls.map((c) => ({ ...c }))) })
+              },
+              workspace_upsert: async ({ workspaceId, createNew, workspaceName, revisionName, action, path, language, content }: {
+                workspaceId?: string; createNew?: boolean; workspaceName?: string; revisionName: string;
+                action: 'create' | 'update' | 'delete' | 'continue'; path: string; language?: string; content?: string
+              }) => {
+                const state = get()
+                let targetWorkspaceId = workspaceId
+                let targetWorkspace = targetWorkspaceId ? state.workspaces[targetWorkspaceId] : null
+
+                // Cap revision name length to keep workspace labels readable
+                const safeRevisionName = String(revisionName ?? '').trim().slice(0, 200) || 'Revision'
+                // Create new workspace if needed
+                if (createNew || !targetWorkspaceId) {
+                  if (!workspaceName) throw Error('workspaceName required when createNew:true')
+                  targetWorkspaceId = uid()
+                  targetWorkspace = {
+                    id: targetWorkspaceId,
+                    name: workspaceName,
+                    revisions: [],
+                  }
+                  set((s) => ({ workspaces: { ...s.workspaces, [targetWorkspaceId]: targetWorkspace! } }))
+                } else if (!targetWorkspace) {
+                  throw Error(`Workspace not found: ${workspaceId}`)
+                }
+
+                // Get the latest revision's files as base
+                // If the latest revision belongs to this message (mid), we'll update it instead of creating a new one
+                const latestRevision = targetWorkspace.revisions[targetWorkspace.revisions.length - 1]
+                const isSameMessageRevision = latestRevision?.msgId === mid
+                const baseFiles = isSameMessageRevision ? latestRevision.files : (latestRevision?.files ?? [])
+
+                // Apply the action
+                let newFiles: WorkspaceFile[]
+                if (action === 'delete') {
+                  newFiles = baseFiles.filter(f => f.path !== path)
+                } else if (action === 'continue') {
+                  // Append content to existing file (for truncated files)
+                  const existingFile = baseFiles.find(f => f.path === path)
+                  if (!existingFile) throw Error(`File not found for continue: ${path}`)
+                  const appendedContent = (existingFile.content.replace(/\n\n\[truncated: content exceeded 50,000 characters\]$/, '')) + (content ?? '')
+                  const { text, truncated } = truncateWorkspaceContent(appendedContent)
+                  newFiles = baseFiles.map(f => f.path === path ? { ...f, content: text, truncated } : f)
+                } else { // create or update
+                  const fileContent = content ?? ''
+                  const { text, truncated } = truncateWorkspaceContent(fileContent)
+                  const existingIndex = baseFiles.findIndex(f => f.path === path)
+                  if (existingIndex >= 0) {
+                    newFiles = baseFiles.map((f, i) => i === existingIndex ? { ...f, content: text, language: language ?? f.language, truncated } : f)
+                  } else {
+                    newFiles = [...baseFiles, { path, language: language ?? '', content: text, truncated }]
+                  }
+                }
+
+                // Create or update revision for this message
+                let newRevision: WorkspaceRevision
+                if (isSameMessageRevision) {
+                  // Update existing revision for this message
+                  newRevision = {
+                    ...latestRevision!,
+                    name: safeRevisionName, // Use the latest capped revisionName
+                    files: newFiles,
+                    createdAt: Date.now(),
+                  }
+                } else {
+                  // Create new revision for this message
+                  newRevision = {
+                    id: uid(),
+                    name: safeRevisionName,
+                    msgId: mid,
+                    files: newFiles,
+                    createdAt: Date.now(),
+                  }
+                }
+
+                // Update workspace with new/updated revision
+                set((s) => {
+                  const ws = s.workspaces[targetWorkspaceId!]
+                  if (!ws) return s
+                  const revisions = isSameMessageRevision
+                    ? ws.revisions.slice(0, -1).concat(newRevision)
+                    : [...ws.revisions, newRevision]
+                  return {
+                    workspaces: {
+                      ...s.workspaces,
+                      [targetWorkspaceId!]: { ...ws, revisions },
+                    },
+                    selectedRevision: { ...s.selectedRevision, [targetWorkspaceId!]: newRevision.id },
+                  }
+                })
+
+                return JSON.stringify({ workspaceId: targetWorkspaceId, path, action: action === 'delete' ? 'deleted' : 'ready', revisionName: safeRevisionName })
+              },
+              // Live tool deltas feed the ephemeral streaming preview; rewritten
+              // wholesale each chunk so backspaces re-render instead of appending.
+            }, (calls) => { useLive.getState().set(mid, calls.map((c) => ({ ...c }))) })
               txt = x.text
               responseTokensIn = x.tin; responseTokensOut = x.tout
               const current = get().chats.find(c => c.id === id)
               if (txt.trim() && current && (current.titleAuto || current.title === 'New chat' || !current.title)) void generateTitle(id, e, txt)
-              const usedSkills = [...new Set(toolRounds.flatMap((r) => r.calls).filter((c) => c.name === SKILL_TOOL_NAME && !c.error).map((c) => { try { return String(JSON.parse(c.arguments || '{}').id || '').trim() } catch { return '' } }).filter(Boolean))]
-              if (usedSkills.length) log.push({ n: 'Skills used', m: '', detail: `Model loaded ${usedSkills.length} skill${usedSkills.length === 1 ? '' : 's'}: ${usedSkills.join(', ')}.`, at: Date.now() })
-              else if ((p.skills ?? []).length) log.push({ n: 'Skills used', m: '', detail: 'Model did not load any skills for this reply.', at: Date.now() })
+
               const elapsed = Date.now() - t0
               const toolElapsed = toolRounds.reduce((total, round) => total + Math.max(0, ...round.calls.map((call) => call.ms ?? 0)), 0)
               log.push({ n: e.name, m: e.model, detail: `Answered ${p.tgt} with ${(um.att ?? []).length} attachments and ${(() => { const g = get(); return featOn(g, 'tools') ? Object.values(g.tools).filter(Boolean).length : 0 })()} enabled tools`, ms: Math.max(0, elapsed - toolElapsed), tin: responseTokensIn, tout: responseTokensOut, at: Date.now() })
@@ -510,7 +682,15 @@ export const useS = create<S>()(
               const genToolMs = toolRounds.reduce((total, round) => total + Math.max(0, ...round.calls.map((call) => call.ms ?? 0)), 0)
               const thinkEnd = Math.max(firstTokenAt || t0, lastThinkAt || t0)
               const genMs = Math.max(0, genEnd - thinkEnd - genToolMs)
-              edit(id, mid, (m) => ({ ...m, tps: Math.round(responseTokensOut / Math.max(genMs / 1000, 0.001) * 10) / 10, toolRounds, ...(toolRounds.length ? { toolFinal: x.text } : {}) }))
+              // Extract workspace IDs from tool rounds (check both arguments and result)
+              const workspaceIds = [...new Set(toolRounds.flatMap((r) => r.calls).filter((c) => c.name === 'workspace_upsert').map((c) => {
+                // First check arguments
+                try { const args = JSON.parse(c.arguments || '{}'); if (args.workspaceId) return args.workspaceId } catch {}
+                // Then check result (for newly created workspaces)
+                try { const res = JSON.parse(c.result || '{}'); if (res.workspaceId) return res.workspaceId } catch {}
+                return null
+              }).filter(Boolean))]
+              edit(id, mid, (m) => ({ ...m, tps: Math.round(responseTokensOut / Math.max(genMs / 1000, 0.001) * 10) / 10, toolRounds, ...(toolRounds.length ? { toolFinal: x.text } : {}), workspaceIds }))
               usedEp = e
               break
             } catch (x: any) {
@@ -549,12 +729,14 @@ export const useS = create<S>()(
         ],
         chats: [], chat: '', memories: [], memoryPrefs: { enabled: false, intent: 'balanced', recall: 'contextual', classifierEp: '', classifierModel: '' }, tools: { ...DEFAULT_TOOLS }, search: { ...BLANK_SEARCH, keys: { ...BLANK_SEARCH.keys } }, skills: DEFAULT_SKILL_STATE.map((s) => ({ ...s })), widgets: {}, widgetPrefs: { usageGroup: 'endpoint', usageMode: 'success', usageFormat: '{in}/{out}', usageTotal: false, usagePeriod: 'all', lastSpeed: true, timeUnit: 'auto', widgetOrder: WIDGETS.map(([k]) => k), shortcuts: KEYS.map(([k]) => k), contextLimit: 128000, showDisabledEndpoints: true, scratchRows: 6, snippetLimit: 20, costDecimals: 4, activePromptsOnly: false, charsPerToken: 4, hideDoneTodos: false }, rail: false, pad: '', snips: [],
         params: { def: true, temp: 0.7, topp: 1, max: 4096 }, effort: {},
-        canvasPrefs: { autoOpen: true, autoClose: false },
+        workspacePrefs: { defaultView: 'latest', autoOpen: true, autoFollow: true },
         advanced: { ...DEFAULT_ADVANCED },
-        sel: null, pr: 'general', globalPrompt: { on: false, text: '' }, features: { ...DEFAULT_FEATURES }, featureOrder: FEATURES.map(([id]) => id), libraryShow: { ...DEFAULT_LIBRARY_SHOW }, theme: 'plum', customColors: { ...DEFAULT_CUSTOM_COLORS }, setupDone: false, prefs: { showBy: true, showLog: true, showTps: false, enterSends: true, autoTitle: true, temporaryByDefault: false, showModelPricing: false, titleEp: '', titleModel: '', fade: 0.4, tempHours: 3, fontBody: 'system', fontMono: 'system', fontHeader: 'system', modelDisplay: 'both', paletteMax: 320, chatWidth: 'standard', settingsWidth: 1024, settingsHeight: 780, modelPickerHeight: 480, sidebarWidth: 288, widgetWidth: 320, canvasWidth: 0.4, modalBlur: 12, settingsOpacity: 55 },
+        sel: null, pr: 'general', globalPrompt: { on: false, text: '' }, features: { ...DEFAULT_FEATURES }, featureOrder: FEATURES.map(([id]) => id), libraryShow: { ...DEFAULT_LIBRARY_SHOW }, theme: 'plum', customColors: { ...DEFAULT_CUSTOM_COLORS }, setupDone: false, prefs: { showBy: true, showLog: true, showTps: false, enterSends: true, autoTitle: true, temporaryByDefault: false, showModelPricing: false, titleEp: '', titleModel: '', fade: 0.4, tempHours: 3, fontBody: 'system', fontMono: 'system', fontHeader: 'system', modelPrimary: 'name', modelSecondary: 'none', paletteMax: 320, chatWidth: 'standard', settingsWidth: 1024, settingsHeight: 780, modelPickerHeight: 480, sidebarWidth: 288, widgetWidth: 320, workspaceWidth: 0.4, modalBlur: 12, settingsOpacity: 55 },
         stats: ZERO(), keys: Object.fromEntries(KEYS.map(([k, , d]) => [k, d])),
         folders: [], price: { in: 0, out: 0 }, todos: [],
         draft: '', busy: false, notice: null,
+        /* Workspace (first-class entity) */
+        workspaces: {}, selectedRevision: {},
 
         patch: (p) => set(p),
         add: (k) => set((s) => ({ [k]: [...(s[k] as any[]), BLANK[k]()] }) as Partial<S>),
@@ -613,7 +795,8 @@ export const useS = create<S>()(
           um.fx = att.filter((a) => a.kind === 'txt').map((a) => `\n\n[file: ${a.name}]\n${a.text ?? ''}`).join('')
           um.full = full(body(cmd, text), um.ctx, um.fx)
           const previous = s.chats.find((c) => c.id === s.chat)?.msgs ?? []
-          um.historyTokens = est(JSON.stringify(wire(s.eps.find(usable)!, previous)))
+          const cpt = Math.min(10, Math.max(1, Number(s.widgetPrefs?.charsPerToken) || 4))
+          um.historyTokens = estimateHistoryTokens(previous, '', cpt)
           um.explicitTokens = est(um.full + JSON.stringify(att.map(a => ({ name: a.name, text: a.text }))))
           set((st) => {
             const old = st.chats.find((c) => c.id === st.chat)
@@ -652,6 +835,22 @@ export const useS = create<S>()(
           void answer(um)
         },
         resetStats: () => set({ stats: ZERO() }),
+        compactStorage: () => {
+          const s = get(), now = Date.now()
+          const before = JSON.stringify({ chats: s.chats, workspaces: s.workspaces }).length
+          const chats = s.chats
+            .filter((c) => !(c.temporary && c.expiresAt != null && c.expiresAt <= now))
+            .map((c) => {
+              const lastAi = [...c.msgs].reverse().find((m) => m.r === 'assistant' && m.reasoning)?.id
+              return { ...c, msgs: c.msgs.map((m) => ({ ...m, fadeEvents: undefined, reasoning: m.id === lastAi ? m.reasoning : undefined })) }
+            })
+          const droppedChats = s.chats.length - chats.length
+          set({ chats, chat: chats.some((c) => c.id === s.chat) ? s.chat : chats[0]?.id ?? '' })
+          try { localStorage.removeItem(QUOTA_FLAG) } catch { /* ignore */ }
+          const after = JSON.stringify({ chats: get().chats, workspaces: get().workspaces }).length
+          const freed = Math.max(0, before - after)
+          return `Compacted stored data (~${(freed / 1024).toFixed(1)} KB freed${droppedChats ? `, ${droppedChats} expired temporary chat${droppedChats > 1 ? 's' : ''} removed` : ''}). Older reasoning traces were cleared; messages, tool history, and workspace files are untouched.`
+        },
         rename: (id, t) => set((s) => ({ chats: s.chats.map((c) => (c.id === id ? { ...c, title: t.slice(0, 80), titleAuto: false } : c)) })),
         reorder: (k, f, t) => set((s) => {
           const a = [...(s[k] as any[])], i = a.findIndex((x) => x.id === f), j = a.findIndex((x) => x.id === t)
@@ -707,7 +906,7 @@ export const useS = create<S>()(
           p.prefs.titleEp = ''
         }
         if (p.prefs && p.prefs.showTps === undefined) p.prefs.showTps = false
-        p.prefs = { ...p.prefs, fade: p.prefs?.fade ?? 0.4, tempHours: p.prefs?.tempHours ?? 3, fontBody: p.prefs?.fontBody ?? 'system', fontMono: p.prefs?.fontMono ?? 'system', fontHeader: p.prefs?.fontHeader ?? 'system', modelDisplay: p.prefs?.modelDisplay ?? 'both', paletteMax: p.prefs?.paletteMax ?? 320, chatWidth: p.prefs?.chatWidth ?? 'standard', settingsWidth: p.prefs?.settingsWidth ?? 1024, settingsHeight: p.prefs?.settingsHeight ?? 780, modelPickerHeight: p.prefs?.modelPickerHeight ?? 480, showModelPricing: p.prefs?.showModelPricing ?? false, titleModel: p.prefs?.titleModel ?? '', sidebarWidth: p.prefs?.sidebarWidth ?? 288, widgetWidth: p.prefs?.widgetWidth ?? 320, canvasWidth: typeof p.prefs?.canvasWidth === 'number' && p.prefs.canvasWidth <= 1 ? p.prefs.canvasWidth : 0.4, modalBlur: p.prefs?.modalBlur ?? 12, settingsOpacity: p.prefs?.settingsOpacity ?? 55, temporaryByDefault: p.prefs?.temporaryByDefault ?? false }
+        p.prefs = { ...p.prefs, fade: p.prefs?.fade ?? 0.4, tempHours: p.prefs?.tempHours ?? 3, fontBody: p.prefs?.fontBody ?? 'system', fontMono: p.prefs?.fontMono ?? 'system', fontHeader: p.prefs?.fontHeader ?? 'system', modelPrimary: p.prefs?.modelPrimary ?? ({ none: 'id', name: 'name', provider: 'id', both: 'name' } as const)[(p.prefs?.modelDisplay as string) ?? 'both'] ?? 'name', modelSecondary: p.prefs?.modelSecondary ?? ({ none: 'none', name: 'none', provider: 'provider', both: 'provider' } as const)[(p.prefs?.modelDisplay as string) ?? 'both'] ?? 'none', paletteMax: p.prefs?.paletteMax ?? 320, chatWidth: p.prefs?.chatWidth ?? 'standard', settingsWidth: p.prefs?.settingsWidth ?? 1024, settingsHeight: p.prefs?.settingsHeight ?? 780, modelPickerHeight: p.prefs?.modelPickerHeight ?? 480, showModelPricing: p.prefs?.showModelPricing ?? false, titleModel: p.prefs?.titleModel ?? '', sidebarWidth: p.prefs?.sidebarWidth ?? 288, widgetWidth: p.prefs?.widgetWidth ?? 320, workspaceWidth: typeof p.prefs?.workspaceWidth === 'number' && p.prefs.workspaceWidth <= 1 ? p.prefs.workspaceWidth : 0.4, modalBlur: p.prefs?.modalBlur ?? 12, settingsOpacity: p.prefs?.settingsOpacity ?? 55, temporaryByDefault: p.prefs?.temporaryByDefault ?? false }
         p.tools = { ...DEFAULT_TOOLS, ...(p.tools ?? {}) }
         p.search = normSearch(p.search)
         p.skills = normSkills(p.skills).skills
@@ -733,7 +932,17 @@ export const useS = create<S>()(
         // Persisted feature order: drop unknown ids, append any missing features in default order.
         p.featureOrder = normFeatureOrder(p.featureOrder)
         p.libraryShow = { ...DEFAULT_LIBRARY_SHOW, ...(typeof p.libraryShow === 'object' && p.libraryShow ? p.libraryShow : {}) }
-        p.canvasPrefs = { autoOpen: true, autoClose: false, ...(p.canvasPrefs ?? {}) }
+        // Migrate legacy canvasPrefs to workspacePrefs
+        p.workspacePrefs = { defaultView: 'pinned', autoOpen: true, autoFollow: true, ...(p.workspacePrefs ?? {}) }
+        // Migrate legacy per-message canvas groups into first-class Workspace entities
+        if (!p.workspaces) {
+          const { workspaces, selectedRevision } = migrateLegacyCanvasGroups(p.chats ?? [])
+          p.workspaces = workspaces
+          p.selectedRevision = selectedRevision
+        } else {
+          p.workspaces = p.workspaces ?? {}
+          p.selectedRevision = p.selectedRevision ?? {}
+        }
         p.advanced = normAdvanced(p.advanced)
         p.memoryPrefs = { enabled: false, intent: 'balanced', recall: 'contextual', classifierEp: '', classifierModel: '', ...(p.memoryPrefs ?? {}) }
         p.widgetPrefs = { usageGroup: 'endpoint', usageMode: 'success', usageFormat: '{in}/{out}', usageTotal: false, usagePeriod: 'all', lastSpeed: true, timeUnit: 'auto', widgetOrder: WIDGETS.map(([k]) => k), shortcuts: KEYS.map(([k]) => k), contextLimit: 128000, showDisabledEndpoints: true, scratchRows: 6, snippetLimit: 20, costDecimals: 4, activePromptsOnly: false, charsPerToken: 4, hideDoneTodos: false, ...(p.widgetPrefs ?? {}) }
@@ -759,6 +968,8 @@ export const useS = create<S>()(
       partialize: (s) => ({
         ...s, busy: false, draft: '', notice: null,
         chats: s.chats.map((c) => ({ ...c, msgs: c.msgs.filter((m) => !(m.r === 'assistant' && !m.t && !m.err)).map((m) => ({ ...m, fadeEvents: undefined, att: m.att?.map(({ name, kind, size }) => ({ name, kind, size })) })) })),
+        workspaces: s.workspaces,
+        selectedRevision: s.selectedRevision,
       }),
     },
   ),

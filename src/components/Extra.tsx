@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { Info, X, Server, Play, MessageSquare, Keyboard, ArrowUp, ArrowDown, MessagesSquare, RotateCcw, Download, Upload, FileText, Trash2, CircleCheck, CircleX, Gauge } from 'lucide-react'
-import { useS, dl, BLANK, THEMES, DEFAULT_FEATURES, modelsOf, modelNameOf, normSearch, normAdvanced, normFeatureOrder, featOn, errText, type Ep, type Kind, type FeatureId } from '../store'
+import { useS, dl, BLANK, THEMES, DEFAULT_FEATURES, modelsOf, modelNameOf, normSearch, normAdvanced, normFeatureOrder, featOn, errText, storageUsage, QUOTA_FLAG, type Ep, type Kind, type FeatureId } from '../store'
 import { normSkills } from '../skills'
 import { combo, fmt, rec as R, testEp } from '../engine'
 import { KEYS, TOOLS } from '../meta'
@@ -190,6 +190,28 @@ export function KeysTab() {
   )
 }
 
+function StorageBox() {
+  const s = useS()
+  const [info, setInfo] = useState<{ localBytes: number; quota?: number; usage?: number } | null>(null)
+  const [quotaFull, setQuotaFull] = useState(false)
+  const [note, setNote] = useState('')
+  useEffect(() => {
+    let live = true
+    void storageUsage().then((v) => { if (live) setInfo(v) })
+    try { setQuotaFull(localStorage.getItem(QUOTA_FLAG) != null) } catch { /* ignore */ }
+    return () => { live = false }
+  }, [s.chats, s.workspaces])
+  const kb = (n: number) => n < 1024 * 1024 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1024 / 1024).toFixed(2)} MB`
+  return (
+    <Box icon={Gauge} t="Browser storage" d={info ? `This browser holds about ${kb(info.localBytes)} of app data.` : 'Measure how much app data this browser holds.'}>
+      <Btn v="soft" onClick={() => { void storageUsage().then(setInfo); try { setQuotaFull(localStorage.getItem(QUOTA_FLAG) != null) } catch { /* ignore */ } }}>Refresh</Btn>
+      <Btn v="soft" onClick={() => { setNote(s.compactStorage()); void storageUsage().then(setInfo) }}>Compact</Btn>
+      {quotaFull && <span className="basis-full text-xs text-er">The last save did not fit: settings were kept and bulky history was compacted automatically. Use Compact or delete old chats to free space.</span>}
+      {note && <span className="basis-full text-xs text-mu">{note}</span>}
+    </Box>
+  )
+}
+
 export function DataTab() {
   const s = useS()
   const [withKeys, setWithKeys] = useState(false)
@@ -217,7 +239,7 @@ export function DataTab() {
     if (exports.memory) { data.memories = s.memories; data.memoryPrefs = s.memoryPrefs }
     if (exports.features) { data.features = s.features; data.featureOrder = s.featureOrder; data.libraryShow = s.libraryShow; data.advanced = s.advanced }
     if (exports.tools) { data.tools = s.tools; const sp = normSearch(s.search); data.search = withKeys ? sp : { ...sp, keys: { tinyfish: '', you: '', exa: '', firecrawl: '', brightdata: '' } } }
-    if (exports.tuning) { data.params = s.params; data.effort = s.effort; data.canvasPrefs = s.canvasPrefs }
+    if (exports.tuning) { data.params = s.params; data.effort = s.effort; data.workspacePrefs = s.workspacePrefs }
     if (exports.widgets) { data.widgets = s.widgets; data.widgetPrefs = s.widgetPrefs }
     if (exports.stats) data.stats = s.stats
     if (exports.chats) { data.chats = s.chats; data.folders = s.folders; data.chat = s.chat; data.todos = s.todos; data.snips = s.snips; data.pad = s.pad }
@@ -238,7 +260,7 @@ export function DataTab() {
         appearance: (typeof j.theme === 'string' && j.theme in THEMES) || (!!j.customColors && typeof j.customColors === 'object') || (!!j.prefs && typeof j.prefs === 'object'),
         features: (!!j.features && typeof j.features === 'object') || Array.isArray(j.featureOrder) || (!!j.libraryShow && typeof j.libraryShow === 'object') || (!!j.advanced && typeof j.advanced === 'object'),
         tools: (!!j.tools && typeof j.tools === 'object') || (!!j.search && typeof j.search === 'object'),
-        tuning: (!!j.params && typeof j.params === 'object') || (!!j.effort && typeof j.effort === 'object') || (!!j.canvasPrefs && typeof j.canvasPrefs === 'object'),
+        tuning: (!!j.params && typeof j.params === 'object') || (!!j.effort && typeof j.effort === 'object') || (!!j.workspacePrefs && typeof j.workspacePrefs === 'object'),
         widgets: (!!j.widgets && typeof j.widgets === 'object') || (!!j.widgetPrefs && typeof j.widgetPrefs === 'object'),
         stats: !!j.stats && typeof j.stats === 'object',
         chats: Array.isArray(j.chats) || Array.isArray(j.todos) || Array.isArray(j.snips) || typeof j.pad === 'string',
@@ -287,7 +309,7 @@ export function DataTab() {
           for (const p of Object.keys(current.keys)) keys[p] = merge ? ((incoming.keys as Record<string, string>)[p] || current.keys[p as keyof typeof current.keys] || '') : ((incoming.keys as Record<string, string>)[p] || '')
           return { search: { ...incoming, keys } }
         })() : {}) } : {}),
-        ...(imports.tuning ? { ...(j.params && typeof j.params === 'object' ? { params: { ...st.params, ...Object.fromEntries(Object.entries(j.params).filter(([k]) => ['def', 'temp', 'topp', 'max'].includes(k))) } } : {}), ...(j.effort && typeof j.effort === 'object' ? { effort: merge ? { ...st.effort, ...cleanStrings(j.effort) } : cleanStrings(j.effort) } : {}), ...(j.canvasPrefs && typeof j.canvasPrefs === 'object' ? { canvasPrefs: { ...st.canvasPrefs, ...Object.fromEntries(Object.entries(j.canvasPrefs).filter(([k]) => ['autoOpen', 'autoClose'].includes(k))) } } : {}) } : {}),
+        ...(imports.tuning ? { ...(j.params && typeof j.params === 'object' ? { params: { ...st.params, ...Object.fromEntries(Object.entries(j.params).filter(([k]) => ['def', 'temp', 'topp', 'max'].includes(k))) } } : {}), ...(j.effort && typeof j.effort === 'object' ? { effort: merge ? { ...st.effort, ...cleanStrings(j.effort) } : cleanStrings(j.effort) } : {}), ...(j.workspacePrefs && typeof j.workspacePrefs === 'object' ? { workspacePrefs: { ...st.workspacePrefs, ...Object.fromEntries(Object.entries(j.workspacePrefs).filter(([k]) => ['defaultView'].includes(k))) } } : {}) } : {}),
         ...(imports.widgets ? { widgets: merge ? { ...st.widgets, ...cleanBools(j.widgets) } : cleanBools(j.widgets), widgetPrefs: j.widgetPrefs ? (merge ? { ...st.widgetPrefs, ...j.widgetPrefs } : { ...st.widgetPrefs, ...j.widgetPrefs }) : st.widgetPrefs } : {}),
         ...(imports.stats && j.stats && typeof j.stats === 'object' ? { stats: merge ? { ...st.stats, ...j.stats } : j.stats } : {}),
         ...(imports.chats ? { chats, folders, chat: chats.some((c) => c.id === st.chat) ? st.chat : chats[0]?.id ?? '', ...(Array.isArray(j.todos) ? { todos: merge ? [...st.todos.filter((x) => !validTodos.some((y: any) => y.id === x.id)), ...validTodos] : validTodos } : {}), ...(Array.isArray(j.snips) ? { snips: merge ? [...st.snips, ...j.snips.filter((x: any) => typeof x === 'string')] : j.snips.filter((x: any) => typeof x === 'string') } : {}), ...(typeof j.pad === 'string' ? { pad: merge && st.pad ? st.pad : j.pad } : {}) } : {}),
@@ -310,6 +332,7 @@ export function DataTab() {
       <Box icon={FileText} t="Chat history" d="Include conversations in configuration exports, or delete them all. Stats are kept.">
         <Btn v="danger" disabled={!s.chats.length} onClick={() => setCf(1)}>Delete all</Btn>
       </Box>
+      <StorageBox />
       <Box icon={Trash2} t="Erase everything" d="Removes all endpoints, keys, prompts, skills, memories, chats, stats and settings from this browser.">
         <Btn v="danger" onClick={() => setCf(2)}>Erase</Btn>
       </Box>

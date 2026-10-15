@@ -1,5 +1,5 @@
 import { lazy, Suspense, useState } from 'react'
-import { Check, Copy, GitBranch, Pencil } from 'lucide-react'
+import { Check, Copy, GitBranch, Pencil, Trash2 } from 'lucide-react'
 import { useS, type FadeEvent, type Msg } from '../store'
 import { Btn } from './ui'
 
@@ -35,6 +35,7 @@ export function UserText({ m }: { m: Msg }) {
       <span className="flex shrink-0 gap-0.5 opacity-0 transition-opacity group-hover/u:opacity-100 focus-within:opacity-100">
         <Btn sm icon={GitBranch} title="Branch from here (copy this thread into a new chat)" onClick={() => branch(m.id)} />
         <Btn sm icon={Pencil} title="Edit message" onClick={() => setEd(true)} />
+        <Btn sm icon={Trash2} title="Delete" onClick={() => useS.getState().delMsg(m.id)} />
       </span>
       <div className={m.t.trimStart().startsWith('/') ? 'min-w-40 overflow-hidden rounded-xl border border-ac/40 bg-ac/5 shadow-sm' : 'whitespace-pre-wrap rounded-2xl bg-surf px-4 py-2.5'}>
         {m.t.trimStart().startsWith('/') && <div className="border-b border-ac/20 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-ac">Command</div>}

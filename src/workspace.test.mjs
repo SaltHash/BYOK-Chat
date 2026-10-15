@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-const { sanitizePath, parseCanvasArgsPartial, truncateCanvasContent, groupCanvasVersions, countCanvasFiles, buildZipEntries, zipFilename, CANVAS_MAX_CONTENT } = await import('./canvas.ts')
+const { sanitizePath, parseWorkspaceArgsPartial, truncateWorkspaceContent, groupWorkspaceVersions, countWorkspaceFiles, buildZipEntries, zipFilename, WORKSPACE_MAX_CONTENT, migrateLegacyCanvasGroups } = await import('./workspace.ts')
 
 test('sanitizePath keeps valid relative paths and never throws', () => {
   assert.equal(sanitizePath('src/app.py'), 'src/app.py')
@@ -31,55 +31,55 @@ test('sanitizePath coerces traversal and illegal input to a root basename', () =
 })
 
 test('tolerant parser reads full JSON exactly', () => {
-  const args = parseCanvasArgsPartial(JSON.stringify({ action: 'create', path: 'src/app.py', language: 'python', content: 'print("hi")\n', label: 'App' }))
+  const args = parseWorkspaceArgsPartial(JSON.stringify({ action: 'create', path: 'src/app.py', language: 'python', content: 'print("hi")\n', label: 'App' }))
   assert.deepEqual(args, { action: 'create', path: 'src/app.py', language: 'python', content: 'print("hi")\n', label: 'App' })
 })
 
 test('tolerant parser extracts truncated streaming prefixes without crashing', () => {
   // Mid-string cut with escapes accumulated so far.
   const partial = '{"action":"create","path":"src/app.py","language":"python","content":"line1\\nline2\\npar'
-  const args = parseCanvasArgsPartial(partial)
+  const args = parseWorkspaceArgsPartial(partial)
   assert.equal(args.action, 'create')
   assert.equal(args.path, 'src/app.py')
   assert.equal(args.language, 'python')
   assert.equal(args.content, 'line1\nline2\npar')
   // Cut right after the content opening quote.
-  assert.equal(parseCanvasArgsPartial('{"action":"create","content":"').content, '')
+  assert.equal(parseWorkspaceArgsPartial('{"action":"create","content":"').content, '')
   // Cut inside an escape sequence.
-  assert.equal(parseCanvasArgsPartial('{"content":"abc\\').content, 'abc')
-  // Cut inside a \\u escape.
-  assert.equal(parseCanvasArgsPartial('{"content":"ab\\u12').content, 'ab')
+  assert.equal(parseWorkspaceArgsPartial('{"content":"abc\\').content, 'abc')
+  // Cut inside a \u escape.
+  assert.equal(parseWorkspaceArgsPartial('{"content":"ab\\u12').content, 'ab')
   // Escaped quotes inside content stay intact.
-  assert.equal(parseCanvasArgsPartial('{"content":"she said \\"hi\\" loudly').content, 'she said "hi" loudly')
+  assert.equal(parseWorkspaceArgsPartial('{"content":"she said \\"hi\\" loudly').content, 'she said "hi" loudly')
   // Garbage never throws and yields at most a partial object.
-  assert.deepEqual(parseCanvasArgsPartial('not json at all'), {})
-  assert.deepEqual(parseCanvasArgsPartial(''), {})
+  assert.deepEqual(parseWorkspaceArgsPartial('not json at all'), {})
+  assert.deepEqual(parseWorkspaceArgsPartial(''), {})
 })
 
 test('content truncation marks oversized files', () => {
-  const big = 'x'.repeat(CANVAS_MAX_CONTENT + 10)
-  const { text, truncated } = truncateCanvasContent(big)
+  const big = 'x'.repeat(WORKSPACE_MAX_CONTENT + 10)
+  const { text, truncated } = truncateWorkspaceContent(big)
   assert.equal(truncated, true)
-  assert.ok(text.startsWith('x'.repeat(CANVAS_MAX_CONTENT)))
+  assert.ok(text.startsWith('x'.repeat(WORKSPACE_MAX_CONTENT)))
   assert.match(text, /truncated/)
-  assert.equal(truncateCanvasContent('small').truncated, false)
+  assert.equal(truncateWorkspaceContent('small').truncated, false)
 })
 
 test('grouping collects versions by path in message order and caps files', () => {
   const calls = [
     { id: '1', name: 'calc', arguments: '{}' },
-    { id: '2', name: 'canvas_upsert', arguments: JSON.stringify({ action: 'create', path: 'src/a.py', language: 'python', content: 'v1' }) },
-    { id: '3', name: 'canvas_upsert', arguments: JSON.stringify({ action: 'update', path: 'src/a.py', language: 'python', content: 'v2' }) },
-    { id: '4', name: 'canvas_upsert', arguments: JSON.stringify({ action: 'create', path: '/tmp/b.txt', language: '', content: 'b' }) },
+    { id: '2', name: 'workspace_upsert', arguments: JSON.stringify({ action: 'create', path: 'src/a.py', language: 'python', content: 'v1' }) },
+    { id: '3', name: 'workspace_upsert', arguments: JSON.stringify({ action: 'update', path: 'src/a.py', language: 'python', content: 'v2' }) },
+    { id: '4', name: 'workspace_upsert', arguments: JSON.stringify({ action: 'create', path: '/tmp/b.txt', language: '', content: 'b' }) },
   ]
-  const groups = groupCanvasVersions(calls)
+  const groups = groupWorkspaceVersions(calls)
   assert.equal(groups.length, 2)
   assert.equal(groups[0].path, 'src/a.py')
   assert.deepEqual(groups[0].versions.map((v) => v.content), ['v1', 'v2'])
-  assert.equal(countCanvasFiles(calls), 2)
-  const many = Array.from({ length: 12 }, (_, i) => ({ id: `c${i}`, name: 'canvas_upsert', arguments: JSON.stringify({ action: 'create', path: `f${i}.txt`, content: `${i}` }) }))
-  assert.equal(groupCanvasVersions(many).length, 8)
-  assert.equal(countCanvasFiles(many), 12)
+  assert.equal(countWorkspaceFiles(calls), 2)
+  const many = Array.from({ length: 12 }, (_, i) => ({ id: `c${i}`, name: 'workspace_upsert', arguments: JSON.stringify({ action: 'create', path: `f${i}.txt`, content: `${i}` }) }))
+  assert.equal(groupWorkspaceVersions(many).length, 8)
+  assert.equal(countWorkspaceFiles(many), 12)
 })
 
 test('zip entries sanitize, dedupe with -2/-3 suffixes, and name the archive', () => {
@@ -92,8 +92,8 @@ test('zip entries sanitize, dedupe with -2/-3 suffixes, and name the archive', (
   ])
   assert.deepEqual(entries.map((e) => e.path), ['proj/a.py', 'proj/a-2.py', 'proj/a-3.py', 'evil.sh', 'notes.txt'])
   assert.equal(zipFilename([{ path: 'proj/a.py' }]), 'proj.zip')
-  assert.equal(zipFilename([{ path: 'flat.txt' }]), 'canvas-files.zip')
-  assert.equal(zipFilename([]), 'canvas-files.zip')
+  assert.equal(zipFilename([{ path: 'flat.txt' }]), 'workspace-files.zip')
+  assert.equal(zipFilename([]), 'workspace-files.zip')
   // Extensionless duplicates still dedupe.
   assert.deepEqual(buildZipEntries([{ path: 'a', content: '1' }, { path: 'a', content: '2' }]).map((e) => e.path), ['a', 'a-2'])
 })
@@ -109,4 +109,31 @@ test('built zip extracts to the correct relative structure', async () => {
   const out = unzipSync(zipSync(obj))
   assert.deepEqual(Object.keys(out).sort(), ['proj/README.md', 'proj/src/app.py'])
   assert.equal(strFromU8(out['proj/src/app.py']), 'print(1)')
+})
+
+test('migrateLegacyCanvasGroups converts per-message canvas to workspaces', () => {
+  const chats = [{
+    msgs: [
+      { id: 'msg1', r: 'assistant', at: 1000, toolRounds: [{
+        text: '', calls: [{
+          id: 'call1', name: 'canvas_upsert', arguments: JSON.stringify({ action: 'create', path: 'src/a.py', language: 'python', content: 'v1', label: 'Initial' })
+        }]
+      }]},
+      { id: 'msg2', r: 'assistant', at: 2000, toolRounds: [{
+        text: '', calls: [{
+          id: 'call2', name: 'canvas_upsert', arguments: JSON.stringify({ action: 'update', path: 'src/a.py', language: 'python', content: 'v2', label: 'Updated' })
+        }]
+      }]},
+    ]
+  }]
+  const { workspaces, selectedRevision } = migrateLegacyCanvasGroups(chats)
+  assert.ok(Object.keys(workspaces).length >= 1)
+  const wsId = Object.keys(workspaces)[0]
+  const ws = workspaces[wsId]
+  assert.ok(ws.id.startsWith('ws-'))
+  assert.equal(ws.name, 'Workspace 1')
+  assert.equal(ws.revisions.length, 1)
+  assert.equal(ws.revisions[0].name, 'Initial')
+  assert.equal(ws.revisions[0].files[0].path, 'src/a.py')
+  assert.equal(selectedRevision[wsId], ws.revisions[0].id)
 })

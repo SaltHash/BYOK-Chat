@@ -7,8 +7,8 @@ import { Composer } from './Composer'
 import { Header } from './Header'
 import { Tutorial } from './Extra'
 import { Md, UserText } from './Md'
-import { CanvasRail, CanvasPanel } from './Canvas'
-import { groupCanvasVersions } from '../canvas'
+import { WorkspaceTile, WorkspacePanel } from './Workspace'
+import { groupWorkspaceVersions, type Workspace, type WorkspaceCallLike } from '../workspace'
 
 function toolStep(name: string, rawArgs: string, result?: string) {
   let args: Record<string, unknown> = {}
@@ -19,10 +19,12 @@ function toolStep(name: string, rawArgs: string, result?: string) {
   if (name === 'prompt_chip') return `Follow-up · ${typeof args.label === 'string' ? args.label : 'Continue'}`
   if (name === 'inline_poll') return `Choice · ${typeof args.question === 'string' ? args.question : 'Choose an option'}`
   const clip = (s: string, n = 90) => s.length > n ? `${s.slice(0, n)}…` : s
-  if (name === 'canvas_upsert') {
+  if (name === 'workspace_upsert') {
     const action = typeof args.action === 'string' ? args.action : 'file'
     const path = typeof args.path === 'string' ? args.path : 'file'
-    return `Canvas file · ${action}: ${clip(path, 80)}`
+    const workspaceId = typeof args.workspaceId === 'string' ? args.workspaceId : ''
+    const wsLabel = workspaceId ? ` (ws:${workspaceId.slice(0, 8)})` : ''
+    return `Workspace file · ${action}: ${clip(path, 80)}${wsLabel}`
   }
   if (name === 'search') {
     const responses = result?.match(/\[Source [^\]]+\]/g)?.length
@@ -105,8 +107,8 @@ function MessageActions({ calls }: { calls: { id: string; name: string; argument
   </div>
 }
 
-function M({ m, last, onOpenCanvas, selectedPath }: { m: Msg; last: boolean; onOpenCanvas: (mid: string, path: string) => void; selectedPath?: string | null }) {
-  const { prefs, busy, advanced, features } = useS()
+function M({ m, last, onOpenWorkspace, selectedWorkspaceId }: { m: Msg; last: boolean; onOpenWorkspace: (mid: string, workspaceId: string, filePath?: string) => void; selectedWorkspaceId?: string | null }) {
+  const { prefs, busy, advanced, features, workspaces } = useS()
   const adv = featOn({ features }, 'advanced') ? advanced : undefined
   const [sysOpen, setSysOpen] = useState(false)
   const [copied, setCopied] = useState(false)
@@ -116,16 +118,19 @@ function M({ m, last, onOpenCanvas, selectedPath }: { m: Msg; last: boolean; onO
   const sysText = m.sys ?? sysPreview
   const togglePayload = (k: string) => setExpanded((v) => ({ ...v, [k]: !v[k] }))
   const live = useLive((s) => s.tools[m.id])
+  const [showRawErr, setShowRawErr] = useState(false)
   const [log, setLog] = useState(false)
   const [thinkingOpen, setThinkingOpen] = useState(false)
   const [ok, setOk] = useState(false)
   const writingPath = useMemo(() => {
-    const final = (m.toolRounds ?? []).flatMap((r) => r.calls).filter((t) => t.name === 'canvas_upsert')
-    const streaming = (live ?? []).filter((t) => t.name === 'canvas_upsert' || !t.name)
+    const final = (m.toolRounds ?? []).flatMap((r) => r.calls).filter((t) => t.name === 'workspace_upsert')
+    const streaming = (live ?? []).filter((t) => t.name === 'workspace_upsert' || !t.name)
     const done = new Set(final.map((t) => t.id))
     const pending = streaming.filter((t) => !t.id || !done.has(t.id))
+    const allCalls = [...pending.map((t) => ({ ...t })), ...final.map((t) => ({ ...t }))]
+    const groups = groupWorkspaceVersions(allCalls)
+    if (!pending.length && final.length && groups[groups.length - 1]?.path) return groups[groups.length - 1].path
     if (!pending.length) return null
-    const groups = groupCanvasVersions(pending.map((t) => ({ ...t })))
     return groups[groups.length - 1]?.path ?? null
   }, [m.toolRounds, live])
   if (m.r === 'user')
@@ -176,6 +181,7 @@ function M({ m, last, onOpenCanvas, selectedPath }: { m: Msg; last: boolean; onO
             </div>
           )}
           <ol className="space-y-1.5">
+            {m.log!.length === 0 && !m.toolRounds?.length && <li className="text-mu">Nothing happening yet...</li>}
             {m.log!.filter((t) => /\(classifier\)$/.test(t.n) || t.n === 'Memory recall').map((t, i) => (
               <li key={`classifier-${i}`} className="flex items-center gap-2">
                 {t.err ? <CircleX size={14} className="shrink-0 text-er" /> : <CircleCheck size={14} className="shrink-0 text-ac" />}
@@ -208,17 +214,26 @@ function M({ m, last, onOpenCanvas, selectedPath }: { m: Msg; last: boolean; onO
           </ol>
         </div>
       )}
-      {(m.reasoning || (m.thinkingOn && busy && last)) && (
-        <div className="rounded-xl bg-surf px-3 py-2 text-sm">
-          <button onClick={() => setThinkingOpen(!thinkingOpen)} className="flex items-center gap-2 text-mu hover:text-tx">
-            <ChevronDown size={14} className={cx('transition-transform', !thinkingOpen && '-rotate-90')} />
-            <span className="font-medium">Thinking</span>
-          </button>
-          {thinkingOpen && <div className="mt-2 whitespace-pre-wrap border-l border-hov pl-4 text-sm text-mu">{m.reasoning || 'This model has not sent a reasoning summary.'}</div>}
+      {(m.thinkingOn && busy && last && !!m.t) && (
+        <div className="reply-thinking" role="status" aria-label="Thinking">
+          <span className="size-3 animate-pulse rounded-full bg-ac" />
         </div>
       )}
       <div className={cx('leading-7', m.err && 'text-er')}>
-        {m.t ? (
+        {m.err ? (
+          <div className="space-y-3 rounded-xl border border-er/30 bg-er/10 p-4">
+            <div className="flex items-center gap-2 font-semibold text-er">
+              <TriangleAlert size={18} /> Model Error{m.by ? ` · ${m.by}` : ''}
+            </div>
+            <div className="text-sm text-er/90">{m.t || 'HTTP 500 — Internal error encountered.'}</div>
+            <button onClick={() => setShowRawErr(!showRawErr)} className="rounded-lg bg-er/20 px-3 py-1.5 text-sm font-medium text-er hover:bg-er/30 transition-colors">
+              {showRawErr ? 'Hide raw error' : 'Show raw error'}
+            </button>
+            {showRawErr && (
+              <pre className="overflow-x-auto whitespace-pre-wrap break-words rounded-lg bg-bg p-3 font-mono text-xs text-mu border border-hov">{(() => { try { return JSON.stringify(JSON.parse(m.t || '{}'), null, 2) } catch { return m.t || '' } })()}</pre>
+            )}
+          </div>
+        ) : m.t ? (
           <div className="inline">
             <Md t={m.t} fadeEvents={m.fadeEvents} fade={prefs.fade} />
           </div>
@@ -234,7 +249,37 @@ function M({ m, last, onOpenCanvas, selectedPath }: { m: Msg; last: boolean; onO
           </span>
         )}
       </div>
-      {((m.toolRounds ?? []).length > 0 || (live ?? []).length > 0) && <CanvasRail msg={m} live={live} selected={selectedPath} onOpen={(path) => onOpenCanvas(m.id, path)} />}
+      {/* Workspace tiles for this message — shown above message controls but below content */}
+      {(() => {
+        const wsIds = new Set<string>(m.workspaceIds ?? [])
+        const liveWsIds = (live ?? []).filter((c: any) => c.name === 'workspace_upsert').map((c: any) => {
+          try { const a = JSON.parse(c.arguments || '{}'); if (a.workspaceId) return a.workspaceId } catch {}
+          try { const r = JSON.parse(c.result || '{}'); if (r.workspaceId) return r.workspaceId } catch {}
+          return null
+        }).filter(Boolean) as string[]
+        liveWsIds.forEach(id => wsIds.add(id))
+        const ids = Array.from(wsIds)
+        return ids.length > 0 ? (
+          <div className="space-y-2">
+            {ids.map((wsId) => {
+              const workspace = workspaces[wsId]
+              if (!workspace) return null
+              const selectedRevId = useS.getState().selectedRevision?.[wsId] ?? workspace.revisions[workspace.revisions.length - 1].id
+              return (
+                <WorkspaceTile
+                  key={wsId}
+                  msg={m}
+                  live={live}
+                  workspace={workspace}
+                  selectedRevisionId={selectedRevId}
+                  onOpen={() => onOpenWorkspace(m.id, wsId)}
+                  onSelectRevision={(revId) => useS.getState().patch({ selectedRevision: { ...useS.getState().selectedRevision, [wsId]: revId } })}
+                />
+              )
+            })}
+          </div>
+        ) : null
+      })()}
       {(m.toolRounds ?? []).length > 0 && <MessageActions calls={(m.toolRounds ?? []).flatMap((round) => round.calls)} />}
       {prefs.showTps && m.tps != null && !m.err && <div className="text-xs text-mu">{m.by} · {m.tps.toLocaleString()} tokens/s</div>}
       <div className={cx('flex items-center gap-0.5 transition-opacity', m.alts && m.alts.length > 1 ? '' : 'opacity-0 group-hover:opacity-100')}>
@@ -268,54 +313,56 @@ export function Chat({ side, toggle, cfg, pal }: { side: boolean; toggle: () => 
   const box = useRef<HTMLDivElement>(null), stick = useRef(true)
   const liveTools = useLive((l) => l.tools)
   const busy = useS((st) => st.busy)
-  const canvasPrefs = useS((st) => st.canvasPrefs ?? { autoOpen: true, autoClose: false })
-  const [dock, setDock] = useState<{ mid: string; path: string | null } | null>(null)
+  const workspacePrefs = useS((st) => st.workspacePrefs ?? { defaultView: 'latest', autoOpen: true, autoFollow: true })
+  const [workspacePanel, setWorkspacePanel] = useState<{ mid: string; workspaceId: string; initialFilePath?: string } | null>(null)
   const prevBusy = useRef(busy)
+
   useEffect(() => { stick.current = true }, [s.chat])
   useEffect(() => {
     const b = box.current, last = c?.msgs[c.msgs.length - 1]
     if (b && (stick.current || last?.r === 'user')) b.scrollTop = b.scrollHeight
   }, [c?.msgs, s.chat])
-  // Drop the dock when switching to a chat that does not contain it.
+
+  // Auto-open workspace panel when AI writes files; follow the file being written.
   useEffect(() => {
-    if (dock && c && !c.msgs.some((m) => m.id === dock.mid)) setDock(null)
-  }, [s.chat])
-  // Auto-open on live canvas writes; follow the last file written; auto-close optionally.
-  useEffect(() => {
-    if (!c) return
-    if (busy && canvasPrefs.autoOpen) {
+    if (!c || !workspacePrefs.autoOpen) return
+    if (busy) {
       for (let i = c.msgs.length - 1; i >= 0; i--) {
         const m = c.msgs[i]
         if (m.r !== 'assistant') continue
-        const final = (m.toolRounds ?? []).flatMap((r) => r.calls).filter((t) => t.name === 'canvas_upsert')
-        const live = (liveTools[m.id] ?? []).filter((t) => t.name === 'canvas_upsert' || !t.name)
-        const done = new Set(final.map((t) => t.id))
-        const pending = live.filter((t) => !t.id || !done.has(t.id))
-        const combined = [...final, ...pending.map((t) => ({ ...t }))]
-        if (!combined.length) {
-          // No canvas activity on this message — keep looking at older ones.
-          continue
-        }
-        const groups = groupCanvasVersions(combined)
-        const lastPath = groups[groups.length - 1]?.path
-        if (!lastPath) break
-        setDock((d) => {
-          if (!d || d.mid !== m.id) return { mid: m.id, path: lastPath }
-          if (d.path !== lastPath) return { ...d, path: lastPath }
-          return d
+        const finalCalls = (m.toolRounds ?? []).flatMap((r) => r.calls).filter((t) => t.name === 'workspace_upsert')
+        const liveCalls = (liveTools[m.id] ?? []).filter((t) => t.name === 'workspace_upsert' || !t.name)
+        const done = new Set(finalCalls.map((t) => t.id))
+        const pending = liveCalls.filter((t) => !t.id || !done.has(t.id))
+        if (pending.length === 0) continue
+        // Find workspace ID and active file path from live arguments
+        let wsId = (m.workspaceIds ?? [])[0]
+        let initialPath: string | undefined
+        const args = liveCalls.map((t: any) => {
+          try { return JSON.parse(t.arguments || '{}') } catch { return {} }
         })
-        break
+        const paths = args.map((a: any) => typeof a.path === 'string' ? a.path : '').filter(Boolean)
+        initialPath = paths[paths.length - 1] || undefined
+        const liveWsIds = args.map((a: any) => a.workspaceId ? String(a.workspaceId) : null).filter(Boolean) as string[]
+        if (!wsId) wsId = liveWsIds[0] || (m.workspaceIds ?? [])[0]
+        if (wsId || initialPath) {
+          setWorkspacePanel((prev) => {
+            if (!prev || prev.mid !== m.id || prev.workspaceId !== wsId || prev.initialFilePath !== initialPath) {
+              return { mid: m.id, workspaceId: wsId || prev?.workspaceId || '', initialFilePath: initialPath || prev?.initialFilePath }
+            }
+            return prev
+          })
+          break
+        }
       }
     }
-    if (prevBusy.current && !busy && canvasPrefs.autoClose) setDock(null)
+    // Auto-close when reply completes (optional - controlled by user closing panel)
+    if (prevBusy.current && !busy && workspacePanel) {
+      // Keep panel open until user closes it
+    }
     prevBusy.current = busy
-  }, [busy, liveTools, c, canvasPrefs.autoOpen, canvasPrefs.autoClose])
-  const openCanvas = (mid: string, path: string) => setDock({ mid, path })
-  const dockMsg = dock ? c?.msgs.find((m) => m.id === dock.mid) : undefined
-  // Canvas width is a fraction of the chat section (screen minus sidebar).
-  // Legacy pixel values (>1) fall back to the 40% default without persisting.
-  const rawCanvas = s.prefs.canvasWidth ?? 0.4
-  const canvasFrac = typeof rawCanvas === 'number' && rawCanvas > 0 && rawCanvas <= 1 ? rawCanvas : 0.4
+  }, [busy, liveTools, c, workspacePrefs.autoOpen, workspacePanel])
+
   const rowRef = useRef<HTMLDivElement>(null)
   const [wide, setWide] = useState(() => typeof matchMedia === 'function' && matchMedia('(min-width: 640px)').matches)
   useEffect(() => {
@@ -325,19 +372,27 @@ export function Chat({ side, toggle, cfg, pal }: { side: boolean; toggle: () => 
     q.addEventListener('change', f)
     return () => q.removeEventListener('change', f)
   }, [])
+
+  const workspaceMsg = workspacePanel ? c?.msgs.find((m) => m.id === workspacePanel.mid) : undefined
+  const workspace = workspaceMsg ? s.workspaces[workspacePanel.workspaceId] : undefined
+  const selectedRevId = workspacePanel ? s.selectedRevision[workspacePanel.workspaceId] : null
+  const rawWorkspace = s.prefs.workspaceWidth ?? 0.4
+  const workspaceFrac = typeof rawWorkspace === 'number' && rawWorkspace > 0 && rawWorkspace <= 1 ? rawWorkspace : 0.4
+
   const startResize = (e: React.PointerEvent) => {
     e.preventDefault()
     const row = rowRef.current
     if (!row) return
-    const x = e.clientX, start = canvasFrac, total = row.getBoundingClientRect().width || 1
+    const x = e.clientX, start = workspaceFrac, total = row.getBoundingClientRect().width || 1
     const move = (ev: PointerEvent) => {
       const value = Math.max(0.15, Math.min(0.7, start - (ev.clientX - x) / total))
       const st = useS.getState()
-      st.patch({ prefs: { ...st.prefs, canvasWidth: Math.round(value * 1000) / 1000 } })
+      st.patch({ prefs: { ...st.prefs, workspaceWidth: Math.round(value * 1000) / 1000 } })
     }
     const up = () => { removeEventListener('pointermove', move); removeEventListener('pointerup', up) }
     addEventListener('pointermove', move); addEventListener('pointerup', up, { once: true })
   }
+
   return (
     <section className="flex min-h-0 min-w-0 flex-1 flex-col bg-bg">
       <Header side={side} toggle={toggle} cfg={cfg} pal={pal} title={c?.title ?? 'New chat'} />
@@ -346,7 +401,7 @@ export function Chat({ side, toggle, cfg, pal }: { side: boolean; toggle: () => 
           <div ref={box} onScroll={(e) => { const b = e.currentTarget; stick.current = b.scrollHeight - b.scrollTop - b.clientHeight < 80 }} className="min-h-0 flex-1 overflow-y-auto">
             {c && c.msgs.length ? (
               <div className="mx-auto space-y-8 px-4 py-6" style={{ maxWidth: ({ narrow: 640, standard: 768, wide: 1024 } as const)[s.prefs.chatWidth] }}>
-                {c.msgs.map((m, i) => <M key={m.id} m={m} last={i === c.msgs.length - 1} onOpenCanvas={openCanvas} selectedPath={dock?.mid === m.id ? dock.path : null} />)}
+                {c.msgs.map((m, i) => <M key={m.id} m={m} last={i === c.msgs.length - 1} onOpenWorkspace={(mid, wsId, filePath) => setWorkspacePanel({ mid, workspaceId: wsId, initialFilePath: filePath })} selectedWorkspaceId={workspacePanel?.mid === m.id ? selectedRevId : null} />)}
               </div>
             ) : !s.eps.some(usable) ? (
               <Tutorial cfg={cfg} />
@@ -363,11 +418,11 @@ export function Chat({ side, toggle, cfg, pal }: { side: boolean; toggle: () => 
           </div>
           <Composer cfg={cfg} />
         </div>
-        {dockMsg && (
+        {workspaceMsg && workspace && (
           <>
-            <div role="separator" aria-orientation="vertical" aria-label="Resize canvas panel" onPointerDown={startResize} className="hidden w-1.5 shrink-0 cursor-col-resize bg-transparent hover:bg-ac/50 sm:block" />
-            <aside aria-label="Canvas side panel" style={wide ? { flex: `0 0 ${canvasFrac * 100}%`, maxWidth: '70%', minWidth: '15%' } : { height: '45dvh', width: '100%' }} className="flex min-h-0 shrink-0 flex-col border-t border-hov bg-surf/40 sm:border-l sm:border-t-0">
-              <CanvasPanel key={`${dockMsg.id}:${dockMsg.ai ?? 0}`} msg={dockMsg} live={liveTools[dockMsg.id]} path={dock?.path ?? null} setPath={(path) => setDock((d) => (d ? { ...d, path } : d))} onClose={() => setDock(null)} />
+            <div role="separator" aria-orientation="vertical" aria-label="Resize workspace panel" onPointerDown={startResize} className="hidden w-1.5 shrink-0 cursor-col-resize bg-transparent hover:bg-ac/50 sm:block" />
+            <aside aria-label="Workspace side panel" style={wide ? { flex: `0 0 ${workspaceFrac * 100}%`, maxWidth: '70%', minWidth: '15%' } : { height: '45dvh', width: '100%' }} className="flex min-h-0 shrink-0 flex-col border-t border-hov bg-surf/40 sm:border-l sm:border-t-0">
+              <WorkspacePanel key={`${workspaceMsg.id}:${workspaceMsg.ai ?? 0}:${workspacePanel.workspaceId}:${workspacePanel.initialFilePath ?? ''}`} msg={workspaceMsg} live={liveTools[workspaceMsg.id]} workspace={workspace} selectedRevisionId={selectedRevId ?? workspace.revisions[workspace.revisions.length - 1].id} setSelectedRevisionId={(id) => s.patch({ selectedRevision: { ...s.selectedRevision, [workspacePanel.workspaceId]: id } })} onClose={() => setWorkspacePanel(null)} initialFilePath={workspacePanel.initialFilePath} />
             </aside>
           </>
         )}

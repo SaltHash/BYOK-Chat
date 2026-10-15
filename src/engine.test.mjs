@@ -181,40 +181,44 @@ test('provider rejection of tool definitions surfaces an explicit error', async 
   finally { globalThis.fetch = original }
 })
 
-test('canvas_upsert executes locally, coerces bad paths, and truncates oversized content', async () => {
-  const { CANVAS_MAX_CONTENT } = await import('./canvas.ts')
-  const ok = await executeTool({ id: 'canvas-1', name: 'canvas_upsert', arguments: JSON.stringify({ action: 'create', path: 'src/app.py', language: 'python', content: 'print(1)' }) }, enabled)
-  assert.equal(ok.result, 'Canvas ready: src/app.py')
+test('workspace_upsert executes locally, coerces bad paths, and truncates oversized content', async () => {
+  const { WORKSPACE_MAX_CONTENT } = await import('./workspace.ts')
+  const ok = await executeTool({ id: 'ws-1', name: 'workspace_upsert', arguments: JSON.stringify({ action: 'create', workspaceId: 'ws-1', revisionName: 'Initial', path: 'src/app.py', language: 'python', content: 'print(1)' }) }, enabled)
+  assert.equal(JSON.parse(ok.result).status, 'ready')
+  assert.equal(JSON.parse(ok.result).path, 'src/app.py')
   assert.equal(ok.error, undefined)
-  const evil = await executeTool({ id: 'canvas-2', name: 'canvas_upsert', arguments: JSON.stringify({ action: 'create', path: '../../evil.sh', content: 'x' }) }, enabled)
-  assert.equal(evil.result, 'Canvas ready: evil.sh')
-  const gone = await executeTool({ id: 'canvas-3', name: 'canvas_upsert', arguments: JSON.stringify({ action: 'delete', path: '/tmp/old.txt' }) }, enabled)
-  assert.equal(gone.result, 'Canvas deleted: tmp/old.txt')
-  const big = await executeTool({ id: 'canvas-4', name: 'canvas_upsert', arguments: JSON.stringify({ action: 'create', path: 'big.txt', content: 'x'.repeat(CANVAS_MAX_CONTENT + 5) }) }, enabled)
-  assert.match(big.result, /Canvas ready: big\.txt/)
-  assert.match((await executeTool({ id: 'canvas-5', name: 'canvas_upsert', arguments: JSON.stringify({ action: 'explode', path: 'a.txt' }) }, enabled)).result, /action must be/)
-  assert.match((await executeTool({ id: 'canvas-6', name: 'canvas_upsert', arguments: JSON.stringify({ action: 'create' }) }, enabled)).result, /Missing required argument: path/)
-  assert.match((await executeTool({ id: 'canvas-7', name: 'canvas_upsert', arguments: '{}' }, {})).result, /disabled/)
+  const evil = await executeTool({ id: 'ws-2', name: 'workspace_upsert', arguments: JSON.stringify({ action: 'create', workspaceId: 'ws-1', revisionName: 'Initial', path: '../../evil.sh', content: 'x' }) }, enabled)
+  assert.equal(JSON.parse(evil.result).status, 'ready')
+  assert.equal(JSON.parse(evil.result).path, 'evil.sh')
+  const gone = await executeTool({ id: 'ws-3', name: 'workspace_upsert', arguments: JSON.stringify({ action: 'delete', workspaceId: 'ws-1', revisionName: 'Delete', path: '/tmp/old.txt' }) }, enabled)
+  assert.equal(JSON.parse(gone.result).status, 'deleted')
+  assert.equal(JSON.parse(gone.result).path, 'tmp/old.txt')
+  const big = await executeTool({ id: 'ws-4', name: 'workspace_upsert', arguments: JSON.stringify({ action: 'create', workspaceId: 'ws-1', revisionName: 'Big', path: 'big.txt', content: 'x'.repeat(WORKSPACE_MAX_CONTENT + 5) }) }, enabled)
+  assert.match(big.result, /"status":"ready"/)
+  assert.match(big.result, /"path":"big\.txt"/)
+  assert.match((await executeTool({ id: 'ws-5', name: 'workspace_upsert', arguments: JSON.stringify({ action: 'explode', workspaceId: 'ws-1', revisionName: 'Test', path: 'a.txt' }) }, enabled)).result, /action must be/)
+  assert.match((await executeTool({ id: 'ws-6', name: 'workspace_upsert', arguments: JSON.stringify({ action: 'create', workspaceId: 'ws-1', revisionName: 'Test' }) }, enabled)).result, /Missing required argument: path/)
+  assert.match((await executeTool({ id: 'ws-7', name: 'workspace_upsert', arguments: '{}' }, {})).result, /disabled/)
 })
 
-test('streaming tool deltas fire per chunk with the accumulated canvas arguments', async () => {
+test('streaming tool deltas fire per chunk with the accumulated workspace arguments', async () => {
   const original = globalThis.fetch
   globalThis.fetch = async () => new Response([
-    'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"cv-1","function":{"name":"canvas_upsert","arguments":"{\\"action\\":\\"create\\""}}]}}]}',
+    'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"cv-1","function":{"name":"workspace_upsert","arguments":"{\\"action\\":\\"create\\""}}]}}]}',
     'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":",\\"path\\":\\"a.py\\",\\"content\\":\\"print("}}]}}]}',
     'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"1)\\"}"}}]}}]}',
     'data: [DONE]', '',
   ].join('\n'), { headers: { 'content-type': 'text/event-stream' } })
   try {
     const seen = []
-    const result = await stream(openai, '', [{ role: 'user', content: 'make a file' }], () => {}, new AbortController(), {}, () => {}, toolsFor({ canvas_upsert: true }, 'openai'), (calls) => seen.push(structuredClone(calls)))
-    assert.equal(result.toolCalls[0].name, 'canvas_upsert')
+    const result = await stream(openai, '', [{ role: 'user', content: 'make a file' }], () => {}, new AbortController(), {}, () => {}, toolsFor({ workspace_upsert: true }, 'openai'), (calls) => seen.push(structuredClone(calls)))
+    assert.equal(result.toolCalls[0].name, 'workspace_upsert')
     assert.ok(seen.length >= 3)
     // Each snapshot reflects the full accumulated string so far (rewrites re-render).
     assert.ok(seen[0][0].arguments.length < seen[seen.length - 1][0].arguments.length)
-    const { parseCanvasArgsPartial } = await import('./canvas.ts')
-    assert.equal(parseCanvasArgsPartial(result.toolCalls[0].arguments).content, 'print(1)')
-    assert.equal(parseCanvasArgsPartial(seen[0][0].arguments).action, 'create')
+    const { parseWorkspaceArgsPartial } = await import('./workspace.ts')
+    assert.equal(parseWorkspaceArgsPartial(result.toolCalls[0].arguments).content, 'print(1)')
+    assert.equal(parseWorkspaceArgsPartial(seen[0][0].arguments).action, 'create')
   } finally { globalThis.fetch = original }
 })
 
@@ -224,14 +228,64 @@ test('runToolLoop forwards live tool deltas to its callback', async () => {
   let n = 0
   globalThis.fetch = async () => {
     n++
-    if (n === 1) return jsonResponse({ choices: [{ message: { tool_calls: [{ id: 'cv-9', type: 'function', function: { name: 'canvas_upsert', arguments: '{"action":"create","path":"a.py","content":"x"}' } }] } }] })
+    if (n === 1) return jsonResponse({ choices: [{ message: { tool_calls: [{ id: 'cv-9', type: 'function', function: { name: 'workspace_upsert', arguments: '{"action":"create","workspaceId":"ws-1","revisionName":"Initial","path":"a.py","content":"x"}' } }] } }] })
     return jsonResponse({ choices: [{ message: { content: 'Done.' } }] })
   }
   try {
     const seen = []
-    const result = await runToolLoop(openai, '', (rounds) => wire(openai, [{ id: 'a', r: 'assistant', t: '', toolRounds: rounds }]), { canvas_upsert: true }, () => {}, new AbortController(), {}, () => {}, () => {}, 8, {}, (calls) => seen.push(calls))
-    assert.equal(result.rounds[0].calls[0].result, 'Canvas ready: a.py')
+    const result = await runToolLoop(openai, '', (rounds) => wire(openai, [{ id: 'a', r: 'assistant', t: '', toolRounds: rounds }]), { workspace_upsert: true }, () => {}, new AbortController(), {}, () => {}, () => {}, 8, {}, (calls) => seen.push(calls))
+    assert.equal(JSON.parse(result.rounds[0].calls[0].result).status, 'ready')
+    assert.equal(JSON.parse(result.rounds[0].calls[0].result).path, 'a.py')
     assert.ok(seen.length >= 1)
-    assert.equal(seen[0][0].name, 'canvas_upsert')
+    assert.equal(seen[0][0].name, 'workspace_upsert')
   } finally { globalThis.fetch = originalFetch; globalThis.requestAnimationFrame = originalRaf }
+})
+
+const { estimateHistoryTokens, trimHistory, readAtt } = await import('./engine.ts')
+const { prunePersisted } = await import('./store.ts')
+
+test('trimHistory drops oldest-first, always keeps the latest message, and fits the budget', () => {
+  const msgs = Array.from({ length: 6 }, (_, i) => ({ id: `m${i}`, r: i % 2 ? 'assistant' : 'user', t: 'x'.repeat(4000) }))
+  const full = estimateHistoryTokens(msgs, 'sys', 4)
+  const budget = Math.floor(full / 2)
+  const { msgs: kept, dropped, estimated } = trimHistory(msgs, { limit: budget + 8000, reserve: 8000, charsPerToken: 4, sys: 'sys' })
+  assert.ok(dropped > 0)
+  assert.equal(kept.length, msgs.length - dropped)
+  assert.equal(kept[kept.length - 1].id, 'm5')
+  assert.ok(estimated <= budget)
+  const single = trimHistory([{ id: 'only', r: 'user', t: 'hi' }], { limit: 128000 })
+  assert.equal(single.dropped, 0)
+})
+
+test('OpenAI wire omits PDFs with a note instead of an image_url block', () => {
+  const pdf = { id: 'u', r: 'user', t: 'read this', att: [{ name: 'doc.pdf', kind: 'pdf', size: '1 KB', mime: 'application/pdf', data: 'AAA' }] }
+  const ow = wire(openai, [pdf])
+  assert.equal(ow.length, 1)
+  assert.equal(typeof ow[0].content, 'string')
+  assert.match(ow[0].content, /cannot process PDFs/)
+  const aw = wire(anthropic, [pdf])
+  assert.equal(typeof aw[0].content, 'object')
+  assert.ok(aw[0].content.some((c) => c.type === 'document'))
+})
+
+test('readAtt rejects office, media, and archive files with guidance and caps text budgets', async () => {
+  const file = (name, type, text = 'hello') => new File([text], name, { type })
+  assert.match(await readAtt(file('deck.docx', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document')), /Office documents/)
+  assert.match(await readAtt(file('song.mp3', 'audio/mpeg')), /not transcribed/)
+  assert.match(await readAtt(file('bundle.zip', 'application/zip')), /not unpacked/)
+  assert.match(await readAtt(file('notes.txt', 'text/plain'), 500000), /budget/)
+  const big = await readAtt(file('big.md', 'text/markdown', 'y'.repeat(200005)))
+  assert.equal(big.kind, 'txt')
+  assert.match(big.text, /truncated at 200,000/)
+  const csv = await readAtt(file('data.csv', 'text/csv', 'a,b\n1,2'))
+  assert.equal(csv.kind, 'txt')
+})
+
+test('prunePersisted compacts bulky tool results and workspace history', () => {
+  const raw = JSON.stringify({ state: { chats: [{ id: 'c', msgs: [{ id: 'm', r: 'assistant', t: 'ok', reasoning: 'r'.repeat(6000), toolRounds: [{ text: '', calls: [{ id: 'x', name: 'calc', arguments: '{}', result: 'z'.repeat(9000) }] }] }] }], workspaces: { w: { revisions: [{ id: '1', files: [{ path: 'a', content: 'q'.repeat(25000) }] }, { id: '2', files: [] }, { id: '3', files: [] }] } } } })
+  const out = prunePersisted(raw)
+  assert.ok(out && out.length < raw.length)
+  const v = JSON.parse(out).state
+  assert.match(v.chats[0].msgs[0].toolRounds[0].calls[0].result, /compacted/)
+  assert.equal(v.workspaces.w.revisions.length, 2)
 })
