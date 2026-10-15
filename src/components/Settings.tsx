@@ -708,7 +708,7 @@ function WidgetsTab() {
   )
 }
 
-const PAL: Record<string, string[]> = { plum: ['#120c16', '#17101c', '#dc8ad8'], claude: ['#151413', '#1c1b1a', '#d97757'], nord: ['#3b4252', '#2e3440', '#88c0d0'], amoled: ['#0a0a0a', '#000000', '#3b82f6'], paper: ['#f1f1ec', '#fbfbf9', '#3b5bdb'], sepia: ['#ede2ca', '#f6eedd', '#9c4a1a'], porcelain: ['#f0f0ee', '#f8f8f7', '#4f46e5'], sand: ['#f3ead8', '#fbf7ef', '#b45309'] }
+const PAL: Record<string, string[]> = { plum: ['#120c16', '#17101c', '#dc8ad8'], claude: ['#151413', '#1c1b1a', '#d97757'], nord: ['#242933', '#2e3440', '#88c0d0'], amoled: ['#000000', '#0a0a0a', '#3b82f6'], paper: ['#f1f1ec', '#fbfbf9', '#3b5bdb'], sepia: ['#ede2ca', '#f6eedd', '#9c4a1a'], porcelain: ['#f0f0ee', '#f8f8f7', '#4f46e5'], sand: ['#f3ead8', '#fbf7ef', '#b45309'] }
 
 function FontPicker({ value, set, options }: { value: string; set: (v: string) => void; options: [string, string][] }) {
   const [query, setQuery] = useState(value === 'system' ? '' : value)
