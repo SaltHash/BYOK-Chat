@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Archive, Check, Copy, ChevronRight, Download, FileCode, FileJson, FileText, FileType, Globe, Image, Music, Video, Braces, Terminal, Database, Cog, Hash, PenTool, LayoutTemplate, Sparkles, File, Files, Folder, FolderOpen, Pencil, X, Diff as DiffIcon, Trash2, Send, Share2, Save, type LucideIcon } from 'lucide-react'
 import { strToU8, zipSync } from 'fflate'
 import { useS, uid, type Msg } from '../store'
@@ -6,7 +6,7 @@ import { clampWorkspaceSplit } from '../layout'
 import type { ToolCall } from '../engine'
 import { Md } from './Md'
 import { Btn, Confirm, Field, Input, Toggle, cx } from './ui'
-import { WORKSPACE_MAX_FILES, buildZipEntries, workspaceLines, workspaceSize, buildFolderTree, expandedFoldersForPath, extractWorkspaceIds, findWritingPath, groupWorkspaceVersions, sanitizePath, zipFilename, diffLines, diffStat, changedFilesBetween, sanitizeHtmlPreview, previewKindFor, parseCsvPreview, type Workspace, type WorkspaceRevision } from '../workspace'
+import { WORKSPACE_MAX_FILES, buildZipEntries, workspaceLines, workspaceSize, buildFolderTree, expandedFoldersForPath, extractWorkspaceIds, findWritingPath, groupWorkspaceVersions, sanitizePath, zipFilename, diffLines, diffStat, changedFilesBetween, sanitizeHtmlPreview, previewKindFor, highlightLanguageFor, parseCsvPreview, type Workspace, type WorkspaceRevision } from '../workspace'
 
 const fence = (lang: string, code: string) => {
   const runs = code.match(/`{3,}/g)
@@ -383,7 +383,6 @@ export function WorkspacePanel({ msg, live, workspace, selectedRevisionId, setSe
     const st = useS.getState()
     st.patch({ prefs: { ...st.prefs, workspaceSplit: Math.round(clampWorkspaceSplit(v) * 1000) / 1000 } })
   }
-  const initialPathRef = useRef(initialFilePath)
 
   const revision = workspace.revisions.find(r => r.id === selectedRevisionId) ?? workspace.revisions[workspace.revisions.length - 1]
   const revIdx = workspace.revisions.findIndex(r => r.id === revision.id)
@@ -395,14 +394,15 @@ export function WorkspacePanel({ msg, live, workspace, selectedRevisionId, setSe
   // Exit edit mode whenever the revision changes.
   useEffect(() => { setEditing(false); setDiffBaseId(null) }, [revision.id])
 
-  // Set initial file path from prop (only on mount)
+  // Select the file requested from the inline tile (or auto-open). Runs on
+  // mount and whenever the requested path changes while the panel is open.
   useEffect(() => {
-    if (initialPathRef.current && !selectedFilePath) {
-      setSelectedFilePath(initialPathRef.current)
+    if (initialFilePath) {
+      setSelectedFilePath(initialFilePath)
       // Ensure the folder containing this file is expanded
-      setExpandedFolders((prev) => ({ ...prev, ...expandedFoldersForPath(initialPathRef.current) }))
+      setExpandedFolders((prev) => ({ ...prev, ...expandedFoldersForPath(initialFilePath) }))
     }
-  }, [])
+  }, [initialFilePath])
 
   // Auto-follow: when AI starts writing a new file, switch to it
   useEffect(() => {
@@ -415,10 +415,10 @@ export function WorkspacePanel({ msg, live, workspace, selectedRevisionId, setSe
 
   // Initialize selected file to first file in revision (only if no file selected yet and no initial path)
   useEffect(() => {
-    if (revision.files.length > 0 && !selectedFilePath && !writingPath && !initialPathRef.current) {
+    if (revision.files.length > 0 && !selectedFilePath && !writingPath && !initialFilePath) {
       setSelectedFilePath(revision.files[0].path)
     }
-  }, [revision.id, revision.files, selectedFilePath, writingPath])
+  }, [revision.id, revision.files, selectedFilePath, writingPath, initialFilePath])
 
   const files = revision.files
   const copy = (s: string) => { navigator.clipboard?.writeText(s) }
@@ -477,7 +477,7 @@ export function WorkspacePanel({ msg, live, workspace, selectedRevisionId, setSe
   const askAboutFile = () => {
     if (busy || !selectedFile) return
     const clipped = selectedFile.content.length > 8000 ? selectedFile.content.slice(0, 8000) + '\n…[truncated]' : selectedFile.content
-    void send(`About \`${selectedFile.path}\` in workspace "${workspace.name}" (workspaceId "${workspace.id}"):\n${fence(selectedFile.language, clipped)}\n\nReply with your thoughts, and apply any changes I ask for with workspace_upsert calls against that workspaceId.`, [])
+    void send(`About \`${selectedFile.path}\` in workspace "${workspace.name}" (workspaceId "${workspace.id}"):\n${fence(highlightLanguageFor(selectedFile.path, selectedFile.language), clipped)}\n\nReply with your thoughts, and apply any changes I ask for with workspace_upsert calls against that workspaceId.`, [])
   }
 
   const saveName = () => {
@@ -493,6 +493,7 @@ export function WorkspacePanel({ msg, live, workspace, selectedRevisionId, setSe
   const selectedFile = files.find(f => f.path === selectedFilePath) ?? files[0]
   const kind = selectedFile ? previewKindFor(selectedFile.path, selectedFile.language) : 'code'
   const canPreview = kind !== 'code'
+  const highlightLang = selectedFile ? highlightLanguageFor(selectedFile.path, selectedFile.language) : 'plaintext'
 
   // Diff base: explicit older revision, else the nearest earlier revision
   // that also contains this file (whole-file add when there is none).
@@ -557,7 +558,7 @@ export function WorkspacePanel({ msg, live, workspace, selectedRevisionId, setSe
         {selectedFile && (
           <div className="flex min-h-0 flex-1 flex-col bg-code">
             <div className="flex flex-wrap items-center gap-1.5 px-4 pt-3">
-              {selectedFile.language && <span className="rounded bg-codeh px-1.5 py-0.5 font-mono text-xs text-mu">{selectedFile.language}</span>}
+              <span className="rounded bg-codeh px-1.5 py-0.5 font-mono text-xs text-mu">{highlightLang}</span>
               <span className="text-xs text-mu">{workspaceLines(selectedFile.content)} lines · {workspaceSize(selectedFile.content)}</span>
               {selectedFile.path === writingPath && <span className="ml-auto inline-flex items-center gap-1.5 text-xs text-ac"><span className="size-1.5 animate-pulse rounded-full bg-ac" />Writing…</span>}
               <span className="flex-1" />
@@ -618,7 +619,7 @@ export function WorkspacePanel({ msg, live, workspace, selectedRevisionId, setSe
               ) : view === 'diff' ? (
                 <DiffView oldText={diffBaseContent} newText={selectedFile.content} />
               ) : (
-                <Md t={fence(selectedFile.language, selectedFile.content)} bare />
+                <Md t={fence(highlightLang, selectedFile.content)} bare />
               )}
             </div>
           </div>

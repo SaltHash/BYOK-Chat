@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react'
 import { BookOpen, Check, Copy, Download, FileText, ListOrdered, Square, X } from 'lucide-react'
 import { useS, type Msg } from '../store'
 import { RESEARCH_TIERS, type ResearchTierId } from '../research'
-import { collectMessageSources, linkifyCitations } from '../citations'
+import { collectMessageSources, linkifyCitations, stripCitations } from '../citations'
 import { Md } from './Md'
 import { SourcesPanel } from './Sources'
 import { Btn, cx } from './ui'
@@ -102,7 +102,7 @@ export function ResearchPanel({ msg, onClose }: { msg: Msg; onClose: () => void 
   const [tab, setTab] = useState<'report' | 'sources'>('report')
   const [copied, setCopied] = useState(false)
   const sources = useMemo(() => collectMessageSources(msg.toolRounds), [msg.toolRounds])
-  const cited = useMemo(() => linkifyCitations(msg.toolFinal ?? msg.t, sources), [msg.toolFinal, msg.t, sources])
+  const cited = useMemo(() => useS.getState().search?.citeStyle === 'off' ? stripCitations(msg.toolFinal ?? msg.t) : linkifyCitations(msg.toolFinal ?? msg.t, sources), [msg.toolFinal, msg.t, sources])
   const rs = msg.research
   const download = () => {
     const name = `${(rs?.query ?? 'research').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'research'}.md`

@@ -333,7 +333,7 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
   const timeLeft = (c: Chat) => {
     if (!c.expiresAt) return 'until you leave'
     const mins = Math.max(0, Math.ceil((c.expiresAt - clock) / 60000))
-    return mins >= 60 ? `${Math.ceil(mins / 60)}h left` : `${mins}m left`
+    return mins >= 60 ? `${Math.floor(mins / 60)}h left` : `${mins}m left`
   }
   const item = 'flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm hover:bg-surf'
   const safeWidth = clampSidebarWidth(width)
@@ -397,7 +397,7 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
                   <button onClick={() => s.toggleFolder(f.id)} onDoubleClick={() => setFe(f.id)} className="flex min-w-0 flex-1 items-center gap-2 px-2.5 py-2 text-left">
                     <span className="relative grid shrink-0 place-items-center" aria-hidden="true">
                       <Folder size={20} className="text-mu" />
-                      <span className="absolute inset-0 flex items-center justify-center pt-[1px] text-[9px] font-semibold leading-none text-mu">{s.chats.filter((c) => c.folder === f.id).length}</span>
+                      <span className="absolute inset-0 flex items-center justify-center pt-[3px] text-[9px] font-semibold leading-none text-mu">{s.chats.filter((c) => c.folder === f.id).length}</span>
                     </span><span className="min-w-0 truncate">{f.name}<span className="sr-only"> ({s.chats.filter((c) => c.folder === f.id).length} chats)</span></span>
                     <ChevronRight size={14} className={cx('shrink-0 text-mu transition-transform', o && 'rotate-90')} />
                   </button>

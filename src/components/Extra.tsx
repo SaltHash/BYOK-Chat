@@ -5,7 +5,7 @@ import { normSkills } from '../skills'
 import { combo, fmt, rec as R, testEp } from '../engine'
 import { KEYS, TOOLS } from '../meta'
 import { Btn, Toggle, Checkbox, Confirm, Modal, Surface, cx, type Ic } from './ui'
-import { Panel } from './Settings'
+import { Panel, Anchor } from './Settings'
 import { detectAvailableCategories, buildExportPayload } from '../configIO'
 import { SyncBox, EncryptedBackupBox } from './SyncBox'
 
@@ -132,13 +132,13 @@ export function StatsTab() {
   return (
     <Panel id="stats">
       <div className="grid gap-3 sm:grid-cols-2">
-        {card(ArrowUp, 'Tokens sent', t.tin, `${t.historyIn.toLocaleString()} history · ${t.explicitIn.toLocaleString()} explicit input`)}
-        {card(ArrowDown, 'Tokens generated', t.tout, 'Reply tokens, including partial replies')}
-        {card(MessageSquare, 'Messages sent', t.sent, 'Includes edited and resent messages')}
-        {card(MessagesSquare, 'Chats started', t.chats, 'A chat counts when its first message is sent')}
+        <Anchor id="tokens-sent">{card(ArrowUp, 'Tokens sent', t.tin, `${t.historyIn.toLocaleString()} history · ${t.explicitIn.toLocaleString()} explicit input`)}</Anchor>
+        <Anchor id="tokens-generated">{card(ArrowDown, 'Tokens generated', t.tout, 'Reply tokens, including partial replies')}</Anchor>
+        <Anchor id="messages-sent">{card(MessageSquare, 'Messages sent', t.sent, 'Includes edited and resent messages')}</Anchor>
+        <Anchor id="chats-started">{card(MessagesSquare, 'Chats started', t.chats, 'A chat counts when its first message is sent')}</Anchor>
       </div>
       <p className="text-xs text-mu">Total {(t.tin + t.tout).toLocaleString()} tokens since {new Date(t.since).toLocaleDateString()}. Totals are all-time and are not affected by deleting chats. They use token counts reported by the provider when available, and a rough 4-characters-per-token estimate otherwise.</p>
-      <Btn v="danger" icon={RotateCcw} onClick={() => setCf(true)}>Reset stats</Btn>
+      <Anchor id="reset-stats"><Btn v="danger" icon={RotateCcw} onClick={() => setCf(true)}>Reset stats</Btn></Anchor>
       {cf && <Confirm title="Reset all stats?" text="Tokens, messages and chats-started totals go back to zero. Your chats and settings are not affected." ok="Reset" close={() => setCf(false)} run={s.resetStats} />}
     </Panel>
   )
@@ -173,19 +173,21 @@ export function KeysTab() {
         {KEYS.map(([id, label, def]) => {
           const cur = keys[id] ?? def
           return (
-            <div key={id} className="flex flex-wrap items-center gap-3 rounded-xl bg-surf p-3">
+            <Anchor key={id} id={`key-${id}`}>
+            <div className="flex flex-wrap items-center gap-3 rounded-xl bg-surf p-3">
               <span className="min-w-40 flex-1 text-sm">{label}</span>
               {rec === id ? <span className="text-sm text-ac">Press the new keys…</span>
                 : <span className="flex gap-1">{cur.split('+').map((k, i) => <kbd key={i} className="rounded-md bg-hov px-1.5 py-0.5 text-xs font-medium">{fmt(k)}</kbd>)}</span>}
               <Btn v="soft" onClick={() => { setErr(''); setRec(rec === id ? '' : id) }}>{rec === id ? 'Cancel' : 'Change'}</Btn>
               <Btn sm icon={RotateCcw} title="Reset to default" disabled={cur === def} onClick={() => patch({ keys: { ...keys, [id]: def } })} />
             </div>
+            </Anchor>
           )
         })}
       </div>
       {err && <p className="text-sm text-er">{err}</p>}
       <div className="flex items-center gap-3">
-        <Btn v="soft" icon={RotateCcw} onClick={() => patch({ keys: Object.fromEntries(KEYS.map(([k, , d]) => [k, d])) })}>Reset all</Btn>
+        <Anchor id="reset-all-keys"><Btn v="soft" icon={RotateCcw} onClick={() => patch({ keys: Object.fromEntries(KEYS.map(([k, , d]) => [k, d])) })}>Reset all</Btn></Anchor>
         <span className="text-xs text-mu">Press Escape while recording to cancel. Some browser shortcuts, such as opening a new tab, cannot be overridden.</span>
       </div>
     </Panel>
@@ -326,24 +328,32 @@ export function DataTab() {
   }
   return (
     <Panel id="data">
-      <SyncBox />
-      <EncryptedBackupBox buildJson={() => JSON.stringify(buildExportPayload(s as Parameters<typeof buildExportPayload>[0], exports, withKeys, normSkills, normSearch), null, 1)} />
+      <Anchor id="device-sync"><SyncBox /></Anchor>
+      <Anchor id="encrypted-backup"><EncryptedBackupBox buildJson={() => JSON.stringify(buildExportPayload(s as Parameters<typeof buildExportPayload>[0], exports, withKeys, normSkills, normSearch), null, 1)} /></Anchor>
+      <Anchor id="export">
       <Box icon={Download} t="Export configuration" d="Choose which settings and chat history to include in a JSON backup.">
         <Btn v="soft" onClick={() => setCf(3)}>Export</Btn>
       </Box>
+      </Anchor>
+      <Anchor id="import">
       <Box icon={Upload} t="Import configuration" d="Choose a JSON configuration file, then select what to import.">
         <label className="inline-flex h-9 cursor-pointer items-center rounded-lg bg-hov px-3 text-sm font-medium hover:opacity-80">
           <input type="file" accept=".json,application/json" hidden onChange={(e) => { chooseFile(e.target.files?.[0]); e.target.value = '' }} />Choose file
         </label>
         {msg && <span className="basis-full text-xs text-mu">{msg}</span>}
       </Box>
+      </Anchor>
+      <Anchor id="chat-history">
       <Box icon={FileText} t="Chat history" d="Include conversations in configuration exports, or delete them all. Stats are kept.">
         <Btn v="danger" disabled={!s.chats.length} onClick={() => setCf(1)}>Delete all</Btn>
       </Box>
-      <StorageBox />
+      </Anchor>
+      <Anchor id="browser-storage"><StorageBox /></Anchor>
+      <Anchor id="erase-everything">
       <Box icon={Trash2} t="Erase everything" d="Removes all endpoints, keys, prompts, skills, memories, chats, stats and settings from this browser.">
         <Btn v="danger" onClick={() => setCf(2)}>Erase</Btn>
       </Box>
+      </Anchor>
       {cf === 1 && <Confirm title="Delete all chats?" text="Every saved chat is removed. Stats and settings are kept." ok="Delete all" close={() => setCf(0)} run={() => s.patch({ chats: [], chat: '' })} />}
       {cf === 2 && <Confirm title="Erase everything?" text="Endpoints, API keys, prompts, playlists, commands, skills, memories, chats, stats and all other settings are removed from this browser. This cannot be undone." ok="Erase" close={() => setCf(0)} run={() => { localStorage.removeItem('byok.v1'); location.reload() }} />}
       {cf === 3 && <Modal close={() => setCf(0)}><section role="dialog" aria-modal="true" aria-labelledby="export-title" className="w-full max-w-xl space-y-5 rounded-2xl border border-hov bg-bg p-5 shadow-2xl">

@@ -8,6 +8,7 @@ import rehypeRaw from 'rehype-raw'
 import rehypeSanitize, { defaultSchema } from 'rehype-sanitize'
 import rehypeKatex from 'rehype-katex'
 import rehypeHighlight from 'rehype-highlight'
+import { all } from 'lowlight'
 import 'katex/dist/katex.min.css'
 import { Check, Copy } from 'lucide-react'
 import { cx } from './ui'
@@ -220,7 +221,7 @@ export default memo(function Rich({ t, fadeEvents = [], fade = 0, bare = false, 
     <div className="md leading-7" style={{ '--word-fade-duration': `${fade}s` } as CSSProperties}>
       <ReactMarkdown
         remarkPlugins={[[remarkGfm, { singleTilde: false }], remarkMath, remarkBreaks, remarkEmoji, fadeFragments(fadeEvents, fade)]}
-        rehypePlugins={[rehypeRaw, [rehypeSanitize, schema], [rehypeKatex, { throwOnError: false, strict: 'ignore', errorColor: 'var(--er)' }], [rehypeHighlight, { detect: false, ignoreMissing: true }]]}
+        rehypePlugins={[rehypeRaw, [rehypeSanitize, schema], [rehypeKatex, { throwOnError: false, strict: 'ignore', errorColor: 'var(--er)' }], [rehypeHighlight, { detect: false, ignoreMissing: true, languages: all }]]}
         components={makeC(bare, cites)}
       >
         {src}

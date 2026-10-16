@@ -145,6 +145,22 @@ export function linkifyCitations(text: string, sources: CiteSource[]): string {
   }).replace(/(\][(][^)\n]*[)])\s+([.,;:!?])/g, '$1$2').replace(/(\[S\d+\])\s+([.,;:!?])/gi, '$1$2')
 }
 
+/* Remove bare [S1] / [Source S1] / [S2, S8] tokens for the citations-off
+ * setting. Already-linked [S1](…) is left alone. */
+export function stripCitations(text: string): string {
+  return String(text ?? '').replace(/( |&nbsp;|\u00a0)?\[(?:Sources? )?([^\]\n]{1,80})\](?!\()/gi, (full, sp: string, inner: string) => {
+    if (!/S\d+/i.test(inner)) return full
+    const stripped = String(inner)
+      .replace(/sources?/gi, '')
+      .replace(/\band\b/gi, '')
+      .replace(/S\d+/gi, '')
+      .replace(/[,;+\s&]/g, '')
+    if (stripped !== '') return full
+    // Drop the token plus one preceding space to avoid double spaces.
+    return ''
+  }).replace(/ {2,}/g, ' ').replace(/ \n/g, '\n')
+}
+
 /* Coverage check for the strict-citations setting: which cited ids are
  * unknown, and whether evidence exists with zero citations. */
 export function citationCoverage(text: string, sources: CiteSource[]): { cited: string[]; unknown: string[]; uncited: boolean } {

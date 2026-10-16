@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react'
 import { Plus, FileUp, FileText, Image as ImageIcon, ArrowUp, Square, ChevronRight, ListMusic, Cpu, ScrollText, Settings, Search, BookOpen, X, TriangleAlert, Wrench, Link as LinkIcon, ScanText } from 'lucide-react'
-import { useS, usable, modelsOf, modelNameOf, featOn, normDocs, type Att } from '../store'
+import { useS, usable, modelsOf, modelNameOf, featOn, normDocs, effortClassifierOf, type Att } from '../store'
 import { CI, TOOLS } from '../meta'
 import { composerWidth } from '../layout'
 import { can, fmt, readAtts, ocrImage, fetchPage } from '../engine'
@@ -20,9 +20,11 @@ function ModelMenu({ close, cfg }: { close: () => void; cfg: (t: string) => void
   const activeModel = activeEp && s.sel?.model
   const efforts: string[] = activeModel ? activeEp?.modelEfforts?.[activeModel] ?? [] : []
   const effortRank: Record<string, number> = { none: 0, minimal: 1, low: 2, medium: 3, high: 4, xhigh: 5, max: 6 }
-  const effortChoices = [...efforts].sort((a, b) => (effortRank[a.toLowerCase()] ?? 50) - (effortRank[b.toLowerCase()] ?? 50))
+  const effortLevels = [...efforts].sort((a, b) => (effortRank[a.toLowerCase()] ?? 50) - (effortRank[b.toLowerCase()] ?? 50))
+  const autoOn = !!effortClassifierOf(s)
+  const effortChoices = autoOn && effortLevels.length ? ['auto', ...effortLevels] : effortLevels
   const storedEffort = activeModel ? s.effort[activeModel] : undefined
-  const effortValue = storedEffort && effortChoices.includes(storedEffort) ? storedEffort : effortChoices[0]
+  const effortValue = storedEffort && effortChoices.includes(storedEffort) ? storedEffort : effortLevels[0] ?? effortChoices[0]
   const effortIndex = Math.max(0, effortChoices.indexOf(effortValue))
   const activeEffort = effortChoices[effortIndex]
   return (
@@ -32,7 +34,7 @@ function ModelMenu({ close, cfg }: { close: () => void; cfg: (t: string) => void
         <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-mu" />
         <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search" className="h-9 w-full rounded-lg bg-surf pl-9 pr-3 text-sm outline-none" />
       </div>
-      {activeModel && efforts.length > 0 && <div className="shrink-0 border-b border-hov px-2.5 py-3" onClick={(e) => e.stopPropagation()}>
+      {activeModel && effortChoices.length > 0 && <div className="shrink-0 border-b border-hov px-2.5 py-3" onClick={(e) => e.stopPropagation()}>
         <div className="mb-1 flex items-center justify-between text-xs"><span className="truncate pr-2 font-medium text-tx">Effort · {modelNameOf(activeEp!, activeModel).replace(/^~+/, '')}</span><span className="text-ac capitalize">{activeEffort}</span></div>
         <RangeSlider label={`${modelNameOf(activeEp!, activeModel).replace(/^~+/, '')} reasoning effort`} min={0} max={effortChoices.length - 1} step={1} value={effortIndex} valueText={effortChoices[effortIndex]} set={(n) => s.patch({ effort: { ...s.effort, [activeModel]: effortChoices[n] } })} className="mt-1 w-full" />
         <div className="mt-1 flex justify-between text-xs capitalize text-mu"><span>{effortChoices[0]}</span><span>{effortChoices.at(-1)}</span></div>
@@ -202,14 +204,28 @@ export function Composer({ cfg }: { cfg: (t: string) => void }) {
         <input ref={fi} type="file" multiple hidden onChange={(e) => { add(e.target.files); e.target.value = '' }} />
         <div className="mt-2 flex items-center gap-1">
           <Pop up w="w-64" trigger={() => <Btn icon={Plus} title="Attach files or manage tools" className="rounded-full" />}>
-            {(close) => (
+            {(close) => {
+              const row = 'flex w-full items-center gap-1 rounded-lg px-1 hover:bg-surf'
+              const main = 'flex min-w-0 flex-1 items-center gap-2.5 rounded-lg px-1.5 py-2 text-left text-sm'
+              const gear = 'grid size-7 shrink-0 place-items-center rounded-md text-mu hover:bg-hov hover:text-tx'
+              return (
               <>
-                <Item icon={FileUp} onClick={() => { pick(''); close() }}>Upload a file</Item>
-                <Item icon={LinkIcon} onClick={() => { setUrlOpen(true); close() }}>Attach page from URL</Item>
-                <Item icon={BookOpen} sub="Quick · Standard · Thorough" onClick={() => { s.patch({ draft: v ? `${v.trim()} @research(` : '@research(' }); close(); ta.current?.focus() }}>Deep research…</Item>
+                <div className={row}>
+                  <button className={main} onClick={() => { pick(''); close() }}><FileUp size={16} className="shrink-0 text-mu" /><span className="min-w-0 flex-1 truncate">Upload a file</span></button>
+                  <button aria-label="Document settings" title="Document settings" className={gear} onClick={() => { close(); cfg('tools') }}><Settings size={15} /></button>
+                </div>
+                <div className={row}>
+                  <button className={main} onClick={() => { setUrlOpen(true); close() }}><LinkIcon size={16} className="shrink-0 text-mu" /><span className="min-w-0 flex-1 truncate">Attach page from URL</span></button>
+                  <button aria-label="Document settings" title="Document settings" className={gear} onClick={() => { close(); cfg('tools') }}><Settings size={15} /></button>
+                </div>
+                <div className={row}>
+                  <button className={main} onClick={() => { s.patch({ draft: v ? `${v.trim()} @research(` : '@research(' }); close(); ta.current?.focus() }}><BookOpen size={16} className="shrink-0 text-mu" /><span className="min-w-0 flex-1 truncate">Deep research…</span></button>
+                  <button aria-label="Deep research settings" title="Deep research settings" className={gear} onClick={() => { close(); cfg('tools') }}><Settings size={15} /></button>
+                </div>
                 <Item icon={Wrench} onClick={() => { close(); cfg('tools') }}>Manage tools…</Item>
               </>
-            )}
+              )
+            }}
           </Pop>
           <Pop up w="w-80" scroll={false} trigger={(o) => (
             <button className={chip}>

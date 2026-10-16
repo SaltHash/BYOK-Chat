@@ -11,7 +11,7 @@ import { Md, UserText } from './Md'
 import { WorkspaceTile, WorkspacePanel } from './Workspace'
 import { ResearchTierPicker, ResearchProgressCard, ResearchTile, ResearchPanel } from './Research'
 import { SourcesPanel, scrollToSource } from './Sources'
-import { collectMessageSources, linkifyCitations, parseSearchEvidence } from '../citations'
+import { collectMessageSources, linkifyCitations, parseSearchEvidence, stripCitations } from '../citations'
 import { findLastWorkspacePath, findWritingPath, extractWorkspaceIds, type WorkspaceCallLike } from '../workspace'
 
 function toolStep(name: string, rawArgs: string, result?: string) {
@@ -164,8 +164,8 @@ function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWorkspaceId, cfg 
   const searchPrefs = useS((s) => s.search)
   const sources = useMemo(() => collectMessageSources(m.toolRounds), [m.toolRounds])
   const displayText = m.toolFinal ?? m.t
-  const citedText = useMemo(() => linkifyCitations(displayText, sources), [displayText, sources])
-  const cites = searchPrefs?.citeStyle === 'links' ? undefined : sources.length ? {
+  const citedText = useMemo(() => searchPrefs?.citeStyle === 'off' ? stripCitations(displayText) : linkifyCitations(displayText, sources), [displayText, sources, searchPrefs?.citeStyle])
+  const cites = searchPrefs?.citeStyle === 'links' || searchPrefs?.citeStyle === 'off' ? undefined : sources.length ? {
     sources,
     onCite: (citeId: string) => {
       setSrcOpen(true)
@@ -320,7 +320,7 @@ function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWorkspaceId, cfg 
                   live={live}
                   workspace={workspace}
                   selectedRevisionId={selectedRevId}
-                  onOpen={() => onOpenWorkspace(m.id, wsId)}
+                  onOpen={(filePath) => onOpenWorkspace(m.id, wsId, filePath)}
                   onSelectRevision={(revId) => useS.getState().patch({ selectedRevision: { ...useS.getState().selectedRevision, [wsId]: revId } })}
                 />
               )
@@ -456,6 +456,13 @@ export function Chat({ side, toggle, cfg, pal }: { side: boolean; toggle: () => 
             {c && c.msgs.length ? (
               <div className="mx-auto space-y-8 px-4 py-6" style={{ maxWidth: CHAT_WIDTH[s.prefs.chatWidth] }}>
                 {c.msgs.map((m, i) => <M key={m.id} m={m} cfg={cfg} last={i === c.msgs.length - 1} onOpenWorkspace={(mid, wsId, filePath) => setWorkspacePanel({ mid, workspaceId: wsId, initialFilePath: filePath })} onOpenResearch={(mid) => s.patch({ researchPanel: { mid } })} selectedWorkspaceId={workspacePanel?.mid === m.id ? selectedRevId : null} />)}
+                {c.msgs[c.msgs.length - 1]?.r === 'user' && !busy && (
+                  <div className="flex justify-center pt-2">
+                    <button onClick={() => useS.getState().regen()} className="inline-flex min-h-9 items-center gap-2 rounded-full border border-hov bg-surf px-4 py-1.5 text-sm text-tx transition-colors hover:bg-hov focus-visible:ring-2 focus-visible:ring-ac">
+                      <RefreshCw size={14} className="text-ac" />Get AI reply
+                    </button>
+                  </div>
+                )}
               </div>
             ) : !s.eps.some(usable) ? (
               <Tutorial cfg={cfg} />

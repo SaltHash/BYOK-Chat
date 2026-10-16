@@ -68,7 +68,7 @@ export const normFeatureOrder = (v: any): FeatureId[] => {
 export type FeatureId = 'prompts' | 'skills' | 'tools' | 'playlists' | 'commands' | 'stats' | 'memory' | 'widgets' | 'shortcuts' | 'library' | 'advanced' | 'workspace' | 'routing'
 export const FEATURES: [FeatureId, string, string][] = [
   ['prompts', 'Prompts', 'Per-chat system prompts and the global system prompt. Off hides the prompt picker everywhere.'],
-  ['skills', 'Skills', 'Skill catalogs the model can load on demand with use_skill.'],
+  ['skills', 'Skills', 'Extra instructions the AI can use for specific tasks.'],
   ['tools', 'Tools', 'Every model tool: @-mentions, web search, workspace files. The AI cannot call any tool while off.'],
   ['playlists', 'Playlists', 'Ordered model lists and classifier routing. Off leaves endpoint-only model selection.'],
   ['commands', 'Commands', 'Slash commands, their templates, and the home-screen command shortcuts.'],
@@ -79,6 +79,7 @@ export const FEATURES: [FeatureId, string, string][] = [
   ['library', 'Library', 'The sidebar shortcut list below your chats.'],
   ['workspace', 'Workspace', 'Workspace file panel and workspace settings.'],
   ['routing', 'Routing', 'Playlist classifier routing and routing rules.'],
+  ['advanced', 'Advanced', 'Debugging aids: verbose errors, hidden tools, system prompt, payloads and token counts.'],
 ]
 export const DEFAULT_FEATURES: Record<FeatureId, boolean> = { prompts: true, skills: true, tools: true, playlists: true, commands: true, stats: true, memory: true, widgets: true, shortcuts: true, library: false, advanced: false, workspace: true, routing: true }
 export const LIBRARY_ITEMS: [string, string][] = [['eps', 'Endpoints'], ['pls', 'Playlists'], ['prompts', 'Prompts'], ['cmds', 'Commands'], ['tools', 'Tools'], ['memory', 'Memory'], ['widgets', 'Widgets']]
@@ -195,11 +196,11 @@ export const exportChat = () => {
 
 export type SearchMode = 'api' | 'searxng'
 export type SearchProvider = 'tinyfish' | 'you' | 'exa' | 'firecrawl' | 'brightdata'
-export type CiteStyle = 'pills' | 'links'
+export type CiteStyle = 'pills' | 'links' | 'off'
 export const SEARCH_MODES: [SearchMode, string][] = [['api', 'API'], ['searxng', 'SearXNG']]
 export const SEARCH_PROVIDERS: [SearchProvider, string][] = [['tinyfish', 'TinyFish'], ['you', 'You.com'], ['exa', 'Exa'], ['firecrawl', 'Firecrawl'], ['brightdata', 'Bright Data']]
 export type SearchPrefs = { mode: SearchMode; provider: SearchProvider; fallback: boolean; keys: Record<SearchProvider, string>; zone: string; maxResults: number; citeStyle: CiteStyle; sourcesOpen: boolean; reader: boolean; strictCitations: boolean }
-export const BLANK_SEARCH: SearchPrefs = { mode: 'api', provider: 'tinyfish', fallback: true, keys: { tinyfish: '', you: '', exa: '', firecrawl: '', brightdata: '' }, zone: '', maxResults: 8, citeStyle: 'pills', sourcesOpen: false, reader: true, strictCitations: false }
+export const BLANK_SEARCH: SearchPrefs = { mode: 'api', provider: 'tinyfish', fallback: true, keys: { tinyfish: '', you: '', exa: '', firecrawl: '', brightdata: '' }, zone: '', maxResults: 8, citeStyle: 'off', sourcesOpen: false, reader: true, strictCitations: false }
 const SEARCH_VALID_MODES: SearchMode[] = ['api', 'searxng']
 const SEARCH_VALID_PROVIDERS: SearchProvider[] = ['tinyfish', 'you', 'exa', 'firecrawl', 'brightdata']
 export const normSearch = (v: any): SearchPrefs => {
@@ -213,7 +214,7 @@ export const normSearch = (v: any): SearchPrefs => {
     keys,
     zone: typeof v?.zone === 'string' ? v.zone : '',
     maxResults: Number.isInteger(v?.maxResults) ? Math.max(1, Math.min(8, v.maxResults)) : BLANK_SEARCH.maxResults,
-    citeStyle: v?.citeStyle === 'links' ? 'links' : 'pills',
+    citeStyle: v?.citeStyle === 'links' ? 'links' : v?.citeStyle === 'pills' ? 'pills' : 'off',
     sourcesOpen: v?.sourcesOpen === true,
     reader: v?.reader !== false,
     strictCitations: v?.strictCitations === true,
@@ -245,7 +246,7 @@ type S = {
   customDarkColors: ThemeColors
   customLightColors: ThemeColors
   setupDone: boolean
-  prefs: { showBy: boolean; showLog: boolean; showTps: boolean; enterSends: boolean; autoTitle: boolean; temporaryByDefault: boolean; showModelPricing: boolean; titleEp: string; titleModel?: string; fade: number; tempHours: number; fontBody: string; fontMono: string; fontHeader: string; modelPrimary: 'id' | 'name'; modelSecondary: 'none' | 'provider' | 'id' | 'name'; modelDisplay?: 'none' | 'name' | 'provider' | 'both'; paletteMax: number; chatWidth: 'narrow' | 'standard' | 'wide'; settingsWidth: number; settingsHeight: number; modelPickerHeight: number; sidebarWidth?: number; widgetWidth?: number; workspaceWidth?: number; workspaceSplit?: number; modalBlur: number; settingsOpacity: number; routingMode?: RoutingMode }
+  prefs: { showBy: boolean; showLog: boolean; showTps: boolean; enterSends: boolean; autoTitle: boolean; temporaryByDefault: boolean; showModelPricing: boolean; titleEp: string; titleModel?: string; effortEp: string; effortModel?: string; recallEp: string; recallModel?: string; fade: number; tempHours: number; fontBody: string; fontMono: string; fontHeader: string; modelPrimary: 'id' | 'name'; modelSecondary: 'none' | 'provider' | 'id' | 'name'; modelDisplay?: 'none' | 'name' | 'provider' | 'both'; paletteMax: number; chatWidth: 'narrow' | 'standard' | 'wide'; settingsWidth: number; settingsHeight: number; modelPickerHeight: number; sidebarWidth?: number; widgetWidth?: number; workspaceWidth?: number; workspaceSplit?: number; modalBlur: number; settingsOpacity: number; routingMode?: RoutingMode }
   widgets: Record<string, boolean>; widgetPrefs: { usageGroup: 'endpoint' | 'model'; usageMode: 'success' | 'tokens'; usageFormat: string; usageTotal: boolean; usagePeriod: 'session' | 'day' | 'week' | 'custom' | 'all'; usageFrom?: string; usageTo?: string; lastSpeed: boolean; timeUnit: 'ms' | 's' | 'auto'; widgetOrder: string[]; shortcuts: string[]; contextLimit: number; showDisabledEndpoints: boolean; scratchRows: number; snippetLimit: number; costDecimals: number; activePromptsOnly: boolean; charsPerToken: number; hideDoneTodos: boolean }; rail: boolean; pad: string; snips: string[]
   params: { def: boolean; temp: number; topp: number; max: number; maxToolRounds: number; highToolsUnlocked: boolean }; effort: Record<string, string>
   workspacePrefs: WorkspacePrefs
@@ -330,6 +331,74 @@ export const previewSysFor = (msgId: string): string | null => {
   } catch { return null }
 }
 
+/* Centralized helper models: one model shared by playlist classification,
+ * title generation, effort auto-detection, and memory recall. Each task reads
+ * its own ref (see prefs.titleEp/titleModel, memoryPrefs.classifierEp/
+ * classifierModel, prefs.effortEp/effortModel, prefs.recallEp/recallModel);
+ * the Endpoints tab sets all four at once. */
+export const helperRef = (ep: string, model?: string) => (ep ? `${ep}::${model ?? ''}` : '')
+export const splitHelperRef = (ref: string): [string, string] => {
+  const i = ref.indexOf('::')
+  return i < 0 ? ['', ''] : [ref.slice(0, i), ref.slice(i + 2)]
+}
+/** Resolve the playlist routing classifier: the playlist's own classifier
+ * when set, otherwise the global helper classification model as fallback. */
+export const playlistClassifierOf = (s: { eps: Ep[]; memoryPrefs: { classifierEp: string; classifierModel: string } }, pl: Pl): Ep | undefined => {
+  const pick = (epId: string, model?: string): Ep | undefined => {
+    if (!epId) return undefined
+    const found = s.eps.find((e) => e.id === epId && usable(e))
+    if (!found) return undefined
+    return { ...found, model: model && modelsOf(found).includes(model) ? model : found.model }
+  }
+  return pick(pl.cls, pl.clsModel) ?? pick(s.memoryPrefs.classifierEp, s.memoryPrefs.classifierModel)
+}
+/** Resolve the configured effort-detection model, if usable. */
+export const effortClassifierOf = (s: { eps: Ep[]; prefs: { effortEp: string; effortModel?: string } }): Ep | undefined => {
+  if (!s.prefs?.effortEp) return undefined
+  const found = s.eps.find((e) => e.id === s.prefs.effortEp && usable(e))
+  if (!found) return undefined
+  return { ...found, model: s.prefs.effortModel && modelsOf(found).includes(s.prefs.effortModel) ? s.prefs.effortModel : found.model }
+}
+/** Resolve the configured memory-recall model, if usable. Prefers the
+ * dedicated recall slot; falls back to the legacy classification slot. */
+export const recallClassifierOf = (s: { eps: Ep[]; prefs: { recallEp: string; recallModel?: string }; memoryPrefs: { classifierEp: string; classifierModel: string } }): Ep | undefined => {
+  const pick = (epId: string, model?: string): Ep | undefined => {
+    if (!epId) return undefined
+    const found = s.eps.find((e) => e.id === epId && usable(e))
+    if (!found) return undefined
+    return { ...found, model: model && modelsOf(found).includes(model) ? model : found.model }
+  }
+  return pick(s.prefs?.recallEp, s.prefs?.recallModel) ?? pick(s.memoryPrefs.classifierEp, s.memoryPrefs.classifierModel)
+}
+/** Lowest thinking level a model supports, or '' when none is known.
+ * Classifier calls use this so background routing stays cheap. */
+const EFFORT_RANK: Record<string, number> = { none: 0, minimal: 1, low: 2, medium: 3, high: 4, xhigh: 5, max: 6 }
+export const lowestEffortOf = (e: Ep): string => {
+  const levels = e.modelEfforts?.[e.model] ?? []
+  if (!levels.length) return ''
+  return [...levels].sort((a, b) => (EFFORT_RANK[a.toLowerCase()] ?? 50) - (EFFORT_RANK[b.toLowerCase()] ?? 50))[0] ?? ''
+}
+/* Ask the effort-detection model to pick one of `levels` for the request.
+ * Strict JSON only: {"effort":"<one available level>"}. Returns '' when
+ * unconfigured, unusable, or the output fails validation. */
+export async function classifyEffort(query: string, levels: string[]): Promise<{ level: string; tin: number; tout: number; by: string }> {
+  const none = { level: '', tin: 0, tout: 0, by: '' }
+  const uniq = [...new Set(levels.filter(Boolean))]
+  if (!uniq.length) return none
+  let s: { eps: Ep[]; prefs: { effortEp: string; effortModel?: string } }
+  try { s = useS.getState() } catch { return none }
+  const c = effortClassifierOf(s)
+  if (!c) return none
+  try {
+    const x = await stream(c,
+      `Pick the reasoning effort for the user's request. Available effort levels: ${JSON.stringify(uniq)}. Reply with strict JSON only, no other text: {"effort":"<one available level>"}`,
+      [{ role: 'user', content: query.slice(0, 4000) }], () => {}, new AbortController(), { cap: 100, effort: lowestEffortOf(c) })
+    const j = JSON.parse(x.text.match(/\{[\s\S]*\}/)?.[0] ?? '')
+    if (!j || typeof j !== 'object' || Object.keys(j).join() !== 'effort' || typeof j.effort !== 'string' || !uniq.includes(j.effort)) throw Error('rejected: ' + x.text.slice(0, 80))
+    return { level: j.effort, tin: x.tin, tout: x.tout, by: `${c.name} · ${c.model}` }
+  } catch { return none }
+}
+
 type Run = { stopped: boolean; ctl: AbortController | null }
 let cur: Run | null = null
 
@@ -388,9 +457,8 @@ export const useS = create<S>()(
       }
 
       async function route(pl: Pl, cand: Ep[], q: string, log: Try[], r: Run) {
-        const selected = get().eps.find((e) => e.id === pl.cls && usable(e))
-        const c = selected ? { ...selected, model: pl.clsModel && modelsOf(selected).includes(pl.clsModel) ? pl.clsModel : selected.model } : undefined
-        if (!c) { log.push({ n: 'Classifier', m: '', err: 'endpoint is missing, disabled or incomplete; using list order' }); return cand }
+        const c = playlistClassifierOf(get(), pl)
+        if (!c) { log.push({ n: 'Classifier', m: '', err: 'no playlist classifier or helper classification model is set; using list order' }); return cand }
         const ids = [...new Set(cand.map((e) => e.model))], t0 = Date.now()
         const cached = routeCache.get(pl.id, q)
         if (cached && ids.includes(cached)) {
@@ -400,13 +468,13 @@ export const useS = create<S>()(
         }
         try {
           r.ctl = new AbortController()
-          const x = await stream(c, `Choose the best model for the user's request. ${pl.rule || ''}\nAllowed model ids: ${JSON.stringify(ids)}\nReply with only JSON: {"model":"<one allowed id>"}`, [{ role: 'user', content: q.slice(0, 4000) }], () => {}, r.ctl, { cap: 200 })
+          const x = await stream(c, `Choose the best model for the user's request. ${pl.rule || ''}\nAllowed model ids: ${JSON.stringify(ids)}\nReply with only JSON: {"model":"<one allowed id>"}`, [{ role: 'user', content: q.slice(0, 4000) }], () => {}, r.ctl, { cap: 200, effort: lowestEffortOf(c) })
           bump(x.tin, x.tout)
           addCost(c, c.model, x.tin, x.tout)
           const j = JSON.parse(x.text.match(/\{[\s\S]*\}/)?.[0] ?? '')
           if (!j || typeof j !== 'object' || Object.keys(j).join() !== 'model' || !ids.includes(j.model)) throw Error('output rejected (wrong shape, or an id outside this playlist): ' + x.text.slice(0, 80))
           routeCache.set(pl.id, q, j.model)
-          log.push({ n: c.name + ' (classifier)', m: c.model, detail: `Compared the request (${q.slice(0, 4000).length} characters) against ${ids.length} allowed model IDs using playlist rule${pl.rule ? `: “${pl.rule.slice(0, 180)}${pl.rule.length > 180 ? '…' : ''}”` : ' (no custom rule)'}.`, ms: Date.now() - t0, tin: x.tin, tout: x.tout, at: Date.now() })
+          log.push({ n: c.name + ' (classifier)', m: c.model, detail: `Compared the request (${q.slice(0, 4000).length} characters) against ${ids.length} allowed model IDs using ${pl.cls ? 'playlist rule' : 'helper classification model'}${pl.rule ? `: “${pl.rule.slice(0, 180)}${pl.rule.length > 180 ? '…' : ''}”` : ' (no custom rule)'}.`, ms: Date.now() - t0, tin: x.tin, tout: x.tout, at: Date.now() })
           const f = cand.find((e) => e.model === j.model)!
           return [f, ...cand.filter((e) => e !== f)]
         } catch (x: any) {
@@ -450,7 +518,7 @@ export const useS = create<S>()(
           try {
             r.ctl = new AbortController()
             const data = await searchWeb(st.query ?? query, searchOpts)
-            const formatted = formatSearch(data as never)
+            const formatted = formatSearch(data as never, { inlineCites: prefs.citeStyle !== 'off' })
             breadthCalls.push({ id: `rs-${n}`, name: 'search', arguments: JSON.stringify({ query: st.query ?? query }), result: formatted })
             for (const x of (data as { results?: { url?: string }[] }).results ?? []) {
               if (x?.url && !seenUrls.includes(x.url)) { seenUrls.push(x.url); rawResults.push({ url: x.url }) }
@@ -497,7 +565,7 @@ export const useS = create<S>()(
         const system = `${p.sys}${p.sys ? '\n\n' : ''}${researchSystemNote(query, tier)}`
         let order = p.cand
         try {
-          if ((get().features ?? DEFAULT_FEATURES).playlists && p.pl?.cls && order.length > 1) order = await route(p.pl, order, um.full ?? um.t, log, r)
+          if ((get().features ?? DEFAULT_FEATURES).playlists && p.pl && order.length > 1 && playlistClassifierOf(get(), p.pl)) order = await route(p.pl, order, um.full ?? um.t, log, r)
         } catch { /* routing is best-effort */ }
         const histFor = () => (get().chats.find((c) => c.id === chatId)?.msgs ?? []).filter((m) => m.id !== mid)
         const initialRounds = breadthCalls.length ? [{ text: '', calls: breadthCalls.filter((c) => !c.error) }] : []
@@ -517,6 +585,12 @@ export const useS = create<S>()(
           let txt = ''
           try {
             r.ctl = new AbortController()
+            let researchEffort = get().effort[e.model] ?? ''
+            if (researchEffort === 'auto') {
+              const picked = await classifyEffort(query, e.modelEfforts?.[e.model] ?? [])
+              if (picked.level) { researchEffort = picked.level; bump(picked.tin, picked.tout); const ce = effortClassifierOf(get()); if (ce) addCost(ce, ce.model, picked.tin, picked.tout); log.push({ n: `${picked.by} (effort)`, m: picked.level, detail: `Auto effort for ${e.model}: chose ${picked.level}.`, ms: 0, tin: picked.tin, tout: picked.tout, at: Date.now() }) }
+              else researchEffort = ''
+            }
             const x = await runToolLoop(e, system, (rounds) => {
               const all = [...initialRounds, ...rounds]
               const partial = { id: mid, r: 'assistant' as const, t: '', toolRounds: all }
@@ -524,7 +598,7 @@ export const useS = create<S>()(
             }, enabledTools, (t) => {
               txt += t
               edit(chatId, mid, (m) => ({ ...m, t: txt }))
-            }, r.ctl, { ...(get().params.def ? {} : { max: get().params.max, temp: get().params.temp, topp: get().params.topp }), effort: get().effort[e.model] ?? '' }, () => {}, (rounds) => {
+            }, r.ctl, { ...(get().params.def ? {} : { max: get().params.max, temp: get().params.temp, topp: get().params.topp }), effort: researchEffort }, () => {}, (rounds) => {
               edit(chatId, mid, (m) => ({ ...m, toolRounds: [...initialRounds, ...rounds] }))
             }, tier.maxRounds, {
               search: async ({ query: q, count }: { query: string; count?: number }) => {
@@ -535,7 +609,7 @@ export const useS = create<S>()(
                 setSteps([...getSteps().filter((s) => s.kind !== 'synthesize'), { id: `d${depthIdx}`, kind: 'search', label, query: String(q ?? '').slice(0, 120), state: 'running' }, ...(getSteps().filter((s) => s.kind === 'synthesize'))])
                 try {
                   const data = await searchWeb(String(q ?? ''), { ...searchOpts, count: searchCountOf(prefs, count) })
-                  const out = formatSearch(data as never)
+                  const out = formatSearch(data as never, { inlineCites: prefs.citeStyle !== 'off' })
                   setSteps(setStep(getSteps(), `d${depthIdx}`, { state: 'done', sources: (data as { results?: unknown[] }).results?.length ?? 0 }))
                   return out
                 } catch (err: any) {
@@ -633,13 +707,13 @@ export const useS = create<S>()(
               selectedMemories = selectedMemories.filter((m) => cachedIds.includes(m.id))
               memoryTrace = `Memory recall used ${mp.recall} mode with a cached classifier decision: accepted ${selectedMemories.length} of ${availableCount} matching IDs.`
             } else {
-              const ce = memoryState.eps.find((e) => e.id === mp.classifierEp && usable(e))
+              const ce = recallClassifierOf(memoryState)
               if (ce) try {
-                const classifier = { ...ce, model: mp.classifierModel && modelsOf(ce).includes(mp.classifierModel) ? mp.classifierModel : ce.model }
+                const classifier = ce
                 const classifierPrompt = `Select relevant stored memories. Return strict JSON only: {"memory_ids":["id"]}. Use only supplied ids. ${mp.recall === 'contextual' ? 'Include somewhat relevant memories.' : 'Include only memories directly applicable to the request.'}`
                 const classifierInput = { question: um.full ?? um.t, memories: selectedMemories.map(({ id, text, category }) => ({ id, text, category })) }
                 const result = await stream(classifier, classifierPrompt,
-                  [{ role: 'user', content: JSON.stringify(classifierInput) }], () => {}, new AbortController(), { cap: 300 })
+                  [{ role: 'user', content: JSON.stringify(classifierInput) }], () => {}, new AbortController(), { cap: 300, effort: lowestEffortOf(classifier) })
                 const j = JSON.parse(result.text.match(/\{[\s\S]*\}/)?.[0] ?? '')
                 if (!Array.isArray(j.memory_ids) || j.memory_ids.some((id: unknown) => typeof id !== 'string' || !selectedMemories.some((m) => m.id === id))) throw Error('Invalid memory ids')
                 const ids = new Set(j.memory_ids); selectedMemories = selectedMemories.filter((m) => ids.has(m.id))
@@ -655,7 +729,7 @@ export const useS = create<S>()(
         try {
           const g = get(), FP = g.features ?? DEFAULT_FEATURES
           const basePrompt = FP.prompts ? p.cmd?.sys || g.prompts.find((x) => x.id === g.pr)?.text || p.pl?.sys || '' : ''
-          if (FP.playlists && p.pl?.cls && order.length > 1) order = await route(p.pl, order, um.full ?? um.t, log, r)
+          if (FP.playlists && p.pl && order.length > 1 && playlistClassifierOf(get(), p.pl)) order = await route(p.pl, order, um.full ?? um.t, log, r)
           const routingMode = get().prefs?.routingMode ?? 'ordered'
           const track = (ep: Ep, ms: number, failed: boolean) => {
             const key = `${ep.id}::${ep.model}`
@@ -671,14 +745,29 @@ export const useS = create<S>()(
           for (const e of order) {
             if (r.stopped) break
             let txt = ''
-            const t0 = Date.now(), q = get().params, effort = get().effort[e.model] ?? ''
+            const t0 = Date.now(), q = get().params
+            let effort = get().effort[e.model] ?? ''
+            if (effort === 'auto') {
+              const levels = e.modelEfforts?.[e.model] ?? []
+              const picked = await classifyEffort(um.full ?? um.t, levels)
+              if (picked.level) {
+                effort = picked.level
+                bump(picked.tin, picked.tout)
+                const ce = effortClassifierOf(get())
+                if (ce) addCost(ce, ce.model, picked.tin, picked.tout)
+                log.push({ n: `${picked.by} (effort)`, m: picked.level, detail: `Auto effort for ${e.model}: chose ${picked.level} from ${levels.length} available levels (${levels.join(', ')}).`, ms: 0, tin: picked.tin, tout: picked.tout, at: Date.now() })
+              } else {
+                effort = ''
+                log.push({ n: 'Effort (auto)', m: '', err: `Auto effort failed validation or no helper model is usable for ${e.model}; using the default level.`, at: Date.now() })
+              }
+            }
             edit(id, mid, (m) => ({ ...m, by: `${e.name} · ${e.model}`, t: '' }))
             const toolRounds: { text: string; calls: ToolResult[] }[] = []
             let responseTokensIn = 0, responseTokensOut = 0
-            // Generation-speed accounting: start the clock when thinking ends
-            // (first content token, or the last reasoning summary if later) and
-            // exclude local tool-execution time.
-            let firstTokenAt = 0, lastThinkAt = 0
+            // Generation-speed accounting: runToolLoop reports the total time
+            // spent inside stream() across every round, so intermediate
+            // tool-call rounds count toward tokens/s while local tool
+            // execution (which runs outside stream()) is excluded.
             try {
               r.ctl = new AbortController()
               const x = await runToolLoop(e, system, (rounds) => {
@@ -691,14 +780,12 @@ export const useS = create<S>()(
                 if (featOn(get(), 'skills') && (p.skills ?? []).length) base[SKILL_TOOL_NAME] = true
                 return base
               })(), (t) => {
-                if (t && !firstTokenAt) firstTokenAt = Date.now()
                 txt += t
                 const at = performance.now(), duration = get().prefs.fade * 1000
                 edit(id, mid, (m) => ({ ...m, t: txt, fadeEvents: duration > 0 && /\S/.test(t)
                   ? [...(m.fadeEvents ?? []).filter((x) => at - x.at < duration), { text: t, at }]
                   : (m.fadeEvents ?? []).filter((x) => at - x.at < duration) }))
               }, r.ctl, { ...(q.def ? {} : { max: q.max, temp: q.temp, topp: q.topp }), effort }, (summary) => {
-                if (summary) lastThinkAt = Date.now()
                 edit(id, mid, (m) => ({ ...m, reasoning: (m.reasoning ?? '') + summary }))
               }, (rounds) => {
                 toolRounds.splice(0, toolRounds.length, ...rounds)
@@ -713,7 +800,7 @@ export const useS = create<S>()(
                 search: async ({ query, count }: { query: string; count?: number }) => {
                   const prefs = normSearch(get().search)
                   if (typeof query !== 'string') throw Error('query must be a string')
-                  return formatSearch(await searchWeb(query, { mode: prefs.mode, provider: prefs.provider, fallback: prefs.fallback, apiKey: searchKeyOf(prefs), zone: prefs.zone, count: searchCountOf(prefs, count) }))
+                  return formatSearch(await searchWeb(query, { mode: prefs.mode, provider: prefs.provider, fallback: prefs.fallback, apiKey: searchKeyOf(prefs), zone: prefs.zone, count: searchCountOf(prefs, count) }), { inlineCites: prefs.citeStyle !== 'off' })
                 },
                 fetch_page: async ({ url }: { url: string }) => {
                   const prefs = normSearch(get().search)
@@ -787,12 +874,11 @@ export const useS = create<S>()(
               track(e, Date.now() - t0, false)
               addCost(e, e.model, responseTokensIn, responseTokensOut)
               // Tokens/sec over generated output tokens (including tokens written
-              // across tool rounds), measured from the end of thinking and
-              // excluding local tool-execution time.
-              const genEnd = Date.now()
-              const genToolMs = toolRounds.reduce((total, round) => total + Math.max(0, ...round.calls.map((call) => call.ms ?? 0)), 0)
-              const thinkEnd = Math.max(firstTokenAt || t0, lastThinkAt || t0)
-              const genMs = Math.max(0, genEnd - thinkEnd - genToolMs)
+              // across tool rounds), measured over total LLM streaming time
+              // across all rounds. Local tool execution runs outside stream()
+              // so it is excluded by construction.
+              const rawStreamMs = (x as { streamMs?: number }).streamMs ?? 0
+              const genMs = rawStreamMs > 0 ? rawStreamMs : Math.max(0, elapsed - toolElapsed)
               // Extract workspace IDs from tool rounds (check both arguments and result)
               const workspaceIds = [...new Set(toolRounds.flatMap((r) => r.calls).filter((c) => c.name === 'workspace_upsert').map((c) => {
                 // First check arguments
@@ -877,7 +963,7 @@ export const useS = create<S>()(
         params: { def: true, temp: 0.7, topp: 1, max: 4096, maxToolRounds: 8, highToolsUnlocked: false }, effort: {},
         workspacePrefs: { defaultView: 'latest', autoOpen: true, autoFollow: true },
         advanced: { ...DEFAULT_ADVANCED },
-        sel: null, pr: 'general', globalPrompt: { on: false, text: '' }, features: { ...DEFAULT_FEATURES }, featureOrder: FEATURES.map(([id]) => id), libraryShow: { ...DEFAULT_LIBRARY_SHOW }, themeMode: 'dark', themeDark: 'claude', themeLight: 'paper', customDarkColors: { ...DEFAULT_CUSTOM_COLORS }, customLightColors: { ...DEFAULT_CUSTOM_LIGHT_COLORS }, setupDone: false, prefs: { showBy: true, showLog: true, showTps: false, enterSends: true, autoTitle: true, temporaryByDefault: false, showModelPricing: false, titleEp: '', titleModel: '', fade: 0.4, tempHours: 3, fontBody: 'system', fontMono: 'system', fontHeader: 'system', modelPrimary: 'name', modelSecondary: 'none', paletteMax: 320, chatWidth: 'standard', settingsWidth: 1024, settingsHeight: 780, modelPickerHeight: 480, sidebarWidth: 288, widgetWidth: 320, workspaceWidth: 0.4, workspaceSplit: 0.2, modalBlur: 12, settingsOpacity: 55 },
+        sel: null, pr: 'general', globalPrompt: { on: false, text: '' }, features: { ...DEFAULT_FEATURES }, featureOrder: FEATURES.map(([id]) => id), libraryShow: { ...DEFAULT_LIBRARY_SHOW }, themeMode: 'dark', themeDark: 'claude', themeLight: 'paper', customDarkColors: { ...DEFAULT_CUSTOM_COLORS }, customLightColors: { ...DEFAULT_CUSTOM_LIGHT_COLORS }, setupDone: false, prefs: { showBy: true, showLog: true, showTps: false, enterSends: true, autoTitle: true, temporaryByDefault: false, showModelPricing: false, titleEp: '', titleModel: '', effortEp: '', effortModel: '', recallEp: '', recallModel: '', fade: 0.4, tempHours: 3, fontBody: 'system', fontMono: 'system', fontHeader: 'system', modelPrimary: 'name', modelSecondary: 'none', paletteMax: 320, chatWidth: 'standard', settingsWidth: 1024, settingsHeight: 780, modelPickerHeight: 480, sidebarWidth: 288, widgetWidth: 320, workspaceWidth: 0.4, workspaceSplit: 0.2, modalBlur: 12, settingsOpacity: 55 },
         stats: ZERO(), keys: Object.fromEntries(KEYS.map(([k, , d]) => [k, d])),
         folders: [], price: { in: 0, out: 0 }, todos: [],
         routeStats: {}, flashMsg: null,
@@ -891,7 +977,13 @@ export const useS = create<S>()(
         upd: (k, id, p) => set((s) => ({ [k]: (s[k] as any[]).map((x) => (x.id === id ? { ...x, ...p } : x)) }) as Partial<S>),
         del: (k, id) => set((s) => {
           const n: any = { [k]: (s[k] as any[]).filter((x) => x.id !== id) }
-          if (k === 'eps') n.pls = s.pls.map((p) => ({ ...p, e: p.e.filter((x) => splitEntry(x)[0] !== id), cls: p.cls === id ? '' : p.cls, clsModel: p.cls === id ? '' : p.clsModel }))
+          if (k === 'eps') {
+            n.pls = s.pls.map((p) => ({ ...p, e: p.e.filter((x) => splitEntry(x)[0] !== id), cls: p.cls === id ? '' : p.cls, clsModel: p.cls === id ? '' : p.clsModel }))
+            if (s.prefs.titleEp === id) n.prefs = { ...s.prefs, titleEp: '', titleModel: '' }
+            if (s.prefs.effortEp === id) n.prefs = { ...(n.prefs ?? s.prefs), effortEp: '', effortModel: '' }
+            if (s.prefs.recallEp === id) n.prefs = { ...(n.prefs ?? s.prefs), recallEp: '', recallModel: '' }
+            if (s.memoryPrefs.classifierEp === id) n.memoryPrefs = { ...s.memoryPrefs, classifierEp: '', classifierModel: '' }
+          }
           if (k === 'pls') n.cmds = s.cmds.map((c) => (c.pl === id ? { ...c, pl: '' } : c))
           if (s.sel?.id === id) n.sel = null
           if (s.pr === id) n.pr = ''
@@ -1123,7 +1215,7 @@ export const useS = create<S>()(
           const remap = (obj?: Record<string, any>) => obj ? Object.fromEntries(Object.entries(obj).map(([id, value]) => [strip(id), value])) : obj
           return { ...e, ...(preset ? { preset } : {}), name: oldGoogle && e.name === 'Gemini' ? 'Google' : e.name, endpointId, endpointFilter: e.endpointFilter ?? (preset ? PRE[preset]?.[3] : undefined), model: strip(e.model), models: e.models?.map(strip), modelNames: remap(e.modelNames), modelEfforts: remap(e.modelEfforts), modelEffortSource: remap(e.modelEffortSource), prices: remap(e.prices) }
         })
-        if (p.effort) p.effort = Object.fromEntries(Object.entries(p.effort).map(([id, value]: [string, any]) => [id, typeof value === 'number' ? (value <= 0 ? '' : value < 34 ? 'low' : value < 68 ? 'medium' : 'high') : value]).filter(([, value]) => value && String(value).toLowerCase() !== 'off'))
+        if (p.effort) p.effort = Object.fromEntries(Object.entries(p.effort).map(([id, value]: [string, any]) => [id, value === 'auto' ? 'auto' : typeof value === 'number' ? (value <= 0 ? '' : value < 34 ? 'low' : value < 68 ? 'medium' : 'high') : value]).filter(([, value]) => value && String(value).toLowerCase() !== 'off'))
         delete p.allow
         delete p.fetchMode
         if (p.tools) delete p.tools.fetch
@@ -1138,7 +1230,7 @@ export const useS = create<S>()(
           p.prefs.titleEp = ''
         }
         if (p.prefs && p.prefs.showTps === undefined) p.prefs.showTps = false
-        p.prefs = { ...p.prefs, fade: p.prefs?.fade ?? 0.4, tempHours: p.prefs?.tempHours ?? 3, fontBody: p.prefs?.fontBody ?? 'system', fontMono: p.prefs?.fontMono ?? 'system', fontHeader: p.prefs?.fontHeader ?? 'system', modelPrimary: p.prefs?.modelPrimary ?? ({ none: 'id', name: 'name', provider: 'id', both: 'name' } as const)[(p.prefs?.modelDisplay as string) ?? 'both'] ?? 'name', modelSecondary: p.prefs?.modelSecondary ?? ({ none: 'none', name: 'none', provider: 'provider', both: 'provider' } as const)[(p.prefs?.modelDisplay as string) ?? 'both'] ?? 'none', paletteMax: p.prefs?.paletteMax ?? 320, chatWidth: p.prefs?.chatWidth ?? 'standard', settingsWidth: p.prefs?.settingsWidth ?? 1024, settingsHeight: p.prefs?.settingsHeight ?? 780, modelPickerHeight: p.prefs?.modelPickerHeight ?? 480, showModelPricing: p.prefs?.showModelPricing ?? false, titleEp: p.prefs?.titleEp ?? '', titleModel: p.prefs?.titleModel ?? '', routingMode: ['ordered', 'fastest', 'cheapest'].includes(p.prefs?.routingMode) ? p.prefs.routingMode : 'ordered', sidebarWidth: p.prefs?.sidebarWidth ?? 288, widgetWidth: p.prefs?.widgetWidth ?? 320, workspaceWidth: typeof p.prefs?.workspaceWidth === 'number' && p.prefs.workspaceWidth <= 1 ? p.prefs.workspaceWidth : 0.4, workspaceSplit: typeof p.prefs?.workspaceSplit === 'number' ? p.prefs.workspaceSplit : 0.2, modalBlur: p.prefs?.modalBlur ?? 12, settingsOpacity: p.prefs?.settingsOpacity ?? 55, temporaryByDefault: p.prefs?.temporaryByDefault ?? false }
+        p.prefs = { ...p.prefs, fade: p.prefs?.fade ?? 0.4, tempHours: p.prefs?.tempHours ?? 3, fontBody: p.prefs?.fontBody ?? 'system', fontMono: p.prefs?.fontMono ?? 'system', fontHeader: p.prefs?.fontHeader ?? 'system', modelPrimary: p.prefs?.modelPrimary ?? ({ none: 'id', name: 'name', provider: 'id', both: 'name' } as const)[(p.prefs?.modelDisplay as string) ?? 'both'] ?? 'name', modelSecondary: p.prefs?.modelSecondary ?? ({ none: 'none', name: 'none', provider: 'provider', both: 'provider' } as const)[(p.prefs?.modelDisplay as string) ?? 'both'] ?? 'none', paletteMax: p.prefs?.paletteMax ?? 320, chatWidth: p.prefs?.chatWidth ?? 'standard', settingsWidth: p.prefs?.settingsWidth ?? 1024, settingsHeight: p.prefs?.settingsHeight ?? 780, modelPickerHeight: p.prefs?.modelPickerHeight ?? 480, showModelPricing: p.prefs?.showModelPricing ?? false, titleEp: p.prefs?.titleEp ?? '', titleModel: p.prefs?.titleModel ?? '', effortEp: p.prefs?.effortEp ?? '', effortModel: p.prefs?.effortModel ?? '', recallEp: p.prefs?.recallEp ?? '', recallModel: p.prefs?.recallModel ?? '', routingMode: ['ordered', 'fastest', 'cheapest'].includes(p.prefs?.routingMode) ? p.prefs.routingMode : 'ordered', sidebarWidth: p.prefs?.sidebarWidth ?? 288, widgetWidth: p.prefs?.widgetWidth ?? 320, workspaceWidth: typeof p.prefs?.workspaceWidth === 'number' && p.prefs.workspaceWidth <= 1 ? p.prefs.workspaceWidth : 0.4, workspaceSplit: typeof p.prefs?.workspaceSplit === 'number' ? p.prefs.workspaceSplit : 0.2, modalBlur: p.prefs?.modalBlur ?? 12, settingsOpacity: p.prefs?.settingsOpacity ?? 55, temporaryByDefault: p.prefs?.temporaryByDefault ?? false }
         p.tools = { ...DEFAULT_TOOLS, ...(p.tools ?? {}) }
         p.search = normSearch(p.search)
         p.research = normResearch(p.research)

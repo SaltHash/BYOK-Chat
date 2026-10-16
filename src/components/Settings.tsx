@@ -1,36 +1,74 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { X, Plus, Trash2, ArrowUp, ArrowDown, ChevronRight, Eye, EyeOff, Play, ShieldCheck, Shield, Download, Upload, Check, CircleCheck, Cpu, Route, GripVertical, Server, ListMusic, ScrollText, Terminal, Wrench, Palette, FolderOpen, FileText, PanelRight, TrendingUp, Keyboard, Search, Brain, Pencil, Sparkles, RotateCcw, SlidersHorizontal, FlaskConical, Library, Database, Lock, LockOpen, LayoutTemplate, Share2 } from 'lucide-react'
-import { useS, PRE, THEMES, DARK_THEMES, LIGHT_THEMES, THEME_COLOR_KEYS, THEME_COLOR_LABELS, SEARCH_MODES, SEARCH_PROVIDERS, FEATURES, LIBRARY_ITEMS, FEATURE_TABS, FEATURE_WIDGETS, DEFAULT_LIBRARY_SHOW, DEFAULT_ADVANCED, featOn, normSearch, normResearch, normAdvanced, normDocs, usable, modelsOf, modelNameOf, TOOL_ROUNDS_DEFAULT, TOOL_ROUNDS_MIN, TOOL_ROUNDS_BASE_MAX, TOOL_ROUNDS_MAX, toolRoundLimitOf, isToolRoundsUnlimited, type Kind, type FeatureId, type DocPrefs } from '../store'
+import { useS, PRE, THEMES, DARK_THEMES, LIGHT_THEMES, THEME_COLOR_KEYS, THEME_COLOR_LABELS, SEARCH_MODES, SEARCH_PROVIDERS, FEATURES, LIBRARY_ITEMS, FEATURE_TABS, FEATURE_WIDGETS, DEFAULT_LIBRARY_SHOW, DEFAULT_ADVANCED, featOn, normSearch, normResearch, normAdvanced, normDocs, usable, modelsOf, modelNameOf, helperRef, splitHelperRef, effortClassifierOf, TOOL_ROUNDS_DEFAULT, TOOL_ROUNDS_MIN, TOOL_ROUNDS_BASE_MAX, TOOL_ROUNDS_MAX, toolRoundLimitOf, isToolRoundsUnlimited, type Kind, type FeatureId, type DocPrefs } from '../store'
 import { RESEARCH_TIERS, type ResearchTierId } from '../research'
 import { normSkills, resolveSkill, validateCustomSkill, enabledSkills, BUILTIN_SKILLS, SKILL_TOOL_NAME, type SkillState } from '../skills'
 import { findDuplicatePairs, mergeMemory } from '../recall'
 import { TOOL_REGISTRY, can } from '../engine'
 import { CI, TOOLS, WIDGETS, KEYS } from '../meta'
+import { SETTINGS_TABS, splitSettingTarget, settingDomId } from '../settingsCatalog'
 import { DataTab, StatsTab, KeysTab, TestRow, TestAllEndpoints } from './Extra'
-import { Btn, Field, Input, Area, Sel, Toggle, Seg, RangeSlider, Checkbox, HelpTip, Modal, Surface, Chip, Pop, Item, cx, type Ic } from './ui'
+import { Btn, Field, Input, Area, Sel, Toggle, Seg, RangeSlider, Checkbox, HelpTip, Modal, Surface, Chip, cx, type Ic } from './ui'
 import { SortableList, type SortHandleProps, type SortItemApi } from './dnd'
 import { fetchModelCatalog, filterCatalogByEndpoint, prioritizeProviderRows, type CatalogEntry } from '../catalog'
 import { WORKSPACE_TEMPLATES } from '../workspace'
 
-const TABS: [string, string, Ic][] = [
-  ['features', 'Features', SlidersHorizontal],
-  ['eps', 'Endpoints', Server], ['prompts', 'Prompts', ScrollText], ['skills', 'Skills', Sparkles], ['pls', 'Playlists', ListMusic],
-  ['cmds', 'Commands', Terminal], ['workspace', 'Workspace', FolderOpen], ['tools', 'Tools', Wrench], ['memory', 'Memory', Brain], ['widgets', 'Widgets', PanelRight], ['look', 'Appearance', Palette], ['keys', 'Shortcuts', Keyboard], ['stats', 'Stats', TrendingUp], ['data', 'Data controls', Database], ['adv', 'Advanced', FlaskConical],
-]
+const TABS = SETTINGS_TABS
 /** Tabs hidden while their owning feature is disabled. */
 export const visibleTabs = (features?: Record<FeatureId, boolean>) => {
   const hidden = new Set<string>()
   for (const [f, tabs] of Object.entries(FEATURE_TABS)) {
     if (!featOn({ features }, f as FeatureId)) for (const t of tabs as string[]) hidden.add(t)
   }
-  return TABS.filter(([k]) => !hidden.has(k))
+  return SETTINGS_TABS.filter(([k]) => !hidden.has(k))
+}
+/** Addressable wrapper: renders id="setting-<anchor>" so the palette can
+ *  deep-link to an individual setting. Unknown anchors still open the tab. */
+export function Anchor({ id, children }: { id: string; children: ReactNode }) {
+  return <div id={settingDomId(id)} data-anchor={id} className="scroll-mt-6">{children}</div>
+}
+/** Briefly highlight a deep-linked section after scrolling to it. */
+export function flashAnchor(anchor: string) {
+  try {
+    const el = document.getElementById(settingDomId(anchor))
+    if (!el) return
+    el.scrollIntoView({ block: 'start', behavior: 'smooth' })
+    el.classList.add('setting-flash')
+    setTimeout(() => el.classList.remove('setting-flash'), 1600)
+  } catch { /* ignore */ }
+}
+/** Jump to another setting from inside a tab (tabs don't receive setTab). */
+export const goSetting = (t: string) => {
+  try { window.dispatchEvent(new CustomEvent('byok:setting', { detail: t })) } catch { /* ignore */ }
+}
+/** Readable label for a helper-model ref (`<epId>::<model>` or ''). */
+export const helperLabel = (s: { eps: any[] }, ref: string, emptyLabel: string) => {
+  if (!ref) return emptyLabel
+  const [id, model] = splitHelperRef(ref)
+  const e = s.eps.find((x) => x.id === id)
+  if (!e) return 'Removed endpoint'
+  const m = model && modelsOf(e).includes(model) ? model : e.model
+  return `${e.name} · ${modelNameOf(e, m || model)}`
+}
+/** Pointer card replacing a removed duplicate helper-model picker. */
+function HelperPointer({ anchor, title, desc, current }: { anchor: string; title: string; desc: string; current: string }) {
+  return (
+    <Anchor id={anchor}>
+    <div className="rounded-xl bg-surf p-3 space-y-2">
+      <div className="text-sm font-medium">{title}</div>
+      <div className="text-xs text-mu">{desc}</div>
+      <div className="text-xs text-mu">Current: <span className="text-tx">{current}</span></div>
+      <div><Btn v="soft" icon={Cpu} onClick={() => goSetting('eps#helper-models')}>Open helper models</Btn></div>
+    </div>
+    </Anchor>
+  )
 }
 const INFO: Record<string, string> = {
   features: 'Turn whole features on or off. A disabled feature is hidden everywhere and is never used by the AI or the app until you turn it back on.',
   library: 'Choose which shortcuts appear in the sidebar library.',
   eps: 'Model APIs you connect with your own key. Add several, disable any, and test each one.',
   prompts: 'Reusable system prompts. Pick one from the prompt menu under the chat box to override a playlist prompt. A global system prompt can also apply to every message in every chat.',
-  skills: 'Instruction packs the model loads itself. Each skill lists when it applies; the model calls use_skill to read the full instructions. use_skill is a hidden capability and never appears under Tools.',
+  skills: 'Extra instructions the AI can use for specific tasks. Turn on the ones you want available.',
   pls: 'Ordered lists of models from your endpoints. A request tries each model from top to bottom and stops at the first that succeeds. An optional classifier model picks one entry first.',
   cmds: 'Slash commands apply a system prompt and template to a typed input and run on the first endpoint that accepts that input type.',
   tools: 'Model tools such as date, calculator, and web search. Only enabled tools are sent to the provider.',
@@ -71,7 +109,7 @@ export function Card({ icon: I, title, sub, right, open0, handle, children, mute
       <div className="flex items-center gap-3 p-3">
         {handle && <span {...handle} title="Drag to reorder" className="dnd-handle -mr-1 cursor-grab text-mu"><GripVertical size={16} /></span>}
         <div role="button" tabIndex={0} onClick={() => setO(!o)} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setO(!o) } }} className="flex min-w-0 flex-1 cursor-pointer items-center gap-3 text-left">
-          <span className={cx('grid size-9 shrink-0 place-items-center rounded-lg bg-hov', muted ? 'text-mu' : 'text-ac')}><I size={18} /></span>
+          <span className={cx('grid size-9 shrink-0 place-items-center rounded-lg bg-hov', muted ? 'text-mu opacity-60' : 'text-ac')}><I size={18} /></span>
           <span className="min-w-0"><span className="block truncate font-medium">{title}</span>{sub && <span className="block truncate text-sm text-mu">{sub}</span>}</span>
         </div>
         {right}
@@ -241,16 +279,20 @@ function FeaturesTab() {
       {order.map((id) => {
         const [, label, desc] = byId(id)
         return (
-        <Card key={id} icon={iconFor(id)} title={label} sub={F[id] ? 'On' : 'Off'} muted={!F[id]} right={<span className="flex items-center gap-1"><Btn sm icon={ArrowUp} title={`Move ${label} up`} disabled={order.indexOf(id) === 0} onClick={() => move(id, -1)} /><Btn sm icon={ArrowDown} title={`Move ${label} down`} disabled={order.indexOf(id) === order.length - 1} onClick={() => move(id, 1)} /><Toggle on={!!F[id]} set={(on) => toggle(id, on)} /></span>}>
+        <Anchor key={id} id={`feature-${id}`}>
+        <Card icon={iconFor(id)} title={label} sub={F[id] ? 'On' : 'Off'} muted={!F[id]} right={<span className="flex items-center gap-1"><Btn sm icon={ArrowUp} title={`Move ${label} up`} disabled={order.indexOf(id) === 0} onClick={() => move(id, -1)} /><Btn sm icon={ArrowDown} title={`Move ${label} down`} disabled={order.indexOf(id) === order.length - 1} onClick={() => move(id, 1)} /><Toggle on={!!F[id]} set={(on) => toggle(id, on)} /></span>}>
           <p className="text-sm text-mu">{desc}</p>
           {id === 'library' && !!F[id] && (
+            <Anchor id="library-entries">
             <Field label="Library entries" hint="Choose which shortcuts appear in the sidebar library.">
               <div className="grid grid-cols-2 gap-2">
                 {LIBRARY_ITEMS.map(([k, l]) => <Checkbox key={k} checked={show[k] ?? true} set={(v) => s.patch({ libraryShow: { ...show, [k]: v } })} label={l} />)}
               </div>
             </Field>
+            </Anchor>
           )}
         </Card>
+        </Anchor>
         )
       })}
       {confirm === 'stats' && (
@@ -283,6 +325,71 @@ function FeaturesTab() {
   )
 }
 
+function HelperModels() {
+  const s = useS()
+  const [open, setOpen] = useState(false)
+  const clsRef = helperRef(s.memoryPrefs.classifierEp, s.memoryPrefs.classifierModel)
+  const titleRef = helperRef(s.prefs.titleEp, s.prefs.titleModel)
+  const effRef = helperRef(s.prefs.effortEp, s.prefs.effortModel)
+  const recallRef = helperRef(s.prefs.recallEp, s.prefs.recallModel)
+  const mixed = !(clsRef === titleRef && titleRef === effRef && effRef === recallRef)
+  const main = mixed ? '__mixed__' : clsRef
+  const refLabel = (ref: string) => {
+    if (!ref) return 'None'
+    const [id, model] = splitHelperRef(ref)
+    const e = s.eps.find((x) => x.id === id)
+    if (!e) return 'Removed endpoint'
+    const m = model && modelsOf(e).includes(model) ? model : e.model
+    return `${e.name} · ${modelNameOf(e, m || model)}`
+  }
+  const opts: [string, string][] = [
+    ['', 'None'],
+    ...(mixed ? [['__mixed__', 'Mixed'] as [string, string]] : []),
+    ...s.eps.flatMap((e) => modelsOf(e).map((m) => [`${e.id}::${m}`, `${e.name} · ${modelNameOf(e, m)}`] as [string, string])),
+  ]
+  const setAll = (ref: string) => {
+    if (ref === '__mixed__') return
+    const [ep, model] = splitHelperRef(ref)
+    s.patch({ prefs: { ...s.prefs, titleEp: ep, titleModel: model, effortEp: ep, effortModel: model, recallEp: ep, recallModel: model }, memoryPrefs: { ...s.memoryPrefs, classifierEp: ep, classifierModel: model } })
+  }
+  const setOne = (which: 'cls' | 'title' | 'eff' | 'recall', ref: string) => {
+    const [ep, model] = splitHelperRef(ref)
+    if (which === 'cls') s.patch({ memoryPrefs: { ...s.memoryPrefs, classifierEp: ep, classifierModel: model } })
+    else if (which === 'title') s.patch({ prefs: { ...s.prefs, titleEp: ep, titleModel: model } })
+    else if (which === 'recall') s.patch({ prefs: { ...s.prefs, recallEp: ep, recallModel: model } })
+    else s.patch({ prefs: { ...s.prefs, effortEp: ep, effortModel: model } })
+  }
+  const singleOpts: [string, string][] = [
+    ['', 'None'],
+    ...s.eps.flatMap((e) => modelsOf(e).map((m) => [`${e.id}::${m}`, `${e.name} · ${modelNameOf(e, m)}`] as [string, string])),
+  ]
+  return (
+    <Anchor id="helper-models">
+    <Surface>
+      <button type="button" onClick={() => setOpen(!open)} aria-expanded={open} className="flex w-full items-center gap-2 text-left">
+        <Cpu size={18} className="shrink-0 text-ac" />
+        <span className="min-w-0 flex-1"><span className="block font-medium">Helper models</span><span className="block truncate text-sm text-mu">Classification · title generation · effort detection · memory recall</span></span>
+        <ChevronRight size={16} aria-hidden="true" className={cx('shrink-0 text-mu transition-transform', open && 'rotate-90')} />
+      </button>
+      <div className="mt-3">
+        <Field label="Model for all helpers" hint="One model for playlist classification, chat-title generation, automatic effort detection, and memory recall. Expand below to set each one individually.">
+          <Sel value={main} set={setAll} opts={opts} />
+        </Field>
+        {opts.find(([k]) => k === main)?.[1] === undefined && <p className="text-xs text-mu">Current: {refLabel(main)}</p>}
+      </div>
+      {open && (
+        <div className="mt-3 space-y-3 rounded-xl bg-bg p-3">
+          <Field label="Classification model" hint="Picks the best model in a playlist for each request. Playlists with their own classifier keep using it."><Sel value={clsRef} set={(v) => setOne('cls', v)} opts={singleOpts} /></Field>
+          <Field label="Title generation model" hint="Names new chats. None uses the model that answered."><Sel value={titleRef} set={(v) => setOne('title', v)} opts={singleOpts} /></Field>
+          <Field label="Effort detection model" hint="Chooses how hard the model thinks when a model is set to Auto."><Sel value={effRef} set={(v) => setOne('eff', v)} opts={singleOpts} /></Field>
+          <Field label="Memory recall model" hint="Chooses which saved memories matter for each reply. Empty falls back to the classification model."><Sel value={recallRef} set={(v) => setOne('recall', v)} opts={singleOpts} /></Field>
+        </div>
+      )}
+    </Surface>
+    </Anchor>
+  )
+}
+
 function Eps() {
   const { eps, upd } = useS()
   const [show, setShow] = useState('')
@@ -295,39 +402,41 @@ function Eps() {
   }
   return (
     <Panel id="eps" k="eps" n={eps.length} add="Add endpoint">
+      <HelperModels />
       <SortableCards k="eps" ids={eps.map((x) => x.id)} label="Endpoint" renderCard={(eid, handle) => {
         const e = eps.find((x) => x.id === eid)
         if (!e) return null
         const u = (p: object) => upd('eps', e.id, p)
         return (
+          <Anchor key={eid} id={`ep-${e.id}`}>
           <Card handle={handle} icon={Server} title={editingName === e.id
             ? <input autoFocus value={e.name} onChange={(ev) => u({ name: ev.target.value })} onBlur={() => setEditingName('')} onKeyDown={(ev) => { if (ev.key === 'Enter' || ev.key === 'Escape') setEditingName('') }} onClick={(ev) => ev.stopPropagation()} aria-label="Endpoint name" className="w-full min-w-0 rounded-md bg-bg px-2 py-1 font-medium outline-none focus:ring-2 focus:ring-ac/40" />
-            : <span className="inline-flex min-w-0 items-center gap-1.5"><span className="truncate">{e.name}</span><button type="button" title="Rename endpoint" aria-label="Rename endpoint" onClick={(ev) => { ev.stopPropagation(); setEditingName(e.id) }} className="grid size-6 shrink-0 place-items-center rounded text-mu hover:bg-hov hover:text-tx"><Pencil size={13}/></button></span>} sub={e.model || 'No model id'} open0={!e.model && !e.key} right={<Toggle on={e.on} set={(v) => u({ on: v })} />}>
+            : <span className="inline-flex min-w-0 items-center gap-1.5"><span className="truncate">{e.name}</span><button type="button" title="Rename endpoint" aria-label="Rename endpoint" onClick={(ev) => { ev.stopPropagation(); setEditingName(e.id) }} className="grid size-6 shrink-0 place-items-center rounded text-mu hover:bg-hov hover:text-tx"><Pencil size={13}/></button></span>} sub={e.model || 'No model id'} open0={!e.model && !e.key} muted={!e.on} right={<Toggle on={e.on} set={(v) => u({ on: v })} />}>
             <div className="space-y-3">
-              <section className="space-y-3 rounded-xl bg-bg p-3"><div className="text-sm font-medium">Models</div>
+              <Anchor id="models"><section className="space-y-3 rounded-xl bg-bg p-3"><div className="text-sm font-medium">Models</div>
               <Field label="Preset"><Sel value={e.preset ?? presetForUrl(e.url)?.[0] ?? ''} set={(v) => v ? selectPreset(e.id, v) : u({ preset: '', endpointId: '', endpointFilter: 'author' })} opts={[[ '', 'Choose a preset'], ...Object.keys(PRE).map((k) => [k, k] as [string, string])]} /></Field>
               <Field label="Models" hint="Press Enter to add the next row. Every row uses this endpoint and API key.">
                 <ModelsEditor e={e} update={u} />
               </Field>
-              <Field label="Model behavior" hint="Playlist mode groups model ids under one endpoint choice and tries them in order.">
+              <Anchor id="model-behavior"><Field label="Model behavior" hint="Playlist mode groups this endpoint's models into a single playlist entry and tries them in order.">
                 <Seg v={e.modelsMode ?? 'separate'} set={(modelsMode) => u({ modelsMode })} opts={[["separate", "Separate models"], ["playlist", "Treat as playlist"]]} />
-              </Field>
-              </section>
-              <section className="space-y-3 rounded-xl bg-bg p-3"><div className="text-sm font-medium">Credentials</div>
+              </Field></Anchor>
+              </section></Anchor>
+              <Anchor id="credentials"><section className="space-y-3 rounded-xl bg-bg p-3"><div className="text-sm font-medium">Credentials</div>
               <Field label="API key" hint="Stored unencrypted in this browser and sent only to the base URL.">
                 <div className="relative">
                   <Input type={show === e.id ? 'text' : 'password'} value={e.key} set={(v) => u({ key: v })} placeholder="Leave empty for local servers" />
                   <button onClick={() => setShow(show === e.id ? '' : e.id)} title="Show or hide key" className="absolute right-2 top-1/2 -translate-y-1/2 text-mu hover:text-tx">{show === e.id ? <EyeOff size={16} /> : <Eye size={16} />}</button>
                 </div>
               </Field>
-              </section>
-              <details open={advanced.includes(e.id)} onToggle={(ev) => { const isOpen = ev.currentTarget.open; setAdvanced(current => isOpen ? [...new Set([...current, e.id])] : current.filter(id => id !== e.id)) }} className="rounded-xl bg-bg px-3"><summary className="flex cursor-pointer list-none items-center gap-2 py-3 text-sm font-medium text-mu"><span>Advanced connection settings</span><ChevronRight size={16} aria-hidden="true" className={cx('transition-transform', advanced.includes(e.id) && 'rotate-90')} /></summary><div className="space-y-3 pb-3">
-                <Field label="Base URL" hint="The format's path is appended to this URL."><Input value={e.url} set={(v) => { const match = presetForUrl(v); u({ url: v, ...(match ? { preset: match[0], endpointId: match[1][2], endpointFilter: match[1][3] } : { preset: '', endpointId: '', endpointFilter: 'author' }) }) }} placeholder="https://…/v1" /></Field>
+              </section></Anchor>
+              <Anchor id="advanced-connection"><details open={advanced.includes(e.id)} onToggle={(ev) => { const isOpen = ev.currentTarget.open; setAdvanced(current => isOpen ? [...new Set([...current, e.id])] : current.filter(id => id !== e.id)) }} className="rounded-xl bg-bg px-3"><summary className="flex cursor-pointer list-none items-center gap-2 py-3 text-sm font-medium text-mu"><span>Advanced connection settings</span><ChevronRight size={16} aria-hidden="true" className={cx('transition-transform', advanced.includes(e.id) && 'rotate-90')} /></summary><div className="space-y-3 pb-3">
+                <Field label="Base URL" hint="The app adds the API path to this URL automatically."><Input value={e.url} set={(v) => { const match = presetForUrl(v); u({ url: v, ...(match ? { preset: match[0], endpointId: match[1][2], endpointFilter: match[1][3] } : { preset: '', endpointId: '', endpointFilter: 'author' }) }) }} placeholder="https://…/v1" /></Field>
                 <Field label="API format"><Seg v={e.type} set={(v) => u({ type: v })} opts={[[ 'openai', 'OpenAI-compatible'], ['anthropic', 'Anthropic Messages']]} /></Field>
                 <Field label="Endpoint ID" hint="Used to limit OpenRouter catalog suggestions to this brand or hosting provider."><Input value={e.endpointId ?? presetForUrl(e.url)?.[1][2] ?? ''} set={(endpointId) => u({ endpointId, endpointFilter: catalogPrefs(endpointId) })} placeholder="e.g. anthropic" /></Field>
-              </div></details>
+              </div></details></Anchor>
             </div>
-            {useS.getState().prefs.showModelPricing && modelsOf(e).length > 0 && <div className="space-y-3 rounded-xl bg-bg p-3">
+            {useS.getState().prefs.showModelPricing && modelsOf(e).length > 0 && <Anchor id="model-pricing"><div className="space-y-3 rounded-xl bg-bg p-3">
               <div><div className="text-sm font-medium">Model pricing</div><div className="text-xs text-mu">USD per 1 million tokens. Estimates use reported token counts.</div></div>
               {modelsOf(e).map((model) => {
                 const price = e.prices?.[model] ?? { input: 0, output: 0 }
@@ -353,12 +462,14 @@ function Eps() {
                   <div className="mt-2 flex items-center justify-between gap-2"><span className="text-xs text-mu">{price.source === 'openrouter' ? 'Detected price' : e.prices?.[model] ? 'Entered manually' : 'No price set'}</span>{/openrouter\.ai/i.test(e.url) && <Btn sm icon={Search} onClick={detect}>Auto-detect</Btn>}</div>
                 </div>
               })}
-            </div>}
-            <TestRow e={e} />
+            </div></Anchor>}
+            <Anchor id="test-connection"><TestRow e={e} /></Anchor>
             <Acts k="eps" id={e.id} />
           </Card>
+          </Anchor>
         )
       }} />
+      <Anchor id="add-endpoint"><span className="block text-xs text-mu">Use Add endpoint above to connect a provider, then test each model here.</span></Anchor>
       {!!eps.length && <TestAllEndpoints eps={eps} />}
     </Panel>
   )
@@ -370,22 +481,25 @@ function Prompts() {
   const setG = (v: Partial<{ on: boolean; text: string }>) => patch({ globalPrompt: { ...g, ...v } })
   return (
     <Panel id="prompts" k="prompts" n={prompts.length} add="Add prompt">
-      <Card icon={ScrollText} title="Global system prompt" sub={g.on ? (g.text.trim() ? 'On · applies to every message in every chat' : 'On · no text yet') : 'Off by default'} open0>
-        <div className="flex items-center justify-between gap-3"><div><div className="text-sm font-medium">Apply to every message</div><div className="text-xs text-mu">Prepended to the system prompt in every chat, alongside the per-chat prompt.</div></div><Toggle on={g.on} set={(on) => setG({ on })} /></div>
+      <Anchor id="global-prompt"><Card icon={ScrollText} title="Global system prompt" sub={g.on ? (g.text.trim() ? 'On · applies to every message in every chat' : 'On · no text yet') : 'Off by default'} muted={!g.on} open0>
+        <div className="flex items-center justify-between gap-3"><div><div className="text-sm font-medium">Apply to every message</div><div className="text-xs text-mu">Added before everything else in every chat, alongside the per-chat prompt.</div></div><Toggle on={g.on} set={(on) => setG({ on })} /></div>
         <Field label="Or pick an existing prompt" hint="Copies its text into the global box.">
           <Sel value="" set={(v) => { const p = prompts.find((x) => x.id === v); if (p) setG({ text: p.text }) }} opts={[['', 'Choose a prompt…'], ...prompts.map((p) => [p.id, p.name] as [string, string])]} />
         </Field>
         <Field label="Global system prompt" hint="Write one from scratch, or copy an existing prompt above."><Area rows={6} value={g.text} set={(v) => setG({ text: v })} /></Field>
-      </Card>
+      </Card></Anchor>
+      <Anchor id="add-prompt"><span className="block text-xs text-mu">Use Add prompt above for per-chat prompts; each prompt below is individually addressable.</span></Anchor>
       <SortableCards k="prompts" ids={prompts.map((x) => x.id)} label="Prompt" renderCard={(pid, handle) => {
         const p = prompts.find((x) => x.id === pid)
         if (!p) return null
         return (
+        <Anchor key={pid} id={`prompt-${p.id}`}>
         <Card handle={handle} icon={ScrollText} title={p.name} sub={p.text.slice(0, 70)}>
           <Field label="Name"><Input value={p.name} set={(v) => upd('prompts', p.id, { name: v })} /></Field>
           <Field label="System prompt"><Area rows={6} value={p.text} set={(v) => upd('prompts', p.id, { text: v })} /></Field>
           <Acts k="prompts" id={p.id} />
         </Card>
+        </Anchor>
         )
       }} />
     </Panel>
@@ -405,12 +519,12 @@ function Pls() {
     .sort((a, b) => b.calls - a.calls)
   return (
     <Panel id="pls" k="pls" n={pls.length} add="Add playlist">
-      <Card icon={Route} title="Routing mode" sub="How multi-model requests try models">
+      <Anchor id="routing-mode"><Card icon={Route} title="Routing mode" sub="How multi-model requests try models">
         <Field label="Candidate order" hint="Ordered tries list order. Fastest tries the quickest-measured models first (new models go first until measured). Cheapest tries the lowest input price first (models without a price go last). A playlist classifier, when set, still picks first; the mode orders the rest.">
           <Seg v={routingMode} set={(v) => useS.getState().patch({ prefs: { ...useS.getState().prefs, routingMode: v as typeof routingMode } })} opts={[['ordered', 'Ordered'], ['fastest', 'Fastest'], ['cheapest', 'Cheapest']]} />
         </Field>
         <div className="space-y-1">
-          <div className="flex items-center justify-between"><span className="text-sm font-medium">Observed performance</span><Btn v="soft" disabled={!statRows.length} onClick={() => useS.getState().patch({ routeStats: {} })}>Reset</Btn></div>
+          <Anchor id="observed-performance"><div className="flex items-center justify-between"><span className="text-sm font-medium">Observed performance</span><Btn v="soft" disabled={!statRows.length} onClick={() => useS.getState().patch({ routeStats: {} })}>Reset</Btn></div></Anchor>
           {!statRows.length && <p className="text-xs text-mu">No attempts recorded yet. Averages appear here after replies run.</p>}
           {statRows.slice(0, 12).map((r) => (
             <div key={r.key} className="flex items-center gap-2 rounded-lg bg-bg px-2.5 py-1.5 text-xs">
@@ -419,12 +533,14 @@ function Pls() {
             </div>
           ))}
         </div>
-      </Card>
+      </Card></Anchor>
+      <Anchor id="add-playlist"><span className="block text-xs text-mu">Use Add playlist above; each playlist below is individually addressable.</span></Anchor>
       <SortableCards k="pls" ids={pls.map((x) => x.id)} label="Playlist" renderCard={(plid, handle) => {
         const p = pls.find((x) => x.id === plid)
         if (!p) return null
         const u = (x: object) => upd('pls', p.id, x)
         return (
+          <Anchor key={plid} id={`playlist-${p.id}`}>
           <Card handle={handle} icon={ListMusic} title={p.name} sub={`${p.e.length} entries${p.cls ? ' · classifier' : ''}`}>
             <Field label="Name"><Input value={p.name} set={(v) => u({ name: v })} /></Field>
             <Field label="System prompt" hint="Optional. Used when this playlist is selected and no prompt override is chosen."><Area value={p.sys} set={(v) => u({ sys: v })} /></Field>
@@ -455,9 +571,9 @@ function Pls() {
               </div>
             </Field>
             <div className="space-y-3 rounded-xl bg-bg p-3">
-              <div className="flex items-center gap-2 text-sm font-medium"><Route size={16} className="text-ac" />Classifier routing</div>
-              <Field label="Classifier endpoint" hint="Must reply with JSON only. Output that fails validation, or names a model outside this playlist, is ignored. Decisions are cached per request for an hour.">
-                <Sel value={p.cls} set={(v) => u({ cls: v })} opts={[['', 'None, use list order'], ...eps.map((e) => [e.id, e.name] as [string, string])]} />
+              <Anchor id="classifier-routing"><div className="flex items-center gap-2 text-sm font-medium"><Route size={16} className="text-ac" />Classifier routing</div></Anchor>
+              <Field label="Classifier endpoint" hint="Picks which model in this playlist answers each request. Replies that don't pick a model from this list are ignored. Empty uses the helper classification model from Endpoints when one is set, otherwise list order.">
+                <Sel value={p.cls} set={(v) => u({ cls: v })} opts={[[ '', useS.getState().memoryPrefs.classifierEp ? 'None, use helper model' : 'None, use list order'], ...eps.map((e) => [e.id, e.name] as [string, string])]} />
               </Field>
               {p.cls && eps.find((e) => e.id === p.cls) && <Field label="Classifier model"><Sel value={p.clsModel ?? ""} set={(v) => u({ clsModel: v })} opts={[["", "Default model"], ...modelsOf(eps.find((e) => e.id === p.cls)!).map((model) => [model, modelNameOf(eps.find((e) => e.id === p.cls)!, model) + " · " + model] as [string, string])]} /></Field>}
               <Field label="Routing instructions"><Area rows={3} value={p.rule} set={(v) => u({ rule: v })} /></Field>
@@ -465,6 +581,7 @@ function Pls() {
             </div>
             <Acts k="pls" id={p.id} />
           </Card>
+          </Anchor>
         )
       }} />
     </Panel>
@@ -475,12 +592,14 @@ function Cmds() {
   const { cmds, pls, upd } = useS()
   return (
     <Panel id="cmds" k="cmds" n={cmds.length} add="Add command">
+      <Anchor id="add-command"><span className="block text-xs text-mu">Use Add command above; each command below is individually addressable.</span></Anchor>
       <SortableCards k="cmds" ids={cmds.map((x) => x.id)} label="Command" renderCard={(cid, handle) => {
         const c = cmds.find((x) => x.id === cid)
         if (!c) return null
         const u = (x: object) => upd('cmds', c.id, x)
         return (
-          <Card handle={handle} icon={CI[c.in]} title={'/' + c.name} sub={c.desc || c.in} right={<Toggle on={c.on} set={(v) => u({ on: v })} />}>
+          <Anchor key={cid} id={`command-${c.id}`}>
+          <Card handle={handle} icon={CI[c.in]} title={'/' + c.name} sub={c.desc || c.in} muted={!c.on} right={<Toggle on={c.on} set={(v) => u({ on: v })} />}>
             <div className="grid gap-4 sm:grid-cols-2">
               <Field label="Name" hint="Typed after /"><Input value={c.name} set={(v) => u({ name: v.replace(/[^\w-]/g, '') })} /></Field>
               <Field label="Description"><Input value={c.desc} set={(v) => u({ desc: v })} /></Field>
@@ -493,6 +612,7 @@ function Cmds() {
             </Field>
             <Acts k="cmds" id={c.id} />
           </Card>
+          </Anchor>
         )
       }} />
     </Panel>
@@ -514,7 +634,8 @@ function ToolLimitCard() {
     s.patch({ params: { ...s.params, highToolsUnlocked: false, maxToolRounds: Number.isFinite(cur) ? Math.min(cur, TOOL_ROUNDS_BASE_MAX) : TOOL_ROUNDS_DEFAULT } })
   }
   return (
-    <Card icon={Wrench} title="Tool execution limit" sub={unlimited ? 'Unlimited (unlocked)' : `${sliderVal} round${sliderVal === 1 ? '' : 's'}${unlimited ? '' : ` · max ${sliderMax === TOOL_ROUNDS_BASE_MAX ? TOOL_ROUNDS_BASE_MAX : `${TOOL_ROUNDS_MAX} + unlimited`}`}`} open0>
+    <Anchor id="tool-limit">
+    <Card icon={Wrench} title="Tool execution limit" sub={unlimited ? 'Unlimited (unlocked)' : `${sliderVal} round${sliderVal === 1 ? '' : 's'}`} open0>
       <div className="flex items-center gap-2">
         <div className="min-w-0 flex-1">
           <RangeSlider label="Tool execution limit" min={TOOL_ROUNDS_MIN} max={sliderMax} step={1} value={sliderVal} valueText={unlimited ? 'Unlimited' : `${sliderVal} rounds`} set={(n) => set(n > TOOL_ROUNDS_MAX ? 0 : Math.round(n))} />
@@ -540,6 +661,7 @@ function ToolLimitCard() {
         </Modal>
       )}
     </Card>
+    </Anchor>
   )
 }
 
@@ -550,13 +672,15 @@ function DocumentsCard() {
   const visionEps = s.eps.filter((e) => usable(e) && can(e, 'img'))
   const ocrEp = s.eps.find((e) => e.id === d.ocrEp)
   return (
+    <Anchor id="documents">
     <Card icon={FileText} title="Documents" sub="PDF text, Office files, archives, transcripts, image OCR" open0>
       <div className="flex items-center justify-between gap-3"><div><div className="text-sm font-medium">Extract PDF text</div><div className="text-xs text-mu">Read the text layer of PDFs so every endpoint (not just Anthropic) can use them. Scanned pages still need OCR or a vision endpoint.</div></div><Toggle on={d.pdfText} set={(pdfText) => set({ pdfText })} /></div>
       <div className="flex items-center justify-between gap-3"><div><div className="text-sm font-medium">Read Office documents</div><div className="text-xs text-mu">Extract text from .docx, .odt, .rtf, .pptx and first-sheet .xlsx locally. Legacy .doc/.xls/.ppt still need conversion.</div></div><Toggle on={d.office} set={(office) => set({ office })} /></div>
       <div className="flex items-center justify-between gap-3"><div><div className="text-sm font-medium">Unpack archives</div><div className="text-xs text-mu">Expand .zip and .gz attachments into individual files (up to 25 entries). Pair .vtt/.srt transcripts with matching audio/video automatically.</div></div><Toggle on={d.archives} set={(archives) => set({ archives })} /></div>
-      <Field label="Image text extraction (OCR)" hint="Auto transcribes images only when no usable endpoint takes images natively. Always transcribes every image. Uses your own vision endpoint; results are cached.">
+      <Field label="Image text extraction (OCR)" hint="Auto transcribes images only when the answering model can't read images itself. Always transcribes every image. Uses the vision endpoint below.">
         <Seg v={d.ocr} set={(ocr) => set({ ocr })} opts={[['off', 'Off'], ['auto', 'Auto'], ['always', 'Always']]} />
       </Field>
+      <Anchor id="ocr">
       {d.ocr !== 'off' && (
         <div className="space-y-2 rounded-lg bg-bg p-3">
           <Field label="OCR vision endpoint"><Sel value={d.ocrEp} set={(ocrEp) => set({ ocrEp, ocrModel: '' })} opts={[['', 'First vision-capable endpoint'], ...visionEps.map((e) => [e.id, e.name] as [string, string])]} /></Field>
@@ -564,10 +688,14 @@ function DocumentsCard() {
           {!visionEps.length && <p className="text-xs text-er">No usable vision-capable endpoint yet. Add one in Settings → Endpoints for OCR to work.</p>}
         </div>
       )}
+      </Anchor>
+      <Anchor id="per-file-chars">
       <Field label="Text per document" hint="Character budget for each extracted document. The message-wide text budget still applies.">
         <Sel value={String(d.perFileChars)} set={(v) => set({ perFileChars: Number(v) })} opts={[['15000', '15k characters'], ['30000', '30k characters'], ['60000', '60k characters'], ['100000', '100k characters'], ['200000', '200k characters (max)']]} />
       </Field>
+      </Anchor>
     </Card>
+    </Anchor>
   )
 }
 
@@ -587,6 +715,7 @@ function Tools() {
     <Panel id="tools">
       <ToolLimitCard />
       <DocumentsCard />
+      <Anchor id="deep-research">
       <Card icon={Brain} title="Deep research" sub="@research(query)">
         <p className="text-sm">Multi-step investigation: parallel searches for breadth, then model follow-ups for depth, ending in a long cited report shown in a document-styled side panel.</p>
         <p className="text-sm text-mu">Start with @research(topic), the + menu → Deep research…, or a model-suggested “Deep research …” chip. Every run asks for Quick, Standard, or Thorough first.</p>
@@ -594,8 +723,10 @@ function Tools() {
           <Seg v={normResearch(s.research).defaultTier} set={(defaultTier) => s.patch({ research: { ...normResearch(s.research), defaultTier } })} opts={RESEARCH_TIERS.map((t) => [t.id, `${t.label} · ${t.blurb}`] as [ResearchTierId, string])} />
         </Field>
       </Card>
+      </Anchor>
       {TOOLS.filter(([k]) => k !== 'memory').map(([k, n, I, u, d, p]) => (
-        <Card key={k} icon={I} title={n} sub={u} right={
+        <Anchor key={k} id={`tool-${k}`}>
+        <Card icon={I} title={n} sub={u} muted={!s.tools[k]} right={
           <>
             <span className="hidden items-center gap-1.5 text-xs text-mu sm:flex">{s.tools[k] ? <ShieldCheck size={14} className="text-ac" /> : <Shield size={14} />}{s.tools[k] ? 'Allowed' : 'Off'}</span>
             <Toggle on={!!s.tools[k]} set={(v) => (v ? setAsk(k) : s.patch({ tools: { ...s.tools, [k]: false } }))} />
@@ -603,48 +734,62 @@ function Tools() {
         }>
           <p className="text-sm">{d}</p>
           <p className="text-sm text-mu">Permission: {p}</p>
-          {k === 'workspace_upsert' && <div className="space-y-3 rounded-xl bg-bg p-3">
+          {k === 'workspace_upsert' && <Anchor id="workspace-view"><div className="space-y-3 rounded-xl bg-bg p-3">
             <div className="flex items-center justify-between gap-3"><div><div className="text-sm font-medium">Default view for workspace tiles</div><div className="text-xs text-mu">Pinned shows the revision created by each message. Latest shows the most recent revision with a dropdown to go back.</div></div><Seg v={s.workspacePrefs?.defaultView ?? 'pinned'} set={(defaultView) => s.patch({ workspacePrefs: { ...s.workspacePrefs, defaultView } })} opts={[['pinned', 'Pinned'], ['latest', 'Latest']]} /></div>
             <div className="flex items-center justify-between gap-3"><div><div className="text-sm font-medium">Auto-open workspace panel</div><div className="text-xs text-mu">Automatically open the side panel when the AI starts writing files.</div></div><Toggle on={s.workspacePrefs?.autoOpen ?? true} set={(autoOpen) => s.patch({ workspacePrefs: { ...s.workspacePrefs, autoOpen } })} /></div>
             <div className="flex items-center justify-between gap-3"><div><div className="text-sm font-medium">Auto-follow active file</div><div className="text-xs text-mu">When the AI switches to writing a different file, automatically select it in the panel.</div></div><Toggle on={s.workspacePrefs?.autoFollow ?? true} set={(autoFollow) => s.patch({ workspacePrefs: { ...s.workspacePrefs, autoFollow } })} /></div>
-          </div>}
+          </div></Anchor>}
           {k === 'search' && <div className="space-y-3 rounded-xl bg-bg p-3">
+            <Anchor id="search-mode">
             <Field label="Search mode" hint="API uses your own provider key below. SearXNG uses your self-hosted instance.">
               <Seg v={search.mode} set={(mode) => setSearch({ mode })} opts={SEARCH_MODES.map(([id, label]) => [id, label] as [typeof search.mode, string])} />
             </Field>
+            </Anchor>
+            <Anchor id="search-fallback">
             <div className="flex items-center gap-3">
               <div className="flex flex-1 items-center gap-2 text-sm font-medium">Fall back onto the other<HelpTip text={search.mode === 'api' ? 'When the API key is missing or the API request fails, retry with SearXNG.' : 'When SearXNG fails, retry with your API provider key.'} label="Help: search fallback" /></div>
               <Toggle on={search.fallback} set={(fallback) => setSearch({ fallback })} />
             </div>
+            </Anchor>
+            <Anchor id="search-provider">
             <Field label="API provider" hint="Used when the mode is API, or as the fallback when the mode is SearXNG.">
               <Sel value={search.provider} set={(provider) => { setShowSearchKey(false); setSearch({ provider: provider as typeof search.provider }) }} opts={SEARCH_PROVIDERS.map(([id, label]) => [id, label] as [string, string])} />
             </Field>
+            </Anchor>
             {!ownKey && search.provider !== 'firecrawl' && <p role="status" className="rounded-lg bg-er/10 px-3 py-2 text-xs text-er">No {health?.apiProviders?.[search.provider]?.label ?? search.provider} key saved in this browser yet. Searches will fail until you paste one{search.fallback ? ', or fall back to SearXNG' : ', and fallback is off'}.</p>}
+            <Anchor id="search-key">
             <Field label={`${health?.apiProviders?.[search.provider]?.label ?? search.provider} API key`} hint="Bring your own key. Stored unencrypted in this browser and sent only to your search backend with each query.">
               <div className="relative">
                 <Input type={showSearchKey ? 'text' : 'password'} value={search.keys[search.provider] ?? ''} set={(v) => setSearch({ keys: { ...search.keys, [search.provider]: v } })} placeholder="Paste your search API key" />
                 <button onClick={() => setShowSearchKey(!showSearchKey)} title="Show or hide key" className="absolute right-2 top-1/2 -translate-y-1/2 text-mu hover:text-tx">{showSearchKey ? <EyeOff size={16} /> : <Eye size={16} />}</button>
               </div>
             </Field>
-            {search.provider === 'brightdata' && <Field label="SERP zone" hint="Your Bright Data SERP API zone name. Stored in this browser like the key."><Input value={search.zone} set={(zone) => setSearch({ zone })} placeholder="e.g. serp_api1" /></Field>}
-            <Field label={`Results per search · ${search.maxResults}`} hint="Default results for each search. The model may request fewer with its count parameter, but never more than this.">
+            </Anchor>
+            {search.provider === 'brightdata' && <Anchor id="search-zone"><Field label="SERP zone" hint="Your Bright Data SERP API zone name. Stored in this browser like the key."><Input value={search.zone} set={(zone) => setSearch({ zone })} placeholder="e.g. serp_api1" /></Field></Anchor>}
+            <Anchor id="search-max-results">
+            <Field label={`Results per search · ${search.maxResults}`} hint="Results shown for each search. The model may use fewer for simple questions, but never more than this.">
               <RangeSlider label="Results per search" min={1} max={8} step={1} value={search.maxResults} valueText={`${search.maxResults} result${search.maxResults === 1 ? '' : 's'}`} set={(maxResults) => setSearch({ maxResults: Math.round(maxResults) })} className="w-full" />
             </Field>
+            </Anchor>
+            <Anchor id="citations">
             <div className="space-y-3 rounded-xl bg-surf p-3">
               <div className="text-sm font-medium">Sources & transparency</div>
-              <Field label="Inline citations" hint="Pills jump to the Sources list below the reply (description first, Open button inside). Links render as plain markdown links.">
-                <Seg v={search.citeStyle} set={(citeStyle) => setSearch({ citeStyle })} opts={[['pills', 'Pills'], ['links', 'Links']]} />
+              <Field label="Inline citations" hint="Off hides [S1] markers in replies (Sources list stays below the reply). Pills jump to the Sources list below the reply (description first, Open button inside). Links render as plain markdown links.">
+                <Seg v={search.citeStyle} set={(citeStyle) => setSearch({ citeStyle })} opts={[['off', 'Off'], ['pills', 'Pills'], ['links', 'Links']]} />
               </Field>
               <div className="flex items-center justify-between gap-3"><div><div className="text-sm font-medium">Expand Sources by default</div><div className="text-xs text-mu">Show the source list open on every grounded reply instead of behind the Sources button.</div></div><Toggle on={search.sourcesOpen} set={(sourcesOpen) => setSearch({ sourcesOpen })} /></div>
-              <div className="flex items-center justify-between gap-3"><div><div className="text-sm font-medium">Page reader</div><div className="text-xs text-mu">Let the model open a search result for a full excerpt via fetch_page (same-origin /api/extract, public pages only). Turn off to keep grounding to snippets.</div></div><Toggle on={search.reader} set={(reader) => setSearch({ reader })} /></div>
-              <div className="flex items-center justify-between gap-3"><div><div className="text-sm font-medium">Strict citation warnings</div><div className="text-xs text-mu">Flag grounded replies that cite nothing, or cite unknown source ids.</div></div><Toggle on={search.strictCitations} set={(strictCitations) => setSearch({ strictCitations })} /></div>
+              <div className="flex items-center justify-between gap-3"><div><div className="text-sm font-medium">Page reader</div><div className="text-xs text-mu">Let the model open a search result to read the full page. Turn off to keep grounding to snippets.</div></div><Toggle on={search.reader} set={(reader) => setSearch({ reader })} /></div>
+              <div className="flex items-center justify-between gap-3"><div><div className="text-sm font-medium">Strict citation warnings</div><div className="text-xs text-mu">Flag grounded replies that cite nothing, or cite sources they weren't given.</div></div><Toggle on={search.strictCitations} set={(strictCitations) => setSearch({ strictCitations })} /></div>
             </div>
+            </Anchor>
           </div>}
         </Card>
+        </Anchor>
       ))}
       {featOn(s, 'advanced') && s.advanced?.showHiddenTools && (
-        <Card icon={FlaskConical} title="Hidden capabilities" sub="Owned by other features · read-only">
-          <p className="text-sm text-mu">These model capabilities are enabled automatically by their owning feature and cannot be toggled here.</p>
+        <Anchor id="hidden-capabilities">
+        <Card icon={FlaskConical} title="Additional capabilities" sub="Owned by other features · read-only">
+          <p className="text-sm text-mu">These capabilities turn on automatically with their feature and can't be toggled here.</p>
           {Object.keys(TOOL_REGISTRY)
             .filter((name) => name === 'memory' || !TOOLS.some(([t]) => t === name))
             .map((name) => {
@@ -671,6 +816,7 @@ function Tools() {
               )
             })}
         </Card>
+        </Anchor>
       )}
       {t && (
         <Modal close={() => setAsk(null)}>
@@ -706,25 +852,27 @@ function SkillsTab() {
   }
   return (
     <Panel id="skills">
-      <p className="rounded-xl bg-surf px-3 py-2 text-xs text-mu">The model sees each enabled skill's name and description, then calls <span className="font-mono">use_skill</span> with the skill id to load its instructions. There is no keyword matching.</p>
       {!!warnings.length && <p role="status" className="rounded-xl bg-er/10 px-3 py-2 text-xs text-er">{warnings[0]} Edit or reset the skill below to fix it.</p>}
       {skills.map((st) => {
         const def = resolveSkill(st)
-        if (!def) return <Card key={st.id} icon={Sparkles} title={st.id} sub="Missing instructions"><p className="text-sm text-er">This skill has no instructions, so the model cannot load it. Edit it or remove it.</p><div><Btn v="danger" icon={Trash2} onClick={() => setSkills(skills.filter((x) => x.id !== st.id))}>Remove</Btn></div></Card>
+        if (!def) return <Anchor key={st.id} id={`skill-${st.id}`}><Card icon={Sparkles} title={st.id} sub="Missing instructions" muted><p className="text-sm text-er">This skill has no instructions, so it can't be used. Edit it or remove it.</p><div><Btn v="danger" icon={Trash2} onClick={() => setSkills(skills.filter((x) => x.id !== st.id))}>Remove</Btn></div></Card></Anchor>
         const builtin = BUILTIN_SKILLS.some((b) => b.id === st.id)
         return (
-          <Card key={st.id} icon={Sparkles} title={def.name} sub={`${st.enabled ? 'On' : 'Off'} · id: ${st.id}`} right={<Toggle on={st.enabled} set={(enabled) => upd(st.id, { enabled })} />}>
+          <Anchor key={st.id} id={`skill-${st.id}`}>
+          <Card icon={Sparkles} title={def.name} sub={`${st.enabled ? 'On' : 'Off'} · id: ${st.id}`} muted={!st.enabled} right={<Toggle on={st.enabled} set={(enabled) => upd(st.id, { enabled })} />}>
             <p className="text-xs text-mu">Skill id: <span className="font-mono">{st.id}</span></p>
             {def.source && <p className="text-xs text-mu">Source: {def.source}{def.license ? ` · ${def.license}` : ''}</p>}
-            <Field label="When to use" hint="Short description the model reads to decide whether to load this skill."><Input value={st.description ?? def.description} set={(description) => upd(st.id, { description })} placeholder="When this skill applies." /></Field>
-            <Field label="Instructions" hint={builtin ? 'What the model follows after loading this skill. Editing overrides the built-in text for this browser. Reset restores it.' : 'What the model follows after loading this skill.'}><Area rows={6} value={st.instructions ?? def.instructions} set={(instructions) => upd(st.id, { instructions })} /></Field>
+            <Field label="When to use" hint="Short description of when this skill applies."><Input value={st.description ?? def.description} set={(description) => upd(st.id, { description })} placeholder="When this skill applies." /></Field>
+            <Field label="Instructions" hint={builtin ? 'What to do when this skill is used. Editing overrides the built-in text for this browser. Reset restores it.' : 'What to do when this skill is used.'}><Area rows={6} value={st.instructions ?? def.instructions} set={(instructions) => upd(st.id, { instructions })} /></Field>
             <div className="flex gap-2">
               {builtin && <Btn v="soft" icon={RotateCcw} onClick={() => upd(st.id, { name: undefined, description: undefined, instructions: undefined } as Partial<SkillState>)}>Reset</Btn>}
               {!builtin && <Btn v="danger" icon={Trash2} onClick={() => setSkills(skills.filter((x) => x.id !== st.id))}>Remove</Btn>}
             </div>
           </Card>
+          </Anchor>
         )
       })}
+      <Anchor id="add-skill">
       <Card icon={Plus} title="Add a custom skill" sub="Your own reusable instructions" open0={false}>
         <div className="grid gap-4 sm:grid-cols-2">
           <Field label="ID" hint="Lowercase letters, numbers, hyphens."><Input value={draft.id} set={(id) => setDraft({ ...draft, id })} placeholder="e.g. api-docs" /></Field>
@@ -735,6 +883,7 @@ function SkillsTab() {
         {error && <p role="alert" className="text-xs text-er">{error}</p>}
         <div><Btn v="solid" icon={Plus} onClick={add}>Add skill</Btn></div>
       </Card>
+      </Anchor>
     </Panel>
   )
 }
@@ -763,24 +912,35 @@ function MemoryTab() {
     setDupes((d) => (d ?? []).filter((p) => p.a !== a && p.b !== b && p.a !== b && p.b !== a))
   }
   return <Panel id="memory">
+    <Anchor id="memory-tool">
     <div className="rounded-xl bg-surf p-4 space-y-3">
       <div className="flex items-center justify-between gap-3"><div><div className="font-medium">Memory tool</div><div className="text-sm text-mu">Disabled by default. Memories stay in this browser and are sent to your selected model when recalled.</div></div><Toggle on={mp.enabled} set={(enabled) => setPrefs({ enabled })} /></div>
+      <Anchor id="memory-mode">
       <Field label="Memory mode" hint="Intentional stores explicit remember requests. Balanced also stores important disclosures. Aggressive includes smaller details and preferences.">
         <Seg v={mp.intent} set={(intent) => setPrefs({ intent })} opts={[["intentional", "Intentional"], ["balanced", "Balanced"], ["aggressive", "Aggressive"]]} />
       </Field>
+      </Anchor>
+      <Anchor id="recall-method">
       <Field label="Recall method" hint="Local rank picks memories on this device with no model calls (fast, free, offline). Classifier call asks a model to choose, and costs a request per reply.">
         <Seg v={mp.method ?? 'local'} set={(method) => setPrefs({ method })} opts={[["local", "Local rank"], ["classifier", "Classifier call"]]} />
       </Field>
+      </Anchor>
+      <Anchor id="recall-mode">
       <Field label="Recall mode" hint="Holistic sends every memory. Contextual and Specific rank to the most relevant ones.">
         <Seg v={mp.recall} set={(recall) => setPrefs({ recall })} opts={[["holistic", "Holistic"], ["contextual", "Contextual"], ["specific", "Specific"]]} />
       </Field>
-      {(mp.method ?? 'local') === 'classifier' && mp.recall !== 'holistic' && <div className="space-y-2 rounded-lg bg-bg p-3"><Field label="Recall classifier endpoint"><Sel value={mp.classifierEp} set={(classifierEp) => setPrefs({ classifierEp, classifierModel: '' })} opts={[["", "Choose endpoint…"], ...s.eps.map((e) => [e.id, e.name] as [string, string])]} /></Field>
-        {mp.classifierEp && s.eps.find((e) => e.id === mp.classifierEp) && <Field label="Classifier model"><Sel value={mp.classifierModel} set={(classifierModel) => setPrefs({ classifierModel })} opts={[["", "Endpoint default"], ...modelsOf(s.eps.find((e) => e.id === mp.classifierEp)!).map((m) => [m, m] as [string, string])]} /></Field>}
-        <p className="text-xs text-mu">The classifier is prompted for strict JSON and any response containing unknown memory IDs is rejected. Decisions are cached per question for an hour.</p></div>}
+      </Anchor>
+      {(mp.method ?? 'local') === 'classifier' && mp.recall !== 'holistic' && <HelperPointer anchor="recall-classifier" title="Memory recall model" desc="Set in Endpoints → Helper models. Chooses which saved memories matter for each reply." current={helperLabel(s, helperRef(s.prefs.recallEp, s.prefs.recallModel) || helperRef(mp.classifierEp, mp.classifierModel), 'Classification model (fallback)')} />}
     </div>
+    </Anchor>
+    <Anchor id="add-memory">
     <div className="rounded-xl bg-surf p-4 space-y-3"><div className="font-medium">Add a memory</div><Area rows={2} value={draft} set={setDraft} placeholder="A short fact, preference, or reminder…" /><div className="flex gap-2"><Input value={category} set={setCategory} placeholder="Category" /><Btn v="solid" icon={Plus} onClick={addMemory}>Add memory</Btn></div>
       <p className="text-xs text-mu">New memories merge into near-duplicates automatically instead of piling up copies.</p></div>
+    </Anchor>
+    <Anchor id="stored-memories">
     <div className="flex items-center justify-between"><div className="text-sm font-medium">Stored memories ({s.memories.length})</div><div className="flex gap-2"><Btn v="soft" disabled={s.memories.length < 2} onClick={() => setDupes(findDuplicatePairs(s.memories))}>Check duplicates</Btn><Btn v="danger" icon={Trash2} disabled={!s.memories.length} onClick={() => { if (window.confirm('Delete all stored memories?')) s.patch({ memories: [] }) }}>Delete all</Btn></div></div>
+    </Anchor>
+    <Anchor id="check-duplicates">
     {dupes && (
       <div className="rounded-xl bg-surf p-4 space-y-2">
         <div className="text-sm font-medium">{dupes.length ? `${dupes.length} near-duplicate pair${dupes.length === 1 ? '' : 's'}` : 'No near-duplicates found.'}</div>
@@ -797,6 +957,7 @@ function MemoryTab() {
         })}
       </div>
     )}
+    </Anchor>
     {s.memories.map((m) => <div key={m.id} className="rounded-xl bg-surf p-3 space-y-2"><div className="flex gap-2"><Input value={m.category} set={(category) => s.patch({ memories: s.memories.map((x) => x.id === m.id ? { ...x, category, updatedAt: Date.now() } : x) })} placeholder="Category" /><Btn v="danger" icon={Trash2} title="Delete memory" onClick={() => s.patch({ memories: s.memories.filter((x) => x.id !== m.id) })}>Delete</Btn></div><Area rows={2} value={m.text} set={(text) => s.patch({ memories: s.memories.map((x) => x.id === m.id ? { ...x, text, updatedAt: Date.now() } : x) })} /></div>)}
     {!s.memories.length && <p className="rounded-xl bg-surf p-4 text-sm text-mu">No memories stored yet. Add one here or enable memory and choose a mode.</p>}
   </Panel>
@@ -817,31 +978,33 @@ function WidgetsTab() {
       {WIDGETS.map(([k, n, I, d]) => {
         const blocked = blockedBy(k)
         return (
-        <Card key={k} icon={I} title={n} sub={blocked ? `Needs the ${blocked} feature` : d} right={blocked
+        <Anchor key={k} id={`widget-${k}`}>
+        <Card icon={I} title={n} sub={blocked ? `Needs the ${blocked} feature` : d} muted={!!blocked || !s.widgets[k]} right={blocked
           ? <span className="shrink-0 rounded-md bg-hov px-2 py-1 text-xs text-mu">Off</span>
           : <Toggle on={!!s.widgets[k]} set={(v) => s.patch({ widgets: { ...s.widgets, [k]: v }, rail: v || s.rail })} />}>
           <div className={blocked ? 'pointer-events-none opacity-50' : ''}>
           <p className="text-sm text-mu">Shown in the panel at the right of the chat. Open or close that panel with the panel button in the chat header.</p>
-          {k === 'usage' && <div className="space-y-3 rounded-xl bg-bg p-3">
+          {k === 'usage' && <Anchor id="usage-settings"><div className="space-y-3 rounded-xl bg-bg p-3">
             <Field label="Group usage"><Seg v={wp.usageGroup} set={(usageGroup) => setWp({ usageGroup })} opts={[["endpoint", "Endpoint totals"], ["model", "Individual models"]]} /></Field>
             <Field label="Show"><Seg v={wp.usageMode} set={(usageMode) => setWp({ usageMode })} opts={[["success", "OK / fails"], ["tokens", "Tokens"]]} /></Field>
             {wp.usageMode === 'tokens' && <Field label="Token format" hint="Use {in} and {out} where input and output totals should appear."><Input value={wp.usageFormat} set={(usageFormat) => setWp({ usageFormat })} /></Field>}
             <Field label="Usage period"><Seg v={wp.usagePeriod} set={(usagePeriod) => setWp({ usagePeriod })} opts={[["session", "Session"], ["day", "Day"], ["week", "Week"], ["custom", "Custom"], ["all", "All time"]]} /></Field>
             {wp.usagePeriod === 'custom' && <div className="grid grid-cols-2 gap-2"><Field label="From"><Input type="date" value={wp.usageFrom ?? ''} set={(usageFrom) => setWp({ usageFrom })} /></Field><Field label="Through"><Input type="date" value={wp.usageTo ?? ''} set={(usageTo) => setWp({ usageTo })} /></Field></div>}
             <Checkbox checked={wp.usageTotal} set={(usageTotal) => setWp({ usageTotal })} label="Show total across models and endpoints" />
-          </div>}
-          {k === 'last' && <div className="space-y-3"><div className="rounded-xl bg-bg p-3"><Checkbox checked={wp.lastSpeed} set={(lastSpeed) => setWp({ lastSpeed })} label="Show response speed" /></div><Field label="Time unit"><Seg v={wp.timeUnit} set={(timeUnit) => setWp({ timeUnit })} opts={[["auto", "Auto"], ["ms", "Milliseconds"], ["s", "Seconds"]]} /></Field></div>}
-          {k === 'keys' && <div className="grid gap-2 rounded-xl bg-bg p-3 sm:grid-cols-2">{KEYS.map(([id, label]) => <Checkbox key={id} checked={wp.shortcuts.includes(id)} set={(checked) => setWp({ shortcuts: checked ? [...wp.shortcuts, id] : wp.shortcuts.filter((x) => x !== id) })} label={label} />)}</div>}
-          {k === 'ctx' && <Field label="Estimated context limit" hint="Sets the scale of the meter. This does not change the model's actual context window."><Input type="number" min="1000" step="1000" value={wp.contextLimit} set={(v) => setWp({ contextLimit: Math.max(1000, Number(v) || 1000) })} /></Field>}
-          {k === 'eps' && <div className="rounded-xl bg-bg p-3"><Checkbox checked={wp.showDisabledEndpoints} set={(showDisabledEndpoints) => setWp({ showDisabledEndpoints })} label="Show disabled endpoints" /></div>}
-          {k === 'pad' && <Field label="Visible note height" hint="Number of text rows before scrolling."><Input type="number" min="2" max="20" value={wp.scratchRows} set={(v) => setWp({ scratchRows: Math.min(20, Math.max(2, Number(v) || 6)) })} /></Field>}
-          {k === 'snips' && <Field label="Maximum snippets shown" hint="Older snippets remain saved and can be found by removing newer ones."><Input type="number" min="1" max="100" value={wp.snippetLimit} set={(v) => setWp({ snippetLimit: Math.min(100, Math.max(1, Number(v) || 20)) })} /></Field>}
-          {k === 'cost' && <Field label="Decimal places"><Input type="number" min="0" max="8" value={wp.costDecimals} set={(v) => setWp({ costDecimals: Math.min(8, Math.max(0, Number(v) || 0)) })} /></Field>}
-          {k === 'prompts' && <div className="rounded-xl bg-bg p-3"><Checkbox checked={wp.activePromptsOnly} set={(activePromptsOnly) => setWp({ activePromptsOnly })} label="Show only the selected prompt" /></div>}
-          {k === 'draft' && <Field label="Characters per estimated token" hint="A rough estimate; 4 is a common default for English text."><Input type="number" min="1" max="10" value={wp.charsPerToken} set={(v) => setWp({ charsPerToken: Math.min(10, Math.max(1, Number(v) || 4)) })} /></Field>}
-          {k === 'todo' && <div className="rounded-xl bg-bg p-3"><Checkbox checked={wp.hideDoneTodos} set={(hideDoneTodos) => setWp({ hideDoneTodos })} label="Hide completed tasks" /></div>}
+          </div></Anchor>}
+          {k === 'last' && <Anchor id="last-settings"><div className="space-y-3"><div className="rounded-xl bg-bg p-3"><Checkbox checked={wp.lastSpeed} set={(lastSpeed) => setWp({ lastSpeed })} label="Show response speed" /></div><Field label="Time unit"><Seg v={wp.timeUnit} set={(timeUnit) => setWp({ timeUnit })} opts={[["auto", "Auto"], ["ms", "Milliseconds"], ["s", "Seconds"]]} /></Field></div></Anchor>}
+          {k === 'keys' && <Anchor id="shortcut-list"><div className="grid gap-2 rounded-xl bg-bg p-3 sm:grid-cols-2">{KEYS.map(([id, label]) => <Checkbox key={id} checked={wp.shortcuts.includes(id)} set={(checked) => setWp({ shortcuts: checked ? [...wp.shortcuts, id] : wp.shortcuts.filter((x) => x !== id) })} label={label} />)}</div></Anchor>}
+          {k === 'ctx' && <Anchor id="context-limit"><Field label="Estimated context limit" hint="Sets the scale of the meter. This does not change the model's actual context window."><Input type="number" min="1000" step="1000" value={wp.contextLimit} set={(v) => setWp({ contextLimit: Math.max(1000, Number(v) || 1000) })} /></Field></Anchor>}
+          {k === 'eps' && <Anchor id="show-disabled"><div className="rounded-xl bg-bg p-3"><Checkbox checked={wp.showDisabledEndpoints} set={(showDisabledEndpoints) => setWp({ showDisabledEndpoints })} label="Show disabled endpoints" /></div></Anchor>}
+          {k === 'pad' && <Anchor id="scratch-rows"><Field label="Visible note height" hint="Number of text rows before scrolling."><Input type="number" min="2" max="20" value={wp.scratchRows} set={(v) => setWp({ scratchRows: Math.min(20, Math.max(2, Number(v) || 6)) })} /></Field></Anchor>}
+          {k === 'snips' && <Anchor id="snippet-limit"><Field label="Maximum snippets shown" hint="Older snippets remain saved and can be found by removing newer ones."><Input type="number" min="1" max="100" value={wp.snippetLimit} set={(v) => setWp({ snippetLimit: Math.min(100, Math.max(1, Number(v) || 20)) })} /></Field></Anchor>}
+          {k === 'cost' && <Anchor id="cost-decimals"><Field label="Decimal places"><Input type="number" min="0" max="8" value={wp.costDecimals} set={(v) => setWp({ costDecimals: Math.min(8, Math.max(0, Number(v) || 0)) })} /></Field></Anchor>}
+          {k === 'prompts' && <Anchor id="active-prompts-only"><div className="rounded-xl bg-bg p-3"><Checkbox checked={wp.activePromptsOnly} set={(activePromptsOnly) => setWp({ activePromptsOnly })} label="Show only the selected prompt" /></div></Anchor>}
+          {k === 'draft' && <Anchor id="chars-per-token"><Field label="Characters per estimated token" hint="A rough estimate; 4 is a common default for English text."><Input type="number" min="1" max="10" value={wp.charsPerToken} set={(v) => setWp({ charsPerToken: Math.min(10, Math.max(1, Number(v) || 4)) })} /></Field></Anchor>}
+          {k === 'todo' && <Anchor id="hide-done"><div className="rounded-xl bg-bg p-3"><Checkbox checked={wp.hideDoneTodos} set={(hideDoneTodos) => setWp({ hideDoneTodos })} label="Hide completed tasks" /></div></Anchor>}
           </div>
         </Card>
+        </Anchor>
         )
       })}
     </Panel>
@@ -868,53 +1031,6 @@ function FontPicker({ value, set, options }: { value: string; set: (v: string) =
   </div>
 }
 
-function TitleModelPicker() {
-  const s = useS()
-  const [q, setQ] = useState('')
-  const ep = s.eps.find((e) => e.id === s.prefs.titleEp)
-  const label = !s.prefs.titleEp
-    ? 'Default (model that answered)'
-    : !ep ? 'Default (endpoint removed)'
-    : s.prefs.titleModel && modelsOf(ep).includes(s.prefs.titleModel)
-      ? `${ep.name} · ${modelNameOf(ep, s.prefs.titleModel)}`
-      : `${ep.name} · ${modelNameOf(ep, ep.model)}`
-  const pick = (titleEp: string, titleModel: string) => s.patch({ prefs: { ...s.prefs, titleEp, titleModel } })
-  const query = q.toLowerCase()
-  const L = s.eps.filter((x) => !query || x.name.toLowerCase().includes(query) || modelsOf(x).some((m) => m.toLowerCase().includes(query)))
-  const primary = s.prefs.modelPrimary ?? 'name'
-  const secondary = s.prefs.modelSecondary ?? 'none'
-  return (
-    <div className="rounded-xl bg-surf p-3 space-y-2">
-      <div className="text-sm font-medium">Title generation model</div>
-      <div className="text-xs text-mu">Choose a model to generate chat names, or leave on default (uses the responding model).</div>
-      <Pop w="w-full" trigger={() => (
-        <span className="flex h-9 w-full items-center gap-2 rounded-lg bg-bg px-3 text-sm hover:ring-2 hover:ring-ac/40"><Cpu size={16} className="shrink-0 text-mu" /><span className="min-w-0 flex-1 truncate text-left">{label}</span><ChevronRight size={14} className="shrink-0 rotate-90 text-mu" /></span>
-      )}>
-        {(close) => (
-          <div className="flex max-h-80 flex-col overflow-hidden">
-            <div className="p-1.5 pb-0"><input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search endpoints or models" className="h-9 w-full rounded-lg bg-surf px-3 text-sm outline-none" /></div>
-            <div className="min-h-0 flex-1 overflow-y-auto p-1.5">
-              <Item icon={Cpu} on={!s.prefs.titleEp} onClick={() => { pick('', ''); setQ(''); close() }}>Default (model that answered)</Item>
-              {L.map((x) => (
-                <div key={x.id}>
-                  <div className="px-3 pb-1 pt-2 text-xs font-semibold uppercase tracking-wide text-mu">{x.name}</div>
-                  {modelsOf(x).map((model) => {
-                    const alias = modelNameOf(x, model)
-                    const title = (primary === 'name' ? alias : model).replace(/^~+/, '')
-                    const sub = secondary === 'provider' ? x.name : secondary === 'none' || secondary === primary ? '' : (secondary === 'name' ? alias : model).replace(/^~+/, '')
-                    return <Item key={model} icon={Cpu} off={x.on === false} on={s.prefs.titleEp === x.id && (s.prefs.titleModel || x.model) === model} sub={sub} onClick={() => { pick(x.id, model); setQ(''); close() }}>{title}</Item>
-                  })}
-                </div>
-              ))}
-              {!L.length && <p className="px-2.5 py-3 text-sm text-mu">No endpoints match.</p>}
-            </div>
-          </div>
-        )}
-      </Pop>
-    </div>
-  )
-}
-
 function Look() {
   const s = useS()
   const settingsWidth = s.prefs.settingsWidth ?? 1024
@@ -923,19 +1039,24 @@ function Look() {
   const [colorPicker, setColorPicker] = useState<string | null>(null)
   const [fadeInput, setFadeInput] = useState(String(s.prefs.fade))
   useEffect(() => setFadeInput(String(s.prefs.fade)), [s.prefs.fade])
-  const row = (k: 'showBy' | 'showLog' | 'showTps' | 'enterSends' | 'autoTitle' | 'temporaryByDefault', t: string, d: string) => (
+  const row = (anchor: string, k: 'showBy' | 'showLog' | 'showTps' | 'enterSends' | 'autoTitle' | 'temporaryByDefault', t: string, d: string) => (
+    <Anchor id={anchor}>
     <div className="flex items-center gap-3 rounded-xl bg-surf p-3">
       <div className="flex flex-1 items-center gap-2 text-sm font-medium">{t}<HelpTip text={d} label={`Help: ${t}`} /></div>
       <Toggle on={s.prefs[k]} set={(v) => s.patch({ prefs: { ...s.prefs, [k]: v } })} />
     </div>
+    </Anchor>
   )
   return (
     <Panel id="look">
+      <Anchor id="appearance-mode">
       <div className="rounded-xl bg-surf p-3 space-y-2">
         <div className="text-sm font-medium">Appearance mode</div>
         <div className="text-xs text-mu">Dark and light each keep their own theme and custom colors.</div>
         <div className="mt-1"><Seg v={s.themeMode} set={(themeMode) => s.patch({ themeMode })} opts={[['dark', 'Dark'], ['light', 'Light']]} /></div>
       </div>
+      </Anchor>
+      <Anchor id="theme-picker">
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
         {[...(s.themeMode === 'light' ? LIGHT_THEMES : DARK_THEMES), 'custom'].map((k) => {
           const n = THEMES[k as keyof typeof THEMES]
@@ -952,10 +1073,11 @@ function Look() {
           )
         })}
       </div>
+      </Anchor>
       {((s.themeMode === 'light' ? s.themeLight : s.themeDark) === 'custom') && (() => {
         const custom = s.themeMode === 'light' ? s.customLightColors : s.customDarkColors
         const setCustom = (next: typeof custom) => s.patch(s.themeMode === 'light' ? { customLightColors: next } : { customDarkColors: next })
-        return <div className="rounded-xl bg-surf p-3 space-y-3">
+        return <Anchor id="custom-colors"><div className="rounded-xl bg-surf p-3 space-y-3">
         <div><div className="text-sm font-medium">Custom theme colors ({s.themeMode === 'light' ? 'light' : 'dark'})</div><div className="text-xs text-mu">Saved separately for {s.themeMode === 'light' ? 'light' : 'dark'} mode — switching modes keeps each custom palette.</div></div>
         <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">{THEME_COLOR_KEYS.map((key) => <div key={key} className="relative flex items-center gap-2 rounded-lg bg-bg p-2 text-sm">
           <button type="button" aria-label={`Choose ${THEME_COLOR_LABELS[key]} color`} aria-expanded={colorPicker === key} onClick={() => setColorPicker(colorPicker === key ? null : key)} className="size-9 shrink-0 rounded-lg border border-white/30 shadow-sm" style={{ backgroundColor: custom[key] }} />
@@ -964,51 +1086,69 @@ function Look() {
           {colorPicker === key && <div className="settings-dropdown absolute left-2 top-full z-30 mt-1 w-56 rounded-xl bg-bg p-3"><label className="flex items-center justify-between gap-3 text-xs text-mu">Choose color<input type="color" aria-label={`Choose ${THEME_COLOR_LABELS[key]} color`} value={custom[key]} onChange={(e) => setCustom({ ...custom, [key]: e.target.value })} className="h-9 w-12 cursor-pointer rounded-md border border-hov bg-transparent p-1" /></label></div>}
         </div>)}</div>
       </div>
+      </Anchor>
       })()}
-      {row('showBy', 'Show which model answered', 'Label each reply with the endpoint and model that produced it.')}
-      {row('showLog', 'Show model-use details', 'List every model called for a reply, including classifiers and failures.')}
-      {row('showTps', 'Show generation speed', 'Show tokens per second below each reply.')}
-      {row('enterSends', 'Enter sends the message', 'Turn off to send with the button and use Enter for new lines.')}
-      {row('autoTitle', 'Auto-generate chat names', 'Automatically generate a concise title after the first reply.')}
-      {row('temporaryByDefault', 'New chats are temporary by default', 'New chats are deleted after the retention period, or when you leave if retention is set to Immediate.')}
+      {row('show-by', 'showBy', 'Show which model answered', 'Label each reply with the endpoint and model that produced it.')}
+      {row('show-log', 'showLog', 'Show model-use details', 'List every model called for a reply, including classifiers and failures.')}
+      {row('show-tps', 'showTps', 'Show generation speed', 'Show tokens per second below each reply.')}
+      {row('enter-sends', 'enterSends', 'Enter sends the message', 'Turn off to send with the button and use Enter for new lines.')}
+      {row('auto-title', 'autoTitle', 'Auto-generate chat names', 'Automatically generate a concise title after the first reply.')}
+      {row('temporary-default', 'temporaryByDefault', 'New chats are temporary by default', 'New chats are deleted after the retention period, or when you leave if retention is set to Immediate.')}
+      <Anchor id="model-picker-labels">
       <div className="rounded-xl bg-surf p-3 space-y-2">
         <div className="text-sm font-medium">Model picker main label</div>
         <div className="text-xs text-mu">The main identifier shown on the left of each model.</div>
         <Seg v={s.prefs.modelPrimary ?? 'name'} set={(modelPrimary) => {
           const secondary = s.prefs.modelSecondary ?? 'none'
           s.patch({ prefs: { ...s.prefs, modelPrimary, modelSecondary: secondary === modelPrimary ? (modelPrimary === 'name' ? 'id' : 'name') : secondary } })
-        }} opts={[["id", "Model ID"], ["name", "Model name"]]} />
+        }} opts={[["name", "Model name"], ["id", "Model ID"]]} />
       </div>
+      </Anchor>
+      <Anchor id="model-picker-labels-secondary">
       <div className="rounded-xl bg-surf p-3 space-y-2">
         <div className="text-sm font-medium">Model picker secondary label</div>
         <div className="text-xs text-mu">The detail shown on the right of each model.</div>
         <Seg v={s.prefs.modelSecondary ?? 'none'} set={(modelSecondary) => s.patch({ prefs: { ...s.prefs, modelSecondary } })} opts={(s.prefs.modelPrimary ?? 'name') === 'name' ? [["provider", "Provider"], ["id", "Model ID"], ["none", "None"]] : [["provider", "Provider"], ["name", "Model name"], ["none", "None"]]} />
       </div>
+      </Anchor>
+      <Anchor id="palette-height">
       <div className="rounded-xl bg-surf p-3 space-y-2">
         <div className="text-sm font-medium">Command palette height</div>
         <div className="text-xs text-mu">Maximum height of the result list before it scrolls.</div>
         <div className="flex items-center gap-3"><RangeSlider label="Command palette maximum height" min={200} max={720} step={20} value={s.prefs.paletteMax} set={(paletteMax) => s.patch({ prefs: { ...s.prefs, paletteMax } })} className="flex-1" /><span className="w-20 text-right text-sm">{s.prefs.paletteMax}px</span></div>
       </div>
+      </Anchor>
+      <Anchor id="chat-width">
       <div className="rounded-xl bg-surf p-3 space-y-2">
         <div className="text-sm font-medium">Message width</div>
         <div className="text-xs text-mu">Set the maximum width of the conversation column.</div>
         <Seg v={s.prefs.chatWidth} set={(chatWidth) => s.patch({ prefs: { ...s.prefs, chatWidth } })} opts={[["narrow", "Narrow"], ["standard", "Standard"], ["wide", "Wide"]]} />
       </div>
+      </Anchor>
+      <Anchor id="settings-size">
       <div className="rounded-xl bg-surf p-3 space-y-3">
         <div><div className="text-sm font-medium">Settings window size</div><div className="text-xs text-mu">Set the maximum width and height of the settings window. Smaller screens constrain it to fit.</div></div>
         <Field label={`Width · ${settingsWidth}px`}><RangeSlider label="Settings window width" min={720} max={1440} step={40} value={settingsWidth} set={(settingsWidth) => s.patch({ prefs: { ...s.prefs, settingsWidth } })} className="w-full" /></Field>
         <Field label={`Height · ${settingsHeight}px`}><RangeSlider label="Settings window height" min={520} max={1000} step={20} value={settingsHeight} set={(settingsHeight) => s.patch({ prefs: { ...s.prefs, settingsHeight } })} className="w-full" /></Field>
       </div>
+      </Anchor>
+      <Anchor id="model-picker-height">
       <div className="rounded-xl bg-surf p-3 space-y-2"><div className="text-sm font-medium">Model picker height</div><div className="text-xs text-mu">Maximum height of the model and playlist menu. Smaller screens constrain it to fit.</div><Field label={`Height · ${modelPickerHeight}px`}><RangeSlider label="Model picker height" min={320} max={720} step={20} value={modelPickerHeight} set={(modelPickerHeight) => s.patch({ prefs: { ...s.prefs, modelPickerHeight } })} className="w-full" /></Field></div>
+      </Anchor>
+      <Anchor id="model-pricing-toggle">
       <div className="rounded-xl bg-surf p-3 space-y-2">
         <label className="flex items-center justify-between gap-3 text-sm">Show model pricing controls<Toggle on={s.prefs.showModelPricing} set={(showModelPricing) => s.patch({ prefs: { ...s.prefs, showModelPricing } })} /></label>
         <div className="text-xs text-mu">Adds per-model pricing fields to each endpoint. Off by default.</div>
       </div>
+      </Anchor>
+      <Anchor id="overlay">
       <div className="rounded-xl bg-surf p-3 space-y-3">
         <div><div className="text-sm font-medium">Overlay appearance</div><div className="text-xs text-mu">Control how dialogs and the settings panel sit over the workspace.</div></div>
         <Field label={`Modal background blur · ${s.prefs.modalBlur}px`} hint="Blur behind confirmation and selection dialogs. Settings itself stays sharp."><RangeSlider label="Modal background blur" min={0} max={24} step={1} value={s.prefs.modalBlur} set={(modalBlur) => s.patch({ prefs: { ...s.prefs, modalBlur } })} className="w-full" /></Field>
         <Field label={`Settings background opacity · ${s.prefs.settingsOpacity}%`} hint="How much the settings backdrop dims the workspace behind the settings panel."><RangeSlider label="Settings background opacity" min={0} max={100} step={5} value={s.prefs.settingsOpacity} set={(settingsOpacity) => s.patch({ prefs: { ...s.prefs, settingsOpacity } })} className="w-full" /></Field>
       </div>
+      </Anchor>
+      <Anchor id="fade-duration">
       <div className="rounded-xl bg-surf p-3 space-y-2">
         <div className="text-sm font-medium">Text fade-in duration</div>
         <div className="text-xs text-mu">Set to 0 to turn it off, or choose up to 1 second.</div>
@@ -1018,18 +1158,23 @@ function Look() {
           <span className="text-sm text-mu">seconds</span>
         </div>
       </div>
+      </Anchor>
+      <Anchor id="temp-retention">
       <div className="rounded-xl bg-surf p-3 space-y-2">
         <div className="text-sm font-medium">Temporary chat retention</div>
         <div className="text-xs text-mu">Temporary chats are removed automatically after this time. Immediate also removes them when you start another chat or leave this page.</div>
         <div className="flex items-center gap-3"><RangeSlider label="Temporary chat retention" min={0} max={48} step={1} value={s.prefs.tempHours} set={(tempHours) => s.patch({ prefs: { ...s.prefs, tempHours } })} className="flex-1" /><span className="w-24 text-right text-sm">{s.prefs.tempHours === 0 ? 'Immediate' : `${s.prefs.tempHours} hours`}</span></div>
       </div>
+      </Anchor>
+      <Anchor id="fonts">
       <div className="rounded-xl bg-surf p-3 space-y-3">
         <div><div className="text-sm font-medium">Fonts</div><div className="text-xs text-mu">Fonts already loaded in the app are reused; other choices load from Google Fonts.</div></div>
         <Field label="Body font"><FontPicker value={s.prefs.fontBody} set={(fontBody) => s.patch({ prefs: { ...s.prefs, fontBody } })} options={FONT_OPTIONS} /></Field>
         <Field label="Heading font"><FontPicker value={s.prefs.fontHeader} set={(fontHeader) => s.patch({ prefs: { ...s.prefs, fontHeader } })} options={FONT_OPTIONS} /></Field>
         <Field label="Monospace font"><FontPicker value={s.prefs.fontMono} set={(fontMono) => s.patch({ prefs: { ...s.prefs, fontMono } })} options={MONO_OPTIONS} /></Field>
       </div>
-      <TitleModelPicker />
+      </Anchor>
+      <HelperPointer anchor="title-model" title="Title generation model" desc="Set in Endpoints → Helper models. Names new chats automatically; when empty, the model that answered is used." current={helperLabel(s, helperRef(s.prefs.titleEp, s.prefs.titleModel), 'Default (model that answered)')} />
     </Panel>
   )
 }
@@ -1042,19 +1187,21 @@ function AdvancedTab() {
   if (!featOn(s, 'advanced')) return null
   const a = { ...DEFAULT_ADVANCED, ...s.advanced }
   const setA = (p: Partial<typeof a>) => s.patch({ advanced: { ...a, ...p } })
-  const row = (k: 'verboseErrors' | 'showHiddenTools' | 'showSystemPrompt' | 'showToolPayloads' | 'showTokenCounts', t: string, d: string) => (
+  const row = (anchor: string, k: 'verboseErrors' | 'showHiddenTools' | 'showSystemPrompt' | 'showToolPayloads' | 'showTokenCounts', t: string, d: string) => (
+    <Anchor id={anchor}>
     <div className="flex items-center gap-3 rounded-xl bg-surf p-3">
       <div className="flex flex-1 items-center gap-2 text-sm font-medium">{t}<HelpTip text={d} label={`Help: ${t}`} /></div>
       <Toggle on={a[k]} set={(v) => setA({ [k]: v })} />
     </div>
+    </Anchor>
   )
   return (
     <Panel id="adv">
-      {row('verboseErrors', 'Verbose errors', 'Show exact provider error messages in the process log and failure replies. The endpoint key is still masked; other key-like tokens are shown verbatim.')}
-      {row('showHiddenTools', 'Show hidden tools', 'List model capabilities owned by other features (such as the skills loader) in Settings → Tools. They stay read-only and cannot be toggled there.')}
-      {row('showSystemPrompt', 'Show full system prompt', 'Save the exact system prompt sent with each reply and show it in the process log: global prompt, selected prompt, tool guidance, skill catalog, and memory context.')}
-      {row('showToolPayloads', 'Show tool arguments and results', 'Render the full JSON arguments and returned text of every tool call in the process log instead of one-line summaries.')}
-      {row('showTokenCounts', 'Show per-step token counts', 'List reported input/output tokens beside each process-log entry when the provider reports them.')}
+      {row('verbose-errors', 'verboseErrors', 'Verbose errors', 'Show exact provider error messages in the process log and failure replies. The endpoint key is still masked; other key-like tokens are shown verbatim.')}
+      {row('show-hidden-tools', 'showHiddenTools', 'Show additional capabilities', 'List capabilities owned by other features in Settings → Tools. They stay read-only and cannot be toggled there.')}
+      {row('show-system-prompt', 'showSystemPrompt', 'Show full system prompt', 'Save the exact system prompt sent with each reply and show it in the process log: global prompt, selected prompt, tool guidance, skill catalog, and memory context.')}
+      {row('show-tool-payloads', 'showToolPayloads', 'Show tool arguments and results', 'Render the full JSON arguments and returned text of every tool call in the process log instead of one-line summaries.')}
+      {row('show-token-counts', 'showTokenCounts', 'Show per-step token counts', 'List reported input/output tokens beside each process-log entry when the provider reports them.')}
     </Panel>
   )
 }
@@ -1068,14 +1215,16 @@ function WorkspaceTab() {
   return (
     <Panel id="workspace">
       <div className="space-y-3">
-        <Field label="Default view"><Seg v={wp.defaultView ?? 'pinned'} set={(defaultView) => set({ defaultView: defaultView as typeof wp.defaultView })} opts={[['pinned', 'Pinned'], ['latest', 'Latest']]} /></Field>
-        <div className="flex items-center justify-between gap-3"><div><div className="text-sm font-medium">Auto-open panel</div><div className="text-xs text-mu">Open the side panel when the AI starts writing files.</div></div><Toggle on={wp.autoOpen ?? true} set={(autoOpen) => set({ autoOpen })} /></div>
-        <div className="flex items-center justify-between gap-3"><div><div className="text-sm font-medium">Auto-follow file</div><div className="text-xs text-mu">Select the file the AI is writing automatically.</div></div><Toggle on={wp.autoFollow ?? true} set={(autoFollow) => set({ autoFollow })} /></div>
+        <Anchor id="default-view"><Field label="Default view"><Seg v={wp.defaultView ?? 'pinned'} set={(defaultView) => set({ defaultView: defaultView as typeof wp.defaultView })} opts={[['pinned', 'Pinned'], ['latest', 'Latest']]} /></Field></Anchor>
+        <Anchor id="auto-open"><div className="flex items-center justify-between gap-3"><div><div className="text-sm font-medium">Auto-open panel</div><div className="text-xs text-mu">Open the side panel when the AI starts writing files.</div></div><Toggle on={wp.autoOpen ?? true} set={(autoOpen) => set({ autoOpen })} /></div></Anchor>
+        <Anchor id="auto-follow"><div className="flex items-center justify-between gap-3"><div><div className="text-sm font-medium">Auto-follow file</div><div className="text-xs text-mu">Select the file the AI is writing automatically.</div></div><Toggle on={wp.autoFollow ?? true} set={(autoFollow) => set({ autoFollow })} /></div></Anchor>
       </div>
+      <Anchor id="templates">
       <Card icon={LayoutTemplate} title="Project templates" sub="Starter file sets the model can scaffold with template + createNew">
         <div className="space-y-2">
           {WORKSPACE_TEMPLATES.map((t) => (
-            <div key={t.id} className="rounded-xl bg-bg p-3">
+            <Anchor key={t.id} id={`template-${t.id}`}>
+            <div className="rounded-xl bg-bg p-3">
               <div className="flex flex-wrap items-center gap-2">
                 <span className="font-mono text-sm font-medium">{t.id}</span>
                 <span className="text-sm">{t.name}</span>
@@ -1088,9 +1237,12 @@ function WorkspaceTab() {
               <p className="mt-1 text-xs text-mu">{t.description}</p>
               <p className="mt-1 font-mono text-xs text-mu">{t.files.map((f) => f.path).join(' · ')}</p>
             </div>
+            </Anchor>
           ))}
         </div>
       </Card>
+      </Anchor>
+      <Anchor id="gist-sharing">
       <Card icon={Share2} title="GitHub Gist sharing" sub="Optional personal token, stored only here">
         <Field label="Gist token (classic, gist scope)" hint="Only used when you press Share in a workspace panel. Leave empty to disable sharing.">
           <div className="relative">
@@ -1099,6 +1251,7 @@ function WorkspaceTab() {
           </div>
         </Field>
       </Card>
+      </Anchor>
     </Panel>
   )
 }
@@ -1108,11 +1261,25 @@ const VIEWS: Record<string, () => ReactNode> = { features: FeaturesTab, eps: Eps
 export function Settings({ tab, setTab }: { tab: string; setTab: (t: string) => void }) {
   const features = useS((s) => s.features)
   const tabs = visibleTabs(features)
-  const active = tabs.some(([k]) => k === tab) ? tab : 'features'
+  const { tab: rawTab, anchor } = splitSettingTarget(tab)
+  const active = tabs.some(([k]) => k === rawTab) ? rawTab : 'features'
   const V = VIEWS[active] ?? FeaturesTab
   const settingsOpacity = useS((s) => s.prefs.settingsOpacity)
   const settingsWidth = useS((s) => s.prefs.settingsWidth ?? 1024)
   const settingsHeight = useS((s) => s.prefs.settingsHeight ?? 780)
+  useEffect(() => {
+    if (!anchor) return
+    const t = setTimeout(() => flashAnchor(anchor), 60)
+    return () => clearTimeout(t)
+  }, [active, anchor])
+  useEffect(() => {
+    const jump = (e: Event) => {
+      const t = (e as CustomEvent<string>).detail
+      if (typeof t === 'string' && t) setTab(t)
+    }
+    window.addEventListener('byok:setting', jump)
+    return () => window.removeEventListener('byok:setting', jump)
+  }, [setTab])
   return (
     <Modal close={() => setTab('')} blur={false} opacity={settingsOpacity}>
       <div style={{ width: `min(${settingsWidth}px, 96vw)`, height: `min(${settingsHeight}px, 92dvh)` }} className="settings-root flex overflow-hidden rounded-2xl bg-bg">

@@ -1,4 +1,5 @@
 /* Pure model-catalog helpers (no React). Fetch orchestration stays thin in Settings. */
+import { stripVendorPrefix } from './models'
 
 export type CatalogEntry = {
   id: string
@@ -38,8 +39,7 @@ export function parseCatalogModels(body: unknown, opts: { endpointId?: string; e
     const id = String(r.id ?? r.model_id ?? r.model_name ?? '')
     const name = String(r.name ?? r.display_name ?? '')
     const providerId = String(r.provider ?? r.litellm_provider ?? r.provider_name ?? '')
-    const modelLabel = name.replace(/^~+/, '').replace(/^([^:]+):\s*/, (full: string, prefix: string) =>
-      [providerId, endpointId, endpointName, id.split('/')[0]].some((owner) => owner && owner.toLowerCase() === prefix.trim().toLowerCase()) ? '' : full)
+    const modelLabel = stripVendorPrefix(name, [providerId, endpointId, endpointName, id.split('/')[0]])
     const context = Number(r.context_length ?? r.context_window ?? r.max_input_tokens)
     const inputPrice = Number(r.pricing?.prompt)
     const outputPrice = Number(r.pricing?.completion)

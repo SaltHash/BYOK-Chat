@@ -65,7 +65,6 @@ export function HelpTip({ text, label = 'Help' }: { text: string; label?: string
         aria-label={label}
         aria-describedby={idRef.current}
         aria-expanded={open}
-        title={text}
         onClick={() => setOpen((v) => !v)}
         onBlur={() => setOpen(false)}
         className="rounded-full text-mu hover:text-tx focus-visible:text-tx"
@@ -129,9 +128,24 @@ export function SearchSelect({ value, set, opts, ariaLabel = 'Choose an option' 
 }
 
 export function RangeSlider({ value, set, min, max, step = 1, label, valueText, describedBy, disabled = false, className = '' }: { value: number; set: (n: number) => void; min: number; max: number; step?: number; label: string; valueText?: string; describedBy?: string; disabled?: boolean; className?: string }) {
-  const ref = useRef<HTMLDivElement>(null), pct = Math.max(0, Math.min(100, (value - min) / (max - min) * 100))
-  const update = (clientX: number) => { const r = ref.current!.getBoundingClientRect(), raw = min + Math.max(0, Math.min(1, (clientX - r.left) / r.width)) * (max - min); set(Math.max(min, Math.min(max, min + Math.round((raw - min) / step) * step))) }
-  return <div ref={ref} role="slider" tabIndex={disabled ? -1 : 0} aria-label={label} aria-valuemin={min} aria-valuemax={max} aria-valuenow={Math.round(value * 100) / 100} aria-valuetext={valueText ?? String(value)} aria-orientation="horizontal" aria-describedby={describedBy} aria-disabled={disabled} onPointerDown={(e) => { if (disabled) return; e.currentTarget.setPointerCapture(e.pointerId); update(e.clientX) }} onPointerMove={(e) => { if (!disabled && e.buttons) update(e.clientX) }} onKeyDown={(e) => { if (disabled) return; const delta = e.shiftKey ? step * 10 : step; if (e.key === 'ArrowRight' || e.key === 'ArrowUp') { e.preventDefault(); set(Math.min(max, value + delta)) } else if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') { e.preventDefault(); set(Math.max(min, value - delta)) } else if (e.key === 'Home') { e.preventDefault(); set(min) } else if (e.key === 'End') { e.preventDefault(); set(max) } else if (e.key === 'PageUp') { e.preventDefault(); set(Math.min(max, value + step * 10)) } else if (e.key === 'PageDown') { e.preventDefault(); set(Math.max(min, value - step * 10)) } }} className={cx('group relative h-7 touch-none select-none outline-none focus-visible:ring-2 focus-visible:ring-ac/40 rounded-md', disabled && 'opacity-40', className)}>
+  const ref = useRef<HTMLDivElement>(null)
+  const [drag, setDrag] = useState<number | null>(null)
+  const shown = drag ?? value
+  const pct = Math.max(0, Math.min(100, (shown - min) / (max - min) * 100))
+  const setRef = useRef(set); setRef.current = set
+  const valRef = useRef(value); valRef.current = value
+  const lastPush = useRef(0), pending = useRef<number | null>(null), timer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(() => () => { if (timer.current) clearTimeout(timer.current) }, [])
+  const snap = (clientX: number) => { const r = ref.current!.getBoundingClientRect(), raw = min + Math.max(0, Math.min(1, (clientX - r.left) / r.width)) * (max - min); return Math.max(min, Math.min(max, min + Math.round((raw - min) / step) * step)) }
+  const push = (n: number) => { // throttled live store write so sibling labels update without per-mousemove persist
+    if (n === valRef.current && n === pending.current) return
+    const now = Date.now()
+    if (now - lastPush.current >= 80) { lastPush.current = now; pending.current = null; if (timer.current) { clearTimeout(timer.current); timer.current = null } if (n !== valRef.current) setRef.current(n) }
+    else { pending.current = n; if (!timer.current) timer.current = setTimeout(() => { timer.current = null; lastPush.current = Date.now(); const p = pending.current; pending.current = null; if (p !== null && p !== valRef.current) setRef.current(p) }, 80 - (now - lastPush.current)) }
+  }
+  const move = (n: number) => { setDrag(n); push(n) }
+  const commit = (n: number) => { setDrag(null); if (timer.current) { clearTimeout(timer.current); timer.current = null } pending.current = null; lastPush.current = Date.now(); if (n !== valRef.current) setRef.current(n) }
+  return <div ref={ref} role="slider" tabIndex={disabled ? -1 : 0} aria-label={label} aria-valuemin={min} aria-valuemax={max} aria-valuenow={Math.round(shown * 100) / 100} aria-valuetext={valueText ?? String(shown)} aria-orientation="horizontal" aria-describedby={describedBy} aria-disabled={disabled} onPointerDown={(e) => { if (disabled) return; e.currentTarget.setPointerCapture(e.pointerId); move(snap(e.clientX)) }} onPointerMove={(e) => { if (!disabled && e.buttons) move(snap(e.clientX)) }} onPointerUp={() => { if (!disabled && drag !== null) commit(drag) }} onPointerCancel={() => { if (timer.current) { clearTimeout(timer.current); timer.current = null } pending.current = null; setDrag(null) }} onKeyDown={(e) => { if (disabled) return; const delta = e.shiftKey ? step * 10 : step; if (e.key === 'ArrowRight' || e.key === 'ArrowUp') { e.preventDefault(); setDrag(null); set(Math.min(max, shown + delta)) } else if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') { e.preventDefault(); setDrag(null); set(Math.max(min, shown - delta)) } else if (e.key === 'Home') { e.preventDefault(); setDrag(null); set(min) } else if (e.key === 'End') { e.preventDefault(); setDrag(null); set(max) } else if (e.key === 'PageUp') { e.preventDefault(); setDrag(null); set(Math.min(max, shown + step * 10)) } else if (e.key === 'PageDown') { e.preventDefault(); setDrag(null); set(Math.max(min, shown - step * 10)) } }} className={cx('group relative h-7 touch-none select-none outline-none focus-visible:ring-2 focus-visible:ring-ac/40 rounded-md', disabled && 'opacity-40', className)}>
     <div className="absolute inset-x-0 top-1/2 h-2 -translate-y-1/2 rounded-full border border-mu/50 bg-mu/35 shadow-inner"><div className="h-full rounded-full bg-ac shadow-[0_0_5px_color-mix(in_srgb,var(--ac)_55%,transparent)]" style={{ width: `${pct}%` }} /></div><div className="absolute top-1/2 size-[18px] -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-bg bg-ac shadow-md ring-1 ring-ac/50 group-focus-visible:ring-4 group-focus-visible:ring-ac/30" style={{ left: `${pct}%` }} />
   </div>
 }

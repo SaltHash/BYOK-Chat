@@ -22,8 +22,8 @@ export default function App() {
     const openRoute = () => {
       const route = window.location.hash.replace(/^#\/?/, '')
       if (route === 'chat') { setCfg(''); return }
-      const match = route.match(/^settings(?:\/([a-z]+))?$/)
-      if (match) setCfg(match[1] || 'eps')
+      const match = route.match(/^settings(?:\/([^#]+))?(?:#(.+))?$/)
+      if (match) setCfg(match[2] ? `${match[1] || 'eps'}#${match[2]}` : (match[1] || 'eps'))
     }
     openRoute()
     window.addEventListener('hashchange', openRoute)

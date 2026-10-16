@@ -20,6 +20,7 @@ export function UserText({ m }: { m: Msg }) {
   const branch = useS((s) => s.branch)
   const [ed, setEd] = useState(false)
   const [v, setV] = useState(m.t)
+  const [copied, setCopied] = useState(false)
   if (ed)
     return (
       <div className="space-y-2">
@@ -32,16 +33,17 @@ export function UserText({ m }: { m: Msg }) {
       </div>
     )
   return (
-    <div className="group/u relative flex items-start justify-end gap-1">
-      <span className="flex shrink-0 gap-0.5 opacity-0 transition-opacity group-hover/u:opacity-100 focus-within:opacity-100">
-        <Btn sm icon={GitBranch} title="Branch from here (copy this thread into a new chat)" onClick={() => branch(m.id)} />
-        <Btn sm icon={Pencil} title="Edit message" onClick={() => setEd(true)} />
-        <Btn sm icon={Trash2} title="Delete" onClick={() => useS.getState().delMsg(m.id)} />
-      </span>
+    <div className="group/u flex flex-col items-end gap-1">
       <div className={m.t.trimStart().startsWith('/') ? 'min-w-40 overflow-hidden rounded-xl border border-ac/40 bg-ac/5 shadow-sm' : 'whitespace-pre-wrap rounded-2xl bg-surf px-4 py-2.5'}>
         {m.t.trimStart().startsWith('/') && <div className="border-b border-ac/20 px-3 py-1.5 text-xs font-semibold uppercase tracking-wider text-ac">Command</div>}
         <div className="whitespace-pre-wrap px-4 py-2.5">{m.t}</div>
       </div>
+      <span className="flex shrink-0 gap-0.5 opacity-0 transition-opacity group-hover/u:opacity-100 focus-within:opacity-100">
+        <Btn sm icon={copied ? Check : Copy} title="Copy" onClick={() => { void navigator.clipboard?.writeText(m.t).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1200) }).catch(() => {}) }} />
+        <Btn sm icon={GitBranch} title="Branch from here (copy this thread into a new chat)" onClick={() => branch(m.id)} />
+        <Btn sm icon={Pencil} title="Edit message" onClick={() => setEd(true)} />
+        <Btn sm icon={Trash2} title="Delete" onClick={() => useS.getState().delMsg(m.id)} />
+      </span>
     </div>
   )
 }

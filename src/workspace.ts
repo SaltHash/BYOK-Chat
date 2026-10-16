@@ -446,6 +446,199 @@ export function previewKindFor(path: string, language: string): PreviewKind {
   return 'code'
 }
 
+/* ----------------------------------------------------------------------------
+ * Syntax highlighting language resolution for the workspace code view.
+ * The viewer renders code as a fenced markdown block through
+ * rehype-highlight (highlight.js via lowlight `all`, ~190 grammars), so the
+ * fence tag must be a canonical lowlight language id. Models often omit
+ * `language` or send aliases ("js", "py", "sh"), so resolve in order:
+ * explicit language (normalized) -> filename/extension -> plaintext.
+ * ---------------------------------------------------------------------------- */
+
+/** Aliases models commonly send, mapped to canonical lowlight ids. */
+const HIGHLIGHT_ALIASES: Record<string, string> = {
+  js: 'javascript', jsx: 'javascript', mjs: 'javascript', cjs: 'javascript', mts: 'typescript',
+  cts: 'typescript', tsx: 'typescript', ts: 'typescript',
+  py: 'python', pyw: 'python', gyp: 'python',
+  rb: 'ruby', erb: 'erb',
+  sh: 'shell', bash: 'bash', zsh: 'bash', fish: 'shell', shell: 'shell', console: 'bash',
+  ps1: 'powershell', psm1: 'powershell', powershell: 'powershell', bat: 'dos', cmd: 'dos',
+  yml: 'yaml', yaml: 'yaml', toml: 'ini',
+  md: 'markdown', markdown: 'markdown', mdown: 'markdown', mkd: 'markdown',
+  htm: 'xml', html: 'xml', xhtml: 'xml', vue: 'xml', svelte: 'xml', astro: 'xml', wxml: 'xml',
+  c: 'c', h: 'c', cc: 'cpp', cpp: 'cpp', cxx: 'cpp', 'c++': 'cpp', hpp: 'cpp', hh: 'cpp', hxx: 'cpp',
+  'c#': 'csharp', 'c-sharp': 'csharp', cs: 'csharp', csx: 'csharp',
+  m: 'objectivec', mm: 'objectivec',
+  kt: 'kotlin', kts: 'kotlin', ktscript: 'kotlin',
+  rs: 'rust', go: 'go', swift: 'swift',
+  java: 'java', scala: 'scala', groovy: 'groovy', gradle: 'gradle',
+  php: 'php', pl: 'perl', pm: 'perl', perl: 'perl', r: 'r', jl: 'julia',
+  lua: 'lua', dart: 'dart', elm: 'elm', ex: 'elixir', exs: 'elixir', elixir: 'elixir',
+  erl: 'erlang', hrl: 'erlang', clj: 'clojure', cljs: 'clojure', cljc: 'clojure',
+  hs: 'haskell', ml: 'ocaml', mli: 'ocaml', fs: 'fsharp', fsi: 'fsharp', fsx: 'fsharp',
+  pas: 'delphi', dpr: 'delphi', pp: 'delphi', d: 'd',
+  sql: 'sql', pgsql: 'pgsql', postgres: 'pgsql', mysql: 'sql', graphql: 'graphql', gql: 'graphql',
+  css: 'css', scss: 'scss', sass: 'scss', less: 'less', styl: 'stylus', stylus: 'stylus',
+  json: 'json', jsonc: 'json', json5: 'json', jsonl: 'json', geojson: 'json', ndjson: 'json',
+  jsmap: 'json', tsmap: 'json',
+  diff: 'diff', patch: 'diff',
+  tex: 'latex', latex: 'latex', sty: 'latex', bib: 'latex',
+  vim: 'vim', vimrc: 'vim', nvim: 'vim',
+  asm: 'x86asm', s: 'x86asm', nasm: 'x86asm', yasm: 'x86asm', arm: 'armasm',
+  vb: 'vbnet', vba: 'vbnet', vbs: 'vbscript',
+  f90: 'fortran', f95: 'fortran', f03: 'fortran', fortran: 'fortran',
+  cob: 'cobol', cbl: 'cobol', cobol: 'cobol',
+  adb: 'ada', ads: 'ada', ada: 'ada',
+  sol: 'javascript', hcl: 'ini', tf: 'ini', tfvars: 'ini',
+  proto: 'protobuf', protobuf: 'protobuf',
+  thrift: 'thrift', avro: 'json', capnp: 'capnproto',
+  cmake: 'cmake', make: 'makefile', mk: 'makefile', makefile: 'makefile',
+  dockerfile: 'dockerfile', containerfile: 'dockerfile',
+  nginx: 'nginx', apache: 'apache', htaccess: 'apache',
+  ini: 'ini', cfg: 'ini', conf: 'ini', config: 'ini', properties: 'properties',
+  env: 'properties', gitignore: 'plaintext', dockerignore: 'plaintext',
+  txt: 'plaintext', text: 'plaintext', log: 'plaintext',
+  csv: 'plaintext', tsv: 'plaintext',
+  svg: 'xml', wsdl: 'xml', xsd: 'xml', rss: 'xml', atom: 'xml', plist: 'xml',
+  wasm: 'wasm', wat: 'wasm',
+  glsl: 'glsl', vert: 'glsl', frag: 'glsl', wgsl: 'glsl', hlsl: 'glsl',
+  nix: 'nix', star: 'python', bazel: 'python', bzl: 'python',
+  octave: 'matlab', matlab: 'matlab',
+  awk: 'awk', sed: 'bash', tcl: 'tcl', expect: 'tcl',
+  lisp: 'lisp', scm: 'scheme', ss: 'scheme', scheme: 'scheme', rkt: 'scheme',
+  smalltalk: 'smalltalk', st: 'smalltalk',
+  pro: 'prolog', prolog: 'prolog',
+  v: 'verilog', sv: 'verilog', svh: 'verilog', vhd: 'vhdl', vhdl: 'vhdl',
+  zig: 'c', nim: 'nim', crystal: 'crystal',
+  coffee: 'coffeescript', litcoffee: 'coffeescript', iced: 'coffeescript',
+  ls: 'livescript', reason: 'reasonml', res: 'reasonml', resi: 'reasonml', re: 'reasonml',
+  purs: 'haskell',
+  flow: 'javascript', ejs: 'django', hbs: 'handlebars', handlebars: 'handlebars',
+  mustache: 'django', njk: 'django', nunjucks: 'django', twig: 'twig', liquid: 'django',
+  pug: 'xml', jade: 'xml',
+  rss2: 'xml', adoc: 'asciidoc', asciidoc: 'asciidoc', rst: 'plaintext',
+  http: 'http', https: 'http', rest: 'http',
+  gqlgen: 'graphql',
+  cshtml: 'xml', razor: 'xml',
+  ktm: 'kotlin', klib: 'kotlin',
+  ipynb: 'json', har: 'json',
+  lock: 'json', map: 'json',
+  cucumber: 'gherkin', feature: 'gherkin', gherkin: 'gherkin',
+  arduino: 'arduino', ino: 'arduino', pde: 'arduino',
+}
+
+/** File extension (no dot, lowercase) -> canonical lowlight id. */
+const EXTENSION_HIGHLIGHT: Record<string, string> = {
+  js: 'javascript', jsx: 'javascript', mjs: 'javascript', cjs: 'javascript', flow: 'javascript',
+  ts: 'typescript', tsx: 'typescript', mts: 'typescript', cts: 'typescript',
+  json: 'json', jsonc: 'json', json5: 'json', jsonl: 'json', geojson: 'json', ndjson: 'json',
+  map: 'json', har: 'json', ipynb: 'json', jsonld: 'json',
+  html: 'xml', htm: 'xml', xhtml: 'xml', vue: 'xml', svelte: 'xml', astro: 'xml',
+  svg: 'xml', xml: 'xml', xsd: 'xml', xsl: 'xml', xslt: 'xml', wsdl: 'xml', plist: 'xml',
+  atom: 'xml', rss: 'xml', cshtml: 'xml', wxml: 'xml', axml: 'xml',
+  css: 'css', scss: 'scss', sass: 'scss', less: 'less', styl: 'stylus', stylus: 'stylus',
+  md: 'markdown', markdown: 'markdown', mdown: 'markdown', mkd: 'markdown',
+  py: 'python', pyw: 'python', pyi: 'python', gyp: 'python', gypi: 'python', bzl: 'python',
+  rb: 'ruby', erb: 'erb', rake: 'ruby', gemspec: 'ruby',
+  php: 'php', phtml: 'php', php3: 'php', php4: 'php', php5: 'php', phps: 'php',
+  java: 'java', kt: 'kotlin', kts: 'kotlin', scala: 'scala', sc: 'scala',
+  groovy: 'groovy', gradle: 'gradle',
+  go: 'go', rs: 'rust', c: 'c', h: 'c', cc: 'cpp', cpp: 'cpp', cxx: 'cpp', hpp: 'cpp',
+  hh: 'cpp', hxx: 'cpp', inl: 'cpp', ipp: 'cpp',
+  cs: 'csharp', csx: 'csharp',
+  m: 'objectivec', mm: 'objectivec',
+  swift: 'swift', dart: 'dart',
+  lua: 'lua', pl: 'perl', pm: 'perl', t: 'perl',
+  r: 'r', jl: 'julia',
+  sh: 'bash', bash: 'bash', zsh: 'bash', ksh: 'bash', dash: 'bash', fish: 'shell',
+  ps1: 'powershell', psm1: 'powershell', psd1: 'powershell',
+  bat: 'dos', cmd: 'dos',
+  sql: 'sql', pgsql: 'pgsql', mysql: 'sql',
+  graphql: 'graphql', gql: 'graphql',
+  yaml: 'yaml', yml: 'yaml',
+  toml: 'ini', ini: 'ini', cfg: 'ini', conf: 'ini', config: 'ini', properties: 'properties',
+  env: 'properties',
+  dockerfile: 'dockerfile', containerfile: 'dockerfile',
+  makefile: 'makefile', mk: 'makefile', mak: 'makefile',
+  cmake: 'cmake', 'cmake.in': 'cmake',
+  nginx: 'nginx', apache: 'apache',
+  diff: 'diff', patch: 'diff',
+  tex: 'latex', latex: 'latex', sty: 'latex', bib: 'latex', cls: 'latex',
+  vim: 'vim', vimrc: 'vim',
+  asm: 'x86asm', s: 'x86asm', nasm: 'x86asm', yasm: 'x86asm',
+  vb: 'vbnet', vba: 'vbnet', vbs: 'vbscript',
+  f: 'fortran', f90: 'fortran', f95: 'fortran', f03: 'fortran', f08: 'fortran', for: 'fortran', ftn: 'fortran',
+  cob: 'cobol', cbl: 'cobol', ccp: 'cobol',
+  adb: 'ada', ads: 'ada',
+  sol: 'javascript', hcl: 'ini', tf: 'ini', tfvars: 'ini',
+  proto: 'protobuf', thrift: 'thrift', avdl: 'json', avsc: 'json',
+  ex: 'elixir', exs: 'elixir', erl: 'erlang', hrl: 'erlang',
+  clj: 'clojure', cljs: 'clojure', cljc: 'clojure', edn: 'clojure',
+  hs: 'haskell', lhs: 'haskell', ml: 'ocaml', mli: 'ocaml', fs: 'fsharp', fsi: 'fsharp', fsx: 'fsharp',
+  pas: 'delphi', dpr: 'delphi', pp: 'delphi',
+  awk: 'awk', tcl: 'tcl', expect: 'tcl',
+  lisp: 'lisp', lsp: 'lisp', scm: 'scheme', ss: 'scheme', rkt: 'scheme',
+  st: 'smalltalk', pro: 'prolog',
+  v: 'verilog', sv: 'verilog', svh: 'verilog', vhd: 'vhdl', vhdl: 'vhdl',
+  zig: 'c', nim: 'nim', nims: 'nim',
+  coffee: 'coffeescript', litcoffee: 'coffeescript', ls: 'livescript',
+  re: 'reasonml', res: 'reasonml', resi: 'reasonml',
+  pug: 'xml', jade: 'xml', hbs: 'handlebars',
+  twig: 'twig', ejs: 'django', njk: 'django',
+  feature: 'gherkin',
+  ino: 'arduino', pde: 'arduino',
+  glsl: 'glsl', vert: 'glsl', frag: 'glsl', geom: 'glsl', comp: 'glsl', wgsl: 'glsl', hlsl: 'glsl',
+  nix: 'nix', http: 'http', rest: 'http',
+  csv: 'plaintext', tsv: 'plaintext', txt: 'plaintext', text: 'plaintext', log: 'plaintext',
+  gitignore: 'plaintext', dockerignore: 'plaintext', editorconfig: 'plaintext',
+  wasm: 'wasm', wat: 'wasm',
+  cql: 'sql', hql: 'sql',
+  qml: 'qml', sqf: 'sqf',
+  cr: 'crystal',
+}
+
+/** Basenames without a useful extension -> canonical lowlight id. */
+const FILENAME_HIGHLIGHT: Record<string, string> = {
+  dockerfile: 'dockerfile', containerfile: 'dockerfile',
+  makefile: 'makefile', gnumakefile: 'makefile', cmakelists: 'cmake',
+  gemfile: 'ruby', rakefile: 'ruby', vagrantfile: 'ruby', podfile: 'ruby', fastfile: 'ruby',
+  cmakecache: 'cmake',
+  '.bashrc': 'bash', '.bash_profile': 'bash', '.zshrc': 'bash', '.profile': 'bash',
+  '.vimrc': 'vim', '.gvimrc': 'vim', vimrc: 'vim',
+  '.gitignore': 'plaintext', '.dockerignore': 'plaintext', '.editorconfig': 'plaintext',
+}
+
+/** Normalize a model- or user-supplied language tag to a lowlight id. */
+export function normalizeHighlightLanguage(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null
+  const t = raw.trim().toLowerCase().replace(/^\./, '')
+  if (!t) return null
+  if (HIGHLIGHT_ALIASES[t]) return HIGHLIGHT_ALIASES[t]
+  // Already canonical (letters, digits, +, #, -)? Keep as-is; rehype-highlight
+  // ignores unknown ids (ignoreMissing) so pass-through is safe.
+  if (/^[a-z0-9+#-]+$/.test(t)) return t
+  return null
+}
+
+/** Fence-tag language for the workspace code view: explicit tag wins, else
+ *  filename/extension inference, else plaintext (never empty). */
+export function highlightLanguageFor(path: string, language: unknown): string {
+  const explicit = normalizeHighlightLanguage(language)
+  if (explicit) return explicit
+  const base = String(path ?? '').split('/').pop() ?? ''
+  const lower = base.toLowerCase()
+  if (FILENAME_HIGHLIGHT[lower]) return FILENAME_HIGHLIGHT[lower]
+  const noDot = lower.startsWith('.') ? lower.slice(1) : lower
+  if (FILENAME_HIGHLIGHT[noDot]) return FILENAME_HIGHLIGHT[noDot]
+  // Basename without extension but known (e.g. "Dockerfile.dev", "Makefile.am").
+  const stem = lower.split('.')[0]
+  if (FILENAME_HIGHLIGHT[stem]) return FILENAME_HIGHLIGHT[stem]
+  const ext = lower.includes('.') ? lower.split('.').pop()! : ''
+  if (ext && EXTENSION_HIGHLIGHT[ext]) return EXTENSION_HIGHLIGHT[ext]
+  if (ext && HIGHLIGHT_ALIASES[ext]) return HIGHLIGHT_ALIASES[ext]
+  return 'plaintext'
+}
+
 /** Minimal CSV/TSV parse for the table preview (quotes + delimiter aware). */
 export function parseCsvPreview(text: string, maxRows = 200, maxCols = 20): string[][] {
   const rows: string[][] = []
