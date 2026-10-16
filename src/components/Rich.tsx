@@ -173,7 +173,7 @@ const makeC = (bare: boolean, cites?: CiteMap): any => ({
               onClick={() => cites.onCite?.(hit.citeId)}
               title={`${hit.title} — ${hit.host}. Jump to source.`}
               aria-label={`Jump to source ${hit.citeId}: ${hit.title}`}
-              className="mx-0.5 inline-grid min-h-6 min-w-6 place-items-center rounded-md bg-ac/15 px-1.5 font-mono text-xs font-semibold text-ac underline decoration-ac/40 underline-offset-2 hover:bg-ac/25"
+              className="mx-0.5 inline-block min-h-6 min-w-6 whitespace-nowrap rounded-md bg-ac/15 px-1.5 text-center align-baseline font-mono text-xs font-semibold leading-6 text-ac underline decoration-ac/40 underline-offset-2 hover:bg-ac/25"
             >
               {hit.citeId.replace(/^S/i, '')}
             </button>

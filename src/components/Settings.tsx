@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { X, Plus, Trash2, ArrowUp, ArrowDown, ChevronRight, Eye, EyeOff, Play, ShieldCheck, Shield, Download, Upload, Check, CircleCheck, Cpu, Route, GripVertical, Server, ListMusic, ScrollText, Terminal, Wrench, Palette, FolderOpen, FileText, PanelRight, TrendingUp, Keyboard, Search, Brain, Pencil, Sparkles, RotateCcw, SlidersHorizontal, FlaskConical, Library, Database, Lock, LockOpen, LayoutTemplate, Share2 } from 'lucide-react'
-import { useS, PRE, THEMES, DARK_THEMES, LIGHT_THEMES, THEME_COLOR_KEYS, THEME_COLOR_LABELS, SEARCH_MODES, SEARCH_PROVIDERS, FEATURES, LIBRARY_ITEMS, FEATURE_TABS, FEATURE_WIDGETS, DEFAULT_LIBRARY_SHOW, DEFAULT_ADVANCED, featOn, normSearch, normAdvanced, normDocs, usable, modelsOf, modelNameOf, TOOL_ROUNDS_DEFAULT, TOOL_ROUNDS_MIN, TOOL_ROUNDS_BASE_MAX, TOOL_ROUNDS_MAX, toolRoundLimitOf, isToolRoundsUnlimited, type Kind, type FeatureId, type DocPrefs } from '../store'
+import { useS, PRE, THEMES, DARK_THEMES, LIGHT_THEMES, THEME_COLOR_KEYS, THEME_COLOR_LABELS, SEARCH_MODES, SEARCH_PROVIDERS, FEATURES, LIBRARY_ITEMS, FEATURE_TABS, FEATURE_WIDGETS, DEFAULT_LIBRARY_SHOW, DEFAULT_ADVANCED, featOn, normSearch, normResearch, normAdvanced, normDocs, usable, modelsOf, modelNameOf, TOOL_ROUNDS_DEFAULT, TOOL_ROUNDS_MIN, TOOL_ROUNDS_BASE_MAX, TOOL_ROUNDS_MAX, toolRoundLimitOf, isToolRoundsUnlimited, type Kind, type FeatureId, type DocPrefs } from '../store'
+import { RESEARCH_TIERS, type ResearchTierId } from '../research'
 import { normSkills, resolveSkill, validateCustomSkill, enabledSkills, BUILTIN_SKILLS, SKILL_TOOL_NAME, type SkillState } from '../skills'
 import { findDuplicatePairs, mergeMemory } from '../recall'
 import { TOOL_REGISTRY, can } from '../engine'
@@ -579,22 +580,20 @@ function Tools() {
     fetch('/api/health').then((r) => r.json()).then((x) => setHealth(x)).catch(() => setHealth({ searchConfigured: false }))
   }, [])
   const t = TOOLS.find((x) => x[0] === ask)
-  const searchReady = health ? !!health.searchConfigured : null
   const search = normSearch(s.search)
   const setSearch = (p: Partial<typeof search>) => s.patch({ search: { ...search, ...p } })
   const ownKey = (search.keys[search.provider] || '').trim()
-  const otherLabel = search.mode === 'api' ? 'SearXNG' : (health?.apiProviders?.[search.provider]?.label ?? 'API')
-  const providerHint: Record<string, string> = {
-    tinyfish: 'GET https://api.search.tinyfish.ai with an X-API-Key header.',
-    you: 'POST https://ydc-index.io/v1/search with an X-API-Key header.',
-    exa: 'POST https://api.exa.ai/search with highlights enabled.',
-    firecrawl: 'POST https://api.firecrawl.dev/v2/search with a Bearer token (optional: works without a key at lower limits).',
-    brightdata: 'POST https://api.brightdata.com/request plus your SERP zone.',
-  }
   return (
     <Panel id="tools">
       <ToolLimitCard />
       <DocumentsCard />
+      <Card icon={Brain} title="Deep research" sub="@research(query)">
+        <p className="text-sm">Multi-step investigation: parallel searches for breadth, then model follow-ups for depth, ending in a long cited report shown in a document-styled side panel.</p>
+        <p className="text-sm text-mu">Start with @research(topic), the + menu → Deep research…, or a model-suggested “Deep research …” chip. Every run asks for Quick, Standard, or Thorough first.</p>
+        <Field label="Default depth" hint="Preselected in the tier picker. Quick is fastest; Thorough uses the largest search and read budgets.">
+          <Seg v={normResearch(s.research).defaultTier} set={(defaultTier) => s.patch({ research: { ...normResearch(s.research), defaultTier } })} opts={RESEARCH_TIERS.map((t) => [t.id, `${t.label} · ${t.blurb}`] as [ResearchTierId, string])} />
+        </Field>
+      </Card>
       {TOOLS.filter(([k]) => k !== 'memory').map(([k, n, I, u, d, p]) => (
         <Card key={k} icon={I} title={n} sub={u} right={
           <>
@@ -628,9 +627,9 @@ function Tools() {
               </div>
             </Field>
             {search.provider === 'brightdata' && <Field label="SERP zone" hint="Your Bright Data SERP API zone name. Stored in this browser like the key."><Input value={search.zone} set={(zone) => setSearch({ zone })} placeholder="e.g. serp_api1" /></Field>}
-            <p className="text-xs text-mu">{searchReady === null ? 'Checking search service…' : search.mode === 'api' ? (ownKey ? `Using your ${health?.apiProviders?.[search.provider]?.label ?? 'API'} key${search.fallback ? ', with SearXNG as the fallback' : ', without fallback'}.` : `No ${health?.apiProviders?.[search.provider]?.label ?? 'API'} key in this browser yet.${search.fallback ? ' SearXNG will be used until you paste one.' : ' Paste a key or switch the mode to SearXNG.'}`) : `Using SearXNG${search.fallback ? `, with ${health?.apiProviders?.[search.provider]?.label ?? 'your API provider'} as the fallback` : ', without fallback'}.`}{` When allowed, messages about current or recent information can use web results. You can also write @search(query).`}</p>
-            <p className="text-xs text-mu">Server keys (TINYFISH_API_KEY, YOU_API_KEY, EXA_API_KEY, FIRECRAWL_API_KEY, BRIGHTDATA_API_KEY) still work as a shared fallback when this browser sends no key. Fallback target: {otherLabel}.</p>
-            <p className="text-xs text-mu">{providerHint[search.provider]}</p>
+            <Field label={`Results per search · ${search.maxResults}`} hint="Default results for each search. The model may request fewer with its count parameter, but never more than this.">
+              <RangeSlider label="Results per search" min={1} max={8} step={1} value={search.maxResults} valueText={`${search.maxResults} result${search.maxResults === 1 ? '' : 's'}`} set={(maxResults) => setSearch({ maxResults: Math.round(maxResults) })} className="w-full" />
+            </Field>
             <div className="space-y-3 rounded-xl bg-surf p-3">
               <div className="text-sm font-medium">Sources & transparency</div>
               <Field label="Inline citations" hint="Pills jump to the Sources list below the reply (description first, Open button inside). Links render as plain markdown links.">

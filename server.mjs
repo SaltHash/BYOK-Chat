@@ -102,10 +102,11 @@ async function search(req, res) {
   const clientZone = typeof parsed?.zone === 'string' ? parsed.zone.slice(0, 200) : ''
   if (!entry || now - entry.start >= 60_000) limit.set(ip, { start: now, count: 1 }); else entry.count++
   const query = q.trim()
-  const cacheKey = `${mode}:${mode === 'searxng' ? 'searxng' : provider}:${fallback ? 'fb' : 'nofb'}:${query.toLowerCase()}`
+  const requested = boundedInt(parsed?.count, maxResults, 1, maxResults)
+  const cacheKey = `${mode}:${mode === 'searxng' ? 'searxng' : provider}:${fallback ? 'fb' : 'nofb'}:${requested}:${query.toLowerCase()}`
   const cached = cache.get(cacheKey)
   if (cached && now - cached.at < 60_000) return send(res, 200, cached.data, { 'cache-control': 'private, max-age=30' })
-  const limits = { maxResults, maxSnippetChars, evidenceBudget }
+  const limits = { maxResults: requested, maxSnippetChars, evidenceBudget }
   const retry = { maxRetries, baseMs: retryBaseMs }
   const apiKey = resolveApiKey(provider, clientKey)
   const zone = resolveZone(clientZone)

@@ -3,6 +3,9 @@ import { persist } from 'zustand/middleware'
 import { DEFAULT_TOOLS, KEYS, WIDGETS } from './meta'
 import { est, redact, stream, wire, trimHistory, estimateHistoryTokens, runToolLoop, type ToolCall, type ToolResult, searchWeb, formatSearch, fetchPage, formatPage, can, ocrImage } from './engine'
 import { DEFAULT_SKILL_STATE, normSkills, enabledSkills, getSkillInstructions, composeSystemPrompt, SKILL_TOOL_NAME, type SkillState, type ResolvedSkill } from './skills'
+import { BLANK_RESEARCH, RESEARCH_TIERS, decomposeResearch, normResearch, parseResearchRequest, researchStepsFor, researchSystemNote, setStep, tierOf, type ResearchState, type ResearchTierId } from './research'
+export { BLANK_RESEARCH, normResearch, tierOf, RESEARCH_TIERS }
+export type { ResearchState, ResearchTierId }
 import { hintForLog, getErrorCode, classifyModelError, type ErrorCode } from './errors'
 import { usable, modelsOf, modelNameOf } from './models'
 import { splitEntry, playlistEntries, applyCommandTemplate, composeFullInput, planRequest } from './chatPlan'
@@ -31,7 +34,7 @@ export type Try = Attempt
 export type Attachment = { name: string; kind: 'img' | 'pdf' | 'txt' | 'media'; size: string; mime?: string; data?: string; text?: string; source?: string; pages?: number }
 export type Att = Attachment
 export type FadeEvent = { text: string; at: number }
-export type Message = { id: string; r: 'user' | 'assistant'; t: string; at?: number; fadeEvents?: FadeEvent[]; by?: string; tps?: number; log?: Attempt[]; att?: Attachment[]; err?: boolean; full?: string; ctx?: string[]; fx?: string; cmd?: string; alts?: Snap[]; ai?: number; historyTokens?: number; explicitTokens?: number; reasoning?: string; toolRounds?: { text: string; calls: ToolResult[] }[]; toolFinal?: string; sys?: string; workspaceIds?: string[] }
+export type Message = { id: string; r: 'user' | 'assistant'; t: string; at?: number; fadeEvents?: FadeEvent[]; by?: string; tps?: number; log?: Attempt[]; att?: Attachment[]; err?: boolean; full?: string; ctx?: string[]; fx?: string; cmd?: string; alts?: Snap[]; ai?: number; historyTokens?: number; explicitTokens?: number; reasoning?: string; toolRounds?: { text: string; calls: ToolResult[] }[]; toolFinal?: string; sys?: string; workspaceIds?: string[]; research?: ResearchState }
 export type Msg = Message
 export type Snap = { t: string; by?: string; tps?: number; log?: Try[]; err?: boolean; toolRounds?: { text: string; calls: ToolResult[] }[]; toolFinal?: string }
 export type Chat = { id: string; title: string; pin?: boolean; started?: boolean; folder?: string; msgs: Msg[]; temporary?: boolean; expiresAt?: number; titleAuto?: boolean }
@@ -195,8 +198,8 @@ export type SearchProvider = 'tinyfish' | 'you' | 'exa' | 'firecrawl' | 'brightd
 export type CiteStyle = 'pills' | 'links'
 export const SEARCH_MODES: [SearchMode, string][] = [['api', 'API'], ['searxng', 'SearXNG']]
 export const SEARCH_PROVIDERS: [SearchProvider, string][] = [['tinyfish', 'TinyFish'], ['you', 'You.com'], ['exa', 'Exa'], ['firecrawl', 'Firecrawl'], ['brightdata', 'Bright Data']]
-export type SearchPrefs = { mode: SearchMode; provider: SearchProvider; fallback: boolean; keys: Record<SearchProvider, string>; zone: string; citeStyle: CiteStyle; sourcesOpen: boolean; reader: boolean; strictCitations: boolean }
-export const BLANK_SEARCH: SearchPrefs = { mode: 'api', provider: 'tinyfish', fallback: true, keys: { tinyfish: '', you: '', exa: '', firecrawl: '', brightdata: '' }, zone: '', citeStyle: 'pills', sourcesOpen: false, reader: true, strictCitations: false }
+export type SearchPrefs = { mode: SearchMode; provider: SearchProvider; fallback: boolean; keys: Record<SearchProvider, string>; zone: string; maxResults: number; citeStyle: CiteStyle; sourcesOpen: boolean; reader: boolean; strictCitations: boolean }
+export const BLANK_SEARCH: SearchPrefs = { mode: 'api', provider: 'tinyfish', fallback: true, keys: { tinyfish: '', you: '', exa: '', firecrawl: '', brightdata: '' }, zone: '', maxResults: 8, citeStyle: 'pills', sourcesOpen: false, reader: true, strictCitations: false }
 const SEARCH_VALID_MODES: SearchMode[] = ['api', 'searxng']
 const SEARCH_VALID_PROVIDERS: SearchProvider[] = ['tinyfish', 'you', 'exa', 'firecrawl', 'brightdata']
 export const normSearch = (v: any): SearchPrefs => {
@@ -209,6 +212,7 @@ export const normSearch = (v: any): SearchPrefs => {
     fallback: typeof v?.fallback === 'boolean' ? v.fallback : true,
     keys,
     zone: typeof v?.zone === 'string' ? v.zone : '',
+    maxResults: Number.isInteger(v?.maxResults) ? Math.max(1, Math.min(8, v.maxResults)) : BLANK_SEARCH.maxResults,
     citeStyle: v?.citeStyle === 'links' ? 'links' : 'pills',
     sourcesOpen: v?.sourcesOpen === true,
     reader: v?.reader !== false,
@@ -216,6 +220,14 @@ export const normSearch = (v: any): SearchPrefs => {
   }
 }
 export const searchKeyOf = (s: any) => String(s?.keys?.[s?.provider] ?? '').trim()
+/* Results per search: the model may request fewer via its count parameter,
+ * but never more than the user's max. Defaults to the user's max. */
+export const searchCountOf = (prefs: Pick<SearchPrefs, 'maxResults'>, requested?: unknown): number => {
+  const max = Number.isInteger((prefs as { maxResults?: unknown })?.maxResults)
+    ? Math.max(1, Math.min(8, (prefs as { maxResults: number }).maxResults))
+    : BLANK_SEARCH.maxResults
+  return Number.isInteger(requested) ? Math.max(1, Math.min(max, requested as number)) : max
+}
 
 type S = {
   eps: Ep[]; prompts: Prompt[]; pls: Pl[]; cmds: Cmd[]; chats: Chat[]; chat: string
@@ -241,6 +253,7 @@ type S = {
   stats: Stats; keys: Record<string, string>
   memories: Memory[]; memoryPrefs: { enabled: boolean; intent: 'intentional' | 'balanced' | 'aggressive'; recall: 'holistic' | 'contextual' | 'specific'; method: 'local' | 'classifier'; classifierEp: string; classifierModel: string }
   docPrefs: DocPrefs
+  research: { defaultTier: ResearchTierId }
   folders: Folder[]; price: { in: number; out: number }; todos: { id: string; t: string; done: boolean }[]
   routeStats: Record<string, RouteStat>
   flashMsg: string | null
@@ -248,6 +261,7 @@ type S = {
   /* Workspace (first-class entity) */
   workspaces: Record<string, Workspace>
   selectedRevision: Record<string, string>
+  researchPanel: { mid: string } | null
   patch: (p: Partial<S>) => void
   add: (k: Kind) => void
   upd: (k: Kind, id: string, p: object) => void
@@ -260,6 +274,8 @@ type S = {
   regen: () => void
   delMsg: (id: string) => void
   editMsg: (id: string, t: string) => void
+  chooseResearchTier: (mid: string, tier: ResearchTierId) => void
+  stopResearch: (mid: string) => void
   resetStats: () => void
   compactStorage: () => string
   rename: (id: string, t: string) => void
@@ -273,7 +289,10 @@ type S = {
   variant: (mid: string, idx: number) => void
 }
 
-export { splitEntry, playlistEntries as ents, applyCommandTemplate as body, composeFullInput as full }
+export { splitEntry }
+export const ents = playlistEntries
+export const body = applyCommandTemplate
+export const full = composeFullInput
 /* Structured failure hint: prefers coded errors, falls back to classifying
  * legacy string messages so stored logs still get a useful hint. */
 const hint = (l: Try[]) => hintForLog(l)
@@ -394,6 +413,164 @@ export const useS = create<S>()(
           if (!r.stopped) log.push({ n: c.name + ' (classifier)', m: c.model, ms: Date.now() - t0, err: errText(c, x.message), errCode: getErrorCode(x) ?? errCodeOf(x), at: Date.now() })
           return cand
         }
+      }
+
+      async function runResearch(mid: string, um: Msg, query: string, tierId: ResearchTierId) {
+        const chatId = get().chat
+        const p = plan(get(), um)
+        if (p.err) {
+          edit(chatId, mid, (m) => ({ ...m, research: { ...(m.research as ResearchState), status: 'error', error: p.err?.t ?? 'No endpoint ready.', finishedAt: Date.now() } }))
+          set({ busy: false, notice: p.err })
+          if (cur) cur = null
+          return
+        }
+        const tier = tierOf(tierId)
+        const r: Run = { stopped: false, ctl: null }
+        cur = r
+        set({ busy: true })
+        const log: Try[] = []
+        const patchResearch = (f: (rs: ResearchState) => ResearchState) =>
+          edit(chatId, mid, (m) => (m.research ? { ...m, research: f(m.research) } : m))
+        const setSteps = (steps: ResearchState['steps']) => patchResearch((rs) => ({ ...rs, steps }))
+        const getSteps = () => (get().chats.find((c) => c.id === chatId)?.msgs.find((m) => m.id === mid)?.research?.steps ?? [])
+        let steps = researchStepsFor(query, tier)
+        patchResearch((rs) => ({ ...rs, status: 'running', steps, startedAt: Date.now() }))
+        const prefs = normSearch(get().search)
+        const searchOpts = { mode: prefs.mode, provider: prefs.provider, fallback: prefs.fallback, apiKey: searchKeyOf(prefs), zone: prefs.zone, count: searchCountOf(prefs) }
+        const breadthCalls: ToolResult[] = []
+        const seenUrls: string[] = []
+        const rawResults: { url: string }[] = []
+        const t0 = Date.now()
+        const deadline = t0 + tier.timeoutMs
+        let n = 0
+        for (const st of steps.filter((s) => s.kind === 'search')) {
+          if (r.stopped || Date.now() > deadline) break
+          n++
+          setSteps(setStep(getSteps(), st.id, { state: 'running' }))
+          try {
+            r.ctl = new AbortController()
+            const data = await searchWeb(st.query ?? query, searchOpts)
+            const formatted = formatSearch(data as never)
+            breadthCalls.push({ id: `rs-${n}`, name: 'search', arguments: JSON.stringify({ query: st.query ?? query }), result: formatted })
+            for (const x of (data as { results?: { url?: string }[] }).results ?? []) {
+              if (x?.url && !seenUrls.includes(x.url)) { seenUrls.push(x.url); rawResults.push({ url: x.url }) }
+            }
+            log.push({ n: 'Deep research', m: tier.label, detail: `Breadth search ${n}/${tier.maxSearches}: “${(st.query ?? '').slice(0, 80)}” (${(data as { results?: unknown[] }).results?.length ?? 0} sources)`, at: Date.now() })
+            setSteps(setStep(getSteps(), st.id, { state: 'done', sources: (data as { results?: unknown[] }).results?.length ?? 0 }))
+          } catch (x: any) {
+            log.push({ n: 'Deep research', m: tier.label, err: String(x?.message ?? x), errCode: getErrorCode(x) ?? errCodeOf(x), at: Date.now() })
+            setSteps(setStep(getSteps(), st.id, { state: 'error', error: String(x?.message ?? x).slice(0, 200) }))
+            breadthCalls.push({ id: `rs-${n}`, name: 'search', arguments: JSON.stringify({ query: st.query ?? query }), result: String((x as Error)?.message ?? x), error: true })
+          }
+        }
+        // Page reads for top unique URLs (skipped when the reader is off).
+        if (prefs.reader !== false) {
+          const urls = seenUrls.slice(0, tier.maxReads)
+          if (urls.length) {
+            const withReads = [...getSteps()]
+            urls.forEach((u, i) => withReads.splice(withReads.length - 1, 0, { id: `rd${i + 1}`, kind: 'read' as const, label: `Read ${i + 1}`, query: u, state: 'queued' as const }))
+            setSteps(withReads)
+            let k = 0
+            for (const u of urls) {
+              if (r.stopped || Date.now() > deadline) break
+              k++
+              setSteps(setStep(getSteps(), `rd${k}`, { state: 'running' }))
+              try {
+                const page = await fetchPage(u)
+                breadthCalls.push({ id: `rr-${k}`, name: 'fetch_page', arguments: JSON.stringify({ url: u }), result: JSON.stringify({ url: page.url, title: page.title, text: (page.text ?? '').slice(0, 6000) }) })
+                setSteps(setStep(getSteps(), `rd${k}`, { state: 'done' }))
+              } catch (x: any) {
+                setSteps(setStep(getSteps(), `rd${k}`, { state: 'error', error: String(x?.message ?? x).slice(0, 200) }))
+              }
+            }
+          }
+        }
+        if (r.stopped) {
+          patchResearch((rs) => ({ ...rs, status: 'stopped', finishedAt: Date.now() }))
+          edit(chatId, mid, (m) => ({ ...m, sys: p.sys, log, toolRounds: breadthCalls.length ? [{ text: '', calls: breadthCalls }] : m.toolRounds }))
+          useLive.getState().clear(mid)
+          if (cur === r) { cur = null; set({ busy: false }) }
+          return
+        }
+        // Model-driven depth + synthesis: breadth rounds are preloaded, the
+        // model may spend the remaining budget on follow-ups before reporting.
+        const system = `${p.sys}${p.sys ? '\n\n' : ''}${researchSystemNote(query, tier)}`
+        let order = p.cand
+        try {
+          if ((get().features ?? DEFAULT_FEATURES).playlists && p.pl?.cls && order.length > 1) order = await route(p.pl, order, um.full ?? um.t, log, r)
+        } catch { /* routing is best-effort */ }
+        const histFor = () => (get().chats.find((c) => c.id === chatId)?.msgs ?? []).filter((m) => m.id !== mid)
+        const initialRounds = breadthCalls.length ? [{ text: '', calls: breadthCalls.filter((c) => !c.error) }] : []
+        let usedSearches = breadthCalls.filter((c) => c.name === 'search' && !c.error).length
+        let usedReads = breadthCalls.filter((c) => c.name === 'fetch_page' && !c.error).length
+        let depthIdx = 0
+        const enabledTools = (() => {
+          const g = get(), GF = g.features ?? DEFAULT_FEATURES
+          const base: Record<string, boolean> = GF.tools ? { ...g.tools, search: true, fetch_page: prefs.reader !== false } : { search: true, fetch_page: prefs.reader !== false }
+          if (featOn(get(), 'skills') && (p.skills ?? []).length) base[SKILL_TOOL_NAME] = true
+          return base
+        })()
+        let ok = false
+        for (const e of order) {
+          if (r.stopped) break
+          edit(chatId, mid, (m) => ({ ...m, by: `${e.name} · ${e.model} · Deep research (${tier.label})` }))
+          let txt = ''
+          try {
+            r.ctl = new AbortController()
+            const x = await runToolLoop(e, system, (rounds) => {
+              const all = [...initialRounds, ...rounds]
+              const partial = { id: mid, r: 'assistant' as const, t: '', toolRounds: all }
+              return wire(e, [...histFor(), partial])
+            }, enabledTools, (t) => {
+              txt += t
+              edit(chatId, mid, (m) => ({ ...m, t: txt }))
+            }, r.ctl, { ...(get().params.def ? {} : { max: get().params.max, temp: get().params.temp, topp: get().params.topp }), effort: get().effort[e.model] ?? '' }, () => {}, (rounds) => {
+              edit(chatId, mid, (m) => ({ ...m, toolRounds: [...initialRounds, ...rounds] }))
+            }, tier.maxRounds, {
+              search: async ({ query: q, count }: { query: string; count?: number }) => {
+                if (usedSearches >= tier.maxSearches) throw Error(`Search budget reached (${tier.maxSearches} for ${tier.label}). Synthesize the report from the evidence so far.`)
+                usedSearches++
+                depthIdx++
+                const label = `Follow-up ${depthIdx}`
+                setSteps([...getSteps().filter((s) => s.kind !== 'synthesize'), { id: `d${depthIdx}`, kind: 'search', label, query: String(q ?? '').slice(0, 120), state: 'running' }, ...(getSteps().filter((s) => s.kind === 'synthesize'))])
+                try {
+                  const data = await searchWeb(String(q ?? ''), { ...searchOpts, count: searchCountOf(prefs, count) })
+                  const out = formatSearch(data as never)
+                  setSteps(setStep(getSteps(), `d${depthIdx}`, { state: 'done', sources: (data as { results?: unknown[] }).results?.length ?? 0 }))
+                  return out
+                } catch (err: any) {
+                  setSteps(setStep(getSteps(), `d${depthIdx}`, { state: 'error', error: String(err?.message ?? err).slice(0, 200) }))
+                  throw err
+                }
+              },
+              fetch_page: async ({ url }: { url: string }) => {
+                if (prefs.reader === false) throw Error('The page reader is off.')
+                if (usedReads >= tier.maxReads) throw Error(`Read budget reached (${tier.maxReads} for ${tier.label}). Synthesize from the evidence so far.`)
+                usedReads++
+                return formatPage(await fetchPage(String(url ?? '')))
+              },
+            }, (calls) => { useLive.getState().set(mid, calls.map((c) => ({ ...c }))) })
+            txt = x.text
+            const allRounds = [...initialRounds, ...x.rounds]
+            bump(x.tin, x.tout); addCost(e, e.model, x.tin, x.tout)
+            log.push({ n: e.name, m: e.model, detail: `Deep research (${tier.label}) on “${query.slice(0, 80)}”: ${usedSearches} searches, ${usedReads} reads`, ms: Date.now() - t0, tin: x.tin, tout: x.tout, at: Date.now() })
+            setSteps(getSteps().map((s) => (s.state === 'running' || s.state === 'queued' ? { ...s, state: 'skipped' as const } : s)))
+            edit(chatId, mid, (m) => ({ ...m, t: txt, toolRounds: allRounds, toolFinal: txt, sys: system, log, research: m.research ? { ...m.research, status: 'done', steps: getSteps(), finishedAt: Date.now() } : m.research }))
+            set({ researchPanel: { mid } })
+            ok = true
+            break
+          } catch (x: any) {
+            if (r.stopped) break
+            log.push({ n: e.name, m: e.model, err: errText(e, (x as Error)?.message), errCode: getErrorCode(x) ?? errCodeOf(x), at: Date.now() })
+            if (p.ex) break
+          }
+        }
+        if (!ok && !r.stopped) {
+          patchResearch((rs) => ({ ...rs, status: 'error', error: 'No model responded.', finishedAt: Date.now() }))
+          edit(chatId, mid, (m) => ({ ...m, sys: system, log, toolRounds: m.toolRounds?.length ? m.toolRounds : initialRounds.length ? initialRounds : m.toolRounds, err: !m.t, by: m.by || 'No model responded', t: m.t || log.filter((x) => x.err).map((x) => `${x.n}${x.m ? ' · ' + x.m : ''}: ${x.err}`).join('\n') }))
+        }
+        useLive.getState().clear(mid)
+        if (cur === r) { cur = null; set({ busy: false }) }
       }
 
       async function answer(um: Msg, prev?: Snap[]) {
@@ -533,9 +710,10 @@ export const useS = create<S>()(
                   if (!def) throw Error(`Unknown or disabled skill: ${String(skillId || '').trim() || '(empty)'}. Use an id from the Available skills list.`)
                   return `Skill: ${def.name}\n${def.instructions}`
                 },
-                search: async ({ query }: { query: string }) => {
+                search: async ({ query, count }: { query: string; count?: number }) => {
                   const prefs = normSearch(get().search)
-                  return formatSearch(await searchWeb(query, { mode: prefs.mode, provider: prefs.provider, fallback: prefs.fallback, apiKey: searchKeyOf(prefs), zone: prefs.zone }))
+                  if (typeof query !== 'string') throw Error('query must be a string')
+                  return formatSearch(await searchWeb(query, { mode: prefs.mode, provider: prefs.provider, fallback: prefs.fallback, apiKey: searchKeyOf(prefs), zone: prefs.zone, count: searchCountOf(prefs, count) }))
                 },
                 fetch_page: async ({ url }: { url: string }) => {
                   const prefs = normSearch(get().search)
@@ -695,7 +873,7 @@ export const useS = create<S>()(
           { id: 'k6', name: 'translate', desc: 'Translate text', in: 'text', sys: 'Translate the provided text into the language requested. If no target language is specified, ask which language.', tpl: '{{input}}', pl: '', on: true },
           { id: 'k7', name: 'brainstorm', desc: 'Generate useful ideas', in: 'text', sys: 'Generate varied, practical ideas. Keep each idea distinct and briefly explain why it may work.', tpl: '{{input}}', pl: '', on: true },
         ],
-        chats: [], chat: '', memories: [], memoryPrefs: { enabled: false, intent: 'balanced', recall: 'contextual', method: 'local', classifierEp: '', classifierModel: '' }, docPrefs: { ...BLANK_DOCS }, tools: { ...DEFAULT_TOOLS }, search: { ...BLANK_SEARCH, keys: { ...BLANK_SEARCH.keys } }, skills: DEFAULT_SKILL_STATE.map((s) => ({ ...s })), widgets: {}, widgetPrefs: { usageGroup: 'endpoint', usageMode: 'success', usageFormat: '{in}/{out}', usageTotal: false, usagePeriod: 'all', lastSpeed: true, timeUnit: 'auto', widgetOrder: WIDGETS.map(([k]) => k), shortcuts: KEYS.map(([k]) => k), contextLimit: 128000, showDisabledEndpoints: true, scratchRows: 6, snippetLimit: 20, costDecimals: 4, activePromptsOnly: false, charsPerToken: 4, hideDoneTodos: false }, rail: false, pad: '', snips: [],
+        chats: [], chat: '', memories: [], memoryPrefs: { enabled: false, intent: 'balanced', recall: 'contextual', method: 'local', classifierEp: '', classifierModel: '' }, docPrefs: { ...BLANK_DOCS }, research: { ...BLANK_RESEARCH }, tools: { ...DEFAULT_TOOLS }, search: { ...BLANK_SEARCH, keys: { ...BLANK_SEARCH.keys } }, skills: DEFAULT_SKILL_STATE.map((s) => ({ ...s })), widgets: {}, widgetPrefs: { usageGroup: 'endpoint', usageMode: 'success', usageFormat: '{in}/{out}', usageTotal: false, usagePeriod: 'all', lastSpeed: true, timeUnit: 'auto', widgetOrder: WIDGETS.map(([k]) => k), shortcuts: KEYS.map(([k]) => k), contextLimit: 128000, showDisabledEndpoints: true, scratchRows: 6, snippetLimit: 20, costDecimals: 4, activePromptsOnly: false, charsPerToken: 4, hideDoneTodos: false }, rail: false, pad: '', snips: [],
         params: { def: true, temp: 0.7, topp: 1, max: 4096, maxToolRounds: 8, highToolsUnlocked: false }, effort: {},
         workspacePrefs: { defaultView: 'latest', autoOpen: true, autoFollow: true },
         advanced: { ...DEFAULT_ADVANCED },
@@ -706,6 +884,7 @@ export const useS = create<S>()(
         draft: '', busy: false, notice: null,
         /* Workspace (first-class entity) */
         workspaces: {}, selectedRevision: {},
+        researchPanel: null,
 
         patch: (p) => set(p),
         add: (k) => set((s) => ({ [k]: [...(s[k] as any[]), BLANK[k]()] }) as Partial<S>),
@@ -741,6 +920,24 @@ export const useS = create<S>()(
           if (s.busy) return false
           const raw = v.trim()
           if (!raw && !att.length) return false
+          const researchReq = parseResearchRequest(raw)
+          if (researchReq && !att.length) {
+            const pre = plan(s, { id: 'tmp', r: 'user', t: raw } as Msg)
+            if (pre.err) return warn(pre.err)
+            const um: Msg = { id: uid(), r: 'user', t: raw, at: Date.now(), att, full: raw }
+            um.historyTokens = 0
+            um.explicitTokens = est(raw)
+            const mid = uid()
+            const initialTier = researchReq.tier ?? normResearch((s as unknown as { research?: unknown }).research).defaultTier
+            const rq: ResearchState = { id: uid(), query: researchReq.query, tier: initialTier, status: 'tier-pick', steps: [], startedAt: Date.now() }
+            set((st) => {
+              const old = st.chats.find((c) => c.id === st.chat)
+              const base: Chat = old ?? { id: uid(), title: 'New chat', msgs: [] }
+              const next: Chat = { ...base, started: true, titleAuto: base.msgs.length ? base.titleAuto : st.prefs.autoTitle, title: base.msgs.length ? base.title : researchReq.query.slice(0, 40), msgs: [...base.msgs, um, { id: mid, r: 'assistant', t: '', at: Date.now(), by: '', log: [], research: rq }] }
+              return { chat: base.id, chats: old ? st.chats.map((c) => (c.id === base.id ? next : c)) : [next, ...st.chats], notice: null }
+            })
+            return true
+          }
           let text = raw, cmd: Cmd | undefined
           const m = v.match(/^\/(\S+)(?:\s+([\s\S]*))?$/)
           if (m && featOn(s, 'commands')) {
@@ -816,6 +1013,33 @@ export const useS = create<S>()(
           void answer(um, prev)
         },
         delMsg: (id) => set((s) => ({ chats: s.chats.map((c) => ({ ...c, msgs: c.msgs.filter((m) => m.id !== id) })) })),
+        chooseResearchTier: (mid, tier) => {
+          const s = get()
+          if (s.busy) return
+          const c = s.chats.find((x) => x.id === s.chat)
+          if (!c) return
+          const i = c.msgs.findIndex((m) => m.id === mid)
+          if (i < 0) return
+          const msg = c.msgs[i]
+          if (!msg.research || msg.research.status !== 'tier-pick') return
+          const um = [...c.msgs.slice(0, i)].reverse().find((m) => m.r === 'user')
+          if (!um) return
+          set((st) => ({
+            chats: st.chats.map((x) => (x.id === c.id ? { ...x, msgs: x.msgs.map((m) => (m.id === mid && m.research ? { ...m, research: { ...m.research, tier } } : m)) } : x)),
+            research: { ...st.research, defaultTier: tier },
+          }))
+          void runResearch(mid, um, msg.research.query, tier)
+        },
+        stopResearch: (mid) => {
+          const s = get()
+          const c = s.chats.find((x) => x.msgs.some((m) => m.id === mid))
+          if (!c) return
+          if (cur) { cur.stopped = true; cur.ctl?.abort() }
+          set((st) => ({
+            busy: false,
+            chats: st.chats.map((x) => (x.id === c.id ? { ...x, msgs: x.msgs.map((m) => (m.id === mid && m.research && (m.research.status === 'running' || m.research.status === 'tier-pick') ? { ...m, research: { ...m.research, status: 'stopped', finishedAt: Date.now() } } : m)) } : x)),
+          }))
+        },
         editMsg: (id, t) => {
           const s = get(), c = s.chats.find((x) => x.id === s.chat), i = c ? c.msgs.findIndex((m) => m.id === id) : -1
           if (!c || i < 0) return
@@ -917,6 +1141,8 @@ export const useS = create<S>()(
         p.prefs = { ...p.prefs, fade: p.prefs?.fade ?? 0.4, tempHours: p.prefs?.tempHours ?? 3, fontBody: p.prefs?.fontBody ?? 'system', fontMono: p.prefs?.fontMono ?? 'system', fontHeader: p.prefs?.fontHeader ?? 'system', modelPrimary: p.prefs?.modelPrimary ?? ({ none: 'id', name: 'name', provider: 'id', both: 'name' } as const)[(p.prefs?.modelDisplay as string) ?? 'both'] ?? 'name', modelSecondary: p.prefs?.modelSecondary ?? ({ none: 'none', name: 'none', provider: 'provider', both: 'provider' } as const)[(p.prefs?.modelDisplay as string) ?? 'both'] ?? 'none', paletteMax: p.prefs?.paletteMax ?? 320, chatWidth: p.prefs?.chatWidth ?? 'standard', settingsWidth: p.prefs?.settingsWidth ?? 1024, settingsHeight: p.prefs?.settingsHeight ?? 780, modelPickerHeight: p.prefs?.modelPickerHeight ?? 480, showModelPricing: p.prefs?.showModelPricing ?? false, titleEp: p.prefs?.titleEp ?? '', titleModel: p.prefs?.titleModel ?? '', routingMode: ['ordered', 'fastest', 'cheapest'].includes(p.prefs?.routingMode) ? p.prefs.routingMode : 'ordered', sidebarWidth: p.prefs?.sidebarWidth ?? 288, widgetWidth: p.prefs?.widgetWidth ?? 320, workspaceWidth: typeof p.prefs?.workspaceWidth === 'number' && p.prefs.workspaceWidth <= 1 ? p.prefs.workspaceWidth : 0.4, workspaceSplit: typeof p.prefs?.workspaceSplit === 'number' ? p.prefs.workspaceSplit : 0.2, modalBlur: p.prefs?.modalBlur ?? 12, settingsOpacity: p.prefs?.settingsOpacity ?? 55, temporaryByDefault: p.prefs?.temporaryByDefault ?? false }
         p.tools = { ...DEFAULT_TOOLS, ...(p.tools ?? {}) }
         p.search = normSearch(p.search)
+        p.research = normResearch(p.research)
+        p.researchPanel = null
         p.skills = normSkills(p.skills).skills
         if (typeof p.pr !== 'string') p.pr = ''
         // Fresh installs start on the general-purpose prompt. Existing custom
@@ -987,7 +1213,7 @@ export const useS = create<S>()(
       },
       partialize: (s) => ({
         ...s, busy: false, draft: '', notice: null, flashMsg: null,
-        chats: s.chats.map((c) => ({ ...c, msgs: c.msgs.filter((m) => !(m.r === 'assistant' && !m.t && !m.err)).map((m) => ({ ...m, fadeEvents: undefined, att: m.att?.map(({ name, kind, size, mime, source, pages }) => ({ name, kind, size, ...(mime ? { mime } : {}), ...(source ? { source } : {}), ...(pages ? { pages } : {}) })) })) })),
+        chats: s.chats.map((c) => ({ ...c, msgs: c.msgs.filter((m) => !(m.r === 'assistant' && !m.t && !m.err && !m.research)).map((m) => ({ ...m, fadeEvents: undefined, att: m.att?.map(({ name, kind, size, mime, source, pages }) => ({ name, kind, size, ...(mime ? { mime } : {}), ...(source ? { source } : {}), ...(pages ? { pages } : {}) })) })) })),
         workspaces: s.workspaces,
         selectedRevision: s.selectedRevision,
       }),

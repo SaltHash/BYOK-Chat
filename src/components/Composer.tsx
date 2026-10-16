@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react'
-import { Plus, FileUp, FileText, Image as ImageIcon, ArrowUp, Square, ChevronRight, ListMusic, Cpu, ScrollText, Settings, Search, X, TriangleAlert, Wrench, Link as LinkIcon, ScanText } from 'lucide-react'
+import { Plus, FileUp, FileText, Image as ImageIcon, ArrowUp, Square, ChevronRight, ListMusic, Cpu, ScrollText, Settings, Search, BookOpen, X, TriangleAlert, Wrench, Link as LinkIcon, ScanText } from 'lucide-react'
 import { useS, usable, modelsOf, modelNameOf, featOn, normDocs, type Att } from '../store'
 import { CI, TOOLS } from '../meta'
 import { composerWidth } from '../layout'
@@ -76,7 +76,10 @@ export function Composer({ cfg }: { cfg: (t: string) => void }) {
   const menu: { k: string; icon: Ic; label: string; hint: string; pick: () => void }[] | null = /^\/\S*$/.test(v) && featOn(s, 'commands')
     ? s.cmds.filter((c) => c.on && c.name.startsWith(v.slice(1))).map((c) => ({ k: c.id, icon: CI[c.in], label: '/' + c.name, hint: c.desc || c.in, pick: () => s.patch({ draft: '/' + c.name + ' ' }) }))
     : tw && featOn(s, 'tools')
-      ? TOOLS.filter((t) => t[3].startsWith(tw.toLowerCase())).map((t) => ({ k: t[0], icon: t[2], label: t[3].split('(')[0], hint: s.tools[t[0]] ? t[4] : 'Off. Enable in Settings → Tools', pick: () => s.patch({ draft: v.slice(0, v.length - tw.length) + '@' + t[0] + (/^(calc|count|json|base64|search|fetch_page|random|hash)$/.test(t[0]) ? '(' : ' ') }) }))
+      ? [
+        ...TOOLS.filter((t) => t[3].startsWith(tw.toLowerCase())).map((t) => ({ k: t[0], icon: t[2], label: t[3].split('(')[0], hint: s.tools[t[0]] ? t[4] : 'Off. Enable in Settings → Tools', pick: () => s.patch({ draft: v.slice(0, v.length - tw.length) + '@' + t[0] + (/^(calc|count|json|base64|search|fetch_page|random|hash)$/.test(t[0]) ? '(' : ' ') }) })),
+        ...('@research'.startsWith(tw.toLowerCase()) ? [{ k: 'deep_research', icon: BookOpen as Ic, label: '@research', hint: 'Start deep research: pick Quick, Standard, or Thorough', pick: () => s.patch({ draft: v.slice(0, v.length - tw.length) + '@research(' }) }] : []),
+      ]
       : null
   const hl = Math.min(hi, Math.max((menu?.length ?? 1) - 1, 0))
   const sel = s.sel ? (s.sel.k === 'pl' ? s.pls : s.eps).find((x) => x.id === s.sel!.id) : undefined
@@ -203,6 +206,7 @@ export function Composer({ cfg }: { cfg: (t: string) => void }) {
               <>
                 <Item icon={FileUp} onClick={() => { pick(''); close() }}>Upload a file</Item>
                 <Item icon={LinkIcon} onClick={() => { setUrlOpen(true); close() }}>Attach page from URL</Item>
+                <Item icon={BookOpen} sub="Quick · Standard · Thorough" onClick={() => { s.patch({ draft: v ? `${v.trim()} @research(` : '@research(' }); close(); ta.current?.focus() }}>Deep research…</Item>
                 <Item icon={Wrench} onClick={() => { close(); cfg('tools') }}>Manage tools…</Item>
               </>
             )}

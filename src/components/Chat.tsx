@@ -9,6 +9,7 @@ import { Header } from './Header'
 import { Tutorial } from './Extra'
 import { Md, UserText } from './Md'
 import { WorkspaceTile, WorkspacePanel } from './Workspace'
+import { ResearchTierPicker, ResearchProgressCard, ResearchTile, ResearchPanel } from './Research'
 import { SourcesPanel, scrollToSource } from './Sources'
 import { collectMessageSources, linkifyCitations, parseSearchEvidence } from '../citations'
 import { findLastWorkspacePath, findWritingPath, extractWorkspaceIds, type WorkspaceCallLike } from '../workspace'
@@ -135,7 +136,7 @@ function MessageActions({ calls }: { calls: { id: string; name: string; argument
   </div>
 }
 
-function M({ m, last, onOpenWorkspace, selectedWorkspaceId, cfg }: { m: Msg; last: boolean; onOpenWorkspace: (mid: string, workspaceId: string, filePath?: string) => void; selectedWorkspaceId?: string | null; cfg: (t: string) => void }) {
+function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWorkspaceId, cfg }: { m: Msg; last: boolean; onOpenWorkspace: (mid: string, workspaceId: string, filePath?: string) => void; onOpenResearch: (mid: string) => void; selectedWorkspaceId?: string | null; cfg: (t: string) => void }) {
   const { prefs, busy, advanced, features, workspaces } = useS()
   const adv = featOn({ features }, 'advanced') ? advanced : undefined
   const [sysOpen, setSysOpen] = useState(false)
@@ -300,6 +301,9 @@ function M({ m, last, onOpenWorkspace, selectedWorkspaceId, cfg }: { m: Msg; las
         })()}
       </div>
       {/* Workspace tiles for this message — shown above message controls but below content */}
+      {m.research && <ResearchTierPicker msg={m} />}
+      {m.research && <ResearchProgressCard msg={m} />}
+      {m.research && m.research.status === 'done' && <ResearchTile msg={m} onOpen={() => onOpenResearch(m.id)} />}
       {(() => {
         const wsIds = new Set<string>([...(m.workspaceIds ?? []), ...extractWorkspaceIds(((live ?? []) as { name: string; arguments: string; result?: string }[]))])
         const ids = Array.from(wsIds)
@@ -426,6 +430,8 @@ export function Chat({ side, toggle, cfg, pal }: { side: boolean; toggle: () => 
   const workspace = workspaceMsg ? s.workspaces[workspacePanel.workspaceId] : undefined
   const selectedRevId = workspacePanel ? s.selectedRevision[workspacePanel.workspaceId] : null
   const workspaceFrac = clampWorkspaceFrac(s.prefs.workspaceWidth)
+  const researchMid = useS((st) => st.researchPanel?.mid ?? null)
+  const researchMsg = researchMid ? c?.msgs.find((m) => m.id === researchMid && m.research) : undefined
 
   const startResize = (e: React.PointerEvent) => {
     e.preventDefault()
@@ -449,7 +455,7 @@ export function Chat({ side, toggle, cfg, pal }: { side: boolean; toggle: () => 
           <div ref={box} onScroll={(e) => { const b = e.currentTarget; stick.current = b.scrollHeight - b.scrollTop - b.clientHeight < 80 }} className="min-h-0 flex-1 overflow-y-auto" style={{ WebkitMaskImage: 'linear-gradient(to bottom, black calc(100% - 32px), rgba(0,0,0,0.1) 100%)', maskImage: 'linear-gradient(to bottom, black calc(100% - 32px), rgba(0,0,0,0.1) 100%)' }}>
             {c && c.msgs.length ? (
               <div className="mx-auto space-y-8 px-4 py-6" style={{ maxWidth: CHAT_WIDTH[s.prefs.chatWidth] }}>
-                {c.msgs.map((m, i) => <M key={m.id} m={m} cfg={cfg} last={i === c.msgs.length - 1} onOpenWorkspace={(mid, wsId, filePath) => setWorkspacePanel({ mid, workspaceId: wsId, initialFilePath: filePath })} selectedWorkspaceId={workspacePanel?.mid === m.id ? selectedRevId : null} />)}
+                {c.msgs.map((m, i) => <M key={m.id} m={m} cfg={cfg} last={i === c.msgs.length - 1} onOpenWorkspace={(mid, wsId, filePath) => setWorkspacePanel({ mid, workspaceId: wsId, initialFilePath: filePath })} onOpenResearch={(mid) => s.patch({ researchPanel: { mid } })} selectedWorkspaceId={workspacePanel?.mid === m.id ? selectedRevId : null} />)}
               </div>
             ) : !s.eps.some(usable) ? (
               <Tutorial cfg={cfg} />
@@ -471,6 +477,14 @@ export function Chat({ side, toggle, cfg, pal }: { side: boolean; toggle: () => 
             <div role="separator" aria-orientation="vertical" aria-label="Resize workspace panel" onPointerDown={startResize} className="hidden w-1.5 shrink-0 cursor-col-resize bg-transparent hover:bg-ac/50 sm:block" />
             <aside aria-label="Workspace side panel" style={wide ? { flex: `0 0 ${workspaceFrac * 100}%`, maxWidth: '70%', minWidth: '15%' } : { height: '45dvh', width: '100%' }} className="flex min-h-0 shrink-0 flex-col border-t border-hov bg-surf/40 sm:border-l sm:border-t-0">
               <WorkspacePanel key={`${workspaceMsg.id}:${workspaceMsg.ai ?? 0}:${workspacePanel.workspaceId}:${workspacePanel.initialFilePath ?? ''}`} msg={workspaceMsg} live={liveTools[workspaceMsg.id]} workspace={workspace} selectedRevisionId={selectedRevId ?? workspace.revisions[workspace.revisions.length - 1].id} setSelectedRevisionId={(id) => s.patch({ selectedRevision: { ...s.selectedRevision, [workspacePanel.workspaceId]: id } })} onClose={() => setWorkspacePanel(null)} initialFilePath={workspacePanel.initialFilePath} />
+            </aside>
+          </>
+        )}
+        {researchMsg && (
+          <>
+            <div role="separator" aria-orientation="vertical" aria-label="Resize research panel" onPointerDown={startResize} className="hidden w-1.5 shrink-0 cursor-col-resize bg-transparent hover:bg-ac/50 sm:block" />
+            <aside aria-label="Research side panel" style={wide ? { flex: `0 0 ${workspaceFrac * 100}%`, maxWidth: '70%', minWidth: '15%' } : { height: '45dvh', width: '100%' }} className="flex min-h-0 shrink-0 flex-col border-t border-hov bg-surf/40 sm:border-l sm:border-t-0">
+              <ResearchPanel key={`${researchMsg.id}:${researchMsg.research?.finishedAt ?? 0}`} msg={researchMsg} onClose={() => s.patch({ researchPanel: null })} />
             </aside>
           </>
         )}

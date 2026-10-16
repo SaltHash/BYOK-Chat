@@ -2,7 +2,8 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 
 const { TOOLS } = await import('./meta.ts')
-const { executeTool, runToolLoop, stream, toolsFor, wire } = await import('./engine.ts')
+const { executeTool, runToolLoop, stream, toolsFor, wire, searchWeb } = await import('./engine.ts')
+const { normSearch, searchCountOf } = await import('./store.ts')
 const jsonResponse = (value) => new Response(JSON.stringify(value), { headers: { 'content-type': 'application/json' } })
 const openai = { type: 'openai', url: 'https://provider.example/v1', key: 'test-key', model: 'test-model' }
 const anthropic = { ...openai, type: 'anthropic' }
@@ -255,6 +256,57 @@ test('runToolLoop forwards live tool deltas to its callback', async () => {
 })
 
 const { estimateHistoryTokens, trimHistory, readAtt, readAtts } = await import('./engine.ts')
+
+test('search results-per-search defaults to the user max and never exceeds it', () => {
+  assert.equal(normSearch({}).maxResults, 8)
+  assert.equal(normSearch({ maxResults: 3 }).maxResults, 3)
+  assert.equal(normSearch({ maxResults: 99 }).maxResults, 8)
+  assert.equal(normSearch({ maxResults: 0 }).maxResults, 1)
+  assert.equal(normSearch({ maxResults: 'junk' }).maxResults, 8)
+  const prefs = normSearch({ maxResults: 5 })
+  assert.equal(searchCountOf(prefs), 5)
+  assert.equal(searchCountOf(prefs, 3), 3)
+  assert.equal(searchCountOf(prefs, 7), 5)
+  assert.equal(searchCountOf(prefs, 0), 1)
+  assert.equal(searchCountOf(prefs, 'junk'), 5)
+})
+
+test('search tool accepts an integer count and rejects other types', async () => {
+  const searchFetch = globalThis.fetch
+  globalThis.fetch = async () => jsonResponse({ query: 'q', results: [{ id: 'S1', title: 'T', url: 'https://one.example/a', snippet: 's' }] })
+  try {
+    const ok = await executeTool({ id: 's-count', name: 'search', arguments: JSON.stringify({ query: 'q', count: 3 }) }, enabled)
+    assert.equal(ok.error, undefined)
+    const bad = await executeTool({ id: 's-bad', name: 'search', arguments: JSON.stringify({ query: 'q', count: 'many' }) }, enabled)
+    assert.match(bad.result, /Invalid argument: count/)
+    const fractional = await executeTool({ id: 's-frac', name: 'search', arguments: JSON.stringify({ query: 'q', count: 2.5 }) }, enabled)
+    assert.match(fractional.result, /Invalid argument: count/)
+  } finally { globalThis.fetch = searchFetch }
+})
+
+test('searchWeb forwards a clamped count to the backend', async () => {
+  const original = globalThis.fetch
+  const bodies = []
+  globalThis.fetch = async (_url, init) => {
+    bodies.push(JSON.parse(init.body))
+    return jsonResponse({ query: 'q', results: [] })
+  }
+  try {
+    await searchWeb('q', { count: 3 })
+    assert.equal(bodies.at(-1).count, 3)
+    await searchWeb('q', { count: 99 })
+    assert.equal(bodies.at(-1).count, 8)
+    await searchWeb('q', {})
+    assert.equal('count' in bodies.at(-1), false)
+  } finally { globalThis.fetch = original }
+})
+
+test('settings list research tools before niche developer utilities', () => {
+  const names = TOOLS.map(([name]) => name)
+  assert.ok(names.indexOf('search') < names.indexOf('uuid'))
+  assert.ok(names.indexOf('search') < names.indexOf('hash'))
+  assert.ok(names.indexOf('fetch_page') < names.indexOf('base64'))
+})
 const { prunePersisted } = await import('./store.ts')
 
 test('trimHistory drops oldest-first, always keeps the latest message, and fits the budget', () => {

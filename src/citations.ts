@@ -1,5 +1,5 @@
 /* Citation helpers: turn per-search evidence blocks back into structured
- * sources, then turn the model's [S1] / [Source S1] tokens into real links.
+ * sources, then turn the model's [S1] / [Source S1] / [S2, S8] tokens into real links.
  * Pure + unit-testable; no DOM, no store imports. */
 
 export type CiteSource = {
@@ -39,7 +39,7 @@ export function parseSearchEvidence(result: string): { query: string; provider: 
       title: (m[2] ?? '').trim() || url,
       url,
       host: hostOf(url),
-      snippet: (m[4] ?? '').replace(/\s+/g, ' ').trim(),
+      snippet: (m[4] ?? '').replace(/<\/?search_evidence>/g, ' ').replace(/\s+/g, ' ').trim(),
       query,
       engine: provider || undefined,
     })
@@ -92,24 +92,57 @@ export function collectMessageSources(rounds?: { calls: { name: string; argument
   return [...seen.values()]
 }
 
-/* Citation ids referenced by rendered text: [S1], [Source S1], [S1](url). */
+/* Citation ids referenced by rendered text: [S1], [Source S1], [S1](url),
+ * plus grouped forms like [S2, S8], [S1; S2], [Sources S1, S2]. */
 export function extractCitedIds(text: string): string[] {
   const ids = new Set<string>()
-  const re = /\[(?:Source )?(S\d+)\](?:\([^)]*\))?/gi
+  const re = /\[(?:Sources? )?([^\]\n]{1,80})\](?:\([^)]*\))?/gi
   let m: RegExpExecArray | null
-  while ((m = re.exec(String(text ?? '')))) ids.add(m[1].toUpperCase())
+  while ((m = re.exec(String(text ?? '')))) {
+    const inner = m[1] ?? ''
+    if (!/S\d+/i.test(inner)) continue
+    // Only treat the bracket as a citation when its contents are ids plus
+    // separators (commas, semicolons, whitespace, &, +, "and", "Source(s)").
+    const stripped = inner
+      .replace(/sources?/gi, '')
+      .replace(/\band\b/gi, '')
+      .replace(/S\d+/gi, '')
+      .replace(/[,;+\s&]/g, '')
+    if (stripped !== '') continue
+    for (const hit of inner.match(/S\d+/gi) ?? []) ids.add(hit.toUpperCase())
+  }
   return [...ids].sort((a, b) => Number(a.slice(1)) - Number(b.slice(1)))
 }
 
-/* Rewrite bare [S1] / [Source S1] tokens into markdown links against sources.
- * Already-linked [S1](…) is left alone; unknown ids are left as plain text. */
+/* Rewrite bare [S1] / [Source S1] / [S2, S8] tokens into markdown links
+ * against sources. Already-linked [S1](…) is left alone; unknown ids are
+ * left as plain text ([S2, S9] links S2, leaves [S9]). */
 export function linkifyCitations(text: string, sources: CiteSource[]): string {
   if (!sources.length) return text
   const byId = new Map(sources.map((s) => [s.citeId.toUpperCase(), s]))
-  return String(text ?? '').replace(/\[(?:Source )?(S\d+)\](?!\()/gi, (full, id: string) => {
-    const s = byId.get(String(id).toUpperCase())
-    return s ? `[${s.citeId}](${s.url} "${s.title.replace(/"/g, "'")}")` : full
-  })
+  const linkOf = (id: string): string | null => {
+    const s = byId.get(id.toUpperCase())
+    return s ? `[${s.citeId}](${s.url} "${s.title.replace(/"/g, "'")}")` : null
+  }
+  return String(text ?? '').replace(/( |&nbsp;|\u00a0)?\[(?:Sources? )?([^\]\n]{1,80})\](?!\()/gi, (full, sp: string, inner: string) => {
+    if (!/S\d+/i.test(inner)) return full
+    const stripped = String(inner)
+      .replace(/sources?/gi, '')
+      .replace(/\band\b/gi, '')
+      .replace(/S\d+/gi, '')
+      .replace(/[,;+\s&]/g, '')
+    if (stripped !== '') return full
+    const ids = inner.match(/S\d+/gi) ?? []
+    if (!ids.length) return full
+    const glue = sp ? ' ' : ''
+    if (ids.length === 1) {
+      // Preserve the [Source S1] spelling for singletons.
+      const link = linkOf(ids[0])
+      return (link ? glue + (link ?? full) : full)
+    }
+    // Grouped ids render as adjacent pills (space-separated, no comma).
+    return glue + ids.map((id) => linkOf(id) ?? `[${id.toUpperCase()}]`).join(' ')
+  }).replace(/(\][(][^)\n]*[)])\s+([.,;:!?])/g, '$1$2').replace(/(\[S\d+\])\s+([.,;:!?])/gi, '$1$2')
 }
 
 /* Coverage check for the strict-citations setting: which cited ids are

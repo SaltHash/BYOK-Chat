@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { BookOpen, ChevronDown, Copy, Check, ExternalLink, FileText, Link2, AlertTriangle } from 'lucide-react'
+import { BookOpen, ChevronDown, ChevronUp, Copy, Check, ExternalLink, FileText, Link2, AlertTriangle } from 'lucide-react'
 import { fetchPage } from '../engine'
 import { truncateSnippet, citationCoverage, type CiteSource } from '../citations'
 import { cx } from './ui'
@@ -87,11 +87,19 @@ export function SourcesPanel({ msgId, text, sources, defaultOpen, strict, open, 
         )}
       </div>
       {isOpen && (
-        <ul className="space-y-2" aria-label="Sources used in this reply">
-          {ordered.map((s) => (
-            <Row key={s.citeId} msgId={msgId} source={s} flash={flash === s.citeId.toUpperCase()} cited={citedSet.has(s.citeId.toUpperCase())} />
-          ))}
-        </ul>
+        <>
+          <ul className="space-y-2" aria-label="Sources used in this reply">
+            {ordered.map((s) => (
+              <Row key={s.citeId} msgId={msgId} source={s} flash={flash === s.citeId.toUpperCase()} cited={citedSet.has(s.citeId.toUpperCase())} />
+            ))}
+          </ul>
+          <button
+            onClick={() => setIsOpen(false)}
+            className="inline-flex min-h-9 items-center gap-1.5 rounded-full px-3 py-1.5 text-xs text-mu transition-colors hover:bg-hov hover:text-tx"
+          >
+            <ChevronUp size={14} />Collapse
+          </button>
+        </>
       )}
     </div>
   )
