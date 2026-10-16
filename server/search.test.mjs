@@ -1,18 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { boundedInt, buildSearchUrl, selectResults, normalizeMode, normalizeFallback, normalizeProvider, providerNeedsKey, classifyUpstream, buildApiRequest, parseApiResponse, runSearxng, runApiSearch, apiKeyFor, resolveApiKey, resolveZone } from './search.mjs'
-
-test('builds an encoded SearXNG JSON search URL', () => {
-  const url = buildSearchUrl('http://127.0.0.1:8080', 'Fedora Linux & Podman')
-  assert.equal(url.origin, 'http://127.0.0.1:8080')
-  assert.equal(url.pathname, '/search')
-  assert.equal(url.searchParams.get('q'), 'Fedora Linux & Podman')
-  assert.equal(url.searchParams.get('format'), 'json')
-})
-
-test('rejects non-HTTP search service URLs', () => {
-  assert.throws(() => buildSearchUrl('file:///tmp', 'query'), /HTTP or HTTPS/)
-})
+import { boundedInt, selectResults, normalizeProvider, providerNeedsKey, classifyUpstream, buildApiRequest, parseApiResponse, runApiSearch, apiKeyFor, resolveApiKey, resolveZone } from './search.mjs'
 
 test('normalizes, deduplicates and favors distinct high-scoring sources', () => {
   const results = selectResults([
@@ -46,14 +34,7 @@ test('bounds configurable integer settings', () => {
   assert.equal(boundedInt('invalid', 8, 1, 8), 8)
 })
 
-test('normalizes search modes and provider aliases', () => {
-  assert.equal(normalizeMode('SearXNG'), 'searxng')
-  assert.equal(normalizeMode('API'), 'api')
-  assert.equal(normalizeMode('API (with fallback)'), 'api')
-  assert.equal(normalizeMode('unknown', 'api'), 'api')
-  assert.equal(normalizeFallback(true), true)
-  assert.equal(normalizeFallback('false', true), false)
-  assert.equal(normalizeFallback(undefined, true), true)
+test('normalizes provider aliases', () => {
   assert.equal(normalizeProvider('TinyFish'), 'tinyfish')
   assert.equal(normalizeProvider('you.com'), 'you')
   assert.equal(normalizeProvider('exa.ai'), 'exa')
@@ -140,7 +121,7 @@ test('reports timeouts as retryable instead of generic failures', async () => {
     signal?.addEventListener('abort', () => { const error = new Error('aborted'); error.name = 'AbortError'; reject(error) })
   })
   await assert.rejects(
-    () => runSearxng('q', { baseUrl: 'http://127.0.0.1:8080', timeoutMs: 20, retry: { maxRetries: 0 }, fetchFn: hanging }),
+    () => runApiSearch('tinyfish', 'q', { apiKey: 'k', timeoutMs: 20, limits: { maxResults: 8, maxSnippetChars: 100, evidenceBudget: 1000 }, retry: { maxRetries: 0 }, fetchFn: hanging }),
     (error) => error.code === 'timeout' && error.retryable === true,
   )
 })
@@ -174,10 +155,7 @@ test('prefers browser BYOK keys and zones over server env', () => {
   assert.equal(resolveZone('', { SEARCH_API_ZONE: 'server-zone' }), 'server-zone')
 })
 
-test('runs SearXNG and API searches through selectResults', async () => {
-  const searxngFetch = async () => new Response(JSON.stringify({ results: [{ title: 'S', url: 'https://s.example/', content: 'snip' }] }), { headers: { 'content-type': 'application/json' } })
-  const sResults = await runSearxng('q', { baseUrl: 'http://127.0.0.1:8080', timeoutMs: 5000, limits: { maxResults: 8, maxSnippetChars: 100, evidenceBudget: 1000 }, fetchFn: searxngFetch })
-  assert.equal(sResults[0].id, 'S1')
+test('runs API searches through selectResults', async () => {
   const apiFetch = async () => new Response(JSON.stringify({ results: [{ title: 'T', url: 'https://t.example/', snippet: 'hello' }] }), { headers: { 'content-type': 'application/json' } })
   const aResults = await runApiSearch('tinyfish', 'q', { apiKey: 'k', timeoutMs: 5000, limits: { maxResults: 8, maxSnippetChars: 100, evidenceBudget: 1000 }, fetchFn: apiFetch })
   assert.equal(aResults[0].title, 'T')

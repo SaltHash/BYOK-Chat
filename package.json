@@ -7,7 +7,10 @@
     "build": "vite build",
     "preview": "vite preview",
     "start": "node server.mjs",
-    "test": "node --experimental-loader ./tests/ts-extension-loader.mjs --test"
+    "deploy": "npm run build && wrangler deploy",
+    "cf:dev": "wrangler dev",
+    "test": "node --experimental-loader ./tests/ts-extension-loader.mjs --test",
+    "test:worker": "node scripts/worker-smoke.mjs"
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.2.0",

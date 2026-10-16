@@ -3,15 +3,6 @@ export function boundedInt(value, fallback, min, max) {
   return Number.isInteger(n) ? Math.max(min, Math.min(max, n)) : fallback
 }
 
-export function buildSearchUrl(baseUrl, query) {
-  const base = new URL(baseUrl)
-  if (!['http:', 'https:'].includes(base.protocol)) throw new Error('SEARXNG_BASE_URL must use HTTP or HTTPS')
-  const endpoint = new URL('/search', base)
-  endpoint.searchParams.set('q', query)
-  endpoint.searchParams.set('format', 'json')
-  return endpoint
-}
-
 function canonicalUrl(value) {
   try {
     const u = new URL(value)
@@ -55,8 +46,6 @@ export function selectResults(items, { maxResults = 8, maxSnippetChars = 1800, e
 }
 
 /* ---- Multi-provider AI search ---- */
-
-export const SEARCH_MODES = ['api', 'searxng']
 
 export const SEARCH_API_PROVIDERS = {
   tinyfish: {
@@ -111,24 +100,6 @@ const PROVIDER_ALIASES = {
   brightdata: 'brightdata', 'bright-data': 'brightdata', 'bright data': 'brightdata', bright: 'brightdata',
 }
 
-export function normalizeMode(value, fallback = 'api') {
-  const v = String(value || '').trim().toLowerCase()
-  if (v === 'api') return 'api'
-  if (v === 'searxng') return 'searxng'
-  // Legacy three-option mode: api-fallback behaves like api with fallback enabled.
-  if (['api-fallback', 'api_fallback', 'api with fallback', 'api (with fallback)', 'fallback'].includes(v)) return 'api'
-  return fallback
-}
-
-export function normalizeFallback(value, fallback = true) {
-  if (typeof value === 'boolean') return value
-  if (typeof value === 'number') return value !== 0
-  const v = String(value ?? '').trim().toLowerCase()
-  if (['1', 'true', 'yes', 'on', 'fallback', 'with-fallback', 'with fallback'].includes(v)) return true
-  if (['0', 'false', 'no', 'off', 'none', 'no-fallback'].includes(v)) return false
-  return fallback
-}
-
 export function normalizeProvider(value, fallback = 'tinyfish') {
   const v = String(value || '').trim().toLowerCase()
   if (PROVIDER_ALIASES[v]) return PROVIDER_ALIASES[v]
@@ -137,7 +108,6 @@ export function normalizeProvider(value, fallback = 'tinyfish') {
 }
 
 export function providerLabel(provider) {
-  if (String(provider || '').trim().toLowerCase() === 'searxng') return 'SearXNG'
   return SEARCH_API_PROVIDERS[normalizeProvider(provider, '')]?.label || String(provider || '')
 }
 
@@ -401,15 +371,6 @@ async function fetchJson(url, options, { provider = '', timeoutMs = 8000, retry 
   } catch {
     throw searchFailure(`${providerLabel(provider)} returned invalid JSON.`, { status: response.status ?? 200, code: 'bad_response', retryable: false, provider })
   }
-}
-
-export async function runSearxng(query, { baseUrl, timeoutMs, limits, retry = {}, fetchFn = fetch } = {}) {
-  const endpoint = buildSearchUrl(baseUrl, query)
-  const body = await fetchJson(endpoint, { headers: { accept: 'application/json' } }, { provider: 'searxng', timeoutMs, retry }, fetchFn)
-  if (!body || !Array.isArray(body.results)) {
-    throw searchFailure('SearXNG returned malformed search results.', { status: 200, code: 'bad_response', retryable: false, provider: 'searxng' })
-  }
-  return selectResults(body.results, limits)
 }
 
 export async function runApiSearch(provider, query, { apiKey, zone, baseUrl, timeoutMs, limits, retry = {}, fetchFn = fetch } = {}) {

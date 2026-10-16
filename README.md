@@ -1,35 +1,27 @@
 # BYOK Chat
 
-A highly customizable, browser-based chat client supporting custom endpoints. Model provider keys are saved in the browser and sent directly to the configured provider. The included Node service handles web search and does not store model credentials.
+A highly customizable, browser-based chat client supporting custom endpoints. Model provider keys are saved in the browser and sent directly to the configured provider. The included Node service (or the Cloudflare Worker) handles web search and does not store model credentials.
 
 ## Run locally
 
-Run SearXNG through Podman Compose with its HTTP port bound to `127.0.0.1:8080` and JSON search enabled. Then install dependencies and start the app:
+Install dependencies and start the app:
 
 ```sh
 npm install
 npm run dev
 ```
 
-The backend defaults to `SEARXNG_BASE_URL=http://127.0.0.1:8080`. Set that variable in the server environment to use another reachable SearXNG URL. No search API key is needed for SearXNG mode. Keep SearXNG bound to loopback; when the app backend itself runs in a container, configure a private host/container route to SearXNG rather than exposing its port publicly.
+`npm run dev` runs Vite with an `/api` proxy to the Node server (`server.mjs`). To run the Cloudflare deployment model locally instead (workerd serving the built `dist/` and the Worker API on one origin), build first and use `npm run cf:dev`; optional local secrets go in a gitignored `.dev.vars` file.
 
-Optional server limits can be configured with `SEARCH_TIMEOUT_MS` (default 8000), `SEARCH_MAX_RESULTS` (default 8), `SEARCH_MAX_SNIPPET_CHARS` (default 1800), and `SEARCH_EVIDENCE_BUDGET` (default 12000). Result and evidence limits are capped at 8 results, 3000 characters per snippet, and 16000 total evidence characters.
+There are no committed environment files. Search tuning lives in the app under Settings → Tools → Web search and grounding (results per search, request timeout, snippet length, evidence budget, retries, retry delay) and is sent with each search request; the server only enforces hard caps (8 results, 3000 characters per snippet, 16000 total evidence characters, 1–30s timeout, 0–4 retries).
 
 ## AI search providers
 
-Search is bring-your-own-key: paste a provider key in Settings → Tools → Web search and grounding. It is stored only in the browser (like model keys) and sent with each search request; the server never stores browser keys. Server-side keys remain supported as a shared fallback when the browser sends none. Providers: TinyFish, You.com, Exa, Firecrawl, or Bright Data (plus SearXNG). Choose the mode in Settings → Tools:
+Search is bring-your-own-key: paste a provider key in Settings → Tools → Web search and grounding. It is stored only in the browser (like model keys) and sent with each search request; the server never stores browser keys. Server-side keys remain supported as a shared fallback when the browser sends none. Providers: TinyFish, You.com, Exa, Firecrawl, or Bright Data.
 
-- `API`: use the selected API provider with your own key.
-- `SearXNG`: use your self-hosted instance.
-
-Enable `Fall back onto the other` to retry with the other search when the primary is missing its key or fails.
-
-Server configuration:
+Server configuration (hosting environment only; no `.env` files):
 
 ```sh
-SEARCH_MODE=api
-SEARCH_FALLBACK=true
-SEARCH_API_PROVIDER=tinyfish
 # optional shared server keys (used only when the browser sends none):
 SEARCH_API_KEY=...
 # or provider-specific keys:
@@ -43,7 +35,7 @@ SEARCH_API_ZONE=your-serp-zone  # Bright Data only
 SEARCH_API_URL=
 ```
 
-`/api/search` accepts `{ query, mode, provider, fallback, apiKey, zone }` and returns `{ query, results, searchedAt, provider, mode }`. `/api/health` reports the configured mode, fallback default, default provider, and which providers have server keys.
+`/api/search` accepts `{ query, provider, apiKey, zone, count, timeoutMs, maxSnippetChars, evidenceBudget, maxRetries, retryBaseMs }` and returns `{ query, results, searchedAt, provider, mode }`. `/api/health` reports which providers have server keys.
 
 Failures return structured JSON `{ error, code, provider, retryable }` with a matching HTTP status instead of a blanket 503:
 
@@ -52,7 +44,7 @@ Failures return structured JSON `{ error, code, provider, retryable }` with a ma
 - `502 upstream_auth`: the provider rejected the key (HTTP 401/403). Check the key; not retried.
 - `502 billing`: the provider reported a billing problem (HTTP 402, e.g. depleted You.com credits). Not retried.
 - `502 bad_request` / `bad_response`: the provider rejected the request or returned something unusable. Not retried.
-- `503 upstream_unavailable`, `timeout`, or `network`: the provider or SearXNG could not be reached after bounded retries (`SEARCH_MAX_RETRIES`, default 2, plus `SEARCH_RETRY_BASE_MS`). Only these are genuine outages.
+- `503 upstream_unavailable`, `timeout`, or `network`: the provider could not be reached after bounded retries. Only these are genuine outages.
 
 Transient failures (HTTP 429/502/503/504, timeouts, connection errors) are retried with exponential backoff; permanent errors (other 4xx, missing keys) are never retried. The server logs provider, mode, error code, and upstream status for diagnostics, and never logs API keys, zones, or authorization headers.
 
@@ -82,12 +74,48 @@ The `frontend-design` skill is Anthropic's work from https://github.com/anthropi
 
 ## Production
 
+Any Node host:
+
 ```sh
 npm run build
 npm start
 ```
 
-Set `PORT` if the host assigns a port. The Node server serves `dist/` and exposes same-origin `/api/search` and `/api/health` routes. Configure the host to run `npm run build` during deployment and `npm start` as its web process. Ensure the backend can reach SearXNG through a private route and keep the SearXNG port bound to loopback or a private container network.
+Set `PORT` if the host assigns a port. The Node server serves `dist/` and exposes same-origin `/api/search`, `/api/extract`, `/api/health` and `/api/sync/*` routes. Configure the host to run `npm run build` during deployment and `npm start` as its web process.
+
+### Cloudflare Workers (static assets + API)
+
+`wrangler.jsonc` deploys one Worker that serves the built frontend from `dist/` and executes `/api/*` (the shared core in `server/api.mjs`, also used by `server.mjs`). `assets.run_worker_first` is limited to `/api/*`, so static asset requests never invoke the Worker and do not count against the Workers request quota; unknown `/api/*` paths always answer with JSON, never `index.html`.
+
+```sh
+npm run deploy        # npm run build && wrangler deploy
+# or manually:
+npm run build && npx wrangler deploy
+```
+
+Secrets are stored encrypted by Cloudflare and are never committed (reuse the same names as the Node environment):
+
+```sh
+npx wrangler secret put TINYFISH_API_KEY     # or any of: YOU_API_KEY, EXA_API_KEY
+npx wrangler secret put FIRECRAWL_API_KEY    # Firecrawl also works keyless at lower limits
+npx wrangler secret put BRIGHTDATA_API_KEY   # requires SEARCH_API_ZONE too
+npx wrangler secret put SEARCH_API_KEY       # optional shared fallback for any provider
+npx wrangler secret put SEARCH_API_ZONE      # Bright Data SERP zone
+npx wrangler secret put DATABASE_URL         # optional Neon Postgres URL for cross-device sync
+```
+
+Optional plain-text vars (for example a `SEARCH_API_URL` endpoint override) can be set in `wrangler.jsonc` under `vars` or with `npx wrangler secret put`. For local `wrangler dev`, put the same names in `.dev.vars` (gitignored).
+
+Verify a deployment (both must return JSON, never the app HTML):
+
+```sh
+curl -i https://<worker-host>/api/health
+curl -i -X POST https://<worker-host>/api/search -H 'content-type: application/json' -d '{"query":"hello"}'
+```
+
+`POST /api/search` answers `missing_key` until a browser key (Settings → Tools → Web search) or a server secret is configured. `npx wrangler tail` streams Worker logs for routing and failure diagnostics.
+
+Workers Free plan notes: 100,000 Worker requests/day, 10 ms CPU per invocation, 50 subrequests per request; static asset requests are unmetered. Search responses are cached for 60 s per isolate and provider retries are bounded. Token sync payloads of several MB can exceed the free 10 ms CPU budget while hashing/parsing — keep sync payloads small or use Workers Paid for very large exports. Third-party search providers bill per their own plans (this app sends searches with your key); Firecrawl search works keyless at lower limits.
 
 ## Durable storage and device sync
 
@@ -109,7 +137,7 @@ Each assistant reply collects its successful `search` calls into one deduped sou
 
 Every grounded reply shows a **Sources** button below the workspaces and above the message options. Expanding it lists each source with its truncated snippet, host, engine, and query, plus per-source actions: **Open** (new tab), **Read page** (full excerpt via the reader), **Copy link**, **Copy cite**. Unknown ids and uncited grounded replies are flagged, with optional strict warnings.
 
-`GET /api/extract?url=…` reads one public `http(s)` page through the backend (SSRF-blocked private hosts, 8s timeout via `EXTRACT_TIMEOUT_MS`, 1.5MB HTML cap, 12k-character excerpt, 10-minute cache) and backs both the `fetch_page` model tool and the per-source Read page button. The process log shows each search as `Web search · query (N sources · provider)` and each read as `Page reader · title · host`; the live status reads Searching… / Reading page…. Related settings (citation style, expand-by-default, page reader on/off, strict warnings) live in Settings → Tools → Web search → Sources & transparency.
+`GET /api/extract?url=…` reads one public `http(s)` page through the backend (SSRF-blocked private hosts, 8s timeout, 1.5MB HTML cap, 12k-character excerpt, 10-minute cache) and backs both the `fetch_page` model tool and the per-source Read page button. The process log shows each search as `Web search · query (N sources · provider)` and each read as `Page reader · title · host`; the live status reads Searching… / Reading page…. Related settings (citation style, expand-by-default, page reader on/off, strict warnings) live in Settings → Tools → Web search → Sources & transparency.
 
 ## Documents: PDFs, Office, archives, transcripts, OCR
 
@@ -133,4 +161,4 @@ Routing learns from experience: every attempt records latency and failures per e
 
 ## Checks
 
-Run the SearXNG search helper tests with `node --test` and create a production build with `npm run build`. Search provider tests live in `server/search.test.mjs`, citation tests in `src/citations.test.mjs`, reader tests in `server/extract.test.mjs`, document parser tests in `src/docs.test.mjs`, recall and routing tests in `src/recall.test.mjs`.
+Run the search helper tests with `node --test` and create a production build with `npm run build`. Search provider tests live in `server/search.test.mjs`, citation tests in `src/citations.test.mjs`, reader tests in `server/extract.test.mjs`, document parser tests in `src/docs.test.mjs`, recall and routing tests in `src/recall.test.mjs`. `npm test` also runs the Node integration suite (`tests/integration/server.test.mjs`) and the Worker suite (`tests/worker/worker.test.mjs`); `npm run test:worker` boots `wrangler dev` and checks the deployed routing contract (static assets, SPA fallback, `/api/*`) end to end after `npm run build`.

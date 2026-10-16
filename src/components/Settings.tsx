@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { X, Plus, Trash2, ArrowUp, ArrowDown, ChevronRight, Eye, EyeOff, Play, ShieldCheck, Shield, Download, Upload, Check, CircleCheck, Cpu, Route, GripVertical, Server, ListMusic, ScrollText, Terminal, Wrench, Palette, FolderOpen, FileText, PanelRight, TrendingUp, Keyboard, Search, Brain, Pencil, Sparkles, RotateCcw, SlidersHorizontal, FlaskConical, Library, Database, Lock, LockOpen, LayoutTemplate, Share2 } from 'lucide-react'
-import { useS, PRE, THEMES, DARK_THEMES, LIGHT_THEMES, THEME_COLOR_KEYS, THEME_COLOR_LABELS, SEARCH_MODES, SEARCH_PROVIDERS, FEATURES, LIBRARY_ITEMS, FEATURE_TABS, FEATURE_WIDGETS, DEFAULT_LIBRARY_SHOW, DEFAULT_ADVANCED, featOn, normSearch, normResearch, normAdvanced, normDocs, usable, modelsOf, modelNameOf, helperRef, splitHelperRef, effortClassifierOf, TOOL_ROUNDS_DEFAULT, TOOL_ROUNDS_MIN, TOOL_ROUNDS_BASE_MAX, TOOL_ROUNDS_MAX, toolRoundLimitOf, isToolRoundsUnlimited, type Kind, type FeatureId, type DocPrefs } from '../store'
+import { useS, PRE, THEMES, DARK_THEMES, LIGHT_THEMES, THEME_COLOR_KEYS, THEME_COLOR_LABELS, SEARCH_PROVIDERS, FEATURES, LIBRARY_ITEMS, FEATURE_TABS, FEATURE_WIDGETS, DEFAULT_LIBRARY_SHOW, DEFAULT_ADVANCED, featOn, normSearch, normResearch, normAdvanced, normDocs, usable, modelsOf, modelNameOf, helperRef, splitHelperRef, effortClassifierOf, TOOL_ROUNDS_DEFAULT, TOOL_ROUNDS_MIN, TOOL_ROUNDS_BASE_MAX, TOOL_ROUNDS_MAX, toolRoundLimitOf, isToolRoundsUnlimited, type Kind, type FeatureId, type DocPrefs } from '../store'
 import { RESEARCH_TIERS, type ResearchTierId } from '../research'
 import { normSkills, resolveSkill, validateCustomSkill, enabledSkills, BUILTIN_SKILLS, SKILL_TOOL_NAME, type SkillState } from '../skills'
 import { findDuplicatePairs, mergeMemory } from '../recall'
@@ -703,7 +703,7 @@ function Tools() {
   const s = useS()
   const [ask, setAsk] = useState<string | null>(null)
   const [showSearchKey, setShowSearchKey] = useState(false)
-  const [health, setHealth] = useState<{ searchConfigured?: boolean; searchMode?: string; searchFallback?: boolean; apiProvider?: string; searchProvider?: string; apiProviders?: Record<string, { label: string; configured: boolean; needsZone?: boolean }> } | null>(null)
+  const [health, setHealth] = useState<{ searchConfigured?: boolean; apiProviders?: Record<string, { label: string; configured: boolean; needsZone?: boolean }> } | null>(null)
   useEffect(() => {
     fetch('/api/health').then((r) => r.json()).then((x) => setHealth(x)).catch(() => setHealth({ searchConfigured: false }))
   }, [])
@@ -740,23 +740,12 @@ function Tools() {
             <div className="flex items-center justify-between gap-3"><div><div className="text-sm font-medium">Auto-follow active file</div><div className="text-xs text-mu">When the AI switches to writing a different file, automatically select it in the panel.</div></div><Toggle on={s.workspacePrefs?.autoFollow ?? true} set={(autoFollow) => s.patch({ workspacePrefs: { ...s.workspacePrefs, autoFollow } })} /></div>
           </div></Anchor>}
           {k === 'search' && <div className="space-y-3 rounded-xl bg-bg p-3">
-            <Anchor id="search-mode">
-            <Field label="Search mode" hint="API uses your own provider key below. SearXNG uses your self-hosted instance.">
-              <Seg v={search.mode} set={(mode) => setSearch({ mode })} opts={SEARCH_MODES.map(([id, label]) => [id, label] as [typeof search.mode, string])} />
-            </Field>
-            </Anchor>
-            <Anchor id="search-fallback">
-            <div className="flex items-center gap-3">
-              <div className="flex flex-1 items-center gap-2 text-sm font-medium">Fall back onto the other<HelpTip text={search.mode === 'api' ? 'When the API key is missing or the API request fails, retry with SearXNG.' : 'When SearXNG fails, retry with your API provider key.'} label="Help: search fallback" /></div>
-              <Toggle on={search.fallback} set={(fallback) => setSearch({ fallback })} />
-            </div>
-            </Anchor>
             <Anchor id="search-provider">
-            <Field label="API provider" hint="Used when the mode is API, or as the fallback when the mode is SearXNG.">
+            <Field label="API provider" hint="Your searches run through this provider with your own key below.">
               <Sel value={search.provider} set={(provider) => { setShowSearchKey(false); setSearch({ provider: provider as typeof search.provider }) }} opts={SEARCH_PROVIDERS.map(([id, label]) => [id, label] as [string, string])} />
             </Field>
             </Anchor>
-            {!ownKey && search.provider !== 'firecrawl' && <p role="status" className="rounded-lg bg-er/10 px-3 py-2 text-xs text-er">No {health?.apiProviders?.[search.provider]?.label ?? search.provider} key saved in this browser yet. Searches will fail until you paste one{search.fallback ? ', or fall back to SearXNG' : ', and fallback is off'}.</p>}
+            {!ownKey && search.provider !== 'firecrawl' && <p role="status" className="rounded-lg bg-er/10 px-3 py-2 text-xs text-er">No {health?.apiProviders?.[search.provider]?.label ?? search.provider} key saved in this browser yet. Searches will fail until you paste one below.</p>}
             <Anchor id="search-key">
             <Field label={`${health?.apiProviders?.[search.provider]?.label ?? search.provider} API key`} hint="Bring your own key. Stored unencrypted in this browser and sent only to your search backend with each query.">
               <div className="relative">
@@ -769,6 +758,31 @@ function Tools() {
             <Anchor id="search-max-results">
             <Field label={`Results per search · ${search.maxResults}`} hint="Results shown for each search. The model may use fewer for simple questions, but never more than this.">
               <RangeSlider label="Results per search" min={1} max={8} step={1} value={search.maxResults} valueText={`${search.maxResults} result${search.maxResults === 1 ? '' : 's'}`} set={(maxResults) => setSearch({ maxResults: Math.round(maxResults) })} className="w-full" />
+            </Field>
+            </Anchor>
+            <Anchor id="search-timeout">
+            <Field label={`Request timeout · ${(search.timeoutMs / 1000).toFixed(search.timeoutMs % 1000 ? 1 : 0)}s`} hint="How long to wait for the search provider before retrying or failing.">
+              <RangeSlider label="Request timeout" min={1000} max={30000} step={1000} value={search.timeoutMs} valueText={`${(search.timeoutMs / 1000).toFixed(search.timeoutMs % 1000 ? 1 : 0)} seconds`} set={(timeoutMs) => setSearch({ timeoutMs: Math.round(timeoutMs) })} className="w-full" />
+            </Field>
+            </Anchor>
+            <Anchor id="search-snippet">
+            <Field label={`Snippet length · ${search.maxSnippetChars} chars`} hint="Maximum characters kept per result snippet. Capped at 3000.">
+              <RangeSlider label="Snippet length" min={200} max={3000} step={100} value={search.maxSnippetChars} valueText={`${search.maxSnippetChars} characters`} set={(maxSnippetChars) => setSearch({ maxSnippetChars: Math.round(maxSnippetChars) })} className="w-full" />
+            </Field>
+            </Anchor>
+            <Anchor id="search-evidence">
+            <Field label={`Evidence budget · ${search.evidenceBudget} chars`} hint="Total character budget across titles, URLs, and snippets per search. Capped at 16000.">
+              <RangeSlider label="Evidence budget" min={1000} max={16000} step={500} value={search.evidenceBudget} valueText={`${search.evidenceBudget} characters`} set={(evidenceBudget) => setSearch({ evidenceBudget: Math.round(evidenceBudget) })} className="w-full" />
+            </Field>
+            </Anchor>
+            <Anchor id="search-retries">
+            <Field label="Retries" hint="Bounded retries for transient failures (429/5xx/timeouts). Permanent errors are never retried.">
+              <Sel value={String(search.maxRetries)} set={(v) => setSearch({ maxRetries: Number(v) })} opts={[['0', '0 · none'], ['1', '1'], ['2', '2'], ['3', '3'], ['4', '4 · max']]} />
+            </Field>
+            </Anchor>
+            <Anchor id="search-retry-delay">
+            <Field label="Retry base delay" hint="Base backoff between retries (doubles each attempt, capped at 4s).">
+              <Sel value={String(search.retryBaseMs)} set={(v) => setSearch({ retryBaseMs: Number(v) })} opts={[['50', '50ms'], ['100', '100ms'], ['300', '300ms'], ['500', '500ms'], ['1000', '1s'], ['2000', '2s · max']]} />
             </Field>
             </Anchor>
             <Anchor id="citations">

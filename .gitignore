@@ -10,8 +10,11 @@ out/
 # Environment variables and secrets
 .env
 .env.*
-!.env.example
-!.env.sample
+
+# Wrangler / Cloudflare
+.wrangler/
+.dev.vars
+.dev.vars.*
 
 # Package manager logs
 npm-debug.log*

@@ -208,6 +208,28 @@ export function compactChatsForDurable(chats: Array<{ temporary?: boolean; expir
   return { chats: pruned, droppedChats }
 }
 
+/* Fade-in events carry page-relative performance.now() timestamps and are only
+ * meaningful inside the session that produced them. Persisting them (durable
+ * mirror, sync payloads) makes reloaded messages animate against stale
+ * timestamps and can leave text stuck invisible, so drop them at the storage
+ * boundary. Pure + unit-testable; returns the input unchanged when not an array. */
+export function stripEphemeralFromChats<T extends { msgs?: Array<Record<string, unknown>> }>(chats: T[] | null | undefined): T[] | null | undefined {
+  if (!Array.isArray(chats)) return chats
+  return chats.map((c) => {
+    const msgs = c?.msgs
+    if (!Array.isArray(msgs)) return c
+    let changed = false
+    const next = msgs.map((m) => {
+      if (m && typeof m === 'object' && (m as { fadeEvents?: unknown }).fadeEvents !== undefined) {
+        changed = true
+        return { ...m, fadeEvents: undefined }
+      }
+      return m
+    })
+    return changed ? { ...c, msgs: next } : c
+  })
+}
+
 export type StorageBreakdown = { localBytes: number; durableBytes: number; opfs: boolean; backend: 'opfs' | 'idb' | 'memory' }
 
 export async function durableUsage(): Promise<StorageBreakdown> {

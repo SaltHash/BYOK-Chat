@@ -1,0 +1,183 @@
+/* Shared /api request handling for both hosts: the Node server (server.mjs)
+ * and the Cloudflare Worker (worker/index.mjs). Handlers return plain
+ * { status, headers, body } descriptors; each host adapts them to its
+ * response type. Secrets are read from the `env` argument only (process.env
+ * for the Node server, Worker bindings for Cloudflare) and never logged. */
+import { boundedInt, normalizeProvider, providerLabel, providerNeedsKey, apiKeyFor, resolveApiKey, resolveZone, apiBaseUrlFor, runApiSearch, SEARCH_API_PROVIDERS } from './search.mjs'
+import { fetchPageText } from './extract.mjs'
+import { handleSyncPush, handleSyncPull } from './sync.mjs'
+import { syncBackend } from './syncStore.mjs'
+import { clientIp, headerValue, jsonResult, readBodyText, requestHost, sameOrigin } from './http.mjs'
+
+// Hard server-side caps. Per-request tuning arrives from the user's search
+// settings in Settings → Tools → Web search and is bounded below.
+const MAX_RESULTS = 8
+const MAX_SNIPPET_CHARS = 3000
+const EVIDENCE_BUDGET = 16000
+const SEARCH_BODY_LIMIT = 16_384
+const EXTRACT_TIMEOUT_MS = 8000
+const RATE_LIMIT = 30
+const RATE_WINDOW_MS = 60_000
+
+const searchLimit = new Map()
+const extractLimit = new Map()
+const searchCache = new Map()
+
+function overRateLimit(bucket, ip, now) {
+  const entry = bucket.get(ip)
+  return Boolean(entry && now - entry.start < RATE_WINDOW_MS && entry.count >= RATE_LIMIT)
+}
+
+function bumpRateLimit(bucket, ip, now) {
+  const entry = bucket.get(ip)
+  if (!entry || now - entry.start >= RATE_WINDOW_MS) {
+    bucket.set(ip, { start: now, count: 1 })
+    if (bucket.size > 1000) bucket.delete(bucket.keys().next().value)
+  } else entry.count++
+}
+
+export function searchStatus(env = {}) {
+  const apiKeys = Object.fromEntries(Object.keys(SEARCH_API_PROVIDERS).map((id) => [id, Boolean(apiKeyFor(id, env))]))
+  const apiConfigured = Object.values(apiKeys).some(Boolean)
+  return {
+    ok: true,
+    searchConfigured: true,
+    apiProviders: Object.fromEntries(Object.entries(SEARCH_API_PROVIDERS).map(([id, meta]) => [id, { label: meta.label, configured: apiKeys[id], needsZone: Boolean(meta.needsZone) }])),
+    apiConfigured,
+  }
+}
+
+export function apiHealth(req, env = process.env) {
+  if (req.method !== 'GET') return jsonResult(405, { error: 'Method not allowed' }, { allow: 'GET' })
+  return jsonResult(200, searchStatus(env))
+}
+
+/* Map a search failure to an HTTP status and a structured body.
+ * Only genuine upstream outages/timeouts surface as 503. Configuration
+ * problems (missing key/zone) are 400, rate limits propagate as 429, and
+ * upstream auth/billing/request problems are 502 with a stable `code`. */
+function searchFailureStatus(error) {
+  const code = error?.code || ''
+  if (code === 'missing_key' || code === 'missing_zone') return 400
+  if (code === 'rate_limited') return 429
+  if (code === 'timeout' || code === 'network' || code === 'upstream_unavailable') return 503
+  if (typeof error?.status === 'number' && error.status >= 400 && error.status < 600) return 502
+  if (/missing/i.test(error?.message || '')) return 400
+  return 502
+}
+
+function searchFailureBody(error, provider) {
+  return {
+    error: error?.message || 'Could not reach the search provider.',
+    code: error?.code || 'upstream_unavailable',
+    provider,
+    retryable: error?.retryable !== false && error?.code !== 'missing_key' && error?.code !== 'missing_zone',
+  }
+}
+
+// Server-side diagnostics: provider, mode, code and upstream status only.
+// Never log API keys, zones, authorization headers, or full queries.
+function logSearchFailure(provider, mode, queryLength, error, ms) {
+  console.error(`[search] provider=${provider} mode=${mode} code=${error?.code || 'unknown'} upstream=${error?.status ?? 0} queryChars=${queryLength} ms=${ms}`)
+}
+
+export async function apiSearch(req, env = process.env) {
+  if (req.method !== 'POST') return jsonResult(405, { error: 'Method not allowed' }, { allow: 'POST' })
+  if (!sameOrigin(headerValue(req, 'origin'), requestHost(req))) return jsonResult(403, { error: 'Cross-origin request refused' })
+  const ip = clientIp(req)
+  const now = Date.now()
+  if (overRateLimit(searchLimit, ip, now)) return jsonResult(429, { error: 'Search limit reached. Try again in a minute.' }, { 'retry-after': '60' })
+  const raw = await readBodyText(req, SEARCH_BODY_LIMIT)
+  if (raw === null) return jsonResult(413, { error: 'Request is too large' })
+  let parsed
+  try { parsed = JSON.parse(raw) } catch { return jsonResult(400, { error: 'Expected JSON with a query field' }) }
+  const q = parsed?.query
+  if (typeof q !== 'string' || !q.trim() || q.trim().length > 400) return jsonResult(400, { error: 'Query must be 1 to 400 characters' })
+  const provider = normalizeProvider(parsed?.provider ?? 'tinyfish', 'tinyfish')
+  const clientKey = typeof parsed?.apiKey === 'string' ? parsed.apiKey.slice(0, 500) : ''
+  const clientZone = typeof parsed?.zone === 'string' ? parsed.zone.slice(0, 200) : ''
+  bumpRateLimit(searchLimit, ip, now)
+  const query = q.trim()
+  // Per-request tuning from the user's search settings, bounded by hard caps.
+  const requested = boundedInt(parsed?.count, MAX_RESULTS, 1, MAX_RESULTS)
+  const maxSnippetChars = boundedInt(parsed?.maxSnippetChars, 1800, 200, MAX_SNIPPET_CHARS)
+  const evidenceBudget = boundedInt(parsed?.evidenceBudget, 12000, 1000, EVIDENCE_BUDGET)
+  const timeoutMs = boundedInt(parsed?.timeoutMs, 8000, 1000, 30000)
+  const maxRetries = boundedInt(parsed?.maxRetries, 2, 0, 4)
+  const retryBaseMs = boundedInt(parsed?.retryBaseMs, 300, 50, 2000)
+  const cacheKey = `${provider}:${requested}:${maxSnippetChars}:${evidenceBudget}:${query.toLowerCase()}`
+  const cached = searchCache.get(cacheKey)
+  if (cached && now - cached.at < 60_000) return jsonResult(200, cached.data, { 'cache-control': 'private, max-age=30' })
+  const limits = { maxResults: requested, maxSnippetChars, evidenceBudget }
+  const retry = { maxRetries, baseMs: retryBaseMs }
+  const apiKey = resolveApiKey(provider, clientKey, env)
+  const zone = resolveZone(clientZone, env)
+  const baseUrl = apiBaseUrlFor(provider, env)
+  const missingKeyError = () => {
+    const error = new Error(`${providerLabel(provider)} API key is missing. Paste your key in Settings → Tools → Web search${SEARCH_API_PROVIDERS[provider].needsZone && !zone ? ' and add your SERP zone' : ''}.`)
+    error.code = 'missing_key'
+    return error
+  }
+  try {
+    if (providerNeedsKey(provider) && !apiKey) throw missingKeyError()
+    const results = await runApiSearch(provider, query, { apiKey, zone, baseUrl, timeoutMs, limits, retry })
+    const data = { query, results, searchedAt: new Date().toISOString(), provider, mode: 'api' }
+    searchCache.set(cacheKey, { at: now, data })
+    if (searchCache.size > 200) searchCache.delete(searchCache.keys().next().value)
+    return jsonResult(200, data, { 'cache-control': 'private, max-age=30' })
+  } catch (error) {
+    logSearchFailure(provider, 'api', query.length, error, Date.now() - now)
+    const headers = error?.code === 'rate_limited' ? { 'retry-after': '5' } : {}
+    return jsonResult(searchFailureStatus(error), searchFailureBody(error, provider), headers)
+  }
+}
+
+export async function apiExtract(req, env = process.env) {
+  if (req.method !== 'GET') return jsonResult(405, { error: 'Method not allowed' }, { allow: 'GET' })
+  if (!sameOrigin(headerValue(req, 'origin'), requestHost(req))) return jsonResult(403, { error: 'Cross-origin request refused' })
+  const ip = clientIp(req)
+  const now = Date.now()
+  if (overRateLimit(extractLimit, ip, now)) return jsonResult(429, { error: 'Reader limit reached. Try again in a minute.' }, { 'retry-after': '60' })
+  const url = new URL(req.url || '/', 'http://localhost')
+  const target = (url.searchParams.get('url') || '').trim().slice(0, 2000)
+  if (!target) return jsonResult(400, { error: 'Missing url parameter' })
+  bumpRateLimit(extractLimit, ip, now)
+  try {
+    const data = await fetchPageText(target, { timeoutMs: EXTRACT_TIMEOUT_MS })
+    return jsonResult(200, { ...data, fetchedAt: new Date().toISOString() }, { 'cache-control': 'private, max-age=300' })
+  } catch (e) {
+    const code = e.code || 'upstream_unavailable'
+    const status = code === 'bad_url' || code === 'bad_type' ? 400 : code === 'timeout' || code === 'network' ? 503 : e.status === 404 ? 404 : 502
+    console.error(`[extract] code=${code} upstream=${e.status ?? 0} urlChars=${target.length}`)
+    return jsonResult(status, { error: e.message || 'Could not read the page.', code, retryable: e.retryable === true })
+  }
+}
+
+export async function apiSync(req, env = process.env) {
+  const url = new URL(req.url || '/', 'http://localhost')
+  if (!url.pathname.startsWith('/api/sync/')) return null
+  const backend = await syncBackend(env)
+  try {
+    if (url.pathname === '/api/sync/push' && req.method === 'POST') return jsonResult(200, await handleSyncPush(req, backend))
+    if (url.pathname === '/api/sync/pull' && (req.method === 'GET' || req.method === 'POST')) return jsonResult(200, await handleSyncPull(req, backend))
+    if (url.pathname === '/api/sync/status' && req.method === 'GET') {
+      return jsonResult(200, { ok: true, backend: backend.kind, configured: Boolean(env.DATABASE_URL) })
+    }
+    return jsonResult(404, { error: 'Unknown sync route.' })
+  } catch (e) {
+    return jsonResult(e.status ?? 400, { error: e.message || 'Sync failed.', code: e.code || 'sync_error' })
+  }
+}
+
+/* Route if pathname is /api or /api/…; returns null for everything else so
+ * each host can fall through to its static asset handling. Unknown API paths
+ * always answer with JSON instead of the frontend's index.html. */
+export async function apiRoute(req, env = process.env) {
+  const url = new URL(req.url || '/', 'http://localhost')
+  if (url.pathname === '/api/health') return apiHealth(req, env)
+  if (url.pathname === '/api/search') return apiSearch(req, env)
+  if (url.pathname === '/api/extract') return apiExtract(req, env)
+  if (url.pathname.startsWith('/api/sync/')) return apiSync(req, env)
+  if (url.pathname === '/api' || url.pathname.startsWith('/api/')) return jsonResult(404, { error: 'Not found' })
+  return null
+}

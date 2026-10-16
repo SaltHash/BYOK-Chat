@@ -7,7 +7,7 @@ import { join } from 'node:path'
 import { randomBytes } from 'node:crypto'
 
 // Full-stack integration: boots the real server.mjs as a child process and
-// exercises HTTP routing, search fallback/error mapping, sync push/pull and
+// exercises HTTP routing, search error mapping, sync push/pull and
 // extract SSRF guards. No mocks: failures here mean the wiring is broken.
 // Uses an ephemeral port and empty static dir; forces memory sync backend by
 // unsetting DATABASE_URL in the child.
@@ -48,10 +48,6 @@ const child = spawn(process.execPath, ['server.mjs'], {
     ...process.env,
     PORT: String(port),
     STATIC_DIR: staticDir,
-    SEARCH_MODE: 'api',
-    SEARCH_API_PROVIDER: 'tinyfish',
-    SEARCH_FALLBACK: 'false',
-    SEARXNG_BASE_URL: 'http://127.0.0.1:9',
     DATABASE_URL: '',
     TINYFISH_API_KEY: '',
     SEARCH_API_KEY: '',
@@ -87,7 +83,7 @@ test('search rejects empty query before touching providers', async () => {
 })
 
 test('search surfaces missing-key as 400 with stable code', async () => {
-  const res = await post('/api/search', { query: 'hello', mode: 'api', provider: 'tinyfish', fallback: false })
+  const res = await post('/api/search', { query: 'hello', provider: 'tinyfish' })
   assert.equal(res.status, 400)
   const data = await res.json()
   assert.equal(data.code, 'missing_key')
@@ -95,12 +91,12 @@ test('search surfaces missing-key as 400 with stable code', async () => {
   assert.equal(data.retryable, false)
 })
 
-test('search maps unreachable searxng to 502/503, not 400', async () => {
-  const res = await post('/api/search', { query: 'hello', mode: 'searxng', fallback: false })
-  assert.ok([502, 503].includes(res.status), `unexpected status ${res.status}`)
+test('search accepts per-request tuning bounds', async () => {
+  const res = await post('/api/search', { query: 'hello', provider: 'tinyfish', count: 99, maxSnippetChars: 99, evidenceBudget: 99, timeoutMs: 99, maxRetries: 99 })
+  // Still a missing-key 400: tuning must not bypass key checks or crash.
+  assert.equal(res.status, 400)
   const data = await res.json()
-  assert.ok(['timeout', 'network', 'upstream_unavailable'].includes(data.code), `unexpected code ${data.code}`)
-  assert.equal(data.retryable, true)
+  assert.equal(data.code, 'missing_key')
 })
 
 test('sync push then pull round-trips over HTTP; wrong secret rejected', async () => {

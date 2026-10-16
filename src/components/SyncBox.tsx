@@ -3,7 +3,7 @@ import { RefreshCw, Link2, Unlink, Copy, Check, ShieldCheck } from 'lucide-react
 import { useS } from '../store'
 import { generateSyncToken, parseSyncToken, buildSyncPayload, checkSyncCompat } from '../storage/sync'
 import { syncPush, syncPull, syncStatus } from '../storage/syncClient'
-import { durableGetChats, durableGetWorkspaces } from '../storage/durable'
+import { durableGetChats, durableGetWorkspaces, stripEphemeralFromChats } from '../storage/durable'
 import { encryptBackup, decryptBackup, isEncryptedBackup } from '../storage/backupCrypto'
 import { Btn, Input } from './ui'
 
@@ -29,7 +29,7 @@ export function SyncBox() {
     const dWs = await durableGetWorkspaces().catch(() => null)
     const { chats: _c, workspaces: _w, selectedRevision: _sr, ...settings } = s as unknown as Record<string, unknown>
     void _c; void _w; void _sr
-    return buildSyncPayload({ storeVersion: 18, settings, chats: dChats ?? s.chats, workspaces: dWs ?? s.workspaces, selectedRevision: (s as unknown as { selectedRevision: unknown }).selectedRevision })
+    return buildSyncPayload({ storeVersion: 18, settings, chats: stripEphemeralFromChats((dChats ?? s.chats) as { msgs?: Array<Record<string, unknown>> }[]), workspaces: dWs ?? s.workspaces, selectedRevision: (s as unknown as { selectedRevision: unknown }).selectedRevision })
   }
 
   const push = async () => {
@@ -49,7 +49,7 @@ export function SyncBox() {
       const r = await syncPull(token)
       const { warning } = checkSyncCompat({ v: r.exportVersion ?? r.payload.v, storeVersion: r.storeVersion ?? r.payload.storeVersion }, 18)
       const p = r.payload
-      useS.setState({ ...(p.settings as object), chats: p.chats as unknown as never, workspaces: p.workspaces as unknown as never, selectedRevision: p.selectedRevision as unknown as never } as unknown as Parameters<typeof useS.setState>[0])
+      useS.setState({ ...(p.settings as object), chats: stripEphemeralFromChats(p.chats as { msgs?: Array<Record<string, unknown>> }[]) as unknown as never, workspaces: p.workspaces as unknown as never, selectedRevision: p.selectedRevision as unknown as never } as unknown as Parameters<typeof useS.setState>[0])
       try { localStorage.setItem(LAST_KEY, String(r.updatedAt)) } catch {}
       setStatus(warning ? `Pulled with warning: ${warning}` : `Pulled ${new Date(r.updatedAt).toLocaleTimeString()} via ${r.backend}.`)
     } catch (e) { setStatus(`Pull failed: ${(e as Error).message}`) }

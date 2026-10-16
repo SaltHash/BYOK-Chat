@@ -12,6 +12,7 @@ import { all } from 'lowlight'
 import 'katex/dist/katex.min.css'
 import { Check, Copy } from 'lucide-react'
 import { cx } from './ui'
+import { activeFadeEvents } from '../fade'
 import type { FadeEvent } from '../store'
 import type { CiteSource } from '../citations'
 
@@ -66,7 +67,7 @@ const schema: any = {
 // Track stream fragments by timestamp so each word gets its own complete fade.
 const fadeFragments = (events: FadeEvent[], duration: number) => () => (tree: any) => {
   if (duration <= 0 || !events.length) return
-  const now = performance.now(), active = events.filter((e) => now - e.at < duration * 1000).reverse()
+  const now = performance.now(), active = activeFadeEvents(events, now, duration * 1000).reverse()
   const leaves: any[] = []
   const collect = (node: any) => {
     if (node.type === 'text') leaves.push(node)
@@ -210,10 +211,12 @@ export default memo(function Rich({ t, fadeEvents = [], fade = 0, bare = false, 
   const src = useMemo(() => pre(t), [t])
   const [, refresh] = useState(0)
   useEffect(() => {
-    if (fade <= 0 || !fadeEvents.some((event) => performance.now() - event.at < fade * 1000)) return
+    // Only animate events from this session: stale (future-stamped) events are
+    // ignored so they neither hide text nor keep the refresh timer alive.
+    if (fade <= 0 || !activeFadeEvents(fadeEvents, performance.now(), fade * 1000).length) return
     const timer = window.setInterval(() => {
       refresh((n) => n + 1)
-      if (!fadeEvents.some((event) => performance.now() - event.at < fade * 1000)) window.clearInterval(timer)
+      if (!activeFadeEvents(fadeEvents, performance.now(), fade * 1000).length) window.clearInterval(timer)
     }, 32)
     return () => window.clearInterval(timer)
   }, [fadeEvents, fade])

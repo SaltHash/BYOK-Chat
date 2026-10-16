@@ -194,26 +194,27 @@ export const exportChat = () => {
   dl(c.title.replace(/[^\w-]+/g, '_') + '.md', chatMd(c), 'text/markdown')
 }
 
-export type SearchMode = 'api' | 'searxng'
 export type SearchProvider = 'tinyfish' | 'you' | 'exa' | 'firecrawl' | 'brightdata'
 export type CiteStyle = 'pills' | 'links' | 'off'
-export const SEARCH_MODES: [SearchMode, string][] = [['api', 'API'], ['searxng', 'SearXNG']]
 export const SEARCH_PROVIDERS: [SearchProvider, string][] = [['tinyfish', 'TinyFish'], ['you', 'You.com'], ['exa', 'Exa'], ['firecrawl', 'Firecrawl'], ['brightdata', 'Bright Data']]
-export type SearchPrefs = { mode: SearchMode; provider: SearchProvider; fallback: boolean; keys: Record<SearchProvider, string>; zone: string; maxResults: number; citeStyle: CiteStyle; sourcesOpen: boolean; reader: boolean; strictCitations: boolean }
-export const BLANK_SEARCH: SearchPrefs = { mode: 'api', provider: 'tinyfish', fallback: true, keys: { tinyfish: '', you: '', exa: '', firecrawl: '', brightdata: '' }, zone: '', maxResults: 8, citeStyle: 'off', sourcesOpen: false, reader: true, strictCitations: false }
-const SEARCH_VALID_MODES: SearchMode[] = ['api', 'searxng']
+export type SearchPrefs = { provider: SearchProvider; keys: Record<SearchProvider, string>; zone: string; maxResults: number; timeoutMs: number; maxSnippetChars: number; evidenceBudget: number; maxRetries: number; retryBaseMs: number; citeStyle: CiteStyle; sourcesOpen: boolean; reader: boolean; strictCitations: boolean }
+export const BLANK_SEARCH: SearchPrefs = { provider: 'tinyfish', keys: { tinyfish: '', you: '', exa: '', firecrawl: '', brightdata: '' }, zone: '', maxResults: 8, timeoutMs: 8000, maxSnippetChars: 1800, evidenceBudget: 12000, maxRetries: 2, retryBaseMs: 300, citeStyle: 'off', sourcesOpen: false, reader: true, strictCitations: false }
 const SEARCH_VALID_PROVIDERS: SearchProvider[] = ['tinyfish', 'you', 'exa', 'firecrawl', 'brightdata']
+const clampInt = (v: unknown, fallback: number, min: number, max: number): number =>
+  Number.isInteger(v) ? Math.max(min, Math.min(max, v as number)) : fallback
 export const normSearch = (v: any): SearchPrefs => {
-  const legacyFallback = v?.mode === 'api-fallback'
   const keys = { ...BLANK_SEARCH.keys, ...((v?.keys ?? {}) as Record<string, string>) }
   for (const k of SEARCH_VALID_PROVIDERS) keys[k] = typeof keys[k] === 'string' ? keys[k] : ''
   return {
-    mode: SEARCH_VALID_MODES.includes(v?.mode) ? v.mode : legacyFallback ? 'api' : BLANK_SEARCH.mode,
     provider: SEARCH_VALID_PROVIDERS.includes(v?.provider) ? v.provider : BLANK_SEARCH.provider,
-    fallback: typeof v?.fallback === 'boolean' ? v.fallback : true,
     keys,
     zone: typeof v?.zone === 'string' ? v.zone : '',
-    maxResults: Number.isInteger(v?.maxResults) ? Math.max(1, Math.min(8, v.maxResults)) : BLANK_SEARCH.maxResults,
+    maxResults: clampInt(v?.maxResults, BLANK_SEARCH.maxResults, 1, 8),
+    timeoutMs: clampInt(v?.timeoutMs, BLANK_SEARCH.timeoutMs, 1000, 30000),
+    maxSnippetChars: clampInt(v?.maxSnippetChars, BLANK_SEARCH.maxSnippetChars, 200, 3000),
+    evidenceBudget: clampInt(v?.evidenceBudget, BLANK_SEARCH.evidenceBudget, 1000, 16000),
+    maxRetries: clampInt(v?.maxRetries, BLANK_SEARCH.maxRetries, 0, 4),
+    retryBaseMs: clampInt(v?.retryBaseMs, BLANK_SEARCH.retryBaseMs, 50, 2000),
     citeStyle: v?.citeStyle === 'links' ? 'links' : v?.citeStyle === 'pills' ? 'pills' : 'off',
     sourcesOpen: v?.sourcesOpen === true,
     reader: v?.reader !== false,
@@ -229,6 +230,18 @@ export const searchCountOf = (prefs: Pick<SearchPrefs, 'maxResults'>, requested?
     : BLANK_SEARCH.maxResults
   return Number.isInteger(requested) ? Math.max(1, Math.min(max, requested as number)) : max
 }
+/* Full per-request search options from the user's search settings. */
+export const searchOptsOf = (prefs: SearchPrefs, requested?: unknown) => ({
+  provider: prefs.provider,
+  apiKey: searchKeyOf(prefs),
+  zone: prefs.zone,
+  count: searchCountOf(prefs, requested),
+  timeoutMs: prefs.timeoutMs,
+  maxSnippetChars: prefs.maxSnippetChars,
+  evidenceBudget: prefs.evidenceBudget,
+  maxRetries: prefs.maxRetries,
+  retryBaseMs: prefs.retryBaseMs,
+})
 
 type S = {
   eps: Ep[]; prompts: Prompt[]; pls: Pl[]; cmds: Cmd[]; chats: Chat[]; chat: string
@@ -504,7 +517,7 @@ export const useS = create<S>()(
         let steps = researchStepsFor(query, tier)
         patchResearch((rs) => ({ ...rs, status: 'running', steps, startedAt: Date.now() }))
         const prefs = normSearch(get().search)
-        const searchOpts = { mode: prefs.mode, provider: prefs.provider, fallback: prefs.fallback, apiKey: searchKeyOf(prefs), zone: prefs.zone, count: searchCountOf(prefs) }
+        const searchOpts = searchOptsOf(prefs)
         const breadthCalls: ToolResult[] = []
         const seenUrls: string[] = []
         const rawResults: { url: string }[] = []
@@ -800,7 +813,7 @@ export const useS = create<S>()(
                 search: async ({ query, count }: { query: string; count?: number }) => {
                   const prefs = normSearch(get().search)
                   if (typeof query !== 'string') throw Error('query must be a string')
-                  return formatSearch(await searchWeb(query, { mode: prefs.mode, provider: prefs.provider, fallback: prefs.fallback, apiKey: searchKeyOf(prefs), zone: prefs.zone, count: searchCountOf(prefs, count) }), { inlineCites: prefs.citeStyle !== 'off' })
+                  return formatSearch(await searchWeb(query, { ...searchOptsOf(prefs), count: searchCountOf(prefs, count) }), { inlineCites: prefs.citeStyle !== 'off' })
                 },
                 fetch_page: async ({ url }: { url: string }) => {
                   const prefs = normSearch(get().search)

@@ -1,0 +1,23 @@
+{
+  // Cloudflare Workers deployment: one Worker serves the built frontend from
+  // ./dist as static assets and executes the /api/* routes (the same code as
+  // server.mjs, shared via server/api.mjs). Deploy with `npm run deploy`.
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "byok-chat",
+  "main": "worker/index.mjs",
+  // Keep this date fixed once deployed to pin Worker runtime behavior.
+  "compatibility_date": "2026-09-23",
+  // Needed by server/syncStore.mjs (node:crypto, Buffer) for token hashing.
+  "compatibility_flags": ["nodejs_compat"],
+  "upload_source_maps": true,
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    // SPA fallback: unknown non-API paths serve index.html like server.mjs.
+    "not_found_handling": "single-page-application",
+    // Only API requests run the Worker before asset routing; everything else
+    // is served as static assets (and does not count as a Worker request).
+    "run_worker_first": ["/api", "/api/*"]
+  },
+  "observability": { "enabled": true }
+}

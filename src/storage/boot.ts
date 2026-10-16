@@ -6,7 +6,7 @@
  * - On boot, if durable holds chats/workspaces, they win when localStorage
  *   was quota-pruned (smaller/fewer messages). Attachment bytes are restored
  *   from blob storage. Settings are never overwritten by durable. */
-import { durableGetChats, durableGetWorkspaces, durablePutChats, durablePutWorkspaces, durableSetMeta, durableGetMeta, blobPut, blobGet, splitPersistedForDurable, compactChatsForDurable } from './durable'
+import { durableGetChats, durableGetWorkspaces, durablePutChats, durablePutWorkspaces, durableSetMeta, durableGetMeta, blobPut, blobGet, splitPersistedForDurable, compactChatsForDurable, stripEphemeralFromChats } from './durable'
 
 const CHATS_DEBOUNCE_MS = 1200
 let timer: ReturnType<typeof setTimeout> | null = null
@@ -80,7 +80,9 @@ export async function hydrateDurable(patch: (p: Record<string, unknown>) => void
     if (dChats && Array.isArray(dChats) && (migrated || durableMsgs >= localMsgs)) {
       restoredBlobs = await restoreAttachmentBytes(dChats as Parameters<typeof restoreAttachmentBytes>[0]).catch(() => 0)
       const p: Record<string, unknown> = {}
-      if (dChats) p.chats = dChats
+      // Drop session-relative fade timestamps from durable copies written by
+      // older builds, so reloaded messages render fully visible.
+      if (dChats) p.chats = stripEphemeralFromChats(dChats as { msgs?: Array<Record<string, unknown>> }[])
       if (dWs) p.workspaces = dWs
       if (Object.keys(p).length) patch(p)
     } else if (dChats) {
@@ -98,7 +100,7 @@ export function mirrorToDurable(chats: unknown, workspaces: unknown): void {
   timer = setTimeout(() => {
     const key = JSON.stringify({ c: (chats as unknown[])?.length, w: Object.keys((workspaces as object) ?? {}).length })
     void key
-    Promise.all([durablePutChats(chats).catch(() => {}), durablePutWorkspaces(workspaces).catch(() => {})]).then(() => { lastMirror = String(Date.now()) })
+    Promise.all([durablePutChats(stripEphemeralFromChats(chats as { msgs?: Array<Record<string, unknown>> }[])).catch(() => {}), durablePutWorkspaces(workspaces).catch(() => {})]).then(() => { lastMirror = String(Date.now()) })
     void lastMirror
   }, CHATS_DEBOUNCE_MS)
 }

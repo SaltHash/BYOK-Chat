@@ -23,11 +23,11 @@ function memStore() {
 }
 
 let neonClient = null
-async function neonStore() {
-  if (!process.env.DATABASE_URL) return null
+async function neonStore(env = process.env) {
+  if (!env.DATABASE_URL) return null
   if (neonClient) return neonClient
   const { neon } = await import('@neondatabase/serverless')
-  const sql = neon(process.env.DATABASE_URL)
+  const sql = neon(env.DATABASE_URL)
   neonClient = {
     kind: 'neon',
     async get(id) {
@@ -47,8 +47,8 @@ async function neonStore() {
   return neonClient
 }
 
-export async function syncBackend() {
-  return (await neonStore().catch(() => null)) ?? memStore()
+export async function syncBackend(env = process.env) {
+  return (await neonStore(env).catch(() => null)) ?? memStore()
 }
 
 export { safeEqual, memStore }
