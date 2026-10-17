@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useShallow } from 'zustand/react/shallow'
 import { Plus, Clock, Search, PanelLeftClose, Pin, Pencil, Trash2, MessageSquare, Server, ListMusic, ScrollText, Terminal, Wrench, Settings, Palette, Lock, PanelRight, Folder, FolderPlus, FolderMinus, ChevronRight, Bookmark, Download } from 'lucide-react'
 import { useS, chatMd, dl, THEMES, DARK_THEMES, LIGHT_THEMES, themeKeyOf, DEFAULT_LIBRARY_SHOW, featOn, type Chat, type FeatureId } from '../store'
 import { searchChats } from '../recall'
@@ -20,17 +21,23 @@ function Name({ v, save, done }: { v: string; save: (t: string) => void; done: (
   )
 }
 
-function Row({ c, mv, del, dnd, container, index }: { c: Chat; mv: (id: string, x: number, y: number) => void; del: (id: string, shift: boolean) => void; dnd: { register: (id: string) => (el: HTMLDivElement | null) => void; handle: (chat: Chat, container: string, index: number) => { className: string; tabIndex: number; role: string; 'aria-label': string; 'aria-pressed': boolean; onPointerDown: (e: React.PointerEvent) => void; onKeyDown: (e: React.KeyboardEvent) => void }; activeId: string | null }; container: string; index: number }) {
-  const s = useS()
+type RowDnd = { register: (id: string) => (el: HTMLDivElement | null) => void; handle: (chat: Chat, container: string, index: number) => { className: string; tabIndex: number; role: string; 'aria-label': string; 'aria-pressed': boolean; onPointerDown: (e: React.PointerEvent) => void; onKeyDown: (e: React.KeyboardEvent) => void }; activeId: string | null }
+type RowProps = { c: Chat; mv: (id: string, x: number, y: number) => void; del: (id: string, shift: boolean) => void; dnd: RowDnd; container: string; index: number }
+
+function RowBody({ c, mv, del, dnd, container, index }: RowProps) {
+  // The only store field a row renders is whether it is the open chat; the
+  // actions are stable and read on demand, so a streamed chunk or a keystroke
+  // in the composer does not re-render the list.
+  const selected = useS((s) => s.chat === c.id)
   const [ed, setEd] = useState(false)
   const dragging = dnd.activeId === c.id
   const h = dnd.handle(c, container, index)
   return (
     <div ref={dnd.register(c.id)} data-chat-row={c.id}
       {...h} title="Drag to move to a folder"
-      className={cx('dnd-handle group flex cursor-grab items-center rounded-lg pr-1 text-sm', s.chat === c.id ? 'bg-hov' : 'hover:bg-surf', dragging && 'opacity-25')}>
-      {ed ? <Name v={c.title} save={(t) => s.rename(c.id, t)} done={() => setEd(false)} /> : (
-        <button onDoubleClick={() => setEd(true)} onClick={() => s.patch({ chat: c.id })} className="flex min-w-0 flex-1 items-center gap-2.5 px-2.5 py-2 text-left">
+      className={cx('dnd-handle group flex cursor-grab items-center rounded-lg pr-1 text-sm', selected ? 'bg-hov' : 'hover:bg-surf', dragging && 'opacity-25')}>
+      {ed ? <Name v={c.title} save={(t) => useS.getState().rename(c.id, t)} done={() => setEd(false)} /> : (
+        <button onDoubleClick={() => setEd(true)} onClick={() => useS.getState().patch({ chat: c.id })} className="flex min-w-0 flex-1 items-center gap-2.5 px-2.5 py-2 text-left">
           {c.pin ? <Pin size={15} className="shrink-0 text-ac" /> : c.temporary ? <Clock size={15} className="shrink-0 text-mu" /> : <MessageSquare size={15} className="shrink-0 text-mu" />}
           <span className="truncate">{c.title}{c.temporary ? ' · temporary' : ''}</span>
         </button>
@@ -45,15 +52,28 @@ function Row({ c, mv, del, dnd, container, index }: { c: Chat; mv: (id: string, 
           dl(`${base}.json`, JSON.stringify({ v: 4, chats: [chat] }, null, 1), 'application/json')
         }} className={act}><Download size={14} /></button>
         <button title="Move to folder" onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); mv(c.id, r.left, r.bottom + 4) }} className={act}><Folder size={14} /></button>
-        <button title={c.pin ? 'Unpin' : 'Pin'} onClick={() => s.chatOp(c.id, 'pin')} className={act}><Pin size={14} /></button>
+        <button title={c.pin ? 'Unpin' : 'Pin'} onClick={() => useS.getState().chatOp(c.id, 'pin')} className={act}><Pin size={14} /></button>
         <button title="Delete chat (hold Shift to skip confirmation)" onClick={(e) => del(c.id, e.shiftKey)} className={cx(act, 'hover:text-er')}><Trash2 size={14} /></button>
       </span>
     </div>
   )
 }
 
+const Row = memo(RowBody, (a, b) =>
+  a.container === b.container && a.index === b.index && a.dnd === b.dnd && a.mv === b.mv && a.del === b.del
+  && a.c.id === b.c.id && a.c.title === b.c.title && a.c.pin === b.c.pin && a.c.temporary === b.c.temporary)
+
 export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; toggle: () => void; cfg: (t: string) => void; width?: number }) {
-  const s = useS()
+  /* Narrow slice: the sidebar shows chat metadata, folder names and library
+     counts. Composer keystrokes, streaming text and widget state no longer
+     re-render the whole list. Actions are stable, so subscribing to them is
+     free and keeps the call sites unchanged. */
+  const s = useS(useShallow((st) => ({
+    chats: st.chats, chat: st.chat, folders: st.folders, prefs: st.prefs,
+    themeMode: st.themeMode, themeLight: st.themeLight, themeDark: st.themeDark, libraryShow: st.libraryShow,
+    eps: st.eps, pls: st.pls, prompts: st.prompts, cmds: st.cmds, tools: st.tools, memories: st.memories, widgets: st.widgets, features: st.features,
+    patch: st.patch, newChat: st.newChat, renameFolder: st.renameFolder, toggleFolder: st.toggleFolder, delFolder: st.delFolder, addFolder: st.addFolder, moveChat: st.moveChat,
+  })))
   const [clock, setClock] = useState(Date.now())
   const [q, setQ] = useState('')
   const [fe, setFe] = useState('')
@@ -81,7 +101,26 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
     return () => removeEventListener('mousedown', f)
   }, [menu])
   const k = q.toLowerCase()
-  const L = s.chats.filter((c) => !k || c.title.toLowerCase().includes(k) || c.msgs.some((m) => m.t.toLowerCase().includes(k)))
+  // Filter and partition in single passes, memoized: the list only changes
+  // when chats or the query change, not on every unrelated store write.
+  const L = useMemo(
+    () => s.chats.filter((c) => !k || c.title.toLowerCase().includes(k) || c.msgs.some((m) => m.t.toLowerCase().includes(k))),
+    [s.chats, k],
+  )
+  const { temporary, pinned, free } = useMemo(() => {
+    const out = { temporary: [] as Chat[], pinned: [] as Chat[], free: [] as Chat[] }
+    for (const c of L) {
+      if (c.temporary) out.temporary.push(c)
+      else if (c.pin) out.pinned.push(c)
+      else if (!c.folder) out.free.push(c)
+    }
+    return out
+  }, [L])
+  const folderCounts = useMemo(() => {
+    const m = new Map<string, number>()
+    for (const c of s.chats) if (c.folder) m.set(c.folder, (m.get(c.folder) ?? 0) + 1)
+    return m
+  }, [s.chats])
   // Ranked message search (BM25): one hit per chat with a text snippet.
   // Jump-to-message sets flashMsg, which Chat highlights and scrolls to.
   const hits = useMemo(() => (k ? searchChats(s.chats, q, 30) : []), [s.chats, q, k])
@@ -104,23 +143,23 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
     ['widgets', 'Widgets', PanelRight, Object.values(s.widgets).filter(Boolean).length],
   ]
   const library = lib.filter(([key]) => (show[key] ?? true) && (!libFeature[key] || featOn(s, libFeature[key])))
-  const mv = (id: string, x: number, y: number) => setMenu({ id, x, y })
-  const registerRow = (id: string) => (el: HTMLDivElement | null) => {
+  const mv = useCallback((id: string, x: number, y: number) => setMenu({ id, x, y }), [])
+  const registerRow = useCallback((id: string) => (el: HTMLDivElement | null) => {
     if (el) rowEls.current.set(id, el)
     else rowEls.current.delete(id)
-  }
-  const registerZone = (key: string) => (el: HTMLDivElement | null) => {
+  }, [])
+  const registerZone = useCallback((key: string) => (el: HTMLDivElement | null) => {
     if (el) zoneEls.current.set(key, el)
     else zoneEls.current.delete(key)
-  }
+  }, [])
   const zoneKeys = useMemo(() => ['', ...s.folders.map((f) => f.id)], [s.folders])
-  const visMembers = (folder: string, exclude?: string | null) =>
-    L.filter((c) => !c.temporary && !c.pin && (folder ? c.folder === folder : !c.folder) && c.id !== exclude)
   // Live snapshot for window-level listeners (attached once; always current).
   const live = useRef({ L, zoneKeys, folders: s.folders })
   live.current = { L, zoneKeys, folders: s.folders }
-  const liveMembers = (folder: string, exclude?: string | null) =>
-    live.current.L.filter((c) => !c.temporary && !c.pin && (folder ? c.folder === folder : !c.folder) && c.id !== exclude)
+  // Stable, ref-reading: the drag listeners and the memoized rows call these,
+  // so they must not be rebuilt when the list re-renders.
+  const liveMembers = useCallback((folder: string, exclude?: string | null) =>
+    live.current.L.filter((c) => !c.temporary && !c.pin && (folder ? c.folder === folder : !c.folder) && c.id !== exclude), [])
 
   const computeTarget = (clientY: number): { folder: string; at: number } | null => {
     const d = dragRef.current
@@ -143,7 +182,9 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
     return null
   }
 
-  const endDrag = (commit: boolean) => {
+  // Stable: reads the drag state through refs, so it can be a dependency of the
+  // once-attached window listeners and of the memoized row handlers.
+  const endDrag = useCallback((commit: boolean) => {
     const d = dragRef.current
     const st = dragState.current
     const id = d?.id ?? st.dragId
@@ -182,7 +223,7 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
     } else {
       setDndMsg('Chat drag cancelled. Order unchanged.')
     }
-  }
+  }, [liveMembers])
 
   useEffect(() => {
     const mvWindow = (e: PointerEvent) => {
@@ -249,9 +290,9 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
       window.removeEventListener('pointercancel', cancel)
       window.removeEventListener('keydown', key, true)
     }
-    // Attached once; render-fresh data flows through refs above.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+    // Attached once; render-fresh data flows through refs above and `endDrag`
+    // is stable (it reads refs + `useS.getState()`).
+  }, [endDrag])
 
   // Animate rows around the live placeholder; keyed on the visible row order so
   // unrelated re-renders (e.g. the clock tick) never disturb in-flight motion.
@@ -259,12 +300,15 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
   const flipKey = `${L.map((c) => c.id).join(',')}|${dragId ?? ''}|${target ? `${target.folder}:${target.at}` : ''}`
   useFlipAnimate(rowEls, dragId, !!reducedMotion, flipKey)
 
-  const rowHandle = (chat: Chat, container: string, index: number) => ({
+  // Stable row handlers: depend only on refs and setState, so memoized rows
+  // keep their props between renders (including during a drag, apart from the
+  // `activeId` flip that legitimately changes every row's dnd object).
+  const rowHandle = useCallback((chat: Chat, container: string, index: number) => ({
     className: 'dnd-handle',
     tabIndex: 0,
     role: 'button' as const,
     'aria-label': `${chat.title}. Press Space to lift and move between folders.`,
-    'aria-pressed': dragId === chat.id,
+    'aria-pressed': dragState.current.dragId === chat.id,
     onPointerDown: (e: React.PointerEvent) => {
       if (e.pointerType === 'mouse' && e.button !== 0) return
       const el = rowEls.current.get(chat.id)
@@ -273,8 +317,9 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
       pending.current = { id: chat.id, startX: e.clientX, startY: e.clientY, dx: e.clientX - r.left, dy: e.clientY - r.top }
     },
     onKeyDown: (e: React.KeyboardEvent) => {
-      if (dragId !== chat.id) {
-        if (e.key === ' ' && !dragId) {
+      const active = dragState.current.dragId
+      if (active !== chat.id) {
+        if (e.key === ' ' && !active) {
           e.preventDefault()
           const el = rowEls.current.get(chat.id)
           const b = el ? measureBox(el) : { w: 0, h: 40, radius: '8px' }
@@ -282,7 +327,7 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
           setBox(b)
           setDragId(chat.id)
           if (container === 'pinned' || container === 'temporary') {
-            setTarget({ folder: '', at: visMembers('', chat.id).length })
+            setTarget({ folder: '', at: liveMembers('', chat.id).length })
           } else {
             setTarget({ folder: container, at: index })
           }
@@ -291,7 +336,7 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
         return
       }
       const t = dragState.current.target ?? { folder: '', at: 0 }
-      const list = visMembers(t.folder, chat.id)
+      const list = liveMembers(t.folder, chat.id)
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
         e.preventDefault()
         const d = e.key === 'ArrowDown' ? 1 : -1
@@ -299,11 +344,12 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
         setDndMsg(`Destination position ${Math.max(0, Math.min(list.length, t.at + d)) + 1} of ${list.length + 1}.`)
       } else if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
         e.preventDefault()
-        const i = zoneKeys.indexOf(t.folder)
-        const next = zoneKeys[(i + (e.key === 'ArrowRight' ? 1 : zoneKeys.length - 1)) % zoneKeys.length]
-        const nl = visMembers(next, chat.id)
+        const keys = live.current.zoneKeys
+        const i = keys.indexOf(t.folder)
+        const next = keys[(i + (e.key === 'ArrowRight' ? 1 : keys.length - 1)) % keys.length]
+        const nl = liveMembers(next, chat.id)
         setTarget({ folder: next, at: nl.length })
-        setDndMsg(`Destination folder ${next ? (s.folders.find((f) => f.id === next)?.name ?? 'folder') : 'Recent'}. Position ${nl.length + 1}.`)
+        setDndMsg(`Destination folder ${next ? (live.current.folders.find((f) => f.id === next)?.name ?? 'folder') : 'Recent'}. Position ${nl.length + 1}.`)
       } else if (e.key === ' ' || e.key === 'Enter') {
         e.preventDefault()
         endDrag(true)
@@ -315,21 +361,32 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
         setTarget({ folder: t.folder, at: list.length })
       }
     },
-  })
+  }), [endDrag, liveMembers])
+
+  const del = useCallback((id: string, shift: boolean) => {
+    if (shift) useS.getState().chatOp(id, 'del')
+    else setDeleteId(id)
+  }, [])
+  const dnd = useMemo(() => ({ register: registerRow, handle: rowHandle, activeId: dragId }), [registerRow, rowHandle, dragId])
 
   const rows = (l: Chat[], container: string) => {
     // The dragged row is replaced by the live placeholder so the destination
-    // index always refers to the visible rows (no duplicates, no gaps).
-    const shown = l.filter((c) => c.id !== dragId)
-    const items = shown.map((c) => <Row key={c.id} c={c} mv={mv} del={(id, shift) => shift ? s.chatOp(id, 'del') : setDeleteId(id)} dnd={{ register: registerRow, handle: rowHandle, activeId: dragId }} container={container} index={l.findIndex((x) => x.id === c.id)} />)
-    if (dragId && target && container !== 'pinned' && container !== 'temporary' && container === target.folder) {
-      items.splice(Math.max(0, Math.min(target.at, items.length)), 0, <DndPlaceholder key="__drop" height={box?.h ?? 40} radius={box?.radius} />)
-    }
+    // index always refers to the visible rows (no duplicates, no gaps). The
+    // source index is carried through the pass instead of searched per row.
+    const shown: { c: Chat; index: number }[] = []
+    l.forEach((c, index) => { if (c.id !== dragId) shown.push({ c, index }) })
+    const drop = dragId && target && container !== 'pinned' && container !== 'temporary' && container === target.folder
+      ? Math.max(0, Math.min(target.at, shown.length))
+      : -1
+    const items: ReactNode[] = []
+    shown.forEach(({ c, index }, i) => {
+      if (i === drop) items.push(<DndPlaceholder key="__drop" height={box?.h ?? 40} radius={box?.radius} />)
+      items.push(<Row key={c.id} c={c} mv={mv} del={del} dnd={dnd} container={container} index={index} />)
+    })
+    if (drop === shown.length) items.push(<DndPlaceholder key="__drop" height={box?.h ?? 40} radius={box?.radius} />)
     return items
   }
   if (!open) return null
-  const temporary = L.filter((c) => c.temporary)
-  const pinned = L.filter((c) => !c.temporary && c.pin), free = L.filter((c) => !c.temporary && !c.pin && !c.folder)
   const timeLeft = (c: Chat) => {
     if (!c.expiresAt) return 'until you leave'
     const mins = Math.max(0, Math.ceil((c.expiresAt - clock) / 60000))
@@ -397,8 +454,8 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
                   <button onClick={() => s.toggleFolder(f.id)} onDoubleClick={() => setFe(f.id)} className="flex min-w-0 flex-1 items-center gap-2 px-2.5 py-2 text-left">
                     <span className="relative grid shrink-0 place-items-center" aria-hidden="true">
                       <Folder size={20} className="text-mu" />
-                      <span className="absolute inset-0 flex items-center justify-center pt-[3px] text-[9px] font-semibold leading-none text-mu">{s.chats.filter((c) => c.folder === f.id).length}</span>
-                    </span><span className="min-w-0 truncate">{f.name}<span className="sr-only"> ({s.chats.filter((c) => c.folder === f.id).length} chats)</span></span>
+                      <span className="absolute inset-0 flex items-center justify-center pt-[3px] text-[9px] font-semibold leading-none text-mu">{folderCounts.get(f.id) ?? 0}</span>
+                    </span><span className="min-w-0 truncate">{f.name}<span className="sr-only"> ({folderCounts.get(f.id) ?? 0} chats)</span></span>
                     <ChevronRight size={14} className={cx('shrink-0 text-mu transition-transform', o && 'rotate-90')} />
                   </button>
                 )}
@@ -441,7 +498,7 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
           {!s.folders.length && <p className="px-2.5 py-2 text-xs text-mu">Create a folder first with the folder button.</p>}
         </div>
       )}
-      {deleteId && <Confirm title="Delete this chat?" text="This chat and its messages will be permanently removed." ok="Delete" close={() => setDeleteId('')} run={() => s.chatOp(deleteId, 'del')} />}
+      {deleteId && <Confirm title="Delete this chat?" text="This chat and its messages will be permanently removed." ok="Delete" close={() => setDeleteId('')} run={() => useS.getState().chatOp(deleteId, 'del')} />}
       <DndLiveRegion message={dndMsg} />
     </aside>
   )

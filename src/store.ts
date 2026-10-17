@@ -1,11 +1,13 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
+import { useShallow } from 'zustand/react/shallow'
 import { DEFAULT_TOOLS, KEYS, WIDGETS } from './meta'
 import { est, redact, stream, wire, trimHistory, estimateHistoryTokens, runToolLoop, type ToolCall, type ToolResult, searchWeb, formatSearch, fetchPage, formatPage, can, ocrImage } from './engine'
 import { DEFAULT_SKILL_STATE, normSkills, enabledSkills, getSkillInstructions, composeSystemPrompt, SKILL_TOOL_NAME, type SkillState, type ResolvedSkill } from './skills'
-import { BLANK_RESEARCH, RESEARCH_TIERS, decomposeResearch, normResearch, parseResearchRequest, researchStepsFor, researchSystemNote, setStep, tierOf, type ResearchState, type ResearchTierId } from './research'
+import { BLANK_RESEARCH, PLAN_SCOPE_MAX, PLAN_SCOPE_SYSTEM, RESEARCH_ABSTRACT_ASK, RESEARCH_MIN_SEARCHES, RESEARCH_REASONING_CHARS, RESEARCH_REPORT_ASK, RESEARCH_TIERS, citationRepairAsk, citationUncitedAsk, compactResearchRounds, estimateResearchUsage, fallbackPlan, looksLikeReport, normResearch, parseResearchPlan, parseResearchRequest, planUserAsk, reportSample, researchAbstract, researchMinAsk, researchSystemNote, sanitizeCitations, setStep, tierOf, withStepLead, type ResearchPlan, type ResearchState, type ResearchTierId } from './research'
 export { BLANK_RESEARCH, normResearch, tierOf, RESEARCH_TIERS }
-export type { ResearchState, ResearchTierId }
+export type { ResearchState, ResearchTierId, ResearchPlan, ResearchPlanStep } from './research'
+import { collectMessageSources, citationCoverage } from './citations'
 import { hintForLog, getErrorCode, classifyModelError, type ErrorCode } from './errors'
 import { usable, modelsOf, modelNameOf } from './models'
 import { splitEntry, playlistEntries, applyCommandTemplate, composeFullInput, planRequest } from './chatPlan'
@@ -14,7 +16,7 @@ import { BLANK_DOCS, normDocs, type DocPrefs } from './docs'
 export { BLANK_DOCS, normDocs, type DocPrefs }
 import { rankMemories, mergeMemory, RouteCache, orderEndpoints, recordRoute, type RouteStat, type RoutingMode } from './recall'
 export type { RouteStat, RoutingMode }
-import { QUOTA_FLAG, prunePersisted, storageUsage, persistStorage } from './persistence'
+import { QUOTA_FLAG, prunePersisted, storageUsage, persistStorage, createPersistMapper } from './persistence'
 
 export { QUOTA_FLAG, prunePersisted, storageUsage }
 
@@ -22,19 +24,21 @@ export { usable, modelsOf, modelNameOf }
 
 export type Kind = 'eps' | 'prompts' | 'pls' | 'cmds'
 export type ModelPrice = { input: number; output: number; source?: 'manual' | 'openrouter' }
+/* Per-model inference provider pin (OpenRouter only): `tag` is the routing
+ * slug sent as `provider.order` (e.g. `amazon-bedrock`), `name` is its label. */
+export type ModelProvider = { tag: string; name: string }
 /* Explicit names (preferred for new code); short aliases kept as deprecated. */
-export type Endpoint = { id: string; name: string; type: 'openai' | 'anthropic'; url: string; key: string; model: string; preset?: string; endpointId?: string; endpointFilter?: 'author' | 'provider'; models?: string[]; modelNames?: Record<string, string>; modelEfforts?: Record<string, string[]>; modelEffortSource?: Record<string, 'auto' | 'manual'>; modelsMode?: 'separate' | 'playlist'; prices?: Record<string, ModelPrice>; on: boolean }
+export type Endpoint = { id: string; name: string; type: 'openai' | 'anthropic'; url: string; key: string; model: string; preset?: string; endpointId?: string; endpointFilter?: 'author' | 'provider'; models?: string[]; modelNames?: Record<string, string>; modelContext?: Record<string, number>; modelProviders?: Record<string, ModelProvider>; modelEfforts?: Record<string, string[]>; modelEffortSource?: Record<string, 'auto' | 'manual'>; modelsMode?: 'separate' | 'playlist'; prices?: Record<string, ModelPrice>; on: boolean }
 export type Ep = Endpoint
 export type Playlist = { id: string; name: string; sys: string; e: string[]; cls: string; clsModel?: string; rule: string }
 export type Pl = Playlist
 export type Command = { id: string; name: string; desc: string; in: 'text' | 'image' | 'image+text' | 'doc'; sys: string; tpl: string; pl: string; on: boolean }
 export type Cmd = Command
-export type Attempt = { n: string; m: string; detail?: string; ms?: number; err?: string; errCode?: ErrorCode; tin?: number; tout?: number; at?: number }
+export type Attempt = { n: string; m: string; detail?: string; ms?: number; err?: string; errCode?: ErrorCode; tin?: number; tout?: number; cacheRead?: number; cacheWrite?: number; cost?: number; at?: number }
 export type Try = Attempt
 export type Attachment = { name: string; kind: 'img' | 'pdf' | 'txt' | 'media'; size: string; mime?: string; data?: string; text?: string; source?: string; pages?: number }
 export type Att = Attachment
-export type FadeEvent = { text: string; at: number }
-export type Message = { id: string; r: 'user' | 'assistant'; t: string; at?: number; fadeEvents?: FadeEvent[]; by?: string; tps?: number; log?: Attempt[]; att?: Attachment[]; err?: boolean; full?: string; ctx?: string[]; fx?: string; cmd?: string; alts?: Snap[]; ai?: number; historyTokens?: number; explicitTokens?: number; reasoning?: string; toolRounds?: { text: string; calls: ToolResult[] }[]; toolFinal?: string; sys?: string; workspaceIds?: string[]; research?: ResearchState }
+export type Message = { id: string; r: 'user' | 'assistant'; t: string; at?: number; by?: string; tps?: number; log?: Attempt[]; att?: Attachment[]; err?: boolean; full?: string; ctx?: string[]; fx?: string; cmd?: string; alts?: Snap[]; ai?: number; historyTokens?: number; explicitTokens?: number; reasoning?: string; toolRounds?: { text: string; calls: ToolResult[] }[]; toolFinal?: string; sys?: string; workspaceIds?: string[]; research?: ResearchState }
 export type Msg = Message
 export type Snap = { t: string; by?: string; tps?: number; log?: Try[]; err?: boolean; toolRounds?: { text: string; calls: ToolResult[] }[]; toolFinal?: string }
 export type Chat = { id: string; title: string; pin?: boolean; started?: boolean; folder?: string; msgs: Msg[]; temporary?: boolean; expiresAt?: number; titleAuto?: boolean }
@@ -42,6 +46,8 @@ export type Folder = { id: string; name: string; open: boolean }
 export type Notice = { t: string; tab?: string; label?: string } | null
 export type Stats = { tin: number; tout: number; historyIn: number; explicitIn: number; sent: number; chats: number; since: number; cost: number }
 export type Memory = { id: string; text: string; category: string; createdAt: number; updatedAt: number }
+/* Per-chat system prompt preset ({ id, name, text }; see BLANK.prompts). */
+export type Prompt = { id: string; name: string; text: string }
 
 /* Workspace (first-class entity) */
 export type WorkspaceViewDefault = 'pinned' | 'latest'
@@ -98,9 +104,20 @@ export const widgetOn = (s: { features?: Record<FeatureId, boolean>; widgets: Re
   return !!s.widgets[id]
 }
 
-export const THEMES = { plum: 'Plum', claude: 'Claude', nord: 'Nord', amoled: 'AMOLED', paper: 'Paper', sepia: 'Sepia', porcelain: 'Porcelain', sand: 'Sand', custom: 'Custom' }
-export const DARK_THEMES = ['plum', 'claude', 'nord', 'amoled'] as const
-export const LIGHT_THEMES = ['paper', 'sepia', 'porcelain', 'sand'] as const
+export const THEMES = { plum: 'Plum', claude: 'Claude', obsidian: 'Obsidian', bronze: 'Bronze', paper: 'Paper', sage: 'Sage', frost: 'Frost', sunset: 'Sunset', custom: 'Custom' }
+export const DARK_THEMES = ['plum', 'claude', 'obsidian', 'bronze'] as const
+export const LIGHT_THEMES = ['paper', 'sage', 'frost', 'sunset'] as const
+/** Migration map for theme keys removed from the palette. */
+export const LEGACY_THEME_MAP: Record<string, string> = { nord: 'claude', amoled: 'obsidian', sepia: 'sunset', porcelain: 'frost', sand: 'sunset' }
+/** Normalize a stored theme key: remap removed themes, keep 'custom', discard anything unknown. */
+export const normThemeKeyOf = (key: unknown, isDark: boolean): string | null => {
+  if (typeof key !== 'string') return null
+  let k = LEGACY_THEME_MAP[key] ?? key
+  if (k === 'custom') return k
+  const valid = (isDark ? DARK_THEMES : LIGHT_THEMES) as readonly string[]
+  if (!valid.includes(k)) return null
+  return k
+}
 export type ThemeMode = 'dark' | 'light'
 export type DarkTheme = typeof DARK_THEMES[number] | 'custom'
 export type LightTheme = typeof LIGHT_THEMES[number] | 'custom'
@@ -168,15 +185,19 @@ export const isToolRoundsUnlimited = (p: { maxToolRounds?: unknown; highToolsUnl
 
 /* Ephemeral per-reply streaming tool calls (live canvas preview). Deliberately
    outside the persisted store: cleared when each reply completes. */
-type Live = { tools: Record<string, ToolCall[]>; set: (mid: string, calls: ToolCall[]) => void; clear: (mid: string) => void }
+type Live = { tools: Record<string, ToolCall[]>; chunks: Record<string, string[]>; set: (mid: string, calls: ToolCall[]) => void; pushChunk: (mid: string, t: string) => void; clear: (mid: string) => void }
 export const useLive = create<Live>()((set) => ({
   tools: {},
+  chunks: {},
   set: (mid, calls) => set((s) => ({ tools: { ...s.tools, [mid]: calls } })),
+  pushChunk: (mid, t) => set((s) => ({ chunks: { ...s.chunks, [mid]: [...(s.chunks[mid] ?? []), t] } })),
   clear: (mid) => set((s) => {
-    if (!(mid in s.tools)) return s
+    if (!(mid in s.tools) && !(mid in s.chunks)) return s
     const tools = { ...s.tools }
+    const chunks = { ...s.chunks }
     delete tools[mid]
-    return { tools }
+    delete chunks[mid]
+    return { tools, chunks }
   }),
 }))
 export const BLANK: Record<Kind, () => any> = {
@@ -198,7 +219,7 @@ export type SearchProvider = 'tinyfish' | 'you' | 'exa' | 'firecrawl' | 'brightd
 export type CiteStyle = 'pills' | 'links' | 'off'
 export const SEARCH_PROVIDERS: [SearchProvider, string][] = [['tinyfish', 'TinyFish'], ['you', 'You.com'], ['exa', 'Exa'], ['firecrawl', 'Firecrawl'], ['brightdata', 'Bright Data']]
 export type SearchPrefs = { provider: SearchProvider; keys: Record<SearchProvider, string>; zone: string; maxResults: number; timeoutMs: number; maxSnippetChars: number; evidenceBudget: number; maxRetries: number; retryBaseMs: number; citeStyle: CiteStyle; sourcesOpen: boolean; reader: boolean; strictCitations: boolean }
-export const BLANK_SEARCH: SearchPrefs = { provider: 'tinyfish', keys: { tinyfish: '', you: '', exa: '', firecrawl: '', brightdata: '' }, zone: '', maxResults: 8, timeoutMs: 8000, maxSnippetChars: 1800, evidenceBudget: 12000, maxRetries: 2, retryBaseMs: 300, citeStyle: 'off', sourcesOpen: false, reader: true, strictCitations: false }
+export const BLANK_SEARCH: SearchPrefs = { provider: 'tinyfish', keys: { tinyfish: '', you: '', exa: '', firecrawl: '', brightdata: '' }, zone: '', maxResults: 8, timeoutMs: 8000, maxSnippetChars: 1800, evidenceBudget: 12000, maxRetries: 2, retryBaseMs: 300, citeStyle: 'pills', sourcesOpen: false, reader: true, strictCitations: false }
 const SEARCH_VALID_PROVIDERS: SearchProvider[] = ['tinyfish', 'you', 'exa', 'firecrawl', 'brightdata']
 const clampInt = (v: unknown, fallback: number, min: number, max: number): number =>
   Number.isInteger(v) ? Math.max(min, Math.min(max, v as number)) : fallback
@@ -215,7 +236,7 @@ export const normSearch = (v: any): SearchPrefs => {
     evidenceBudget: clampInt(v?.evidenceBudget, BLANK_SEARCH.evidenceBudget, 1000, 16000),
     maxRetries: clampInt(v?.maxRetries, BLANK_SEARCH.maxRetries, 0, 4),
     retryBaseMs: clampInt(v?.retryBaseMs, BLANK_SEARCH.retryBaseMs, 50, 2000),
-    citeStyle: v?.citeStyle === 'links' ? 'links' : v?.citeStyle === 'pills' ? 'pills' : 'off',
+    citeStyle: v?.citeStyle === 'links' ? 'links' : v?.citeStyle === 'off' ? 'off' : 'pills',
     sourcesOpen: v?.sourcesOpen === true,
     reader: v?.reader !== false,
     strictCitations: v?.strictCitations === true,
@@ -259,7 +280,7 @@ type S = {
   customDarkColors: ThemeColors
   customLightColors: ThemeColors
   setupDone: boolean
-  prefs: { showBy: boolean; showLog: boolean; showTps: boolean; enterSends: boolean; autoTitle: boolean; temporaryByDefault: boolean; showModelPricing: boolean; titleEp: string; titleModel?: string; effortEp: string; effortModel?: string; recallEp: string; recallModel?: string; fade: number; tempHours: number; fontBody: string; fontMono: string; fontHeader: string; modelPrimary: 'id' | 'name'; modelSecondary: 'none' | 'provider' | 'id' | 'name'; modelDisplay?: 'none' | 'name' | 'provider' | 'both'; paletteMax: number; chatWidth: 'narrow' | 'standard' | 'wide'; settingsWidth: number; settingsHeight: number; modelPickerHeight: number; sidebarWidth?: number; widgetWidth?: number; workspaceWidth?: number; workspaceSplit?: number; modalBlur: number; settingsOpacity: number; routingMode?: RoutingMode }
+  prefs: { showBy: boolean; showLog: boolean; showTps: boolean; enterSends: boolean; autoTitle: boolean; temporaryByDefault: boolean; showModelPricing: boolean; showContextMeter: boolean; titleEp: string; titleModel?: string; effortEp: string; effortModel?: string; recallEp: string; recallModel?: string; tempHours: number; fontBody: string; fontMono: string; fontHeader: string; modelPrimary: 'id' | 'name'; modelSecondary: 'none' | 'provider' | 'id' | 'name'; modelDisplay?: 'none' | 'name' | 'provider' | 'both'; paletteMax: number; chatWidth: 'narrow' | 'standard' | 'wide'; settingsWidth: number; settingsHeight: number; modelPickerHeight: number; sidebarWidth?: number; widgetWidth?: number; workspaceWidth?: number; workspaceSplit?: number; modalBlur: number; settingsOpacity: number; routingMode?: RoutingMode; streamFade: number; streamMd: boolean }
   widgets: Record<string, boolean>; widgetPrefs: { usageGroup: 'endpoint' | 'model'; usageMode: 'success' | 'tokens'; usageFormat: string; usageTotal: boolean; usagePeriod: 'session' | 'day' | 'week' | 'custom' | 'all'; usageFrom?: string; usageTo?: string; lastSpeed: boolean; timeUnit: 'ms' | 's' | 'auto'; widgetOrder: string[]; shortcuts: string[]; contextLimit: number; showDisabledEndpoints: boolean; scratchRows: number; snippetLimit: number; costDecimals: number; activePromptsOnly: boolean; charsPerToken: number; hideDoneTodos: boolean }; rail: boolean; pad: string; snips: string[]
   params: { def: boolean; temp: number; topp: number; max: number; maxToolRounds: number; highToolsUnlocked: boolean }; effort: Record<string, string>
   workspacePrefs: WorkspacePrefs
@@ -289,6 +310,9 @@ type S = {
   delMsg: (id: string) => void
   editMsg: (id: string, t: string) => void
   chooseResearchTier: (mid: string, tier: ResearchTierId) => void
+  startResearch: (mid: string) => void
+  resumeResearch: (mid: string) => void
+  updateResearchPlan: (mid: string, plan: ResearchPlan) => void
   stopResearch: (mid: string) => void
   resetStats: () => void
   compactStorage: () => string
@@ -394,7 +418,7 @@ export const lowestEffortOf = (e: Ep): string => {
 /* Ask the effort-detection model to pick one of `levels` for the request.
  * Strict JSON only: {"effort":"<one available level>"}. Returns '' when
  * unconfigured, unusable, or the output fails validation. */
-export async function classifyEffort(query: string, levels: string[]): Promise<{ level: string; tin: number; tout: number; by: string }> {
+export async function classifyEffort(query: string, levels: string[]): Promise<{ level: string; tin: number; tout: number; by: string; cost?: number; cacheRead?: number; cacheWrite?: number }> {
   const none = { level: '', tin: 0, tout: 0, by: '' }
   const uniq = [...new Set(levels.filter(Boolean))]
   if (!uniq.length) return none
@@ -408,7 +432,7 @@ export async function classifyEffort(query: string, levels: string[]): Promise<{
       [{ role: 'user', content: query.slice(0, 4000) }], () => {}, new AbortController(), { cap: 100, effort: lowestEffortOf(c) })
     const j = JSON.parse(x.text.match(/\{[\s\S]*\}/)?.[0] ?? '')
     if (!j || typeof j !== 'object' || Object.keys(j).join() !== 'effort' || typeof j.effort !== 'string' || !uniq.includes(j.effort)) throw Error('rejected: ' + x.text.slice(0, 80))
-    return { level: j.effort, tin: x.tin, tout: x.tout, by: `${c.name} · ${c.model}` }
+    return { level: j.effort, tin: x.tin, tout: x.tout, cost: (x as any).cost ?? 0, cacheRead: (x as any).cacheRead ?? 0, cacheWrite: (x as any).cacheWrite ?? 0, by: `${c.name} · ${c.model}` }
   } catch { return none }
 }
 
@@ -420,12 +444,23 @@ let cur: Run | null = null
 const routeCache = new RouteCache()
 export const __routeCache = routeCache
 
+/* Per-chat memo for the persisted copy: only the chat that changed is
+ * re-mapped per store write (see persistence.ts). */
+const mapPersistChats = createPersistMapper()
+
 export const useS = create<S>()(
   persist(
     (set, get) => {
       const bump = (tin: number, tout: number, historyIn = tin, explicitIn = 0) => { if (!featOn(get(), 'stats')) return; set((s) => ({ stats: { ...s.stats, tin: s.stats.tin + tin, tout: s.stats.tout + tout, historyIn: s.stats.historyIn + historyIn, explicitIn: s.stats.explicitIn + explicitIn } })) }
-      const addCost = (e: Ep, model: string, tin: number, tout: number) => {
+      const addCost = (e: Ep, model: string, tin: number, tout: number, reportedCost = 0) => {
         if (!featOn(get(), 'stats')) return
+        // Prefer the provider-reported spend (OpenRouter `usage.cost`) when
+        // present: it already accounts for cached/discounted pricing. Fall
+        // back to the user's per-model price table otherwise.
+        if (Number.isFinite(reportedCost) && reportedCost > 0) {
+          set((s) => ({ stats: { ...s.stats, cost: s.stats.cost + reportedCost } }))
+          return
+        }
         const price = e.prices?.[model]
         if (price) set((s) => ({ stats: { ...s.stats, cost: s.stats.cost + (tin * price.input + tout * price.output) / 1e6 } }))
       }
@@ -483,11 +518,11 @@ export const useS = create<S>()(
           r.ctl = new AbortController()
           const x = await stream(c, `Choose the best model for the user's request. ${pl.rule || ''}\nAllowed model ids: ${JSON.stringify(ids)}\nReply with only JSON: {"model":"<one allowed id>"}`, [{ role: 'user', content: q.slice(0, 4000) }], () => {}, r.ctl, { cap: 200, effort: lowestEffortOf(c) })
           bump(x.tin, x.tout)
-          addCost(c, c.model, x.tin, x.tout)
+          addCost(c, c.model, x.tin, x.tout, (x as any).cost ?? 0)
           const j = JSON.parse(x.text.match(/\{[\s\S]*\}/)?.[0] ?? '')
           if (!j || typeof j !== 'object' || Object.keys(j).join() !== 'model' || !ids.includes(j.model)) throw Error('output rejected (wrong shape, or an id outside this playlist): ' + x.text.slice(0, 80))
           routeCache.set(pl.id, q, j.model)
-          log.push({ n: c.name + ' (classifier)', m: c.model, detail: `Compared the request (${q.slice(0, 4000).length} characters) against ${ids.length} allowed model IDs using ${pl.cls ? 'playlist rule' : 'helper classification model'}${pl.rule ? `: “${pl.rule.slice(0, 180)}${pl.rule.length > 180 ? '…' : ''}”` : ' (no custom rule)'}.`, ms: Date.now() - t0, tin: x.tin, tout: x.tout, at: Date.now() })
+          log.push({ n: c.name + ' (classifier)', m: c.model, detail: `Compared the request (${q.slice(0, 4000).length} characters) against ${ids.length} allowed model IDs using ${pl.cls ? 'playlist rule' : 'helper classification model'}${pl.rule ? `: “${pl.rule.slice(0, 180)}${pl.rule.length > 180 ? '…' : ''}”` : ' (no custom rule)'}.`, ms: Date.now() - t0, tin: x.tin, tout: x.tout, cacheRead: (x as any).cacheRead ?? 0, cacheWrite: (x as any).cacheWrite ?? 0, cost: (x as any).cost ?? 0, at: Date.now() })
           const f = cand.find((e) => e.model === j.model)!
           return [f, ...cand.filter((e) => e !== f)]
         } catch (x: any) {
@@ -496,11 +531,163 @@ export const useS = create<S>()(
         }
       }
 
-      async function runResearch(mid: string, um: Msg, query: string, tierId: ResearchTierId) {
+      /* Append a fresh tier-pick research card after `msgs` in `chatId` and
+       * mark the request as busy. Used by send and by regen / editMsg when
+       * the (re)sent message is a @research request. */
+      function startResearchTierPick(chatId: string, msgs: Msg[], query: string) {
+        const mid = uid()
+        const rq: ResearchState = { id: uid(), query, tier: null, status: 'tier-pick', steps: [], startedAt: Date.now() }
+        set({ busy: false, chats: get().chats.map((x) => (x.id === chatId ? { ...x, msgs: [...msgs, { id: mid, r: 'assistant', t: '', at: Date.now(), by: '', log: [], research: rq }] } : x)) })
+      }
+
+      const researchMsg = (chatId: string, mid: string) =>
+        get().chats.find((c) => c.id === chatId)?.msgs.find((m) => m.id === mid)
+      const patchRs = (chatId: string, mid: string, f: (rs: ResearchState) => ResearchState) =>
+        edit(chatId, mid, (m) => (m.research ? { ...m, research: f(m.research) } : m))
+
+      /** Tool registry for a research run: only the search and page-reader tools
+       * (plus skills when enabled). Unrelated tools — workspaces, prompt chips,
+       * navigation — are deliberately excluded so they cannot derail a run.
+       * Rebuilt for every endpoint attempt so a retry never inherits a tool the
+       * previous attempt disabled or a spent budget. */
+      function researchEnabled(p: ReturnType<typeof plan>): Record<string, boolean> {
+        const g = get()
+        const prefs = normSearch(g.search)
+        const base: Record<string, boolean> = { search: true, fetch_page: prefs.reader !== false }
+        if (featOn(g, 'skills') && (p.skills ?? []).length) base[SKILL_TOOL_NAME] = true
+        return base
+      }
+
+      /** The hidden skill loader, shared by chat and research so a skill enabled
+       * during a research run actually resolves (it would otherwise fall back to
+       * the registry's placeholder). */
+      const skillHandler = ({ id: skillId }: { id?: string }) => {
+        const states = normSkills(get().skills).skills
+        const def = getSkillInstructions(String(skillId || ''), states)
+        if (!def) throw Error(`Unknown or disabled skill: ${String(skillId || '').trim() || '(empty)'}. Use an id from the Available skills list.`)
+        return `Skill: ${def.name}\n${def.instructions}`
+      }
+
+      /** Conservative price ceiling for a research run: the most expensive of the
+       * endpoint candidates it might fail over to, so the shown estimate is a
+       * true worst case rather than only the first candidate's price. */
+      const researchPriceCeiling = (cand: ReturnType<typeof plan>['cand']) => {
+        const prices = cand
+          .map((c) => c.prices?.[c.model])
+          .filter((pr): pr is { input: number; output: number } => !!pr && (pr.input > 0 || pr.output > 0))
+        return prices.length
+          ? { input: Math.max(...prices.map((pr) => pr.input)), output: Math.max(...prices.map((pr) => pr.output)) }
+          : null
+      }
+
+      /* The plan phase: draft a research plan, store it on the card, and wait
+       * for the user to start (or edit) it. Shares `cur` with the run, so the
+       * same Stop button cancels it. Falls back to a deterministic plan when
+       * the planning reply cannot be parsed, so the flow never dead-ends. */
+      async function planResearch(mid: string, um: Msg, query: string, tierId: ResearchTierId) {
         const chatId = get().chat
         const p = plan(get(), um)
         if (p.err) {
-          edit(chatId, mid, (m) => ({ ...m, research: { ...(m.research as ResearchState), status: 'error', error: p.err?.t ?? 'No endpoint ready.', finishedAt: Date.now() } }))
+          patchRs(chatId, mid, (rs) => ({ ...rs, status: 'error', error: p.err?.t ?? 'No endpoint ready.', finishedAt: Date.now() }))
+          set({ busy: false, notice: p.err })
+          return
+        }
+        const tier = tierOf(tierId)
+        const r: Run = { stopped: false, ctl: null }
+        cur = r
+        set({ busy: true })
+        const log: Try[] = []
+        const prefs = normSearch(get().search)
+        const searchOpts = searchOptsOf(prefs)
+        const price = researchPriceCeiling(p.cand)
+        patchRs(chatId, mid, (rs) => ({ ...rs, status: 'planning', scope: 0, tier: tier.id, error: undefined, finishedAt: undefined, estimate: estimateResearchUsage(tier, price) }))
+        let text = ''
+        let used: Ep | null = null
+        // Scope the topic with a few context searches before drafting the plan,
+        // so the plan reflects what is actually out there. Budgeted separately
+        // from the run's own search budget and capped at PLAN_SCOPE_MAX.
+        const scopeEnabled: Record<string, boolean> = { search: true }
+        let scopeUsed = 0
+        let scopeRounds: { text: string; calls: ToolResult[] }[] = []
+        for (const e of p.cand) {
+          if (r.stopped) break
+          try {
+            r.ctl = new AbortController()
+            const effRaw = get().effort[e.model] ?? ''
+            const o = { ...(get().params.def ? {} : { max: get().params.max, temp: get().params.temp, topp: get().params.topp }), effort: effRaw === 'auto' ? '' : effRaw }
+            const sys = `${p.sys}${p.sys ? '\n\n' : ''}${PLAN_SCOPE_SYSTEM}`
+            const ask = planUserAsk(query, tier)
+            const wirePlan = (rounds: { text: string; calls: ToolResult[] }[]) => wire(e, [
+              { id: mid, r: 'user' as const, t: ask },
+              ...(rounds.length ? [{ id: mid, r: 'assistant' as const, t: '', toolRounds: rounds }] : []),
+            ])
+            const t0 = Date.now()
+            let x: Awaited<ReturnType<typeof runToolLoop>>
+            try {
+              x = await runToolLoop(e, sys, wirePlan, scopeEnabled, () => {}, r.ctl, o, () => {}, (rounds) => { scopeRounds = rounds }, PLAN_SCOPE_MAX + 3, {
+                search: async ({ query: q }: { query: string }) => {
+                  if (r.stopped) throw Error('Research stopped.')
+                  if (scopeUsed >= PLAN_SCOPE_MAX) {
+                    // Disable the tool so the next round has nothing to call and
+                    // the model has to return the plan instead of spinning.
+                    scopeEnabled.search = false
+                    return `Context search budget reached (${PLAN_SCOPE_MAX}). Draft the plan now from what you have.`
+                  }
+                  scopeUsed++
+                  patchRs(chatId, mid, (rs) => ({ ...rs, scope: scopeUsed }))
+                  try {
+                    const data = await searchWeb(String(q ?? ''), { ...searchOpts, cache: true })
+                    return formatSearch(data as never, { inlineCites: false })
+                  } catch (err: any) {
+                    // A failed context search must never dead-end planning: tell
+                    // the model to adapt and keep going.
+                    return `Search failed (${String(err?.message ?? err).slice(0, 200)}). Try a different query, or draft the plan from what you already know.`
+                  }
+                },
+              }, () => {}, { maxParallel: 3 })
+            } catch (err) {
+              // The round cap with the tool still enabled: one final tool-free
+              // round so the plan JSON is always produced.
+              if (r.stopped || (getErrorCode(err) ?? errCodeOf(err)) !== 'tool_limit') throw err
+              x = await runToolLoop(e, sys, () => wirePlan(scopeRounds), {}, () => {}, r.ctl, o, () => {}, () => {}, 1)
+            }
+            bump(x.tin, x.tout); addCost(e, e.model, x.tin, x.tout, (x as any).cost ?? 0)
+            log.push({ n: e.name, m: e.model, detail: `Research plan for “${query.slice(0, 80)}” (${scopeUsed} context ${scopeUsed === 1 ? 'search' : 'searches'})`, ms: Date.now() - t0, tin: x.tin, tout: x.tout, cacheRead: (x as any).cacheRead ?? 0, cacheWrite: (x as any).cacheWrite ?? 0, cost: (x as any).cost ?? 0, at: Date.now() })
+            text = x.finalText || x.text
+            used = e
+            break
+          } catch (x: any) {
+            if (r.stopped) break
+            log.push({ n: e.name, m: e.model, err: errText(e, (x as Error)?.message), errCode: getErrorCode(x) ?? errCodeOf(x), at: Date.now() })
+            if (p.ex) break
+          }
+        }
+        if (r.stopped) { if (cur === r) { cur = null; set({ busy: false }) } return }
+        const parsed = text ? parseResearchPlan(text) : null
+        const finalPlan = parsed ?? fallbackPlan(query)
+        const planWarn = parsed ? undefined : 'The model did not return a usable plan, so this default one is shown. Edit it or start the research.'
+        patchRs(chatId, mid, (rs) => ({ ...rs, status: 'plan', plan: finalPlan, error: planWarn }))
+        // A chat whose first message is a deep-research request is named after
+        // the report's plan title (a short topic title) instead of the raw user
+        // message. Never clobber a title the user renamed.
+        const planTitle = String(finalPlan.title ?? '').replace(/\s+/g, ' ').trim()
+        if (planTitle) set((st) => ({
+          chats: st.chats.map((c) => {
+            if (c.id !== chatId) return c
+            const first = c.msgs[0]?.r === 'user' && c.msgs[1]?.id === mid
+            const auto = c.titleAuto || c.title === 'New chat' || !c.title || c.title === query.slice(0, 40)
+            return first && auto ? { ...c, title: planTitle.slice(0, 60) } : c
+          }),
+        }))
+        edit(chatId, mid, (m) => ({ ...m, by: used ? `${used.name} · ${used.model} · Research plan` : (m.by || 'Research plan'), log }))
+        if (cur === r) { cur = null; set({ busy: false }) }
+      }
+
+      async function runResearch(mid: string, um: Msg, query: string, tierId: ResearchTierId, resume = false) {
+        const chatId = get().chat
+        const p = plan(get(), um)
+        if (p.err) {
+          patchRs(chatId, mid, (rs) => ({ ...rs, status: 'error', error: p.err?.t ?? 'No endpoint ready.', finishedAt: Date.now() }))
           set({ busy: false, notice: p.err })
           if (cur) cur = null
           return
@@ -510,140 +697,282 @@ export const useS = create<S>()(
         cur = r
         set({ busy: true })
         const log: Try[] = []
-        const patchResearch = (f: (rs: ResearchState) => ResearchState) =>
-          edit(chatId, mid, (m) => (m.research ? { ...m, research: f(m.research) } : m))
-        const setSteps = (steps: ResearchState['steps']) => patchResearch((rs) => ({ ...rs, steps }))
-        const getSteps = () => (get().chats.find((c) => c.id === chatId)?.msgs.find((m) => m.id === mid)?.research?.steps ?? [])
-        let steps = researchStepsFor(query, tier)
-        patchResearch((rs) => ({ ...rs, status: 'running', steps, startedAt: Date.now() }))
+        const t0 = Date.now()
+        const setSteps = (steps: ResearchState['steps']) => patchRs(chatId, mid, (rs) => ({ ...rs, steps }))
+        const getSteps = () => (researchMsg(chatId, mid)?.research?.steps ?? [])
+        const getResearch = () => researchMsg(chatId, mid)?.research
         const prefs = normSearch(get().search)
         const searchOpts = searchOptsOf(prefs)
-        const breadthCalls: ToolResult[] = []
-        const seenUrls: string[] = []
-        const rawResults: { url: string }[] = []
-        const t0 = Date.now()
-        const deadline = t0 + tier.timeoutMs
-        let n = 0
-        for (const st of steps.filter((s) => s.kind === 'search')) {
-          if (r.stopped || Date.now() > deadline) break
-          n++
-          setSteps(setStep(getSteps(), st.id, { state: 'running' }))
+        const cpt = Math.min(10, Math.max(1, Number(get().widgetPrefs?.charsPerToken) || 4))
+        const ctxLimit = Math.max(2000, Number(get().widgetPrefs?.contextLimit) || 128000)
+        const baseSteps = resume ? (getResearch()?.steps ?? []) : []
+        const baseRounds = resume ? (researchMsg(chatId, mid)?.toolRounds ?? []) : []
+        const baseSearches = baseSteps.filter((s) => s.kind === 'search').length
+        const baseReads = baseSteps.filter((s) => s.kind === 'read').length
+        const planApproved = getResearch()?.plan ?? null
+        const system = `${p.sys}${p.sys ? '\n\n' : ''}${researchSystemNote(query, tier, new Date(), planApproved)}`
+        const histFor = () => (get().chats.find((c) => c.id === chatId)?.msgs ?? []).filter((m) => m.id !== mid)
+        if (!resume || !getResearch()?.estimate) {
+          // A run can fail over to any candidate, so the ceiling uses the most
+          // expensive one rather than only the first (the estimate is a "worst
+          // case" the user sees before starting).
+          const price = researchPriceCeiling(p.cand)
+          patchRs(chatId, mid, (rs) => ({ ...rs, estimate: rs.estimate ?? estimateResearchUsage(tier, price) }))
+        }
+        // Absolute, run-wide citation ids: every search result and page read
+        // gets one S<n> for the whole run, counting up without restarting.
+        // Duplicate URLs reuse their first id so the model's [S<n>] is exact.
+        // Kept across endpoint retries so ids stay unique and monotonic.
+        const citeByUrl = new Map<string, string>()
+        let nextCite = 1
+        const urlKeyOf = (url: string) => {
           try {
-            r.ctl = new AbortController()
-            const data = await searchWeb(st.query ?? query, searchOpts)
-            const formatted = formatSearch(data as never, { inlineCites: prefs.citeStyle !== 'off' })
-            breadthCalls.push({ id: `rs-${n}`, name: 'search', arguments: JSON.stringify({ query: st.query ?? query }), result: formatted })
-            for (const x of (data as { results?: { url?: string }[] }).results ?? []) {
-              if (x?.url && !seenUrls.includes(x.url)) { seenUrls.push(x.url); rawResults.push({ url: x.url }) }
-            }
-            log.push({ n: 'Deep research', m: tier.label, detail: `Breadth search ${n}/${tier.maxSearches}: “${(st.query ?? '').slice(0, 80)}” (${(data as { results?: unknown[] }).results?.length ?? 0} sources)`, at: Date.now() })
-            setSteps(setStep(getSteps(), st.id, { state: 'done', sources: (data as { results?: unknown[] }).results?.length ?? 0 }))
-          } catch (x: any) {
-            log.push({ n: 'Deep research', m: tier.label, err: String(x?.message ?? x), errCode: getErrorCode(x) ?? errCodeOf(x), at: Date.now() })
-            setSteps(setStep(getSteps(), st.id, { state: 'error', error: String(x?.message ?? x).slice(0, 200) }))
-            breadthCalls.push({ id: `rs-${n}`, name: 'search', arguments: JSON.stringify({ query: st.query ?? query }), result: String((x as Error)?.message ?? x), error: true })
-          }
+            const u = new URL(url)
+            u.hash = ''
+            return u.toString().replace(/\/$/, '').toLowerCase()
+          } catch { return String(url ?? '').toLowerCase() }
         }
-        // Page reads for top unique URLs (skipped when the reader is off).
-        if (prefs.reader !== false) {
-          const urls = seenUrls.slice(0, tier.maxReads)
-          if (urls.length) {
-            const withReads = [...getSteps()]
-            urls.forEach((u, i) => withReads.splice(withReads.length - 1, 0, { id: `rd${i + 1}`, kind: 'read' as const, label: `Read ${i + 1}`, query: u, state: 'queued' as const }))
-            setSteps(withReads)
-            let k = 0
-            for (const u of urls) {
-              if (r.stopped || Date.now() > deadline) break
-              k++
-              setSteps(setStep(getSteps(), `rd${k}`, { state: 'running' }))
-              try {
-                const page = await fetchPage(u)
-                breadthCalls.push({ id: `rr-${k}`, name: 'fetch_page', arguments: JSON.stringify({ url: u }), result: JSON.stringify({ url: page.url, title: page.title, text: (page.text ?? '').slice(0, 6000) }) })
-                setSteps(setStep(getSteps(), `rd${k}`, { state: 'done' }))
-              } catch (x: any) {
-                setSteps(setStep(getSteps(), `rd${k}`, { state: 'error', error: String(x?.message ?? x).slice(0, 200) }))
-              }
-            }
-          }
+        const citeIdFor = (url: string): string => {
+          const k = urlKeyOf(url)
+          const hit = citeByUrl.get(k)
+          if (hit) return hit
+          const id = `S${nextCite++}`
+          citeByUrl.set(k, id)
+          return id
         }
-        if (r.stopped) {
-          patchResearch((rs) => ({ ...rs, status: 'stopped', finishedAt: Date.now() }))
-          edit(chatId, mid, (m) => ({ ...m, sys: p.sys, log, toolRounds: breadthCalls.length ? [{ text: '', calls: breadthCalls }] : m.toolRounds }))
-          useLive.getState().clear(mid)
-          if (cur === r) { cur = null; set({ busy: false }) }
-          return
-        }
-        // Model-driven depth + synthesis: breadth rounds are preloaded, the
-        // model may spend the remaining budget on follow-ups before reporting.
-        const system = `${p.sys}${p.sys ? '\n\n' : ''}${researchSystemNote(query, tier)}`
         let order = p.cand
         try {
           if ((get().features ?? DEFAULT_FEATURES).playlists && p.pl && order.length > 1 && playlistClassifierOf(get(), p.pl)) order = await route(p.pl, order, um.full ?? um.t, log, r)
         } catch { /* routing is best-effort */ }
-        const histFor = () => (get().chats.find((c) => c.id === chatId)?.msgs ?? []).filter((m) => m.id !== mid)
-        const initialRounds = breadthCalls.length ? [{ text: '', calls: breadthCalls.filter((c) => !c.error) }] : []
-        let usedSearches = breadthCalls.filter((c) => c.name === 'search' && !c.error).length
-        let usedReads = breadthCalls.filter((c) => c.name === 'fetch_page' && !c.error).length
-        let depthIdx = 0
-        const enabledTools = (() => {
-          const g = get(), GF = g.features ?? DEFAULT_FEATURES
-          const base: Record<string, boolean> = GF.tools ? { ...g.tools, search: true, fetch_page: prefs.reader !== false } : { search: true, fetch_page: prefs.reader !== false }
-          if (featOn(get(), 'skills') && (p.skills ?? []).length) base[SKILL_TOOL_NAME] = true
-          return base
-        })()
         let ok = false
+        // Run-wide, monotonic state: the transcript and the budgets carry over
+        // between endpoint attempts, so a failure on one endpoint never throws
+        // away the evidence (or resets the budget) another already gathered. The
+        // deadline is fixed for the whole run — retries and resumes reuse it
+        // rather than restarting the clock — so the tier's time budget bounds
+        // the run.
+        let usedSearches = baseSearches
+        let usedReads = baseReads
+        let stepN = baseSteps.length
+        let liveRounds: { text: string; calls: ToolResult[] }[] = [...baseRounds]
+        const priorDeadline = getResearch()?.deadlineAt
+        const deadline = typeof priorDeadline === 'number' && priorDeadline > 0 ? priorDeadline : Date.now() + tier.timeoutMs
+        if (!priorDeadline) patchRs(chatId, mid, (rs) => ({ ...rs, deadlineAt: deadline }))
         for (const e of order) {
           if (r.stopped) break
           edit(chatId, mid, (m) => ({ ...m, by: `${e.name} · ${e.model} · Deep research (${tier.label})` }))
           let txt = ''
+          let report = ''
+          let tin = 0, tout = 0, cacheRead = 0, cacheWrite = 0, usageCost = 0
+          const enabledTools = researchEnabled(p)
+          patchRs(chatId, mid, (rs) => ({ ...rs, status: 'running', note: '' }))
+          // Older tool rounds are compacted before they are re-sent, keeping
+          // the transcript inside the context window on long runs; citation
+          // ids survive so the report's [S<n>] still resolve. Chat history is
+          // trimmed oldest-first against the same context limit.
+          const wireRounds = (cand: Ep, rounds: { text: string; calls: ToolResult[] }[], assistantText = '', tail: Msg[] = []) => {
+            const built: Msg = { id: mid, r: 'assistant', t: assistantText, toolRounds: compactResearchRounds(rounds) }
+            // Trim only the chat history (oldest-first); the research message
+            // and its evidence are always kept, since dropping them would
+            // leave the model with nothing to search or write from.
+            const hist = trimHistory(histFor(), { limit: ctxLimit, sys: system, charsPerToken: cpt }).msgs
+            return wire(cand, [...hist, built, ...tail])
+          }
           try {
             r.ctl = new AbortController()
             let researchEffort = get().effort[e.model] ?? ''
             if (researchEffort === 'auto') {
               const picked = await classifyEffort(query, e.modelEfforts?.[e.model] ?? [])
-              if (picked.level) { researchEffort = picked.level; bump(picked.tin, picked.tout); const ce = effortClassifierOf(get()); if (ce) addCost(ce, ce.model, picked.tin, picked.tout); log.push({ n: `${picked.by} (effort)`, m: picked.level, detail: `Auto effort for ${e.model}: chose ${picked.level}.`, ms: 0, tin: picked.tin, tout: picked.tout, at: Date.now() }) }
+              if (picked.level) { researchEffort = picked.level; bump(picked.tin, picked.tout); const ce = effortClassifierOf(get()); if (ce) addCost(ce, ce.model, picked.tin, picked.tout, (picked as any).cost ?? 0); log.push({ n: `${picked.by} (effort)`, m: picked.level, detail: `Auto effort for ${e.model}: chose ${picked.level}.`, ms: 0, tin: picked.tin, tout: picked.tout, cacheRead: (picked as any).cacheRead ?? 0, cacheWrite: (picked as any).cacheWrite ?? 0, cost: (picked as any).cost ?? 0, at: Date.now() }) }
               else researchEffort = ''
             }
-            const x = await runToolLoop(e, system, (rounds) => {
-              const all = [...initialRounds, ...rounds]
-              const partial = { id: mid, r: 'assistant' as const, t: '', toolRounds: all }
-              return wire(e, [...histFor(), partial])
-            }, enabledTools, (t) => {
-              txt += t
-              edit(chatId, mid, (m) => ({ ...m, t: txt }))
-            }, r.ctl, { ...(get().params.def ? {} : { max: get().params.max, temp: get().params.temp, topp: get().params.topp }), effort: researchEffort }, () => {}, (rounds) => {
-              edit(chatId, mid, (m) => ({ ...m, toolRounds: [...initialRounds, ...rounds] }))
-            }, tier.maxRounds, {
+            const o = { ...(get().params.def ? {} : { max: get().params.max, temp: get().params.temp, topp: get().params.topp }), effort: researchEffort }
+            // The round's narration streams above the searches it is about to
+            // make — exactly where its first step will land.
+            const note = (t: string) => patchRs(chatId, mid, (rs) => ({ ...rs, note: (rs.note ?? '') + t }))
+            const onReasoning = (t: string) => patchRs(chatId, mid, (rs) => ({ ...rs, reasoning: ((rs.reasoning ?? '') + t).slice(-RESEARCH_REASONING_CHARS) }))
+            // The search/read budget and time checks live in the handlers; tool
+            // errors steer the model instead of failing the whole run.
+            const toolHandlers: Record<string, (args: any) => unknown | Promise<unknown>> = {
               search: async ({ query: q, count }: { query: string; count?: number }) => {
-                if (usedSearches >= tier.maxSearches) throw Error(`Search budget reached (${tier.maxSearches} for ${tier.label}). Synthesize the report from the evidence so far.`)
+                if (r.stopped) throw Error('Research stopped.')
+                if (Date.now() > deadline) {
+                  enabledTools.search = false
+                  return 'Research time limit reached. No further searches are available — close the research with your short abstract of the report you are about to write.'
+                }
+                if (usedSearches >= tier.maxSearches) {
+                  // Drop the tool so the next round has nothing to call and the
+                  // model has to answer with its abstract instead of spinning.
+                  enabledTools.search = false
+                  return `Search budget reached (${tier.maxSearches} searches for ${tier.label}). No further searches are available — close the research with your short abstract of the report you are about to write.`
+                }
                 usedSearches++
-                depthIdx++
-                const label = `Follow-up ${depthIdx}`
-                setSteps([...getSteps().filter((s) => s.kind !== 'synthesize'), { id: `d${depthIdx}`, kind: 'search', label, query: String(q ?? '').slice(0, 120), state: 'running' }, ...(getSteps().filter((s) => s.kind === 'synthesize'))])
+                stepN++
+                const id = `s${stepN}`
+                patchRs(chatId, mid, (rs) => withStepLead(rs, { id, kind: 'search', label: `Search ${usedSearches}`, query: String(q ?? '').slice(0, 120), state: 'running' }))
                 try {
-                  const data = await searchWeb(String(q ?? ''), { ...searchOpts, count: searchCountOf(prefs, count) })
+                  const data = await searchWeb(String(q ?? ''), { ...searchOpts, count: searchCountOf(prefs, count), cache: true })
+                  const results = (data as { results?: { id: string; url: string }[] }).results ?? []
+                  for (const item of results) item.id = citeIdFor(item.url)
                   const out = formatSearch(data as never, { inlineCites: prefs.citeStyle !== 'off' })
-                  setSteps(setStep(getSteps(), `d${depthIdx}`, { state: 'done', sources: (data as { results?: unknown[] }).results?.length ?? 0 }))
-                  return out
+                  setSteps(setStep(getSteps(), id, { state: 'done', sources: results.length }))
+                  return results.length ? out : `${out}\nNo results matched this query. Rewrite it with different wording, fewer qualifiers, or a more specific domain, then search once more before moving on.`
                 } catch (err: any) {
-                  setSteps(setStep(getSteps(), `d${depthIdx}`, { state: 'error', error: String(err?.message ?? err).slice(0, 200) }))
-                  throw err
+                  const msg = String(err?.message ?? err).slice(0, 200)
+                  setSteps(setStep(getSteps(), id, { state: 'error', error: msg }))
+                  // Surface an instructive tool error so the model rewrites the
+                  // query instead of the call failing the whole run.
+                  throw Error(`Search failed (${msg}). Rewrite the query or try another angle; do not stop the research over one failed search.`)
                 }
               },
               fetch_page: async ({ url }: { url: string }) => {
                 if (prefs.reader === false) throw Error('The page reader is off.')
-                if (usedReads >= tier.maxReads) throw Error(`Read budget reached (${tier.maxReads} for ${tier.label}). Synthesize from the evidence so far.`)
+                if (r.stopped) throw Error('Research stopped.')
+                if (Date.now() > deadline) {
+                  enabledTools.fetch_page = false
+                  return 'Research time limit reached. No further page reads are available — close the research with your short abstract of the report you are about to write.'
+                }
+                if (usedReads >= tier.maxReads) {
+                  enabledTools.fetch_page = false
+                  return `Read budget reached (${tier.maxReads} pages for ${tier.label}). No further page reads are available — close the research with your short abstract of the report you are about to write.`
+                }
                 usedReads++
-                return formatPage(await fetchPage(String(url ?? '')))
+                stepN++
+                const id = `s${stepN}`
+                patchRs(chatId, mid, (rs) => withStepLead(rs, { id, kind: 'read', label: `Read ${usedReads}`, query: String(url ?? '').slice(0, 120), state: 'running' }))
+                try {
+                  const page = await fetchPage(String(url ?? ''), { cache: true })
+                  const citeId = citeIdFor(page.url || String(url ?? ''))
+                  const out = formatPage(page, { citeId })
+                  setSteps(setStep(getSteps(), id, { state: 'done' }))
+                  return out
+                } catch (err: any) {
+                  const msg = String(err?.message ?? err).slice(0, 200)
+                  setSteps(setStep(getSteps(), id, { state: 'error', error: msg }))
+                  throw Error(`Could not read that page (${msg}). Try another result URL; do not stop the research over one unreadable page.`)
+                }
               },
-            }, (calls) => { useLive.getState().set(mid, calls.map((c) => ({ ...c }))) })
-            txt = x.text
-            const allRounds = [...initialRounds, ...x.rounds]
-            bump(x.tin, x.tout); addCost(e, e.model, x.tin, x.tout)
-            log.push({ n: e.name, m: e.model, detail: `Deep research (${tier.label}) on “${query.slice(0, 80)}”: ${usedSearches} searches, ${usedReads} reads`, ms: Date.now() - t0, tin: x.tin, tout: x.tout, at: Date.now() })
-            setSteps(getSteps().map((s) => (s.state === 'running' || s.state === 'queued' ? { ...s, state: 'skipped' as const } : s)))
-            edit(chatId, mid, (m) => ({ ...m, t: txt, toolRounds: allRounds, toolFinal: txt, sys: system, log, research: m.research ? { ...m.research, status: 'done', steps: getSteps(), finishedAt: Date.now() } : m.research }))
+            }
+            if (featOn(get(), 'skills') && (p.skills ?? []).length) toolHandlers[SKILL_TOOL_NAME] = skillHandler
+            const onToolDeltaCb = (calls: ToolCall[]) => { useLive.getState().set(mid, calls.map((c) => ({ ...c }))) }
+            // One page read at a time; searches in small parallel batches.
+            const execTools = { serialize: ['fetch_page'], maxParallel: 3 }
+            // Run the loop seeded from the evidence gathered so far. onRound
+            // snapshots the accumulated rounds, so a retry (or the min-evidence
+            // nudge below) continues the transcript instead of restarting it.
+            const ctl = new AbortController()
+            r.ctl = ctl
+            const runLoop = (seedText: string, tail: Msg[], maxRounds: number) => {
+              const roundBase = liveRounds
+              return runToolLoop(e, system, () => wireRounds(e, liveRounds, seedText, tail), enabledTools, note, ctl, o, onReasoning, (rounds) => {
+                liveRounds = [...roundBase, ...rounds]
+                edit(chatId, mid, (m) => ({ ...m, toolRounds: [...liveRounds] }))
+              }, maxRounds, toolHandlers, onToolDeltaCb, execTools)
+            }
+            let x: Awaited<ReturnType<typeof runToolLoop>>
+            // The search phase can take more than one loop pass (a retried
+            // attempt or the evidence-floor nudge below), so the token/cost
+            // totals are accumulated rather than overwritten.
+            const loopTok = { tin: 0, tout: 0, cost: 0, cacheRead: 0, cacheWrite: 0 }
+            const addLoop = (r0: Awaited<ReturnType<typeof runToolLoop>>) => {
+              loopTok.tin += r0.tin; loopTok.tout += r0.tout; loopTok.cost += (r0 as any).cost ?? 0
+              loopTok.cacheRead += (r0 as any).cacheRead ?? 0; loopTok.cacheWrite += (r0 as any).cacheWrite ?? 0
+            }
+            try {
+              x = await runLoop('', [], Math.max(4, tier.maxRounds - liveRounds.length))
+              addLoop(x)
+            } catch (err) {
+              // A tool-round limit with no text-only round yet: give the model
+              // one final tool-free round so an abstract is always produced.
+              if (r.stopped || (getErrorCode(err) ?? errCodeOf(err)) !== 'tool_limit') throw err
+              x = await runToolLoop(e, `${system}\n\n${RESEARCH_ABSTRACT_ASK}`, () => wireRounds(e, liveRounds), {}, note, ctl, o, () => {}, () => {}, 1)
+              addLoop(x)
+            }
+            // Evidence floor: never let a single search become a "deep research"
+            // report. Nudge the model once to keep researching, unless the budget
+            // or the run's time is already spent.
+            if (!r.stopped && usedSearches < RESEARCH_MIN_SEARCHES && usedSearches < tier.maxSearches && Date.now() <= deadline) {
+              try {
+                x = await runLoop(x.text, [{ id: `${mid}-min`, r: 'user' as const, t: researchMinAsk(usedSearches, RESEARCH_MIN_SEARCHES) }], Math.min(6, Math.max(1, tier.maxRounds - liveRounds.length)))
+                addLoop(x)
+              } catch { /* the nudge is best-effort; keep the abstract we already have */ }
+            }
+            // The model closes the search phase with a short abstract. That is
+            // the report card's sample text; the report itself is written next
+            // and streams into the side panel.
+            const closing = researchAbstract(x)
+            bump(loopTok.tin, loopTok.tout); addCost(e, e.model, loopTok.tin, loopTok.tout, loopTok.cost)
+            tin = loopTok.tin; tout = loopTok.tout; cacheRead = loopTok.cacheRead; cacheWrite = loopTok.cacheWrite; usageCost = loopTok.cost
+            const ready = looksLikeReport(closing)
+            patchRs(chatId, mid, (rs) => ({ ...rs, note: '', status: 'writing', summary: ready ? reportSample(closing) : closing }))
             set({ researchPanel: { mid } })
+            // Write the report, falling back to the other candidate endpoints
+            // if the chosen one dies at the report pass: the evidence is
+            // already gathered, so the run's value is never lost to one drop.
+            const cands = [e, ...order.filter((o2) => o2.id !== e.id || o2.model !== e.model)]
+            const streamReport = async (cand: Ep, assistantText: string, ask: string) => {
+              const effRaw = get().effort[cand.model] ?? ''
+              const oo = { ...(get().params.def ? {} : { max: get().params.max, temp: get().params.temp, topp: get().params.topp }), effort: effRaw === 'auto' ? '' : effRaw }
+              return runToolLoop(cand, system, () => wireRounds(cand, liveRounds, assistantText, [{ id: `${mid}-report`, r: 'user' as const, t: ask }]), {}, (t) => { report += t; edit(chatId, mid, (m) => ({ ...m, t: report, toolFinal: report })) }, r.ctl ?? new AbortController(), oo, () => {}, () => {}, 1)
+            }
+            const writeReport = async (ask: string, assistantText: string) => {
+              let lastErr: unknown = null
+              for (const cand of cands) {
+                if (r.stopped) return
+                report = ''
+                edit(chatId, mid, (m) => ({ ...m, t: '', toolFinal: '' }))
+                try {
+                  const y = await streamReport(cand, assistantText, ask)
+                  bump(y.tin, y.tout); addCost(cand, cand.model, y.tin, y.tout, (y as any).cost ?? 0)
+                  tin += y.tin; tout += y.tout; cacheRead += (y as any).cacheRead ?? 0; cacheWrite += (y as any).cacheWrite ?? 0; usageCost += (y as any).cost ?? 0
+                  if (report.trim()) return
+                  lastErr = Error('The model returned no report text.')
+                } catch (err) {
+                  lastErr = err
+                  if (r.stopped) return
+                  log.push({ n: cand.name, m: cand.model, err: errText(cand, (err as Error)?.message), errCode: getErrorCode(err) ?? errCodeOf(err), at: Date.now() })
+                }
+              }
+              if (lastErr) throw lastErr
+            }
+            if (ready) {
+              // The model wrote the whole report instead of an abstract: keep it
+              // rather than paying for a second pass over the same text.
+              report = closing
+              edit(chatId, mid, (m) => ({ ...m, t: report, toolFinal: report }))
+            } else {
+              await writeReport(RESEARCH_REPORT_ASK, closing)
+            }
+            let txtCandidate = report.trim()
+            if (!txtCandidate) throw Error('The model returned no report text.')
+            // Citation integrity: repair ids the model invented, then drop any
+            // that still do not match a real source so the report never links
+            // to nothing. Both passes are best-effort and never fail the run.
+            const srcList = collectMessageSources(liveRounds)
+            const validIds = srcList.map((s) => s.citeId)
+            try {
+              let cov = citationCoverage(txtCandidate, srcList)
+              if (cov.unknown.length && !r.stopped) {
+                await writeReport(citationRepairAsk(cov.unknown, validIds), txtCandidate)
+                if (report.trim()) { txtCandidate = report.trim(); cov = citationCoverage(txtCandidate, srcList) }
+              }
+              // A report that makes claims but cites nothing is repaired too, so
+              // the sources the run paid for actually reach the reader.
+              if (cov.uncited && validIds.length && !r.stopped) {
+                await writeReport(citationUncitedAsk(validIds), txtCandidate)
+                if (report.trim()) txtCandidate = report.trim()
+                log.push({ n: 'Citations', m: '', detail: `Repaired a report that cited no sources (${validIds.length} available).`, ms: 0, at: Date.now() })
+              }
+            } catch { /* repair is best-effort */ }
+            const sane = sanitizeCitations(txtCandidate, validIds)
+            if (sane.removed.length) {
+              txtCandidate = sane.text.trim() || txtCandidate
+              log.push({ n: 'Citations', m: '', detail: `Removed ${sane.removed.length} citation(s) with no matching source: ${sane.removed.join(', ')}.`, ms: 0, at: Date.now() })
+            }
+            txt = txtCandidate.trim()
+            if (!txt) throw Error('The model returned no report text.')
+            log.push({ n: e.name, m: e.model, detail: `Deep research (${tier.label}) on “${query.slice(0, 80)}”: ${usedSearches} searches, ${usedReads} reads`, ms: Date.now() - t0, tin, tout, cacheRead, cacheWrite, cost: usageCost, at: Date.now() })
+            edit(chatId, mid, (m) => ({ ...m, t: txt, toolRounds: liveRounds.length ? liveRounds : x.rounds, toolFinal: txt, sys: system, log, research: m.research ? { ...m.research, status: 'done', finishedAt: Date.now() } : m.research }))
             ok = true
             break
           } catch (x: any) {
@@ -653,8 +982,8 @@ export const useS = create<S>()(
           }
         }
         if (!ok && !r.stopped) {
-          patchResearch((rs) => ({ ...rs, status: 'error', error: 'No model responded.', finishedAt: Date.now() }))
-          edit(chatId, mid, (m) => ({ ...m, sys: system, log, toolRounds: m.toolRounds?.length ? m.toolRounds : initialRounds.length ? initialRounds : m.toolRounds, err: !m.t, by: m.by || 'No model responded', t: m.t || log.filter((x) => x.err).map((x) => `${x.n}${x.m ? ' · ' + x.m : ''}: ${x.err}`).join('\n') }))
+          patchRs(chatId, mid, (rs) => ({ ...rs, status: 'error', error: 'No model responded.', finishedAt: Date.now() }))
+          edit(chatId, mid, (m) => ({ ...m, sys: system, log, err: !m.t, by: m.by || 'No model responded', t: m.t || log.filter((x) => x.err).map((x) => `${x.n}${x.m ? ' · ' + x.m : ''}: ${x.err}`).join('\n') }))
         }
         useLive.getState().clear(mid)
         if (cur === r) { cur = null; set({ busy: false }) }
@@ -670,9 +999,6 @@ export const useS = create<S>()(
         set((st) => ({ busy: true, notice: null, chats: st.chats.map((c) => (c.id === id ? { ...c, msgs: [...c.msgs, { id: mid, r: 'assistant', t: '', at: Date.now(), by: '', log: [], ...(prev ? { alts: prev, ai: prev.length } : {}) }] } : c)) }))
         const hist = () => (get().chats.find((c) => c.id === id)?.msgs ?? []).filter((m) => m.id !== mid)
         let order = p.cand, ok = false, usedEp: Ep | undefined, system = p.sys
-        // Last partially-streamed reply kept when a stream aborts mid-reply,
-        // so a failed attempt never wipes what the model already sent.
-        let interrupted: { t: string; by: string; toolRounds: { text: string; calls: ToolResult[] }[] } | null = null
         // Context budgeting: the wire payload (not stored history) is trimmed
         // oldest-first so system + history fits the meter's limit minus a
         // reserve for the reply. The trim is reported in the process log.
@@ -767,8 +1093,8 @@ export const useS = create<S>()(
                 effort = picked.level
                 bump(picked.tin, picked.tout)
                 const ce = effortClassifierOf(get())
-                if (ce) addCost(ce, ce.model, picked.tin, picked.tout)
-                log.push({ n: `${picked.by} (effort)`, m: picked.level, detail: `Auto effort for ${e.model}: chose ${picked.level} from ${levels.length} available levels (${levels.join(', ')}).`, ms: 0, tin: picked.tin, tout: picked.tout, at: Date.now() })
+                if (ce) addCost(ce, ce.model, picked.tin, picked.tout, (picked as any).cost ?? 0)
+                log.push({ n: `${picked.by} (effort)`, m: picked.level, detail: `Auto effort for ${e.model}: chose ${picked.level} from ${levels.length} available levels (${levels.join(', ')}).`, ms: 0, tin: picked.tin, tout: picked.tout, cacheRead: (picked as any).cacheRead ?? 0, cacheWrite: (picked as any).cacheWrite ?? 0, cost: (picked as any).cost ?? 0, at: Date.now() })
               } else {
                 effort = ''
                 log.push({ n: 'Effort (auto)', m: '', err: `Auto effort failed validation or no helper model is usable for ${e.model}; using the default level.`, at: Date.now() })
@@ -794,10 +1120,8 @@ export const useS = create<S>()(
                 return base
               })(), (t) => {
                 txt += t
-                const at = performance.now(), duration = get().prefs.fade * 1000
-                edit(id, mid, (m) => ({ ...m, t: txt, fadeEvents: duration > 0 && /\S/.test(t)
-                  ? [...(m.fadeEvents ?? []).filter((x) => at - x.at < duration), { text: t, at }]
-                  : (m.fadeEvents ?? []).filter((x) => at - x.at < duration) }))
+                edit(id, mid, (m) => ({ ...m, t: txt }))
+                useLive.getState().pushChunk(mid, t)
               }, r.ctl, { ...(q.def ? {} : { max: q.max, temp: q.temp, topp: q.topp }), effort }, (summary) => {
                 edit(id, mid, (m) => ({ ...m, reasoning: (m.reasoning ?? '') + summary }))
               }, (rounds) => {
@@ -881,11 +1205,11 @@ export const useS = create<S>()(
 
               const elapsed = Date.now() - t0
               const toolElapsed = toolRounds.reduce((total, round) => total + Math.max(0, ...round.calls.map((call) => call.ms ?? 0)), 0)
-              log.push({ n: e.name, m: e.model, detail: `Answered ${p.tgt} with ${(um.att ?? []).length} attachments and ${(() => { const g = get(); return featOn(g, 'tools') ? Object.values(g.tools).filter(Boolean).length : 0 })()} enabled tools`, ms: Math.max(0, elapsed - toolElapsed), tin: responseTokensIn, tout: responseTokensOut, at: Date.now() })
+              log.push({ n: e.name, m: e.model, detail: `Answered ${p.tgt} with ${(um.att ?? []).length} attachments and ${(() => { const g = get(); return featOn(g, 'tools') ? Object.values(g.tools).filter(Boolean).length : 0 })()} enabled tools`, ms: Math.max(0, elapsed - toolElapsed), tin: responseTokensIn, tout: responseTokensOut, cacheRead: (x as any).cacheRead ?? 0, cacheWrite: (x as any).cacheWrite ?? 0, cost: (x as any).cost ?? 0, at: Date.now() })
               const sum = (um.historyTokens ?? 0) + (um.explicitTokens ?? 0), explicit = sum ? Math.round(x.tin * (um.explicitTokens ?? 0) / sum) : 0
               bump(responseTokensIn, responseTokensOut, responseTokensIn - explicit, explicit); ok = true
               track(e, Date.now() - t0, false)
-              addCost(e, e.model, responseTokensIn, responseTokensOut)
+              addCost(e, e.model, responseTokensIn, responseTokensOut, (x as any).cost ?? 0)
               // Tokens/sec over generated output tokens (including tokens written
               // across tool rounds), measured over total LLM streaming time
               // across all rounds. Local tool execution runs outside stream()
@@ -904,38 +1228,28 @@ export const useS = create<S>()(
               usedEp = e
               break
             } catch (x: any) {
-              if (r.stopped) { if (txt) bump(0, est(txt)); break }
+              if (r.stopped) break
               const elapsed = Date.now() - t0
               track(e, elapsed, true)
               const toolElapsed = toolRounds.reduce((total, round) => total + Math.max(0, ...round.calls.map((call) => call.ms ?? 0)), 0)
               log.push({ n: e.name, m: e.model, ms: Math.max(0, elapsed - toolElapsed), err: errText(e, x.message), errCode: getErrorCode(x) ?? errCodeOf(x), at: Date.now() })
-              // Preserve whatever the model streamed before aborting. `on()`
-              // already wrote it into `txt` (flushed synchronously on error),
-              // with `error.partial` as fallback. Keep it on the message now
-              // so a later "No model responded" summary cannot wipe it.
-              const partial = (typeof x?.partial === 'string' && x.partial) || txt
-              if (partial && partial.trim()) {
-                const by = `${e.name} · ${e.model}`
-                interrupted = { t: partial, by, toolRounds: toolRounds.map((round) => ({ ...round })) }
-                if (typeof x?.tin === 'number' || typeof x?.tout === 'number') {
-                  const ptin = typeof x?.tin === 'number' ? x.tin : 0
-                  const ptout = typeof x?.tout === 'number' ? x.tout : est(partial)
-                  bump(ptin, ptout); addCost(e, e.model, ptin, ptout)
-                }
-                edit(id, mid, (m) => ({ ...m, t: partial, toolRounds: [...toolRounds] }))
-              }
               if (p.ex) break
             }
           }
         } catch (x: any) { log.push({ n: 'engine', m: '', err: String(x?.message ?? x), errCode: getErrorCode(x) ?? errCodeOf(x) }) }
-        edit(id, mid, (m) => r.stopped
-          ? { ...m, sys: system, log, by: m.by ? m.by + ' (stopped)' : 'Stopped', t: m.t || '(stopped before any text arrived)' }
-          : ok ? { ...m, sys: system, log }
-          : interrupted
-            ? { ...m, sys: system, log, t: interrupted.t, toolRounds: interrupted.toolRounds, ...(interrupted.toolRounds.length ? { toolFinal: interrupted.t } : {}), by: `${interrupted.by} (interrupted)`, err: undefined }
-            : { ...m, sys: system, log, err: true, by: 'No model responded', t: log.filter((x) => x.err).map((x) => `${x.n}${x.m ? ' · ' + x.m : ''}: ${x.err}`).join('\n') + hint(log) })
         useLive.getState().clear(mid)
-        if (prev) edit(id, mid, (m) => ({ ...m, alts: [...prev, snap(m)], ai: prev.length }))
+        if (r.stopped && !ok) {
+          // A cancelled reply is discarded, never stored: drop the in-progress
+          // assistant message entirely. For a regeneration, fall back to the
+          // previous alternative so the earlier answer is not lost.
+          const last = prev?.[prev.length - 1]
+          if (last) edit(id, mid, (m) => ({ ...m, ...last, alts: prev, ai: prev!.length - 1 }))
+          else set((st) => ({ chats: st.chats.map((c) => (c.id === id ? { ...c, msgs: c.msgs.filter((m) => m.id !== mid) } : c)) }))
+        } else {
+          edit(id, mid, (m) => ok ? { ...m, sys: system, log }
+            : { ...m, sys: system, log, err: true, by: 'No model responded', t: log.filter((x) => x.err).map((x) => `${x.n}${x.m ? ' · ' + x.m : ''}: ${x.err}`).join('\n') + hint(log) })
+          if (prev) edit(id, mid, (m) => ({ ...m, alts: [...prev, snap(m)], ai: prev.length }))
+        }
         if (cur === r) { cur = null; set({ busy: false }) }
         // Auto-push sync slot when enabled (fire-and-forget, never blocks UI).
         try {
@@ -976,14 +1290,13 @@ export const useS = create<S>()(
         params: { def: true, temp: 0.7, topp: 1, max: 4096, maxToolRounds: 8, highToolsUnlocked: false }, effort: {},
         workspacePrefs: { defaultView: 'latest', autoOpen: true, autoFollow: true },
         advanced: { ...DEFAULT_ADVANCED },
-        sel: null, pr: 'general', globalPrompt: { on: false, text: '' }, features: { ...DEFAULT_FEATURES }, featureOrder: FEATURES.map(([id]) => id), libraryShow: { ...DEFAULT_LIBRARY_SHOW }, themeMode: 'dark', themeDark: 'claude', themeLight: 'paper', customDarkColors: { ...DEFAULT_CUSTOM_COLORS }, customLightColors: { ...DEFAULT_CUSTOM_LIGHT_COLORS }, setupDone: false, prefs: { showBy: true, showLog: true, showTps: false, enterSends: true, autoTitle: true, temporaryByDefault: false, showModelPricing: false, titleEp: '', titleModel: '', effortEp: '', effortModel: '', recallEp: '', recallModel: '', fade: 0.4, tempHours: 3, fontBody: 'system', fontMono: 'system', fontHeader: 'system', modelPrimary: 'name', modelSecondary: 'none', paletteMax: 320, chatWidth: 'standard', settingsWidth: 1024, settingsHeight: 780, modelPickerHeight: 480, sidebarWidth: 288, widgetWidth: 320, workspaceWidth: 0.4, workspaceSplit: 0.2, modalBlur: 12, settingsOpacity: 55 },
+        sel: null, pr: 'general', globalPrompt: { on: false, text: '' }, features: { ...DEFAULT_FEATURES }, featureOrder: FEATURES.map(([id]) => id), libraryShow: { ...DEFAULT_LIBRARY_SHOW }, themeMode: 'dark', themeDark: 'claude', themeLight: 'paper', customDarkColors: { ...DEFAULT_CUSTOM_COLORS }, customLightColors: { ...DEFAULT_CUSTOM_LIGHT_COLORS }, setupDone: false, prefs: { showBy: true, showLog: true, showTps: false, enterSends: true, autoTitle: true, temporaryByDefault: false, showModelPricing: false, showContextMeter: true, titleEp: '', titleModel: '', effortEp: '', effortModel: '', recallEp: '', recallModel: '', tempHours: 3, fontBody: 'system', fontMono: 'system', fontHeader: 'system', modelPrimary: 'name', modelSecondary: 'none', paletteMax: 320, chatWidth: 'standard', settingsWidth: 1024, settingsHeight: 780, modelPickerHeight: 480, sidebarWidth: 288, widgetWidth: 320, workspaceWidth: 0.4, workspaceSplit: 0.2, modalBlur: 12, settingsOpacity: 55, streamFade: 0.3, streamMd: false },
         stats: ZERO(), keys: Object.fromEntries(KEYS.map(([k, , d]) => [k, d])),
         folders: [], price: { in: 0, out: 0 }, todos: [],
         routeStats: {}, flashMsg: null,
         draft: '', busy: false, notice: null,
         /* Workspace (first-class entity) */
-        workspaces: {}, selectedRevision: {},
-        researchPanel: null,
+        workspaces: {}, selectedRevision: {},            researchPanel: null,
 
         patch: (p) => set(p),
         add: (k) => set((s) => ({ [k]: [...(s[k] as any[]), BLANK[k]()] }) as Partial<S>),
@@ -1033,8 +1346,7 @@ export const useS = create<S>()(
             um.historyTokens = 0
             um.explicitTokens = est(raw)
             const mid = uid()
-            const initialTier = researchReq.tier ?? normResearch((s as unknown as { research?: unknown }).research).defaultTier
-            const rq: ResearchState = { id: uid(), query: researchReq.query, tier: initialTier, status: 'tier-pick', steps: [], startedAt: Date.now() }
+            const rq: ResearchState = { id: uid(), query: researchReq.query, tier: null, status: 'tier-pick', steps: [], startedAt: Date.now() }
             set((st) => {
               const old = st.chats.find((c) => c.id === st.chat)
               const base: Chat = old ?? { id: uid(), title: 'New chat', msgs: [] }
@@ -1115,6 +1427,13 @@ export const useS = create<S>()(
           const old = c.msgs.slice(i + 1).find((m) => m.r === 'assistant')
           const prev = old ? old.alts ?? [snap(old)] : undefined
           set({ chats: s.chats.map((x) => (x.id === c.id ? { ...x, msgs: c.msgs.slice(0, i + 1) } : x)) })
+          // A resent message that was a @research request re-enters the
+          // research flow (tier pick) instead of a plain reply.
+          const rreq = parseResearchRequest(um.t ?? '')
+          if (rreq && !um.att?.length) {
+            startResearchTierPick(c.id, c.msgs.slice(0, i + 1), rreq.query)
+            return
+          }
           void answer(um, prev)
         },
         delMsg: (id) => set((s) => ({ chats: s.chats.map((c) => ({ ...c, msgs: c.msgs.filter((m) => m.id !== id) })) })),
@@ -1133,8 +1452,39 @@ export const useS = create<S>()(
             chats: st.chats.map((x) => (x.id === c.id ? { ...x, msgs: x.msgs.map((m) => (m.id === mid && m.research ? { ...m, research: { ...m.research, tier } } : m)) } : x)),
             research: { ...st.research, defaultTier: tier },
           }))
-          void runResearch(mid, um, msg.research.query, tier)
+          void planResearch(mid, um, msg.research.query, tier)
         },
+        startResearch: (mid) => {
+          const s = get()
+          if (s.busy) return
+          const c = s.chats.find((x) => x.id === s.chat)
+          if (!c) return
+          const i = c.msgs.findIndex((m) => m.id === mid)
+          if (i < 0) return
+          const msg = c.msgs[i]
+          if (!msg.research || msg.research.status !== 'plan') return
+          const um = [...c.msgs.slice(0, i)].reverse().find((m) => m.r === 'user')
+          if (!um) return
+          void runResearch(mid, um, msg.research.query, msg.research.tier ?? s.research.defaultTier)
+        },
+        resumeResearch: (mid) => {
+          const s = get()
+          if (s.busy) return
+          const c = s.chats.find((x) => x.msgs.some((m) => m.id === mid))
+          if (!c) return
+          const msg = c.msgs.find((m) => m.id === mid)
+          if (!msg?.research || msg.research.status !== 'stopped') return
+          const i = c.msgs.findIndex((m) => m.id === mid)
+          const um = [...c.msgs.slice(0, i)].reverse().find((m) => m.r === 'user')
+          if (!um) return
+          const used = msg.research.steps.filter((st) => st.kind === 'search').length
+          const tier = tierOf(msg.research.tier ?? s.research.defaultTier)
+          if (used >= tier.maxSearches) return
+          void runResearch(mid, um, msg.research.query, tier.id, true)
+        },
+        updateResearchPlan: (mid, plan) => set((s) => ({
+          chats: s.chats.map((c) => ({ ...c, msgs: c.msgs.map((m) => (m.id === mid && m.research ? { ...m, research: { ...m.research, plan } } : m)) })),
+        })),
         stopResearch: (mid) => {
           const s = get()
           const c = s.chats.find((x) => x.msgs.some((m) => m.id === mid))
@@ -1142,7 +1492,7 @@ export const useS = create<S>()(
           if (cur) { cur.stopped = true; cur.ctl?.abort() }
           set((st) => ({
             busy: false,
-            chats: st.chats.map((x) => (x.id === c.id ? { ...x, msgs: x.msgs.map((m) => (m.id === mid && m.research && (m.research.status === 'running' || m.research.status === 'tier-pick') ? { ...m, research: { ...m.research, status: 'stopped', finishedAt: Date.now() } } : m)) } : x)),
+            chats: st.chats.map((x) => (x.id === c.id ? { ...x, msgs: x.msgs.map((m) => (m.id === mid && m.research && (m.research.status === 'running' || m.research.status === 'writing' || m.research.status === 'tier-pick' || m.research.status === 'planning' || m.research.status === 'plan') ? { ...m, research: { ...m.research, status: 'stopped', finishedAt: Date.now() } } : m)) } : x)),
           }))
         },
         editMsg: (id, t) => {
@@ -1155,6 +1505,13 @@ export const useS = create<S>()(
           const um: Msg = { ...o, t: t.trim(), cmd: cmd?.id, full: full(body(cmd, m && cmd ? (m[2] ?? '').trim() : t.trim()), o.ctx, o.fx) }
           { const pre = plan(s, um); if (pre.err) { set({ notice: pre.err }); return } }
           set((st) => ({ chats: st.chats.map((x) => (x.id === c.id ? { ...x, msgs: [...c.msgs.slice(0, i), um] } : x)), stats: featOn(st, 'stats') ? { ...st.stats, sent: st.stats.sent + 1 } : st.stats } ))
+          // Editing a message into a @research request re-enters the research
+          // flow (tier pick) instead of a plain reply.
+          const rreq = parseResearchRequest(um.t ?? '')
+          if (rreq && !o.att?.length) {
+            startResearchTierPick(c.id, [...c.msgs.slice(0, i), um], rreq.query)
+            return
+          }
           void answer(um)
         },
         resetStats: () => set({ stats: ZERO() }),
@@ -1165,7 +1522,7 @@ export const useS = create<S>()(
             .filter((c) => !(c.temporary && c.expiresAt != null && c.expiresAt <= now))
             .map((c) => {
               const lastAi = [...c.msgs].reverse().find((m) => m.r === 'assistant' && m.reasoning)?.id
-              return { ...c, msgs: c.msgs.map((m) => ({ ...m, fadeEvents: undefined, reasoning: m.id === lastAi ? m.reasoning : undefined })) }
+              return { ...c, msgs: c.msgs.map((m) => ({ ...m, reasoning: m.id === lastAi ? m.reasoning : undefined })) }
             })
           const droppedChats = s.chats.length - chats.length
           set({ chats, chat: chats.some((c) => c.id === s.chat) ? s.chat : chats[0]?.id ?? '' })
@@ -1197,7 +1554,7 @@ export const useS = create<S>()(
       }
     },
     {
-      name: 'byok.v1', version: 18, storage: persistStorage,
+      name: 'byok.v1', version: 19, storage: persistStorage,
       migrate: (p: any, v: number) => {
         delete p.settingsScope
         if (v < 11) {
@@ -1208,11 +1565,13 @@ export const useS = create<S>()(
           const old = typeof p.theme === 'string' ? p.theme : undefined
           const oldCustom = p.customColors
           if (typeof p.themeMode !== 'string') p.themeMode = 'dark'
-          if (typeof p.themeDark !== 'string') p.themeDark = 'claude'
-          if (typeof p.themeLight !== 'string') p.themeLight = 'paper'
-          if (old && old !== 'custom' && (DARK_THEMES as readonly string[]).includes(old)) p.themeDark = old
-          else if (old && old !== 'custom' && (LIGHT_THEMES as readonly string[]).includes(old)) { p.themeMode = 'light'; p.themeLight = old }
-          else if (old === 'custom') p.themeDark = 'custom'
+          const normDark = normThemeKeyOf(p.themeDark, true)
+          const normLight = normThemeKeyOf(p.themeLight, false)
+          p.themeDark = (normDark ?? 'claude') as any
+          p.themeLight = (normLight ?? 'paper') as any
+          const oldKey = normThemeKeyOf(old, (p.themeMode ?? 'dark') !== 'light')
+          if (oldKey && oldKey !== 'custom') { p.themeMode = 'dark' as any; p.themeDark = oldKey as any }
+          else if (oldKey === 'custom' || old === 'custom') p.themeDark = 'custom'
           if (oldCustom && typeof oldCustom === 'object') p.customDarkColors = { ...DEFAULT_CUSTOM_COLORS, ...oldCustom }
           delete p.theme
           delete p.customColors
@@ -1226,7 +1585,7 @@ export const useS = create<S>()(
           const directAuthor = !/openrouter\.ai/i.test(e.url) && (e.endpointFilter ?? (preset ? PRE[preset]?.[3] : 'author')) === 'author' ? endpointId : ''
           const strip = (id: string) => directAuthor && id.toLowerCase().startsWith(`${directAuthor.toLowerCase()}/`) ? id.slice(directAuthor.length + 1) : id
           const remap = (obj?: Record<string, any>) => obj ? Object.fromEntries(Object.entries(obj).map(([id, value]) => [strip(id), value])) : obj
-          return { ...e, ...(preset ? { preset } : {}), name: oldGoogle && e.name === 'Gemini' ? 'Google' : e.name, endpointId, endpointFilter: e.endpointFilter ?? (preset ? PRE[preset]?.[3] : undefined), model: strip(e.model), models: e.models?.map(strip), modelNames: remap(e.modelNames), modelEfforts: remap(e.modelEfforts), modelEffortSource: remap(e.modelEffortSource), prices: remap(e.prices) }
+          return { ...e, ...(preset ? { preset } : {}), name: oldGoogle && e.name === 'Gemini' ? 'Google' : e.name, endpointId, endpointFilter: e.endpointFilter ?? (preset ? PRE[preset]?.[3] : undefined), model: strip(e.model), models: e.models?.map(strip), modelNames: remap(e.modelNames), modelContext: remap(e.modelContext), modelProviders: remap(e.modelProviders), modelEfforts: remap(e.modelEfforts), modelEffortSource: remap(e.modelEffortSource), prices: remap(e.prices) }
         })
         if (p.effort) p.effort = Object.fromEntries(Object.entries(p.effort).map(([id, value]: [string, any]) => [id, value === 'auto' ? 'auto' : typeof value === 'number' ? (value <= 0 ? '' : value < 34 ? 'low' : value < 68 ? 'medium' : 'high') : value]).filter(([, value]) => value && String(value).toLowerCase() !== 'off'))
         delete p.allow
@@ -1243,7 +1602,7 @@ export const useS = create<S>()(
           p.prefs.titleEp = ''
         }
         if (p.prefs && p.prefs.showTps === undefined) p.prefs.showTps = false
-        p.prefs = { ...p.prefs, fade: p.prefs?.fade ?? 0.4, tempHours: p.prefs?.tempHours ?? 3, fontBody: p.prefs?.fontBody ?? 'system', fontMono: p.prefs?.fontMono ?? 'system', fontHeader: p.prefs?.fontHeader ?? 'system', modelPrimary: p.prefs?.modelPrimary ?? ({ none: 'id', name: 'name', provider: 'id', both: 'name' } as const)[(p.prefs?.modelDisplay as string) ?? 'both'] ?? 'name', modelSecondary: p.prefs?.modelSecondary ?? ({ none: 'none', name: 'none', provider: 'provider', both: 'provider' } as const)[(p.prefs?.modelDisplay as string) ?? 'both'] ?? 'none', paletteMax: p.prefs?.paletteMax ?? 320, chatWidth: p.prefs?.chatWidth ?? 'standard', settingsWidth: p.prefs?.settingsWidth ?? 1024, settingsHeight: p.prefs?.settingsHeight ?? 780, modelPickerHeight: p.prefs?.modelPickerHeight ?? 480, showModelPricing: p.prefs?.showModelPricing ?? false, titleEp: p.prefs?.titleEp ?? '', titleModel: p.prefs?.titleModel ?? '', effortEp: p.prefs?.effortEp ?? '', effortModel: p.prefs?.effortModel ?? '', recallEp: p.prefs?.recallEp ?? '', recallModel: p.prefs?.recallModel ?? '', routingMode: ['ordered', 'fastest', 'cheapest'].includes(p.prefs?.routingMode) ? p.prefs.routingMode : 'ordered', sidebarWidth: p.prefs?.sidebarWidth ?? 288, widgetWidth: p.prefs?.widgetWidth ?? 320, workspaceWidth: typeof p.prefs?.workspaceWidth === 'number' && p.prefs.workspaceWidth <= 1 ? p.prefs.workspaceWidth : 0.4, workspaceSplit: typeof p.prefs?.workspaceSplit === 'number' ? p.prefs.workspaceSplit : 0.2, modalBlur: p.prefs?.modalBlur ?? 12, settingsOpacity: p.prefs?.settingsOpacity ?? 55, temporaryByDefault: p.prefs?.temporaryByDefault ?? false }
+        p.prefs = { ...p.prefs, tempHours: p.prefs?.tempHours ?? 3, fontBody: p.prefs?.fontBody ?? 'system', fontMono: p.prefs?.fontMono ?? 'system', fontHeader: p.prefs?.fontHeader ?? 'system', modelPrimary: p.prefs?.modelPrimary ?? ({ none: 'id', name: 'name', provider: 'id', both: 'name' } as const)[(p.prefs?.modelDisplay as string) ?? 'both'] ?? 'name', modelSecondary: p.prefs?.modelSecondary ?? ({ none: 'none', name: 'none', provider: 'provider', both: 'provider' } as const)[(p.prefs?.modelDisplay as string) ?? 'both'] ?? 'none', paletteMax: p.prefs?.paletteMax ?? 320, chatWidth: p.prefs?.chatWidth ?? 'standard', settingsWidth: p.prefs?.settingsWidth ?? 1024, settingsHeight: p.prefs?.settingsHeight ?? 780, modelPickerHeight: p.prefs?.modelPickerHeight ?? 480, showModelPricing: p.prefs?.showModelPricing ?? false, showContextMeter: p.prefs?.showContextMeter ?? true, titleEp: p.prefs?.titleEp ?? '', titleModel: p.prefs?.titleModel ?? '', effortEp: p.prefs?.effortEp ?? '', effortModel: p.prefs?.effortModel ?? '', recallEp: p.prefs?.recallEp ?? '', recallModel: p.prefs?.recallModel ?? '', routingMode: ['ordered', 'fastest', 'cheapest'].includes(p.prefs?.routingMode) ? p.prefs.routingMode : 'ordered', sidebarWidth: p.prefs?.sidebarWidth ?? 288, widgetWidth: p.prefs?.widgetWidth ?? 320, workspaceWidth: typeof p.prefs?.workspaceWidth === 'number' && p.prefs.workspaceWidth <= 1 ? p.prefs.workspaceWidth : 0.4, workspaceSplit: typeof p.prefs?.workspaceSplit === 'number' ? p.prefs.workspaceSplit : 0.2, modalBlur: p.prefs?.modalBlur ?? 12, settingsOpacity: p.prefs?.settingsOpacity ?? 55, temporaryByDefault: p.prefs?.temporaryByDefault ?? false, streamFade: typeof p.prefs?.streamFade === 'number' && p.prefs.streamFade >= 0 && p.prefs.streamFade <= 1 ? p.prefs.streamFade : 0.3, streamMd: p.prefs?.streamMd ?? false }
         p.tools = { ...DEFAULT_TOOLS, ...(p.tools ?? {}) }
         p.search = normSearch(p.search)
         p.research = normResearch(p.research)
@@ -1297,9 +1656,9 @@ export const useS = create<S>()(
         p.flashMsg = null
         p.docPrefs = normDocs(p.docPrefs)
         p.widgetPrefs = { usageGroup: 'endpoint', usageMode: 'success', usageFormat: '{in}/{out}', usageTotal: false, usagePeriod: 'all', lastSpeed: true, timeUnit: 'auto', widgetOrder: WIDGETS.map(([k]) => k), shortcuts: KEYS.map(([k]) => k), contextLimit: 128000, showDisabledEndpoints: true, scratchRows: 6, snippetLimit: 20, costDecimals: 4, activePromptsOnly: false, charsPerToken: 4, hideDoneTodos: false, ...(p.widgetPrefs ?? {}) }
-        p.widgetPrefs.widgetOrder = [...new Set([...(p.widgetPrefs.widgetOrder ?? []), ...WIDGETS.map(([k]) => k)])]
+        p.widgetPrefs.widgetOrder = [...new Set([...(p.widgetPrefs.widgetOrder ?? []), ...WIDGETS.map(([k]) => k)])].filter((k) => k !== 'ctx')
         p.stats = { ...ZERO(), ...p.stats }
-        p.eps = (p.eps ?? []).map((e: Ep) => ({ ...e, modelsMode: e.modelsMode ?? 'separate', models: e.models?.length ? e.models : [e.model], modelNames: e.modelNames ?? {}, prices: e.prices ?? {} }))
+        p.eps = (p.eps ?? []).map((e: Ep) => ({ ...e, modelsMode: e.modelsMode ?? 'separate', models: e.models?.length ? e.models : [e.model], modelNames: e.modelNames ?? {}, modelContext: e.modelContext ?? {}, modelProviders: e.modelProviders ?? {}, prices: e.prices ?? {} }))
         p.pls = (p.pls ?? []).map((pl: Pl) => ({ ...pl, e: (pl.e ?? []).flatMap((ref) => {
           if (ref.includes('::')) return [ref]
           const ep = p.eps.find((item: Ep) => item.id === ref)
@@ -1316,12 +1675,53 @@ export const useS = create<S>()(
         }
         return p
       },
+      // Runs on every rehydrate (migrate only runs on version bumps): remap
+      // removed theme keys and drop anything unknown so `data-t` is always valid.
+      merge: (persisted, current) => {
+        const p = { ...current, ...(persisted as any) }
+        const dk = normThemeKeyOf(p.themeDark, true)
+        const lk = normThemeKeyOf(p.themeLight, false)
+        if (dk) p.themeDark = dk as any
+        if (lk) p.themeLight = lk as any
+        // The word fade-in feature was removed: drop its stale persisted
+        // settings and per-message events so they never carry forward.
+        if (p.prefs && typeof p.prefs === 'object' && 'fade' in p.prefs) delete p.prefs.fade
+        // A run cannot survive a reload, so reap any research card that was
+        // mid-flight when the tab closed; otherwise it shows "researching"
+        // forever. Cards waiting on the user (tier-pick / plan) are kept.
+        if (Array.isArray(p.chats)) p.chats = p.chats.map((c: any) => Array.isArray(c?.msgs) ? {
+          ...c,
+          msgs: c.msgs.map((m: any) => {
+            const st = m?.research?.status
+            const next = st === 'running' || st === 'writing' || st === 'planning'
+              ? { ...m, research: { ...m.research, status: 'stopped', finishedAt: m.research.finishedAt ?? Date.now() } }
+              : m
+            if (next && typeof next === 'object' && 'fadeEvents' in next) {
+              const copy = { ...next }
+              delete copy.fadeEvents
+              return copy
+            }
+            return next
+          }),
+        } : c)
+        return p as S
+      },
       partialize: (s) => ({
         ...s, busy: false, draft: '', notice: null, flashMsg: null,
-        chats: s.chats.map((c) => ({ ...c, msgs: c.msgs.filter((m) => !(m.r === 'assistant' && !m.t && !m.err && !m.research)).map((m) => ({ ...m, fadeEvents: undefined, att: m.att?.map(({ name, kind, size, mime, source, pages }) => ({ name, kind, size, ...(mime ? { mime } : {}), ...(source ? { source } : {}), ...(pages ? { pages } : {}) })) })) })),
-        workspaces: s.workspaces,
-        selectedRevision: s.selectedRevision,
+        // Per-chat memoized: only the chat that changed is re-mapped.
+        chats: mapPersistChats(s.chats),
       }),
     },
   ),
 )
+
+/* Live fields that change while a reply streams (or while the user types).
+ * Panels that do not render live chat text subscribe through `useSConfig`
+ * instead of `useS()`: the slice stays reference-equal for every streamed
+ * chunk, so they are off the streaming render path entirely. Components that
+ * need any of these fields must use their own selector. */
+export const useSConfig = () => useS(useShallow((s) => {
+  const { chats, busy, draft, notice, flashMsg, ...config } = s
+  void chats; void busy; void draft; void notice; void flashMsg
+  return config
+}))

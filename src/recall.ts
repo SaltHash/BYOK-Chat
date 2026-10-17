@@ -50,8 +50,9 @@ export type MemoryLike = { id: string; text: string; category: string }
 export type RecallMode = 'holistic' | 'contextual' | 'specific'
 
 /** Pick memories for a request. Holistic returns everything; contextual and
- *  specific rank locally (top 8 / top 4 above a relevance floor). */
-export function rankMemories(memories: MemoryLike[], query: string, mode: RecallMode): MemoryLike[] {
+ *  specific rank locally (top 8 / top 4 above a relevance floor). Generic
+ *  over the element type so timestamped memories stay timestamped. */
+export function rankMemories<T extends MemoryLike>(memories: T[], query: string, mode: RecallMode): T[] {
   if (mode === 'holistic') return memories
   if (!memories.length) return []
   const topK = mode === 'contextual' ? 8 : 4
@@ -87,11 +88,12 @@ export function findDuplicatePairs(memories: MemoryLike[], threshold = 0.75): { 
   return out
 }
 
-export type MergeResult = { memories: MemoryLike[]; merged: boolean; id: string }
+export type MergeResult<T extends MemoryLike = MemoryLike> = { memories: T[]; merged: boolean; id: string }
 
 /** Insert a memory, folding near-duplicates into the existing entry (keeps
- *  the longer text, refreshes the timestamp/category). Pure. */
-export function mergeMemory(memories: MemoryLike[], entry: { id: string; text: string; category: string; createdAt: number; updatedAt: number }, threshold = 0.75): MergeResult {
+ *  the longer text, refreshes the timestamp/category). Pure. Generic over
+ *  the element type so timestamped memories stay timestamped. */
+export function mergeMemory<T extends MemoryLike>(memories: T[], entry: T & { createdAt: number; updatedAt: number }, threshold = 0.75): MergeResult<T> {
   let best: MemoryLike | null = null, bestScore = 0
   for (const m of memories) {
     const s = similarity(m.text, entry.text)

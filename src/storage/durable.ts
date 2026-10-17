@@ -191,7 +191,7 @@ export function joinPersistedForSync(settings: Record<string, unknown>, chats: u
   return { ...settings, chats, workspaces, selectedRevision }
 }
 
-/* Background compaction (pure part): drop fadeEvents, old reasoning, expired
+/* Background compaction (pure part): drop old reasoning, expired
  * temp chats. Returns pruned copies; caller persists + measures freed bytes. */
 export function compactChatsForDurable(chats: Array<{ temporary?: boolean; expiresAt?: number; msgs: Array<{ id: string; r: string; reasoning?: string }> }>, now = Date.now()): { chats: typeof chats; droppedChats: number } {
   const alive = chats.filter((c) => !(c.temporary && c.expiresAt != null && c.expiresAt <= now))
@@ -203,31 +203,9 @@ export function compactChatsForDurable(chats: Array<{ temporary?: boolean; expir
   }
   const pruned = alive.map((c) => ({
     ...c,
-    msgs: c.msgs.map((m) => ({ ...m, fadeEvents: undefined, reasoning: (m as { id: string }).id === lastReasoning.get(c as unknown as string) ? m.reasoning : undefined })),
+    msgs: c.msgs.map((m) => ({ ...m, reasoning: (m as { id: string }).id === lastReasoning.get(c as unknown as string) ? m.reasoning : undefined })),
   })) as typeof chats
   return { chats: pruned, droppedChats }
-}
-
-/* Fade-in events carry page-relative performance.now() timestamps and are only
- * meaningful inside the session that produced them. Persisting them (durable
- * mirror, sync payloads) makes reloaded messages animate against stale
- * timestamps and can leave text stuck invisible, so drop them at the storage
- * boundary. Pure + unit-testable; returns the input unchanged when not an array. */
-export function stripEphemeralFromChats<T extends { msgs?: Array<Record<string, unknown>> }>(chats: T[] | null | undefined): T[] | null | undefined {
-  if (!Array.isArray(chats)) return chats
-  return chats.map((c) => {
-    const msgs = c?.msgs
-    if (!Array.isArray(msgs)) return c
-    let changed = false
-    const next = msgs.map((m) => {
-      if (m && typeof m === 'object' && (m as { fadeEvents?: unknown }).fadeEvents !== undefined) {
-        changed = true
-        return { ...m, fadeEvents: undefined }
-      }
-      return m
-    })
-    return changed ? { ...c, msgs: next } : c
-  })
 }
 
 export type StorageBreakdown = { localBytes: number; durableBytes: number; opfs: boolean; backend: 'opfs' | 'idb' | 'memory' }

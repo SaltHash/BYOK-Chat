@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode, type TextareaHTMLAttributes } from 'react'
 import { Check, ChevronRight, CircleHelp, TriangleAlert, type LucideIcon } from 'lucide-react'
 
 export type Ic = LucideIcon
@@ -101,11 +101,11 @@ const IN = 'w-full rounded-lg bg-bg px-3 py-2 text-sm outline-none focus:ring-2 
 export const Field = ({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) => (
   <div className="space-y-1.5"><span className="flex items-center gap-1.5 text-sm font-medium">{label}{hint && <HelpTip text={hint} label={`Help: ${label}`} />}</span>{children}</div>
 )
-export const Input = ({ value, set, ...p }: { value: string; set: (v: string) => void } & Omit<InputHTMLAttributes<HTMLInputElement>, 'value' | 'onChange'>) => (
+export const Input = ({ value, set, ...p }: { value: string | number; set: (v: string) => void } & Omit<InputHTMLAttributes<HTMLInputElement>, 'value' | 'onChange'>) => (
   <input {...p} value={value} onChange={(e) => set(e.target.value)} className={IN} />
 )
-export const Area = ({ value, set, rows = 4 }: { value: string; set: (v: string) => void; rows?: number }) => (
-  <textarea rows={rows} value={value} onChange={(e) => set(e.target.value)} className={cx(IN, 'resize-y')} />
+export const Area = ({ value, set, rows = 4, ...p }: { value: string; set: (v: string) => void; rows?: number } & Omit<TextareaHTMLAttributes<HTMLTextAreaElement>, 'value' | 'onChange'>) => (
+  <textarea {...p} rows={rows} value={value} onChange={(e) => set(e.target.value)} className={cx(IN, 'resize-y')} />
 )
 export const Sel = ({ value, set, opts }: { value: string; set: (v: string) => void; opts: [string, string][] }) => (
   <SearchSelect value={value} set={set} opts={opts} />

@@ -1,9 +1,35 @@
-import { createJSONStorage } from 'zustand/middleware'
+import type { PersistStorage, StateStorage } from 'zustand/middleware'
+import { extractCitedIds } from './citations'
+import { attachFlushOnHide, createCoalescedPersistStorage, type CoalescedPersistStorage } from './storage/coalesce'
 
 export const QUOTA_FLAG = 'byok.v1:quota-full'
 
 export const isQuotaError = (x: unknown) =>
   !!x && ((x as { name?: unknown }).name === 'QuotaExceededError' || (x as { code?: unknown }).code === 22 || /quota/i.test(String((x as { message?: unknown })?.message ?? '')))
+
+/* Compact one search-evidence result by keeping only the sources the report
+ * actually cites (plus the header line), so citations survive a reload.
+ * Falls back to a plain character cap when nothing is cited or the result
+ * does not parse. Pure. */
+export const compactSearchEvidence = (result: string, cited: Set<string>, n = 16000): string => {
+  const text = String(result ?? '')
+  if (text.length <= 5000) return text
+  const firstNl = text.indexOf('\n')
+  const header = firstNl < 0 ? text : text.slice(0, firstNl)
+  const body = firstNl < 0 ? '' : text.slice(firstNl)
+  const blocks = body.split(/(?=\n\n\[Source S\d+\])/g)
+  const kept = blocks.filter((b) => {
+    const id = /\[Source (S\d+)\]/.exec(b)?.[1]?.toUpperCase()
+    return !!id && cited.has(id)
+  })
+  if (!kept.length) {
+    return text.length > n ? text.slice(0, n) + `\n[compacted: kept ${n.toLocaleString()} of ${text.length.toLocaleString()} characters]` : text.slice(0, 5000) + `\n[compacted: kept 5,000 of ${text.length.toLocaleString()} characters]`
+  }
+  const out = `${header}${kept.join('')}`
+  if (out.length >= text.length) return text
+  const capped = out.length > n ? out.slice(0, n) + `\n[compacted: kept ${n.toLocaleString()} of ${out.length.toLocaleString()} characters]` : `${out}\n[compacted: kept ${kept.length} cited source(s)]`
+  return capped
+}
 
 /* Shrink a serialized persist payload so it fits localStorage: keep settings,
    keep chats, but drop the bulkiest regenerable/derived fields (old tool
@@ -18,11 +44,45 @@ export const prunePersisted = (raw: string): string | null => {
       ...c,
       msgs: ((c.msgs ?? []) as Record<string, unknown>[]).map((m) => ({
         ...m,
-        fadeEvents: undefined,
         reasoning: typeof m.reasoning === 'string' && (m.reasoning as string).length > 5000 ? (m.reasoning as string).slice(0, 5000) + '\n[compacted]' : m.reasoning,
+        // Research narration is regenerable context: cap the free-text
+        // fields but keep steps, status, and tier so runs stay readable.
+        research: m.research && typeof m.research === 'object' ? (() => {
+          const rs = m.research as Record<string, unknown>
+          const steps = Array.isArray(rs.steps) ? (rs.steps as Record<string, unknown>[]).slice(-120).map((st) => ({
+            ...st,
+            lead: typeof st.lead === 'string' && st.lead.length > 1500 ? st.lead.slice(0, 1500) + '\n[compacted]' : st.lead,
+          })) : rs.steps
+          const plan = rs.plan && typeof rs.plan === 'object' ? (() => {
+            const pl = rs.plan as Record<string, unknown>
+            const pSteps = Array.isArray(pl.steps) ? (pl.steps as Record<string, unknown>[]).slice(0, 6).map((st) => ({
+              ...st,
+              label: cap(st.label, 120),
+              items: Array.isArray(st.items) ? (st.items as unknown[]).slice(0, 12).map((it) => cap(it, 400)) : st.items,
+            })) : pl.steps
+            return { ...pl, title: cap(pl.title, 120), intro: cap(pl.intro, 300), steps: pSteps }
+          })() : rs.plan
+          return {
+            ...rs,
+            plan,
+            steps,
+            note: typeof rs.note === 'string' && rs.note.length > 5000 ? rs.note.slice(0, 5000) + '\n[compacted]' : rs.note,
+            reasoning: typeof rs.reasoning === 'string' && rs.reasoning.length > 5000 ? (rs.reasoning as string).slice(0, 5000) + '\n[compacted]' : rs.reasoning,
+            summary: typeof rs.summary === 'string' && (rs.summary as string).length > 2000 ? (rs.summary as string).slice(0, 2000) + '…[compacted]' : rs.summary,
+          }
+        })() : m.research,
         toolRounds: ((m.toolRounds ?? []) as Record<string, unknown>[]).map((r) => ({
           ...r,
-          calls: ((r.calls ?? []) as Record<string, unknown>[]).map((call) => ({ ...call, result: cap(call.result, 5000) })),
+          calls: ((r.calls ?? []) as Record<string, unknown>[]).map((call) => {
+            // Search evidence compacts by cited source, not by blind
+            // character slice: a blind slice cuts later [Source S<n>]
+            // blocks and orphans the report's citations after a reload.
+            if (call.name === 'search' && typeof call.result === 'string' && call.result.length > 5000) {
+              const cited = new Set(extractCitedIds(`${String((m as { toolFinal?: unknown }).toolFinal ?? '')}\n${String(m.t ?? '')}`))
+              return { ...call, result: compactSearchEvidence(call.result, cited) }
+            }
+            return { ...call, result: cap(call.result, 5000) }
+          }),
         })),
       })),
     }))
@@ -55,8 +115,50 @@ export const storageUsage = async (): Promise<{ localBytes: number; quota?: numb
   return { localBytes }
 }
 
-/** zustand storage with quota-compaction fallback (single source for store persist). */
-export const persistStorage = createJSONStorage(() => ({
+/* ---- persisted-copy shaping ----
+ * The persisted copy drops attachment bytes (they are restored from durable
+ * blob storage on boot) and empty assistant placeholders. The mapping depends
+ * only on the chat object, and immutable updates replace only the chat that
+ * changed, so a per-chat WeakMap keeps this O(changed chat) per store write
+ * instead of O(entire history). */
+
+type PersistMsg = {
+  r?: string
+  t?: string
+  err?: boolean
+  research?: unknown
+  att?: { name: string; kind: string; size: string; mime?: string; source?: string; pages?: number }[]
+}
+type PersistChat = { msgs: PersistMsg[] }
+
+export const pruneChatForPersist = <C extends PersistChat>(chat: C): C => ({
+  ...chat,
+  msgs: chat.msgs
+    .filter((m) => !(m.r === 'assistant' && !m.t && !m.err && !m.research))
+    .map((m) => (m.att?.length
+      ? { ...m, att: m.att.map(({ name, kind, size, mime, source, pages }) => ({ name, kind, size, ...(mime ? { mime } : {}), ...(source ? { source } : {}), ...(pages ? { pages } : {}) })) }
+      : m)),
+}) as C
+
+/** Build the chat mapper used by `partialize`. One instance per store. */
+export const createPersistMapper = () => {
+  const cache = new WeakMap<object, unknown>()
+  return <C extends PersistChat>(chats: C[]): C[] => chats.map((chat) => {
+    const hit = cache.get(chat)
+    if (hit !== undefined) return hit as C
+    const mapped = pruneChatForPersist(chat)
+    cache.set(chat, mapped)
+    return mapped
+  })
+}
+
+/* ---- zustand storage ----
+ * Writes are coalesced (see storage/coalesce.ts): the payload is held by
+ * reference and serialized/written at most once per window, so streamed
+ * chunks no longer stringify and store the whole app on every token.
+ * pagehide/visibilitychange flush the last window so nothing is lost. */
+
+const rawStorage: StateStorage = {
   getItem: (k: string) => { try { localStorage.removeItem(QUOTA_FLAG); return localStorage.getItem(k) } catch { return null } },
   setItem: (k: string, v: string) => {
     try { localStorage.setItem(k, v); localStorage.removeItem(QUOTA_FLAG) }
@@ -71,4 +173,18 @@ export const persistStorage = createJSONStorage(() => ({
     }
   },
   removeItem: (k: string) => { try { localStorage.removeItem(k); localStorage.removeItem(QUOTA_FLAG) } catch { /* ignore */ } },
-}))
+}
+
+/** How long a persist write may be deferred. Bounds how often the whole app
+ *  is serialized and how much state a crash can lose; pagehide flushes. */
+export const PERSIST_WRITE_WINDOW_MS = 400
+
+/** zustand storage with quota-compaction fallback (single source for store
+ *  persist). A write failure inside the window is reported through onError
+ *  rather than thrown from a timer: storage being unavailable must never
+ *  break the app. */
+export const persistStorage: CoalescedPersistStorage<any> = createCoalescedPersistStorage<any>(rawStorage, {
+  wait: PERSIST_WRITE_WINDOW_MS,
+  onError: () => { try { localStorage.setItem(QUOTA_FLAG, String(Date.now())) } catch { /* ignore */ } },
+})
+attachFlushOnHide(persistStorage.flush)

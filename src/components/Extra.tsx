@@ -1,4 +1,5 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useState, type ReactNode } from 'react'
+import { useShallow } from 'zustand/react/shallow'
 import { Info, X, Server, Play, MessageSquare, Keyboard, ArrowUp, ArrowDown, MessagesSquare, RotateCcw, Download, Upload, FileText, Trash2, CircleCheck, CircleX, Gauge } from 'lucide-react'
 import { useS, dl, BLANK, THEMES, themePatch, DEFAULT_FEATURES, modelsOf, modelNameOf, normSearch, normAdvanced, normFeatureOrder, normDocs, featOn, errText, storageUsage, QUOTA_FLAG, type Ep, type Kind, type FeatureId } from '../store'
 import { normSkills } from '../skills'
@@ -23,7 +24,7 @@ export function Notice({ cfg }: { cfg: (t: string) => void }) {
 }
 
 export function Tutorial({ cfg }: { cfg: (t: string) => void }) {
-  const s = useS()
+  const { eps, add } = useS(useShallow((s) => ({ eps: s.eps, add: s.add })))
   const steps: [Ic, string, string][] = [
     [Server, 'Add an endpoint', 'Pick a provider preset or enter any base URL, then paste your API key and the model id. Keys stay in this browser.'],
     [Play, 'Test it', 'Press Test connection on the endpoint. You will see whether it answers and how long it takes.'],
@@ -33,7 +34,7 @@ export function Tutorial({ cfg }: { cfg: (t: string) => void }) {
     <div className="mx-auto flex h-full max-w-xl flex-col justify-center gap-6 px-4 py-6">
       <div className="space-y-1">
         <h2 className="text-xl font-semibold">Connect a model to begin</h2>
-        <p className="text-sm text-mu">{s.eps.length ? 'Your endpoints are disabled or incomplete. Each one must be enabled and have a base URL and a model id.' : 'No models are built in. Bring your own endpoint and key.'}</p>
+        <p className="text-sm text-mu">{eps.length ? 'Your endpoints are disabled or incomplete. Each one must be enabled and have a base URL and a model id.' : 'No models are built in. Bring your own endpoint and key.'}</p>
       </div>
       <ol className="space-y-2">
         {steps.map(([I, t, d], i) => (
@@ -44,7 +45,7 @@ export function Tutorial({ cfg }: { cfg: (t: string) => void }) {
         ))}
       </ol>
       <div className="flex flex-wrap gap-2">
-        <Btn v="solid" icon={Server} onClick={() => { if (!s.eps.length) s.add('eps'); cfg('eps') }}>{s.eps.length ? 'Open endpoints' : 'Add an endpoint'}</Btn>
+        <Btn v="solid" icon={Server} onClick={() => { if (!eps.length) add('eps'); cfg('eps') }}>{eps.length ? 'Open endpoints' : 'Add an endpoint'}</Btn>
         <Btn v="soft" icon={Keyboard} onClick={() => cfg('keys')}>Keyboard shortcuts</Btn>
       </div>
       <p className="text-xs text-mu">Later: playlists try several models in order, commands (/) wrap a prompt around an input, and tools (@) stay off until you allow them.</p>
@@ -119,9 +120,9 @@ const Box = ({ icon: I, t, d, children }: { icon: Ic; t: string; d: string; chil
 )
 
 export function StatsTab() {
-  const s = useS(), t = s.stats
+  const { stats: t, features } = useS(useShallow((s) => ({ stats: s.stats, features: s.features })))
   const [cf, setCf] = useState(false)
-  if (!featOn(s, 'stats')) return null
+  if (!featOn({ features }, 'stats')) return null
   const card = (I: Ic, l: string, v: number, d: string) => (
     <div className="rounded-xl bg-surf p-4">
       <div className="flex items-center gap-2 text-sm text-mu"><I size={16} className="text-ac" />{l}</div>
@@ -139,15 +140,14 @@ export function StatsTab() {
       </div>
       <p className="text-xs text-mu">Total {(t.tin + t.tout).toLocaleString()} tokens since {new Date(t.since).toLocaleDateString()}. Totals are all-time and are not affected by deleting chats. They use token counts reported by the provider when available, and a rough 4-characters-per-token estimate otherwise.</p>
       <Anchor id="reset-stats"><Btn v="danger" icon={RotateCcw} onClick={() => setCf(true)}>Reset stats</Btn></Anchor>
-      {cf && <Confirm title="Reset all stats?" text="Tokens, messages and chats-started totals go back to zero. Your chats and settings are not affected." ok="Reset" close={() => setCf(false)} run={s.resetStats} />}
+      {cf && <Confirm title="Reset all stats?" text="Tokens, messages and chats-started totals go back to zero. Your chats and settings are not affected." ok="Reset" close={() => setCf(false)} run={() => useS.getState().resetStats()} />}
     </Panel>
   )
 }
 
 export function KeysTab() {
-  const st = useS()
-  const { keys, patch } = st
-  const off = !featOn(st, 'shortcuts')
+  const { keys, features, patch } = useS(useShallow((s) => ({ keys: s.keys, features: s.features, patch: s.patch })))
+  const off = !featOn({ features }, 'shortcuts')
   const [rec, setRec] = useState('')
   const [err, setErr] = useState('')
   useEffect(() => {
@@ -195,17 +195,20 @@ export function KeysTab() {
 }
 
 function StorageBox() {
-  const s = useS()
+  const compactStorage = useS((s) => s.compactStorage)
   const [info, setInfo] = useState<{ localBytes: number; quota?: number; usage?: number } | null>(null)
   const [durable, setDurable] = useState<{ localBytes: number; durableBytes: number; opfs: boolean; backend: string } | null>(null)
   const [quotaFull, setQuotaFull] = useState(false)
   const [note, setNote] = useState('')
-  const refresh = () => {
+  const refresh = useCallback(() => {
     void storageUsage().then(setInfo)
     void import('../storage/durable').then(({ durableUsage }) => durableUsage().then(setDurable).catch(() => {}))
     try { setQuotaFull(localStorage.getItem(QUOTA_FLAG) != null) } catch { /* ignore */ }
-  }
+  }, [])
   useEffect(() => {
+    // Mount-only measurement plus a background compaction timer. Neither
+    // depends on the chat list: compaction reads the live store when it fires,
+    // so a streamed reply must not tear down and rebuild the interval.
     let live = true
     void storageUsage().then((v) => { if (live) setInfo(v) })
     void import('../storage/durable').then(({ durableUsage }) => durableUsage().then((v) => { if (live) setDurable(v) }).catch(() => {}))
@@ -215,13 +218,13 @@ function StorageBox() {
       void import('../storage/boot').then(({ compactDurable }) => compactDurable(useS.getState().chats as never).catch(() => null))
     }, 300_000)
     return () => { live = false; clearInterval(timer) }
-  }, [s.chats, s.workspaces])
+  }, [])
   const kb = (n: number) => n < 1024 * 1024 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1024 / 1024).toFixed(2)} MB`
   const desc = info ? `Settings ~${kb(info.localBytes)}${durable ? ` · durable chats/workspaces ~${kb(durable.durableBytes)} (${durable.backend}${durable.opfs ? '+OPFS' : ''})` : ''}.` : 'Measure how much app data this browser holds.'
   return (
     <Box icon={Gauge} t="Browser storage" d={desc}>
       <Btn v="soft" onClick={refresh}>Refresh</Btn>
-      <Btn v="soft" onClick={() => { setNote(s.compactStorage()); refresh() }}>Compact</Btn>
+      <Btn v="soft" onClick={() => { setNote(compactStorage()); refresh() }}>Compact</Btn>
       <Btn v="soft" onClick={() => {
         void import('../storage/boot').then(({ compactDurable }) => compactDurable(useS.getState().chats as never).then((r) => setNote(`Durable compaction: ${(r.freedChars / 1024).toFixed(1)} KB freed${r.droppedChats ? `, ${r.droppedChats} expired chats removed` : ''}.`)).catch(() => setNote('Durable compaction failed.')))
       }}>Compact durable</Btn>
@@ -232,10 +235,13 @@ function StorageBox() {
 }
 
 export function DataTab() {
-  const s = useS()
+  /* The export payload needs the whole store, but only at click time: this
+     reads it from the live state instead of subscribing to it, so the tab only
+     re-renders when the feature switches or the chat count change. */
+  const { features, chatCount, patch } = useS(useShallow((s) => ({ features: s.features, chatCount: s.chats.length, patch: s.patch })))
   const [withKeys, setWithKeys] = useState(false)
   const catFeature: Record<string, FeatureId> = { prompts: 'prompts', pls: 'playlists', cmds: 'commands', skills: 'skills', memory: 'memory', keys: 'shortcuts', tools: 'tools', widgets: 'widgets', stats: 'stats' }
-  const categories = [['eps', 'Endpoints'], ['prompts', 'Prompts'], ['pls', 'Playlists'], ['cmds', 'Commands'], ['skills', 'Skills'], ['memory', 'Memory'], ['keys', 'Shortcuts'], ['appearance', 'Appearance'], ['features', 'Features'], ['tools', 'Tools'], ['tuning', 'Model tuning'], ['widgets', 'Widget settings'], ['stats', 'Usage stats'], ['chats', 'Chat history']].filter(([id]) => !catFeature[id] || featOn(s, catFeature[id])) as unknown as [['eps', 'Endpoints'], ['prompts', 'Prompts'], ['pls', 'Playlists'], ['cmds', 'Commands'], ['skills', 'Skills'], ['memory', 'Memory'], ['keys', 'Shortcuts'], ['appearance', 'Appearance'], ['features', 'Features'], ['tools', 'Tools'], ['tuning', 'Model tuning'], ['widgets', 'Widget settings'], ['stats', 'Usage stats'], ['chats', 'Chat history']]
+  const categories = ([['eps', 'Endpoints'], ['prompts', 'Prompts'], ['pls', 'Playlists'], ['cmds', 'Commands'], ['skills', 'Skills'], ['memory', 'Memory'], ['keys', 'Shortcuts'], ['appearance', 'Appearance'], ['features', 'Features'], ['tools', 'Tools'], ['tuning', 'Model tuning'], ['widgets', 'Widget settings'], ['stats', 'Usage stats'], ['chats', 'Chat history']] as [string, string][]).filter(([id]) => !catFeature[id] || featOn({ features }, catFeature[id])) as unknown as [['eps', 'Endpoints'], ['prompts', 'Prompts'], ['pls', 'Playlists'], ['cmds', 'Commands'], ['skills', 'Skills'], ['memory', 'Memory'], ['keys', 'Shortcuts'], ['appearance', 'Appearance'], ['features', 'Features'], ['tools', 'Tools'], ['tuning', 'Model tuning'], ['widgets', 'Widget settings'], ['stats', 'Usage stats'], ['chats', 'Chat history']]
   type Category = typeof categories[number][0]
   const allOn = { eps: true, prompts: true, pls: true, cmds: true, skills: true, memory: true, keys: true, appearance: true, features: true, tools: true, tuning: true, widgets: true, stats: true, chats: true }
   const allOff = { eps: false, prompts: false, pls: false, cmds: false, skills: false, memory: false, keys: false, appearance: false, features: false, tools: false, tuning: false, widgets: false, stats: false, chats: false }
@@ -263,7 +269,7 @@ export function DataTab() {
     return () => window.removeEventListener('byok:import-backup', f)
   }, [])
   const exp = () => {
-    const data = buildExportPayload(s as Parameters<typeof buildExportPayload>[0], exports, withKeys, normSkills, normSearch)
+    const data = buildExportPayload(useS.getState() as unknown as Parameters<typeof buildExportPayload>[0], exports, withKeys, normSkills, normSearch)
     dl('chat-config.json', JSON.stringify(data, null, 1), 'application/json')
   }
   const chooseFile = async (f?: File) => {
@@ -329,7 +335,7 @@ export function DataTab() {
   return (
     <Panel id="data">
       <Anchor id="device-sync"><SyncBox /></Anchor>
-      <Anchor id="encrypted-backup"><EncryptedBackupBox buildJson={() => JSON.stringify(buildExportPayload(s as Parameters<typeof buildExportPayload>[0], exports, withKeys, normSkills, normSearch), null, 1)} /></Anchor>
+      <Anchor id="encrypted-backup"><EncryptedBackupBox buildJson={() => JSON.stringify(buildExportPayload(useS.getState() as unknown as Parameters<typeof buildExportPayload>[0], exports, withKeys, normSkills, normSearch), null, 1)} /></Anchor>
       <Anchor id="export">
       <Box icon={Download} t="Export configuration" d="Choose which settings and chat history to include in a JSON backup.">
         <Btn v="soft" onClick={() => setCf(3)}>Export</Btn>
@@ -345,7 +351,7 @@ export function DataTab() {
       </Anchor>
       <Anchor id="chat-history">
       <Box icon={FileText} t="Chat history" d="Include conversations in configuration exports, or delete them all. Stats are kept.">
-        <Btn v="danger" disabled={!s.chats.length} onClick={() => setCf(1)}>Delete all</Btn>
+        <Btn v="danger" disabled={!chatCount} onClick={() => setCf(1)}>Delete all</Btn>
       </Box>
       </Anchor>
       <Anchor id="browser-storage"><StorageBox /></Anchor>
@@ -354,7 +360,7 @@ export function DataTab() {
         <Btn v="danger" onClick={() => setCf(2)}>Erase</Btn>
       </Box>
       </Anchor>
-      {cf === 1 && <Confirm title="Delete all chats?" text="Every saved chat is removed. Stats and settings are kept." ok="Delete all" close={() => setCf(0)} run={() => s.patch({ chats: [], chat: '' })} />}
+      {cf === 1 && <Confirm title="Delete all chats?" text="Every saved chat is removed. Stats and settings are kept." ok="Delete all" close={() => setCf(0)} run={() => patch({ chats: [], chat: '' })} />}
       {cf === 2 && <Confirm title="Erase everything?" text="Endpoints, API keys, prompts, playlists, commands, skills, memories, chats, stats and all other settings are removed from this browser. This cannot be undone." ok="Erase" close={() => setCf(0)} run={() => { localStorage.removeItem('byok.v1'); location.reload() }} />}
       {cf === 3 && <Modal close={() => setCf(0)}><section role="dialog" aria-modal="true" aria-labelledby="export-title" className="w-full max-w-xl space-y-5 rounded-2xl border border-hov bg-bg p-5 shadow-2xl">
         <div><h2 id="export-title" className="text-lg font-semibold">Export configuration</h2><p className="mt-1 text-sm text-mu">Choose the settings to include in this file.</p></div>

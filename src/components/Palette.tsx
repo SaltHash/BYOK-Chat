@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { useShallow } from 'zustand/react/shallow'
 import { Search, Plus, MessageSquare, Settings, Palette as Pi, Cpu, ScrollText, Download, PanelRight, Server, Trash2, Type, Maximize2, Sparkles, Wrench, Keyboard, FolderOpen, SlidersHorizontal, Brain, ListMusic, Terminal, TrendingUp, Database, FlaskConical, Library } from 'lucide-react'
 import { useS, THEMES, themePatch, modelsOf, modelNameOf, exportChat, featOn, FEATURES, LIBRARY_ITEMS, type FeatureId } from '../store'
 import { nextThemePatch, stepModelSelection, stepPromptSelection } from '../selection'
@@ -21,7 +22,14 @@ const FEATURE_ICON: Record<string, Ic> = {
 }
 
 export function Palette({ close, cfg, toggleSide }: { close: () => void; cfg: (t: string) => void; toggleSide: () => void }) {
-  const s = useS()
+  /* Narrow slice: the palette is rebuilt from these fields only, so composer
+     keystrokes, streaming text updates and widget state no longer re-render it. */
+  const s = useS(useShallow((st) => ({
+    chats: st.chats, skills: st.skills, eps: st.eps, pls: st.pls, prompts: st.prompts, cmds: st.cmds, pr: st.pr,
+    features: st.features, prefs: st.prefs, sel: st.sel, rail: st.rail,
+    themeMode: st.themeMode, themeLight: st.themeLight, themeDark: st.themeDark,
+    newChat: st.newChat, patch: st.patch, add: st.add,
+  })))
   const [q, setQ] = useState('')
   const [i, setI] = useState(0)
   const refs = useRef<(HTMLButtonElement | null)[]>([])

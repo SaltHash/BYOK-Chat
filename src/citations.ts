@@ -23,19 +23,22 @@ export const truncateSnippet = (s: string, n = 220): string => {
 }
 
 /* Parse one formatSearch() evidence block back into sources. Tolerates the
- * header line plus [Source S1] sections; never throws. */
-export function parseSearchEvidence(result: string): { query: string; provider: string; sources: Omit<CiteSource, 'citeId'>[] } {
+ * header line plus [Source S1] sections; never throws. The evidence `S<n>`
+ * label is preserved as `citeId` so absolute, run-wide numbering survives
+ * the round-trip (see `collectMessageSources`). */
+export function parseSearchEvidence(result: string): { query: string; provider: string; sources: CiteSource[] } {
   const text = String(result ?? '')
   const header = text.split('\n')[0] ?? ''
   const query = /evidence for [“"](.+?)[”"]/.exec(header)?.[1] ?? ''
   const provider = /\((.+?) · \d+ sources?/.exec(header)?.[1] ?? ''
-  const out: Omit<CiteSource, 'citeId'>[] = []
+  const out: CiteSource[] = []
   const re = /\[Source (S\d+)\]\nTitle: ([^\n]*)\nURL: ([^\n]*)\nSnippet: ([\s\S]*?)(?=\n\n\[Source S\d+\]|$)/g
   let m: RegExpExecArray | null
   while ((m = re.exec(text))) {
     const url = (m[3] ?? '').trim()
     if (!/^https?:\/\//i.test(url)) continue
     out.push({
+      citeId: (m[1] ?? '').toUpperCase(),
       title: (m[2] ?? '').trim() || url,
       url,
       host: hostOf(url),
@@ -47,13 +50,57 @@ export function parseSearchEvidence(result: string): { query: string; provider: 
   return { query, provider, sources: out }
 }
 
+/* Parse one research fetch_page() result back into a source. Handles both
+ * the JSON payload shape and the formatted `Page excerpt [Source S<n>]`
+ * text the research loop returns (see `formatPage`). Returns null when the
+ * text is not a readable page result. */
+export function parsePageExcerpt(result: string): CiteSource | null {
+  const text = String(result ?? '')
+  // Preferred: formatted excerpt carrying its absolute source id.
+  const labelled = /Page excerpt\s+\[Source (S\d+)\]\s+for\s+(\S+)/i.exec(text)
+  const unlabelled = /Page excerpt for (\S+)/i.exec(text)
+  const url = (labelled?.[2] ?? unlabelled?.[1] ?? '').trim().replace(/[.,;:!?)\]]+$/, '')
+  if (!/^https?:\/\//i.test(url)) {
+    // Fall back to a raw JSON payload (non-research callers).
+    try {
+      const j = JSON.parse(text)
+      const jurl = String(j?.url ?? '')
+      if (!/^https?:\/\//i.test(jurl)) return null
+      return {
+        citeId: '',
+        title: String(j?.title ?? jurl),
+        url: jurl,
+        host: hostOf(jurl),
+        snippet: String(j?.text ?? j?.snippet ?? '').replace(/\s+/g, ' ').trim().slice(0, 600),
+        query: 'page reader',
+      }
+    } catch { return null }
+  }
+  const title = /^Title: ([^\n]*)/m.exec(text)?.[1]?.trim() || url
+  const body = /<page_excerpt>\n([\s\S]*?)\n<\/page_excerpt>/.exec(text)?.[1]
+    ?? text.replace(/^[^\n]*\n/, '').replace(/^Title: [^\n]*\n/, '')
+  return {
+    citeId: (labelled?.[1] ?? '').toUpperCase(),
+    title,
+    url,
+    host: hostOf(url),
+    snippet: body.replace(/\s+/g, ' ').trim().slice(0, 600),
+    query: 'page reader',
+  }
+}
+
 export type ToolRoundLike = { calls: { name: string; arguments: string; result?: string; error?: boolean }[] }
 
 /* Collect every successful search/fetch_page call across tool rounds into one
- * deduped source list (by canonical URL). Citation ids are reassigned
- * globally (S1..Sn) in first-seen order so [S1] is unambiguous per message. */
+ * deduped source list (by canonical URL). Absolute evidence ids ([Source
+ * S<n>] written by the research loop) are preserved so the model's [S<n>]
+ * citations resolve to the page it actually read; colliding or missing ids
+ * (e.g. legacy per-search S1..Sn blocks) are assigned the next free number.
+ * Output is sorted by numeric citation id. */
 export function collectMessageSources(rounds?: { calls: { name: string; arguments: string; result?: string; error?: boolean }[] }[] | null): CiteSource[] {
-  const seen = new Map<string, CiteSource>()
+  const byUrl = new Map<string, CiteSource>()
+  const usedIds = new Set<string>()
+  let next = 1
   const keyOf = (url: string) => {
     try {
       const u = new URL(url)
@@ -61,35 +108,32 @@ export function collectMessageSources(rounds?: { calls: { name: string; argument
       return u.toString().replace(/\/$/, '').toLowerCase()
     } catch { return url.toLowerCase() }
   }
+  const claim = (wanted: string): string => {
+    const w = String(wanted ?? '').toUpperCase()
+    if (/^S\d+$/.test(w) && !usedIds.has(w)) { usedIds.add(w); return w }
+    while (usedIds.has(`S${next}`)) next++
+    const id = `S${next++}`
+    usedIds.add(id)
+    return id
+  }
+  const addSource = (s: CiteSource) => {
+    const k = keyOf(s.url)
+    if (byUrl.has(k)) return
+    const citeId = claim(s.citeId)
+    byUrl.set(k, { ...s, citeId })
+  }
   for (const round of rounds ?? []) {
     for (const call of round.calls ?? []) {
       if (call.error) continue
       if (call.name === 'search' && call.result) {
-        for (const s of parseSearchEvidence(call.result).sources) {
-          const k = keyOf(s.url)
-          if (!seen.has(k)) seen.set(k, { ...s, citeId: `S${seen.size + 1}` })
-        }
+        for (const s of parseSearchEvidence(call.result).sources) addSource(s)
       } else if (call.name === 'fetch_page' && call.result) {
-        try {
-          const j = JSON.parse(call.result)
-          const url = String(j?.url ?? '')
-          if (!/^https?:\/\//i.test(url)) continue
-          const k = keyOf(url)
-          if (!seen.has(k)) {
-            seen.set(k, {
-              citeId: `S${seen.size + 1}`,
-              title: String(j?.title ?? url),
-              url,
-              host: hostOf(url),
-              snippet: String(j?.text ?? j?.snippet ?? '').replace(/\s+/g, ' ').trim().slice(0, 600),
-              query: 'page reader',
-            })
-          }
-        } catch { /* non-JSON results are ignored */ }
+        const s = parsePageExcerpt(call.result)
+        if (s) addSource(s)
       }
     }
   }
-  return [...seen.values()]
+  return [...byUrl.values()].sort((a, b) => Number(a.citeId.slice(1)) - Number(b.citeId.slice(1)))
 }
 
 /* Citation ids referenced by rendered text: [S1], [Source S1], [S1](url),

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useShallow } from 'zustand/react/shallow'
 import { useS, exportChat, featOn } from './store'
 import { combo, rec } from './engine'
 import { clampSidebarWidth, clampWidgetWidth } from './layout'
@@ -13,7 +14,11 @@ import { Widgets } from './components/Widgets'
 import { Welcome } from './components/Welcome'
 
 export default function App() {
-  const { themeMode, themeDark, themeLight, customDarkColors, customLightColors, rail, widgets, prefs, setupDone, features } = useS()
+  const { themeMode, themeDark, themeLight, customDarkColors, customLightColors, rail, widgets, prefs, setupDone, features } = useS(useShallow((s) => ({
+    themeMode: s.themeMode, themeDark: s.themeDark, themeLight: s.themeLight,
+    customDarkColors: s.customDarkColors, customLightColors: s.customLightColors,
+    rail: s.rail, widgets: s.widgets, prefs: s.prefs, setupDone: s.setupDone, features: s.features,
+  })))
   const [side, setSide] = useState(() => (typeof window !== 'undefined' ? window.innerWidth : 1024) >= 768)
   const [cfg, setCfg] = useState('')
   const [pal, setPal] = useState(false)

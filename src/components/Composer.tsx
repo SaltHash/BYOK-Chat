@@ -1,21 +1,24 @@
-import { useRef, useState } from 'react'
+import { useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useShallow } from 'zustand/react/shallow'
 import { Plus, FileUp, FileText, Image as ImageIcon, ArrowUp, Square, ChevronRight, ListMusic, Cpu, ScrollText, Settings, Search, BookOpen, X, TriangleAlert, Wrench, Link as LinkIcon, ScanText } from 'lucide-react'
-import { useS, usable, modelsOf, modelNameOf, featOn, normDocs, effortClassifierOf, type Att } from '../store'
+import { useS, useLive, usable, modelsOf, modelNameOf, featOn, normDocs, effortClassifierOf, type Att, type Ep } from '../store'
 import { CI, TOOLS } from '../meta'
 import { composerWidth } from '../layout'
 import { can, fmt, readAtts, ocrImage, fetchPage } from '../engine'
 import { fitDoc } from '../docs'
+import { bannerOf, armMention, isPill, mentionsOf, pillEdit, stripMention, tokenizeMentions, type Mention } from '../mentions'
 import { Btn, Item, Pop, Seg, RangeSlider, Toggle, cx, type Ic } from './ui'
+import { MentionBanner, MentionInfo } from './Mention'
 import { Notice } from './Extra'
 
 const chip = 'flex h-9 items-center gap-2 rounded-lg px-2.5 text-sm text-mu hover:bg-hov hover:text-tx'
 
 function ModelMenu({ close, cfg }: { close: () => void; cfg: (t: string) => void }) {
-  const s = useS()
+  const s = useS(useShallow((st) => { const { chats, ...rest } = st; void chats; return rest }))
   const plsOn = featOn(s, 'playlists')
   const [t, setT] = useState<'pl' | 'ep'>(plsOn ? s.sel?.k ?? 'ep' : 'ep')
   const [q, setQ] = useState('')
-  const L: any[] = (t === 'pl' && plsOn ? s.pls : s.eps).filter((x) => x.name.toLowerCase().includes(q.toLowerCase()) || (t === 'ep' && modelsOf(x).some((model) => model.toLowerCase().includes(q.toLowerCase()))))
+  const L: any[] = (t === 'pl' && plsOn ? s.pls : s.eps).filter((x) => x.name.toLowerCase().includes(q.toLowerCase()) || (t === 'ep' && modelsOf(x as Ep).some((model) => model.toLowerCase().includes(q.toLowerCase()))))
   const activeEp = t === 'ep' && s.sel?.k === 'ep' && s.sel.model ? s.eps.find((x) => x.id === s.sel?.id) : undefined
   const activeModel = activeEp && s.sel?.model
   const efforts: string[] = activeModel ? activeEp?.modelEfforts?.[activeModel] ?? [] : []
@@ -44,7 +47,7 @@ function ModelMenu({ close, cfg }: { close: () => void; cfg: (t: string) => void
       {L.map((x) => (
         <div key={x.id}>
           {t === 'pl' || (plsOn && x.modelsMode === 'playlist')
-            ? <Item icon={t === 'pl' ? ListMusic : Cpu} off={x.on === false} on={s.sel?.id === x.id && !s.sel.model} sub={t === 'pl' ? `${x.e.length} models` : `${modelsOf(x).length} model playlist`} onClick={() => { s.patch({ sel: { k: t, id: x.id } }); close() }}>{x.name}</Item>
+            ? <Item icon={t === 'pl' ? ListMusic : Cpu} off={x.on === false} on={s.sel?.id === x.id && !s.sel?.model} sub={t === 'pl' ? `${x.e.length} models` : `${modelsOf(x).length} model playlist`} onClick={() => { s.patch({ sel: { k: t, id: x.id } }); close() }}>{x.name}</Item>
             : <>
               <div className="px-3 pb-1 pt-2 text-xs font-semibold uppercase tracking-wide text-mu">{x.name}</div>
               {modelsOf(x).map((model) => {
@@ -53,7 +56,7 @@ function ModelMenu({ close, cfg }: { close: () => void; cfg: (t: string) => void
                 const alias = modelNameOf(x, model)
                 const title = (primary === 'name' ? alias : model).replace(/^~+/, '')
                 const sub = secondary === 'provider' ? x.name : secondary === 'none' || secondary === primary ? '' : (secondary === 'name' ? alias : model).replace(/^~+/, '')
-                return <Item key={model} icon={Cpu} off={x.on === false} on={s.sel?.id === x.id && s.sel.model === model} sub={sub} onClick={() => { s.patch({ sel: { k: 'ep', id: x.id, model } }); close() }}>{title}</Item>
+                return <Item key={model} icon={Cpu} off={x.on === false} on={s.sel?.id === x.id && s.sel?.model === model} sub={sub} onClick={() => { s.patch({ sel: { k: 'ep', id: x.id, model } }); close() }}>{title}</Item>
               })}
             </>}
         </div>
@@ -68,22 +71,68 @@ function ModelMenu({ close, cfg }: { close: () => void; cfg: (t: string) => void
 }
 
 export function Composer({ cfg }: { cfg: (t: string) => void }) {
-  const s = useS()
+  const s = useS(useShallow((st) => { const { chats, ...rest } = st; void chats; return rest }))
   const [att, setAtt] = useState<Att[]>([])
   const ta = useRef<HTMLTextAreaElement>(null)
+  const bd = useRef<HTMLDivElement>(null)
+  const box = useRef<HTMLDivElement>(null)
+  const spans = useRef<Record<number, HTMLSpanElement | null>>({})
+  const pending = useRef<number | null>(null)
   const fi = useRef<HTMLInputElement>(null)
   const v = s.draft
   const [hi, setHi] = useState(0)
+  const [ime, setIme] = useState(false)
+  const [armed, setArmed] = useState<'search' | 'research' | null>(null)
+  const [active, setActive] = useState<{ m: Mention; left: number; top: number } | null>(null)
   const tw = v.match(/(?:^|\s)(@\w*)$/)?.[1]
   const menu: { k: string; icon: Ic; label: string; hint: string; pick: () => void }[] | null = /^\/\S*$/.test(v) && featOn(s, 'commands')
     ? s.cmds.filter((c) => c.on && c.name.startsWith(v.slice(1))).map((c) => ({ k: c.id, icon: CI[c.in], label: '/' + c.name, hint: c.desc || c.in, pick: () => s.patch({ draft: '/' + c.name + ' ' }) }))
     : tw && featOn(s, 'tools')
       ? [
         ...TOOLS.filter((t) => t[3].startsWith(tw.toLowerCase())).map((t) => ({ k: t[0], icon: t[2], label: t[3].split('(')[0], hint: s.tools[t[0]] ? t[4] : 'Off. Enable in Settings → Tools', pick: () => s.patch({ draft: v.slice(0, v.length - tw.length) + '@' + t[0] + (/^(calc|count|json|base64|search|fetch_page|random|hash)$/.test(t[0]) ? '(' : ' ') }) })),
-        ...('@research'.startsWith(tw.toLowerCase()) ? [{ k: 'deep_research', icon: BookOpen as Ic, label: '@research', hint: 'Start deep research: pick Quick, Standard, or Thorough', pick: () => s.patch({ draft: v.slice(0, v.length - tw.length) + '@research(' }) }] : []),
+        ...('@research'.startsWith(tw.toLowerCase()) ? [{ k: 'deep_research', icon: BookOpen as Ic, label: '@research', hint: 'Start deep research: pick a depth, review the plan, then run', pick: () => s.patch({ draft: v.slice(0, v.length - tw.length) + '@research(' }) }] : []),
       ]
       : null
   const hl = Math.min(hi, Math.max((menu?.length ?? 1) - 1, 0))
+  const segs = useMemo(() => tokenizeMentions(v, { cmds: s.cmds, tools: s.tools, commandsOn: featOn(s, 'commands'), toolsOn: featOn(s, 'tools') }), [v, s.cmds, s.tools, s.features])
+  const pills = useMemo(() => mentionsOf(segs).filter(isPill), [segs])
+  const live = useLive((l) => l.tools)
+  const lastAiId = useS((st) => {
+    const c = st.chats.find((x) => x.id === st.chat)
+    return c ? [...c.msgs].reverse().find((m) => m.r === 'assistant')?.id : undefined
+  })
+  const searchOn = !!s.busy && !!lastAiId && (live[lastAiId] ?? []).some((t) => t.name === 'search')
+  const running: 'search' | null = searchOn ? 'search' : null
+  const typed = useMemo(() => bannerOf(v, segs), [v, segs])
+  // Banner reflects a pre-send state only (armed/typed mentions). A sent
+  // research run keeps its banner in the chat bubble (picker/progress card),
+  // not in the composer.
+  const banner: 'search' | 'research' | null = running ?? armed ?? typed?.kind ?? null
+  // A @search( / @research( call leaves the draft the instant it is typed,
+  // pasted or inserted from the + menu, and shows as the box header instead.
+  // Done before paint so the raw call never flashes in the textarea.
+  useLayoutEffect(() => {
+    const hit = armMention(v)
+    if (!hit) return
+    setArmed(hit.kind)
+    if (hit.rest !== v) s.patch({ draft: hit.rest })
+  }, [v])
+  // Auto-grow plus caret restore after programmatic pill deletes, so the real
+  // input and the mirror layer behind it never disagree on height or position.
+  useLayoutEffect(() => {
+    const t = ta.current
+    if (!t) return
+    const keep = t.scrollTop
+    t.style.height = 'auto'
+    t.style.height = Math.min(t.scrollHeight, 208) + 'px'
+    t.scrollTop = keep
+    if (bd.current) bd.current.scrollTop = t.scrollTop
+    if (pending.current != null) {
+      const p = Math.max(0, Math.min(t.value.length, pending.current))
+      pending.current = null
+      t.setSelectionRange(p, p)
+    }
+  }, [v])
   const sel = s.sel ? (s.sel.k === 'pl' ? s.pls : s.eps).find((x) => x.id === s.sel!.id) : undefined
   const ep = s.sel?.k === 'ep' ? s.eps.find((e) => e.id === s.sel!.id) : undefined
   const pr = s.prompts.find((p) => p.id === s.pr)
@@ -141,22 +190,64 @@ export function Composer({ cfg }: { cfg: (t: string) => void }) {
       return
     }
     if (!ready) return
-    const raw = v, files = att
+    // An armed banner sends as the real call so the tool loop and the deep
+    // research planner still receive exactly what they expect.
+    const raw = armed ? `@${armed}(${v.trim()})` : v, files = att
     if (await s.send(raw, files)) {
-      if (useS.getState().draft === raw) s.patch({ draft: '' })
+      if (useS.getState().draft === v) s.patch({ draft: '' })
+      setArmed(null)
       setAtt([])
+      setActive(null)
       if (ta.current) ta.current.style.height = 'auto'
     }
+  }
+  /* Atomic pill editing: every decision uses the real textarea selection, so
+     the pill, the caret and the underlying draft can never drift apart. */
+  const editDraft = (next: string, caret: number) => { pending.current = caret; setActive(null); s.patch({ draft: next }) }
+  const pillKey = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    const t = ta.current
+    if (!t || ime) return false
+    const edit = pillEdit(segs, e.key, t.selectionStart, t.selectionEnd)
+    if (!edit) return false
+    e.preventDefault()
+    if (edit.kind === 'caret') { setActive(null); t.setSelectionRange(edit.pos, edit.pos); return true }
+    editDraft(v.slice(0, edit.start) + v.slice(edit.end), edit.start)
+    return true
+  }
+  const syncActive = () => {
+    const t = ta.current
+    if (!t) return
+    const a = t.selectionStart, b = t.selectionEnd
+    const hit = a !== b ? pills.find((m) => m.start === a && m.end === b) : null
+    const el = hit ? spans.current[hit.start] : null, host = box.current
+    if (!hit || !el || !host) { setActive(null); return }
+    const r = el.getBoundingClientRect(), c = host.getBoundingClientRect()
+    setActive({ m: hit, left: r.left - c.left + r.width / 2, top: r.top - c.top })
+  }
+  const selectPill = () => {
+    const t = ta.current
+    if (!t || ime || t.selectionStart !== t.selectionEnd) return
+    const hit = pills.find((m) => t.selectionStart >= m.start && t.selectionStart <= m.end)
+    if (!hit) { setActive(null); return }
+    t.setSelectionRange(hit.start, hit.end)
+    syncActive()
+  }
+  const dismissBanner = () => {
+    if (running === 'search') { s.stop(); return }
+    if (armed) { setArmed(null); ta.current?.focus(); return }
+    if (typed?.kind === 'research') { s.patch({ draft: typed.query ?? '' }); ta.current?.focus(); return }
+    if (typed?.kind === 'search' && typed.m) { s.patch({ draft: stripMention(v, typed.m) }); ta.current?.focus() }
   }
   return (
     <div className="mx-auto w-full self-center px-4 pb-4" style={{ maxWidth: composerWidth(s.prefs.chatWidth) }}>
       <Notice cfg={cfg} />
-      <div className="relative rounded-2xl bg-surf p-3" onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); add(e.dataTransfer.files) }}>
+      <div ref={box} className="relative rounded-2xl bg-surf p-3" onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); add(e.dataTransfer.files) }}>
+        {banner && <MentionBanner kind={banner} onDismiss={dismissBanner} />}
         {menu && (
           <div className="absolute inset-x-0 bottom-full mb-2 rounded-xl bg-hov p-1.5">
             {menu.length ? menu.map((o, i) => (
               <Item key={o.k} icon={o.icon} on={i === hl} sub={o.hint} onClick={() => { o.pick(); ta.current?.focus() }}>{o.label}</Item>
-            )) : <p className="px-2.5 py-3 text-sm text-mu">{v.startsWith('/') ? 'No enabled command matches. Manage commands in Settings.' : 'No tool matches.'}</p>}
+            )) : <p className="px-2.5 py-3 text-sm text-mu">{tw ? 'No tool matches.' : 'No enabled command matches. Manage commands in Settings.'}</p>}
           </div>
         )}
         {att.length > 0 && (
@@ -184,23 +275,41 @@ export function Composer({ cfg }: { cfg: (t: string) => void }) {
             <Btn v="soft" onClick={() => setUrlOpen(false)}>Cancel</Btn>
           </div>
         )}
-        <textarea
-          id="composer" ref={ta} rows={1} value={v} placeholder={s.eps.some(usable) ? (featOn(s, 'commands') && featOn(s, 'tools') ? 'Message, / for commands, @ for tools' : featOn(s, 'commands') ? 'Message, / for commands' : featOn(s, 'tools') ? 'Message, @ for tools' : 'Message') : 'Add a model endpoint to start (press Send for a walkthrough)'}
-          onChange={(e) => { s.patch({ draft: e.target.value }); setHi(0) }}
-          onInput={(e) => { const t = e.currentTarget; t.style.height = 'auto'; t.style.height = Math.min(t.scrollHeight, 208) + 'px' }}
-          onKeyDown={(e) => {
-            if (menu?.length && !e.shiftKey && ['ArrowDown', 'ArrowUp', 'Tab', 'Enter'].includes(e.key)) {
-              e.preventDefault()
-              if (e.key === 'ArrowDown') setHi((hl + 1) % menu.length)
-              else if (e.key === 'ArrowUp') setHi((hl - 1 + menu.length) % menu.length)
-              else menu[hl].pick()
-              return
-            }
-            if (e.key === 'Enter' && !e.shiftKey && s.prefs.enterSends) { e.preventDefault(); submit() }
-          }}
-          onPaste={(e) => { if (e.clipboardData.files.length) { e.preventDefault(); add(e.clipboardData.files) } }}
-          className="max-h-52 w-full resize-none bg-transparent px-1 py-1 outline-none"
-        />
+        <div className="relative">
+          <div ref={bd} aria-hidden="true" className={cx('pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words px-1 py-1', ime && 'invisible')}>
+            {segs.map((sg, i) => sg.kind === 'text'
+              ? <span key={i}>{sg.text}</span>
+              : isPill(sg.m)
+                ? <span key={i} ref={(el) => { if (el) spans.current[sg.m.start] = el }} className={cx('mention-pill', !sg.m.enabled && 'mention-pill-off', active?.m.start === sg.m.start && 'mention-pill-sel')}>{sg.m.label}</span>
+                : <span key={i}>{sg.m.label}</span>)}
+          </div>
+          <textarea
+            id="composer" ref={ta} rows={1} value={v} placeholder={armed === 'search' ? 'What should I search for?' : armed === 'research' ? 'What should I research?' : s.eps.some(usable) ? (featOn(s, 'commands') && featOn(s, 'tools') ? 'Message, / for commands, @ for tools' : featOn(s, 'commands') ? 'Message, / for commands' : featOn(s, 'tools') ? 'Message, @ for tools' : 'Message') : 'Add a model endpoint to start (press Send for a walkthrough)'}
+            onChange={(e) => { setActive(null); s.patch({ draft: e.target.value }); setHi(0) }}
+            onScroll={(e) => { if (bd.current) bd.current.scrollTop = e.currentTarget.scrollTop }}
+            onKeyDown={(e) => {
+              if (menu?.length && !e.shiftKey && ['ArrowDown', 'ArrowUp', 'Tab', 'Enter'].includes(e.key)) {
+                e.preventDefault()
+                if (e.key === 'ArrowDown') setHi((hl + 1) % menu.length)
+                else if (e.key === 'ArrowUp') setHi((hl - 1 + menu.length) % menu.length)
+                else menu[hl].pick()
+                return
+              }
+              if (pillKey(e)) return
+              if (e.key === 'Enter' && !e.shiftKey && s.prefs.enterSends) { e.preventDefault(); submit() }
+            }}
+            onSelect={syncActive}
+            onClick={selectPill}
+            onCompositionStart={() => setIme(true)}
+            onCompositionEnd={() => setIme(false)}
+            onBlur={() => setActive(null)}
+            onPaste={(e) => { if (e.clipboardData.files.length) { e.preventDefault(); add(e.clipboardData.files) } }}
+            className={cx('mention-input relative max-h-52 w-full resize-none bg-transparent px-1 py-1 outline-none', ime ? 'text-tx' : 'text-transparent caret-ac')}
+          />
+        </div>
+        {active && !ime && (
+          <MentionInfo m={active.m} cmds={s.cmds} className="absolute" style={{ left: `clamp(8.5rem, ${active.left}px, calc(100% - 8.5rem))`, top: Math.max(active.top - 10, 4), transform: 'translate(-50%, -100%)' }} />
+        )}
         <input ref={fi} type="file" multiple hidden onChange={(e) => { add(e.target.files); e.target.value = '' }} />
         <div className="mt-2 flex items-center gap-1">
           <Pop up w="w-64" trigger={() => <Btn icon={Plus} title="Attach files or manage tools" className="rounded-full" />}>

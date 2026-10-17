@@ -6,11 +6,10 @@
  * - On boot, if durable holds chats/workspaces, they win when localStorage
  *   was quota-pruned (smaller/fewer messages). Attachment bytes are restored
  *   from blob storage. Settings are never overwritten by durable. */
-import { durableGetChats, durableGetWorkspaces, durablePutChats, durablePutWorkspaces, durableSetMeta, durableGetMeta, blobPut, blobGet, splitPersistedForDurable, compactChatsForDurable, stripEphemeralFromChats } from './durable'
+import { durableGetChats, durableGetWorkspaces, durablePutChats, durablePutWorkspaces, durableSetMeta, durableGetMeta, blobPut, blobGet, splitPersistedForDurable, compactChatsForDurable } from './durable'
 
 const CHATS_DEBOUNCE_MS = 1200
 let timer: ReturnType<typeof setTimeout> | null = null
-let lastMirror = ''
 
 export function blobIdFor(msgId: string, index: number, name: string): string {
   return `${msgId}:${index}:${name}`.slice(0, 180)
@@ -80,9 +79,7 @@ export async function hydrateDurable(patch: (p: Record<string, unknown>) => void
     if (dChats && Array.isArray(dChats) && (migrated || durableMsgs >= localMsgs)) {
       restoredBlobs = await restoreAttachmentBytes(dChats as Parameters<typeof restoreAttachmentBytes>[0]).catch(() => 0)
       const p: Record<string, unknown> = {}
-      // Drop session-relative fade timestamps from durable copies written by
-      // older builds, so reloaded messages render fully visible.
-      if (dChats) p.chats = stripEphemeralFromChats(dChats as { msgs?: Array<Record<string, unknown>> }[])
+      p.chats = dChats
       if (dWs) p.workspaces = dWs
       if (Object.keys(p).length) patch(p)
     } else if (dChats) {
@@ -94,14 +91,14 @@ export async function hydrateDurable(patch: (p: Record<string, unknown>) => void
   } catch { return { migrated, restoredBlobs: 0, backend: 'memory' } }
 }
 
-/* Debounced mirror of full chats/workspaces to durable (fire-and-forget). */
+/* Debounced mirror of full chats/workspaces to durable (fire-and-forget).
+ * Coalesces bursts — a streamed reply updates the store many times per
+ * second — into a single write per window, using the newest arguments. */
 export function mirrorToDurable(chats: unknown, workspaces: unknown): void {
   if (timer) clearTimeout(timer)
   timer = setTimeout(() => {
-    const key = JSON.stringify({ c: (chats as unknown[])?.length, w: Object.keys((workspaces as object) ?? {}).length })
-    void key
-    Promise.all([durablePutChats(stripEphemeralFromChats(chats as { msgs?: Array<Record<string, unknown>> }[])).catch(() => {}), durablePutWorkspaces(workspaces).catch(() => {})]).then(() => { lastMirror = String(Date.now()) })
-    void lastMirror
+    timer = null
+    void Promise.all([durablePutChats(chats).catch(() => {}), durablePutWorkspaces(workspaces).catch(() => {})])
   }, CHATS_DEBOUNCE_MS)
 }
 

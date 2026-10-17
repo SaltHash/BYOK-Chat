@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-const { splitPersistedForDurable, joinPersistedForSync, compactChatsForDurable, stripEphemeralFromChats, blobPut, blobGet } = await import('./durable.ts')
+const { splitPersistedForDurable, joinPersistedForSync, compactChatsForDurable, blobPut, blobGet } = await import('./durable.ts')
 const sync = await import('./sync.ts')
 
 test('split/join round-trips settings vs durable payloads', () => {
@@ -23,21 +23,6 @@ test('compact drops expired temp chats and old reasoning', () => {
   assert.equal(out.length, 1)
   assert.equal(out[0].msgs[1].reasoning, 'keep')
   assert.equal(out[0].msgs[0].reasoning, undefined)
-})
-
-test('stripEphemeralFromChats drops session-relative fade events only', () => {
-  const chats = [
-    { id: 'a', msgs: [{ id: 'm1', t: 'hi', fadeEvents: [{ text: 'h', at: 12345 }] }, { id: 'm2', t: 'yo' }] },
-    { id: 'b' },
-  ]
-  const out = stripEphemeralFromChats(chats)
-  assert.equal(out[0].msgs[0].fadeEvents, undefined)
-  assert.equal(out[0].msgs[1].fadeEvents, undefined)
-  assert.equal(out[0].msgs[0].t, 'hi')
-  // untouched messages/chats keep referential identity (no needless churn)
-  assert.equal(out[0].msgs[1], chats[0].msgs[1])
-  assert.equal(out[1], chats[1])
-  assert.equal(stripEphemeralFromChats(null), null)
 })
 
 test('blob memory fallback stores and retrieves', async () => {

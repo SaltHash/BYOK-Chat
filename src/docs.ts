@@ -2,7 +2,8 @@
  * files, archives and transcripts. Only fflate (already a dependency) is
  * used: PDFs are parsed for Tj/TJ text operators (FlateDecode via fflate),
  * OOXML formats are unzipped and their XML text nodes collected.
- * Pure + unit-testable: no DOM, no store imports. */
+ * Pure + unit-testable: no DOM, no store imports — the same functions run on
+ * the main thread and inside the extraction worker (see extractOffThread). */
 
 import { unzipSync, gunzipSync, inflateSync } from 'fflate'
 
@@ -335,6 +336,93 @@ export function extractPptx(bytes: Uint8Array): { text: string; slides: number }
   return { text: out.join('\n\n'), slides: slides.length }
 }
 
+/* ---- Off-main-thread extraction ----
+ *
+ * Document parsing is CPU-bound and can take seconds on large files (a 20 MB
+ * PDF is decoded and regex-scanned synchronously; archives are inflated), so
+ * it belongs on a worker thread. `runExtraction` is the single dispatch used
+ * by both sides; `extractOffThread` prefers a worker and transparently falls
+ * back to the in-process call (Node tests, browsers without module workers,
+ * a worker that failed to start). */
+
+/** Extraction jobs and their result shapes. */
+type DocJobs = {
+  pdf: { text: string; pages: number }
+  docx: { text: string; paragraphs: number }
+  odt: { text: string; paragraphs: number }
+  rtf: { text: string }
+  pptx: { text: string; slides: number }
+  xlsx: { text: string; sheets: number; rows: number }
+  unzip: { entries: ZipEntry[]; skipped: number }
+  gunzip: ZipEntry
+}
+export type DocJobKind = keyof DocJobs
+export type DocJobResult<K extends DocJobKind> = DocJobs[K]
+
+export type DocWorkerRequest = { id: number; kind: DocJobKind; bytes: Uint8Array; arg?: string }
+export type DocWorkerReply = { id: number; ok: true; value: unknown } | { id: number; ok: false; error: string }
+
+export function runExtraction<K extends DocJobKind>(kind: K, bytes: Uint8Array, arg?: string): DocJobResult<K>
+export function runExtraction(kind: DocJobKind, bytes: Uint8Array, arg?: string): unknown {
+  switch (kind) {
+    case 'pdf': return extractPdfText(bytes)
+    case 'docx': return extractDocx(bytes)
+    case 'odt': return extractOdt(bytes)
+    case 'rtf': return { text: extractRtf(new TextDecoder('latin1').decode(bytes)) }
+    case 'pptx': return extractPptx(bytes)
+    case 'xlsx': return extractXlsx(bytes)
+    case 'unzip': return unpackZip(bytes)
+    case 'gunzip': return unpackGzip(bytes, arg ?? 'file')
+  }
+}
+
+let docWorker: Worker | null = null
+let docWorkerBroken = false
+let docJobSeq = 0
+const docJobs = new Map<number, { kind: DocJobKind; bytes: Uint8Array; arg?: string; resolve: (value: unknown) => void; reject: (e: unknown) => void }>()
+
+const spawnDocWorker = (): Worker | null => {
+  if (docWorkerBroken) return null
+  if (docWorker) return docWorker
+  if (typeof Worker === 'undefined') return null
+  try {
+    docWorker = new Worker(new URL('./docs.worker.ts', import.meta.url), { type: 'module' })
+    docWorker.onerror = () => failDocWorker()
+    return docWorker
+  } catch { docWorkerBroken = true; return null }
+}
+
+/** A worker that cannot start (or died) must not cost the user their
+ *  attachment: anything still in flight is re-run in-process. */
+const failDocWorker = () => {
+  docWorkerBroken = true
+  docWorker?.terminate()
+  docWorker = null
+  const jobs = [...docJobs.values()]
+  docJobs.clear()
+  for (const j of jobs) Promise.resolve().then(() => j.resolve(runExtraction(j.kind, j.bytes, j.arg))).catch(j.reject)
+}
+
+/** Run one extraction job away from the main thread when possible. */
+export function extractOffThread<K extends DocJobKind>(kind: K, bytes: Uint8Array, arg?: string): Promise<DocJobResult<K>> {
+  const w = spawnDocWorker()
+  if (!w) return Promise.resolve().then(() => runExtraction(kind, bytes, arg))
+  return new Promise((resolve, reject) => {
+    const id = ++docJobSeq
+    docJobs.set(id, { kind, bytes, arg, resolve: resolve as (value: unknown) => void, reject })
+    const onMessage = (e: MessageEvent<DocWorkerReply>) => {
+      if (e.data?.id !== id) return
+      w.removeEventListener('message', onMessage)
+      docJobs.delete(id)
+      if (e.data.ok) resolve(e.data.value as DocJobResult<K>)
+      else reject(Error(e.data.error))
+    }
+    w.addEventListener('message', onMessage)
+    const req: DocWorkerRequest = { id, kind, bytes, arg }
+    w.postMessage(req)
+  })
+}
+
 /* ---- Archive expansion ---- */
 
 export type ZipEntry = { name: string; bytes: Uint8Array }
@@ -366,7 +454,14 @@ const MIME_BY_EXT: Record<string, string> = {
   png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp',
 }
 
+/** Wrap an unpacked archive member as a File with a known MIME type. */
+const memberFile = (name: string, bytes: Uint8Array): File => {
+  const ext = name.split('.').pop()?.toLowerCase() ?? ''
+  return new File([bytes as BlobPart], name.split('/').pop() || 'file', { type: MIME_BY_EXT[ext] ?? '' })
+}
+
 /** Expand zip/gz members of a FileList into Files (one level, budgeted).
+ *  Inflation happens off the main thread (see extractOffThread).
  *  Returns the expanded list plus human-readable notices for skipped items. */
 export async function expandArchives(files: File[], prefs: Pick<DocPrefs, 'archives'>): Promise<{ files: File[]; notices: string[] }> {
   if (!prefs.archives) return { files, notices: [] }
@@ -376,16 +471,12 @@ export async function expandArchives(files: File[], prefs: Pick<DocPrefs, 'archi
     const lower = f.name.toLowerCase()
     try {
       if (lower.endsWith('.zip')) {
-        const { entries, skipped } = unpackZip(new Uint8Array(await f.arrayBuffer()))
-        for (const e of entries) {
-          const ext = e.name.split('.').pop()?.toLowerCase() ?? ''
-          out.push(new File([e.bytes as BlobPart], e.name.split('/').pop() || 'file', { type: MIME_BY_EXT[ext] ?? '' }))
-        }
+        const { entries, skipped } = await extractOffThread('unzip', new Uint8Array(await f.arrayBuffer()))
+        for (const e of entries) out.push(memberFile(e.name, e.bytes))
         notices.push(skipped ? `${f.name}: unpacked ${entries.length} files (${skipped} skipped).` : `${f.name}: unpacked ${entries.length} files.`)
       } else if (lower.endsWith('.gz') || lower.endsWith('.tgz')) {
-        const e = unpackGzip(new Uint8Array(await f.arrayBuffer()), f.name)
-        const ext = e.name.split('.').pop()?.toLowerCase() ?? ''
-        out.push(new File([e.bytes as BlobPart], e.name.split('/').pop() || 'file', { type: MIME_BY_EXT[ext] ?? '' }))
+        const e = await extractOffThread('gunzip', new Uint8Array(await f.arrayBuffer()), f.name)
+        out.push(memberFile(e.name, e.bytes))
         notices.push(`${f.name}: decompressed to ${e.name}.`)
       } else out.push(f)
     } catch {

@@ -1,7 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useShallow } from 'zustand/react/shallow'
 import { GitBranch, ChevronLeft, ChevronRight, Sparkles, Server, Cpu, Copy, Check, RefreshCw, Trash2, ListOrdered, CircleCheck, CircleX, TriangleAlert, Paperclip, CornerDownLeft } from 'lucide-react'
 import { useS, useLive, usable, featOn, previewSysFor, type Msg } from '../store'
 import { clampWorkspaceFrac, roundFrac, CHAT_WIDTH } from '../layout'
+import { startPointerDrag } from '../hooks'
+import { createFrameThrottle } from '../throttle'
 import { CI, fmtDuration } from '../meta'
 import { Btn, Chip, cx, type Ic } from './ui'
 import { Composer } from './Composer'
@@ -9,7 +12,7 @@ import { Header } from './Header'
 import { Tutorial } from './Extra'
 import { Md, UserText } from './Md'
 import { WorkspaceTile, WorkspacePanel } from './Workspace'
-import { ResearchTierPicker, ResearchProgressCard, ResearchTile, ResearchPanel } from './Research'
+import { ResearchTierPicker, ResearchPlanCard, ResearchProgressCard, ResearchTile, ResearchPanel } from './Research'
 import { SourcesPanel, scrollToSource } from './Sources'
 import { collectMessageSources, linkifyCitations, parseSearchEvidence, stripCitations } from '../citations'
 import { findLastWorkspacePath, findWritingPath, extractWorkspaceIds, type WorkspaceCallLike } from '../workspace'
@@ -108,17 +111,17 @@ function Payload({ label, text, open, onToggle }: { label: string; text: string;
 }
 
 function MessageActions({ calls }: { calls: { id: string; name: string; arguments: string; error?: boolean }[] }) {
-  const s = useS()
+  const busy = useS((s) => s.busy)
   const [chosen, setChosen] = useState<Record<string, number[]>>({})
   const [used, setUsed] = useState<Record<string, boolean>>({})
   const actions = calls.filter((call) => !call.error && ['prompt_chip', 'inline_poll'].includes(call.name))
   if (!actions.length) return null
   const parse = (raw: string) => { try { return JSON.parse(raw || '{}') as Record<string, any> } catch { return {} } }
-  const run = (key: string, prompt: string) => { if (!prompt.trim() || s.busy) return; setUsed((v) => ({ ...v, [key]: true })); void s.send(prompt, []) }
+  const run = (key: string, prompt: string) => { if (!prompt.trim() || busy) return; setUsed((v) => ({ ...v, [key]: true })); void useS.getState().send(prompt, []) }
   return <div className="space-y-2 pt-1">
     {actions.map((call) => {
       const args = parse(call.arguments)
-      if (call.name === 'prompt_chip') return <button key={call.id} disabled={s.busy || used[call.id]} onClick={() => run(call.id, String(args.prompt ?? ''))} className="inline-flex min-h-9 items-center gap-2 rounded-full border border-hov bg-surf px-3 py-1.5 text-sm text-tx transition-colors hover:bg-hov focus-visible:ring-2 focus-visible:ring-ac disabled:opacity-50"><CornerDownLeft size={14} className="text-ac" />{String(args.label || 'Continue')}</button>
+      if (call.name === 'prompt_chip') return <button key={call.id} disabled={busy || used[call.id]} onClick={() => run(call.id, String(args.prompt ?? ''))} className="inline-flex min-h-9 items-center gap-2 rounded-full border border-hov bg-surf px-3 py-1.5 text-sm text-tx transition-colors hover:bg-hov focus-visible:ring-2 focus-visible:ring-ac disabled:opacity-50"><CornerDownLeft size={14} className="text-ac" />{String(args.label || 'Continue')}</button>
       const options = Array.isArray(args.options) ? args.options.map((o: any) => typeof o === 'string' ? { label: o, prompt: o } : o).filter((o: any) => o && typeof o.label === 'string').slice(0, 6) : []
       const selected = chosen[call.id] ?? []
       const multi = args.mode === 'multiple'
@@ -126,18 +129,75 @@ function MessageActions({ calls }: { calls: { id: string; name: string; argument
       return <section key={call.id} aria-label="Assistant choice" className="max-w-xl rounded-xl border border-hov bg-surf p-4">
         <h3 className="text-sm font-medium">{String(args.question || 'Choose an option')}</h3>
         <div role={multi ? 'group' : 'radiogroup'} aria-label={String(args.question || 'Choose an option')} className="mt-3 grid gap-2 sm:grid-cols-2">
-          {options.map((option: any, index: number) => <button key={index} type="button" role={multi ? 'checkbox' : 'radio'} aria-checked={selected.includes(index)} disabled={used[call.id] || s.busy} onClick={() => pick(index)} onKeyDown={(e) => { if (!multi && ['ArrowDown', 'ArrowRight', 'ArrowUp', 'ArrowLeft'].includes(e.key)) { e.preventDefault(); const next = (index + (e.key === 'ArrowDown' || e.key === 'ArrowRight' ? 1 : -1) + options.length) % options.length; pick(next); e.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>('[role="radio"]')[next]?.focus() } }} className={cx('flex min-h-10 items-center gap-2 rounded-lg border px-3 py-2 text-left text-sm transition-colors hover:bg-hov disabled:opacity-50', selected.includes(index) ? 'border-ac bg-ac/10' : 'border-hov')}>
+          {options.map((option: any, index: number) => <button key={index} type="button" role={multi ? 'checkbox' : 'radio'} aria-checked={selected.includes(index)} disabled={used[call.id] || busy} onClick={() => pick(index)} onKeyDown={(e) => { if (!multi && ['ArrowDown', 'ArrowRight', 'ArrowUp', 'ArrowLeft'].includes(e.key)) { e.preventDefault(); const next = (index + (e.key === 'ArrowDown' || e.key === 'ArrowRight' ? 1 : -1) + options.length) % options.length; pick(next); e.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>('[role="radio"]')[next]?.focus() } }} className={cx('flex min-h-10 items-center gap-2 rounded-lg border px-3 py-2 text-left text-sm transition-colors hover:bg-hov disabled:opacity-50', selected.includes(index) ? 'border-ac bg-ac/10' : 'border-hov')}>
             <span aria-hidden="true" className={cx('grid size-4 shrink-0 place-items-center border', multi ? 'rounded' : 'rounded-full', selected.includes(index) ? 'border-ac bg-ac text-acx' : 'border-mu/60')} >{selected.includes(index) && <Check size={11} strokeWidth={3} />}</span>{option.label}
           </button>)}
         </div>
-        <div className="mt-3 flex items-center justify-between"><span aria-live="polite" className="text-xs text-mu">{used[call.id] ? 'Sent' : multi ? 'Choose one or more' : 'Choose one'}</span><button disabled={!selected.length || s.busy || used[call.id]} onClick={() => run(call.id, options.filter((_: any, i: number) => selected.includes(i)).map((o: any) => o.prompt).join('\n\n'))} className="rounded-lg bg-ac px-3 py-1.5 text-sm font-medium text-acx transition-opacity hover:opacity-90 disabled:opacity-40">Continue</button></div>
+        <div className="mt-3 flex items-center justify-between"><span aria-live="polite" className="text-xs text-mu">{used[call.id] ? 'Sent' : multi ? 'Choose one or more' : 'Choose one'}</span><button disabled={!selected.length || busy || used[call.id]} onClick={() => run(call.id, options.filter((_: any, i: number) => selected.includes(i)).map((o: any) => o.prompt).join('\n\n'))} className="rounded-lg bg-ac px-3 py-1.5 text-sm font-medium text-acx transition-opacity hover:opacity-90 disabled:opacity-40">Continue</button></div>
       </section>
     })}
   </div>
 }
 
-function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWorkspaceId, cfg }: { m: Msg; last: boolean; onOpenWorkspace: (mid: string, workspaceId: string, filePath?: string) => void; onOpenResearch: (mid: string) => void; selectedWorkspaceId?: string | null; cfg: (t: string) => void }) {
-  const { prefs, busy, advanced, features, workspaces } = useS()
+/* During streaming, each provider chunk renders as its own <span> so the
+ * fade-in effect applies per chunk. `fade === 0` disables it outright — no
+ * spans, no animation, no CSS variable. Once streaming ends the live chunks
+ * are cleared and the normal markdown renderer takes over. */
+function StreamedText({ chunks, fade }: { chunks: string[]; fade: number }) {
+  return (
+    <span className="md leading-7">
+      {chunks.map((t, i) => (
+        <span key={i} className={fade > 0 ? 'animate-reply-in' : undefined} style={fade > 0 ? { '--reply-in-duration': `${fade}s` } as React.CSSProperties : undefined}>
+          {t}
+        </span>
+      ))}
+    </span>
+  )
+}
+
+/* Markdown during streaming, updated incrementally. Only the longest prefix
+ * that ends at a line boundary is parsed as markdown; the incomplete tail stays
+ * plain text so an open fence or emphasis is never half-rendered. Because the
+ * committed prefix is unchanged between boundaries, <Md> is not re-parsed on
+ * every chunk — only when a new line completes — so a long reply does not
+ * re-render the whole message on each token. */
+const STREAM_TAIL_CAP = 400
+
+function StreamedMd({ chunks, fade }: { chunks: string[]; fade: number }) {
+  const full = useMemo(() => chunks.join(''), [chunks])
+  const committed = useMemo(() => {
+    const nl = full.lastIndexOf('\n')
+    if (nl >= 0 && full.length - nl - 1 <= STREAM_TAIL_CAP) return full.slice(0, nl + 1)
+    if (full.length > STREAM_TAIL_CAP) {
+      const cut = full.lastIndexOf(' ', full.length - STREAM_TAIL_CAP)
+      return cut > 0 ? full.slice(0, cut + 1) : ''
+    }
+    return ''
+  }, [full])
+  const tail = full.slice(committed.length)
+  return (
+    <>
+      {committed && <Md t={committed} />}
+      {tail && (
+        <span className={cx('leading-7', fade > 0 && 'animate-reply-in')} style={fade > 0 ? { '--reply-in-duration': `${fade}s` } as React.CSSProperties : undefined}>
+          {tail}
+        </span>
+      )}
+    </>
+  )
+}
+
+const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWorkspaceId, cfg }: { m: Msg; last: boolean; onOpenWorkspace: (mid: string, workspaceId: string, filePath?: string) => void; onOpenResearch: (mid: string) => void; selectedWorkspaceId?: string | null; cfg: (t: string) => void }) {
+  // Granular subscriptions: a streamed chunk only changes `chats`, so these
+  // slices stay referentially stable and this message does not re-render
+  // unless its own `m` prop (or one of these) actually changed.
+  const prefs = useS((s) => s.prefs)
+  const streamFade = prefs.streamFade
+  const streamMd = prefs.streamMd
+  const busy = useS((s) => s.busy)
+  const advanced = useS((s) => s.advanced)
+  const features = useS((s) => s.features)
+  const workspaces = useS((s) => s.workspaces)
   const adv = featOn({ features }, 'advanced') ? advanced : undefined
   const [sysOpen, setSysOpen] = useState(false)
   const [copied, setCopied] = useState(false)
@@ -147,6 +207,7 @@ function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWorkspaceId, cfg 
   const sysText = m.sys ?? sysPreview
   const togglePayload = (k: string) => setExpanded((v) => ({ ...v, [k]: !v[k] }))
   const live = useLive((s) => s.tools[m.id])
+  const liveChunks = useLive((s) => s.chunks[m.id])
   const [showRawErr, setShowRawErr] = useState(false)
   // Jump-to-message from ranked sidebar search: scroll + temporary highlight.
   const flash = useS((st) => st.flashMsg === m.id)
@@ -165,19 +226,25 @@ function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWorkspaceId, cfg 
   const sources = useMemo(() => collectMessageSources(m.toolRounds), [m.toolRounds])
   const displayText = m.toolFinal ?? m.t
   const citedText = useMemo(() => searchPrefs?.citeStyle === 'off' ? stripCitations(displayText) : linkifyCitations(displayText, sources), [displayText, sources, searchPrefs?.citeStyle])
-  const cites = searchPrefs?.citeStyle === 'links' || searchPrefs?.citeStyle === 'off' ? undefined : sources.length ? {
+  const openCite = useCallback((citeId: string) => {
+    setSrcOpen(true)
+    setSrcFlash(citeId.toUpperCase())
+    window.setTimeout(() => scrollToSource(m.id, citeId), 60)
+    window.setTimeout(() => setSrcFlash((v) => (v === citeId.toUpperCase() ? null : v)), 1800)
+  }, [m.id])
+  // Stable identity: `cites` feeds the memoized markdown renderer, so a fresh
+  // object here would re-parse this message's whole body on every render.
+  const cites = useMemo(() => searchPrefs?.citeStyle === 'links' || searchPrefs?.citeStyle === 'off' || !sources.length ? undefined : {
     sources,
-    onCite: (citeId: string) => {
-      setSrcOpen(true)
-      setSrcFlash(citeId.toUpperCase())
-      window.setTimeout(() => scrollToSource(m.id, citeId), 60)
-      window.setTimeout(() => setSrcFlash((v) => (v === citeId.toUpperCase() ? null : v)), 1800)
-    },
-  } : undefined
+    onCite: openCite,
+  }, [searchPrefs?.citeStyle, sources, openCite])
   const writingPath = useMemo(
     () => findLastWorkspacePath(live as { id: string; name?: string; arguments: string }[] | undefined, m.toolRounds),
     [m.toolRounds, live],
   )
+  // Research reports live in the side panel (opened from the report card),
+  // never inline. Error text still renders so failures stay visible.
+  const hideBody = !!m.research && m.research.status !== 'error'
   if (m.r === 'user')
     return (
       <div id={`msg-${m.id}`} className={cx('ml-auto max-w-[85%] space-y-2 rounded-xl p-1', flash && 'ring-2 ring-ac')}>
@@ -280,9 +347,13 @@ function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWorkspaceId, cfg 
               <pre className="overflow-x-auto whitespace-pre-wrap break-words rounded-lg bg-bg p-3 font-mono text-xs text-mu border border-hov">{(() => { try { return JSON.stringify(JSON.parse(m.t || '{}'), null, 2) } catch { return m.t || '' } })()}</pre>
             )}
           </div>
-        ) : m.t ? (
+        ) : hideBody ? null : m.t ? (
           <div className="inline">
-            <Md t={citedText} fadeEvents={m.fadeEvents} fade={prefs.fade} cites={cites} />
+            {liveChunks && liveChunks.length ? (
+              streamMd ? <StreamedMd chunks={liveChunks} fade={streamFade} /> : <StreamedText chunks={liveChunks} fade={streamFade} />
+            ) : (
+              <Md t={citedText} cites={cites} />
+            )}
           </div>
         ) : writingPath ? (
           <span className="reply-thinking" role="status" aria-label={`Writing ${writingPath}`}>
@@ -302,8 +373,9 @@ function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWorkspaceId, cfg 
       </div>
       {/* Workspace tiles for this message — shown above message controls but below content */}
       {m.research && <ResearchTierPicker msg={m} />}
+      {m.research && <ResearchPlanCard msg={m} />}
       {m.research && <ResearchProgressCard msg={m} />}
-      {m.research && m.research.status === 'done' && <ResearchTile msg={m} onOpen={() => onOpenResearch(m.id)} />}
+      {m.research && <ResearchTile msg={m} onOpen={() => onOpenResearch(m.id)} />}
       {(() => {
         const wsIds = new Set<string>([...(m.workspaceIds ?? []), ...extractWorkspaceIds(((live ?? []) as { name: string; arguments: string; result?: string }[]))])
         const ids = Array.from(wsIds)
@@ -328,8 +400,9 @@ function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWorkspaceId, cfg 
           </div>
         ) : null
       })()}
-      {/* Sources drawer: below workspaces, above the message options. */}
-      {!m.err && (
+      {/* Sources drawer: below workspaces, above the message options.
+        Hidden for research runs — sources live in the report side panel. */}
+      {!m.err && !hideBody && (
         <SourcesPanel
           msgId={m.id}
           text={displayText}
@@ -358,7 +431,7 @@ function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWorkspaceId, cfg 
       </div>
     </div>
   )
-}
+})
 
 const Tile = ({ icon: I, t, d, on }: { icon: Ic; t: string; d: string; on: () => void }) => (
   <button onClick={on} className="flex items-center gap-3 rounded-xl bg-surf p-3 text-left hover:bg-hov">
@@ -368,7 +441,13 @@ const Tile = ({ icon: I, t, d, on }: { icon: Ic; t: string; d: string; on: () =>
 )
 
 export function Chat({ side, toggle, cfg, pal }: { side: boolean; toggle: () => void; cfg: (t: string) => void; pal: () => void }) {
-  const s = useS()
+  /* Narrow slice: the transcript re-renders for chat changes (a streamed chunk
+     legitimately updates it), but not for composer keystrokes, scratchpad,
+     todos, snippets or other unrelated panel state. */
+  const s = useS(useShallow((st) => ({
+    chats: st.chats, chat: st.chat, cmds: st.cmds, prefs: st.prefs, workspaces: st.workspaces,
+    selectedRevision: st.selectedRevision, eps: st.eps, features: st.features, patch: st.patch,
+  })))
   const c = s.chats.find((x) => x.id === s.chat)
   const tiles = featOn(s, 'commands') ? s.cmds.filter((k) => k.on).slice(0, 4) : []
   const box = useRef<HTMLDivElement>(null), stick = useRef(true)
@@ -379,10 +458,18 @@ export function Chat({ side, toggle, cfg, pal }: { side: boolean; toggle: () => 
   const prevBusy = useRef(busy)
 
   useEffect(() => { stick.current = true }, [s.chat])
+  /* Follow-the-bottom scrolling is coalesced to at most one write per frame:
+     assigning `scrollTop` forces a layout, and streamed chunks can arrive
+     faster than the display refreshes. */
+  const followBottom = useMemo(() => createFrameThrottle(() => {
+    const b = box.current
+    if (b) b.scrollTop = b.scrollHeight
+  }), [])
+  useEffect(() => () => followBottom.cancel(), [followBottom])
   useEffect(() => {
-    const b = box.current, last = c?.msgs[c.msgs.length - 1]
-    if (b && (stick.current || last?.r === 'user')) b.scrollTop = b.scrollHeight
-  }, [c?.msgs, s.chat])
+    const last = c?.msgs[c.msgs.length - 1]
+    if (stick.current || last?.r === 'user') followBottom.call()
+  }, [c?.msgs, s.chat, followBottom])
 
   // Auto-open workspace panel when AI writes files; follow the file being written.
   useEffect(() => {
@@ -426,25 +513,28 @@ export function Chat({ side, toggle, cfg, pal }: { side: boolean; toggle: () => 
     return () => q.removeEventListener('change', f)
   }, [])
 
+  // Stable callback identities so memoized message rows do not re-render when
+  // the list re-renders for an unrelated (streamed) chunk.
+  const openWorkspace = useCallback((mid: string, wsId: string, filePath?: string) => setWorkspacePanel({ mid, workspaceId: wsId, initialFilePath: filePath }), [])
+  const openResearch = useCallback((mid: string) => { useS.getState().patch({ researchPanel: { mid } }) }, [])
+
   const workspaceMsg = workspacePanel ? c?.msgs.find((m) => m.id === workspacePanel.mid) : undefined
-  const workspace = workspaceMsg ? s.workspaces[workspacePanel.workspaceId] : undefined
+  const workspace = workspaceMsg && workspacePanel ? s.workspaces[workspacePanel.workspaceId] : undefined
   const selectedRevId = workspacePanel ? s.selectedRevision[workspacePanel.workspaceId] : null
   const workspaceFrac = clampWorkspaceFrac(s.prefs.workspaceWidth)
   const researchMid = useS((st) => st.researchPanel?.mid ?? null)
   const researchMsg = researchMid ? c?.msgs.find((m) => m.id === researchMid && m.research) : undefined
 
   const startResize = (e: React.PointerEvent) => {
-    e.preventDefault()
     const row = rowRef.current
     if (!row) return
-    const x = e.clientX, start = workspaceFrac, total = row.getBoundingClientRect().width || 1
-    const move = (ev: PointerEvent) => {
-      const value = clampWorkspaceFrac(start - (ev.clientX - x) / total)
+    const startX = e.clientX, start = workspaceFrac, total = row.getBoundingClientRect().width || 1
+    startPointerDrag(e, (clientX) => {
+      const next = roundFrac(clampWorkspaceFrac(start - (clientX - startX) / total))
       const st = useS.getState()
-      st.patch({ prefs: { ...st.prefs, workspaceWidth: roundFrac(value) } })
-    }
-    const up = () => { removeEventListener('pointermove', move); removeEventListener('pointerup', up) }
-    addEventListener('pointermove', move); addEventListener('pointerup', up, { once: true })
+      if (st.prefs.workspaceWidth === next) return
+      st.patch({ prefs: { ...st.prefs, workspaceWidth: next } })
+    })
   }
 
   return (
@@ -455,7 +545,7 @@ export function Chat({ side, toggle, cfg, pal }: { side: boolean; toggle: () => 
           <div ref={box} onScroll={(e) => { const b = e.currentTarget; stick.current = b.scrollHeight - b.scrollTop - b.clientHeight < 80 }} className="min-h-0 flex-1 overflow-y-auto" style={{ WebkitMaskImage: 'linear-gradient(to bottom, black calc(100% - 32px), rgba(0,0,0,0.1) 100%)', maskImage: 'linear-gradient(to bottom, black calc(100% - 32px), rgba(0,0,0,0.1) 100%)' }}>
             {c && c.msgs.length ? (
               <div className="mx-auto space-y-8 px-4 py-6" style={{ maxWidth: CHAT_WIDTH[s.prefs.chatWidth] }}>
-                {c.msgs.map((m, i) => <M key={m.id} m={m} cfg={cfg} last={i === c.msgs.length - 1} onOpenWorkspace={(mid, wsId, filePath) => setWorkspacePanel({ mid, workspaceId: wsId, initialFilePath: filePath })} onOpenResearch={(mid) => s.patch({ researchPanel: { mid } })} selectedWorkspaceId={workspacePanel?.mid === m.id ? selectedRevId : null} />)}
+                {c.msgs.map((m, i) => <M key={m.id} m={m} cfg={cfg} last={i === c.msgs.length - 1} onOpenWorkspace={openWorkspace} onOpenResearch={openResearch} selectedWorkspaceId={workspacePanel?.mid === m.id ? selectedRevId : null} />)}
                 {c.msgs[c.msgs.length - 1]?.r === 'user' && !busy && (
                   <div className="flex justify-center pt-2">
                     <button onClick={() => useS.getState().regen()} className="inline-flex min-h-9 items-center gap-2 rounded-full border border-hov bg-surf px-4 py-1.5 text-sm text-tx transition-colors hover:bg-hov focus-visible:ring-2 focus-visible:ring-ac">
@@ -479,7 +569,7 @@ export function Chat({ side, toggle, cfg, pal }: { side: boolean; toggle: () => 
           </div>
           <Composer cfg={cfg} />
         </div>
-        {workspaceMsg && workspace && (
+        {workspaceMsg && workspace && workspacePanel && (
           <>
             <div role="separator" aria-orientation="vertical" aria-label="Resize workspace panel" onPointerDown={startResize} className="hidden w-1.5 shrink-0 cursor-col-resize bg-transparent hover:bg-ac/50 sm:block" />
             <aside aria-label="Workspace side panel" style={wide ? { flex: `0 0 ${workspaceFrac * 100}%`, maxWidth: '70%', minWidth: '15%' } : { height: '45dvh', width: '100%' }} className="flex min-h-0 shrink-0 flex-col border-t border-hov bg-surf/40 sm:border-l sm:border-t-0">

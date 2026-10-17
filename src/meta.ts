@@ -1,4 +1,4 @@
-import { Type, Image, ImagePlus, FileText, Files, Clock, Clipboard, Calculator, Gauge, Activity, Layers, StickyNote, Bookmark, Fingerprint, Dices, Hash, MapPin, Coins, Timer, ScrollText, Keyboard, ListChecks, Search, Link, CornerDownLeft } from 'lucide-react'
+import { Type, Image, ImagePlus, FileText, Files, Clock, Clipboard, Calculator, Activity, Layers, StickyNote, Bookmark, Fingerprint, Dices, Hash, MapPin, Coins, Timer, ScrollText, Keyboard, ListChecks, Search, Link, CornerDownLeft } from 'lucide-react'
 
 export const CI = { text: Type, image: Image, 'image+text': ImagePlus, doc: FileText }
 
@@ -28,7 +28,6 @@ export const TOOLS: [string, string, typeof Clock, string, string, string][] = [
 ]
 
 export const WIDGETS: [string, string, typeof Clock, string][] = [
-  ['ctx', 'Context meter', Gauge, 'Estimated tokens used by the open chat.'],
   ['eps', 'Endpoint status', Activity, 'Enabled state of every endpoint at a glance.'],
   ['usage', 'Usage', Layers, 'Successes and failures per endpoint from saved chats.'],
   ['pad', 'Scratchpad', StickyNote, 'A persistent note area next to the chat.'],

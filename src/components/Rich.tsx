@@ -1,4 +1,4 @@
-import { createElement, memo, useEffect, useMemo, useState, type CSSProperties, type ReactNode } from 'react'
+import { createElement, memo, useEffect, useMemo, useState, type ReactNode } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
@@ -6,14 +6,10 @@ import remarkBreaks from 'remark-breaks'
 import remarkEmoji from 'remark-emoji'
 import rehypeRaw from 'rehype-raw'
 import rehypeSanitize, { defaultSchema } from 'rehype-sanitize'
-import rehypeKatex from 'rehype-katex'
 import rehypeHighlight from 'rehype-highlight'
-import { all } from 'lowlight'
-import 'katex/dist/katex.min.css'
+import { common } from 'lowlight'
 import { Check, Copy } from 'lucide-react'
 import { cx } from './ui'
-import { activeFadeEvents } from '../fade'
-import type { FadeEvent } from '../store'
 import type { CiteSource } from '../citations'
 
 export type CiteMap = { sources: CiteSource[]; onCite?: (citeId: string) => void }
@@ -56,7 +52,7 @@ const schema: any = {
     section: [...(A.section ?? []), 'dataFootnotes'],
     h2: [...(A.h2 ?? []), 'id'],
     li: [...(A.li ?? []), 'id'],
-    span: [...drop('span', 'className'), ['className', 'math', 'math-inline', 'math-display', 'stream-fade', 'stream-fade-active'], ['style', /^transition-duration:\s*\d+(?:\.\d+)?s;?$/]],
+    span: [...drop('span', 'className'), ['className', 'math', 'math-inline', 'math-display']],
     div: [...drop('div', 'className'), ['className', 'math', 'math-display']],
     code: [...drop('code', 'className'), ['className', /^language-./, 'math-inline', 'math-display']],
     th: [...drop('th', 'align'), 'align', ['style', /^text-align:\s*(left|right|center);?$/]],
@@ -64,56 +60,27 @@ const schema: any = {
   },
 }
 
-// Track stream fragments by timestamp so each word gets its own complete fade.
-const fadeFragments = (events: FadeEvent[], duration: number) => () => (tree: any) => {
-  if (duration <= 0 || !events.length) return
-  const now = performance.now(), active = activeFadeEvents(events, now, duration * 1000).reverse()
-  const leaves: any[] = []
-  const collect = (node: any) => {
-    if (node.type === 'text') leaves.push(node)
-    else for (const child of node.children ?? []) collect(child)
-  }
-  collect(tree)
-  const ranges = new Map<any, { start: number; end: number; event: FadeEvent; age: number }[]>()
-  let leafIndex = leaves.length - 1, before = leaves[leafIndex]?.value.length ?? 0
-  for (const event of active) {
-    const needle = event.text.trim().replace(/^[*_~`]+|[*_~`]+$/g, '')
-    if (!needle) continue
-    let found = false
-    for (let i = leafIndex; i >= 0 && !found; i--) {
-      const value = leaves[i].value, limit = i === leafIndex ? before : value.length
-      const start = value.lastIndexOf(needle, limit - needle.length)
-      if (start >= 0 && start + needle.length <= limit) {
-        const list = ranges.get(leaves[i]) ?? []
-        for (const match of needle.matchAll(/\S+/g)) {
-          const wordStart = start + (match.index ?? 0)
-          list.push({ start: wordStart, end: wordStart + match[0].length, event, age: now - event.at })
-        }
-        ranges.set(leaves[i], list)
-        leafIndex = i; before = start; found = true
-      }
-    }
-  }
-  const replace = (parent: any) => {
-    if (!parent.children) return
-    for (let i = 0; i < parent.children.length; i++) {
-      const node = parent.children[i], marks = ranges.get(node)
-      if (marks?.length) {
-        const pieces: any[] = []; let offset = 0
-        for (const mark of marks.sort((a, b) => a.start - b.start)) {
-          if (mark.start < offset) continue
-          if (mark.start > offset) pieces.push({ type: 'text', value: node.value.slice(offset, mark.start) })
-          const active = mark.age >= 32, remaining = Math.max(0, duration - mark.age / 1000).toFixed(3)
-          pieces.push({ type: 'text', value: node.value.slice(mark.start, mark.end), data: { hName: 'span', hProperties: { className: active ? ['stream-fade', 'stream-fade-active'] : ['stream-fade'], ...(active ? { style: `transition-duration:${remaining}s;` } : {}) } } })
-          offset = mark.end
-        }
-        if (offset < node.value.length) pieces.push({ type: 'text', value: node.value.slice(offset) })
-        parent.children.splice(i, 1, ...pieces); i += pieces.length - 1
-      } else replace(node)
-    }
-  }
-  replace(tree)
-}
+// Remark + rehype pipelines are identical for every render; hoist them so they
+// are allocated once rather than on every streamed word.
+const BASE_PLUGINS: any = [[remarkGfm, { singleTilde: false }], remarkMath, remarkBreaks, remarkEmoji]
+
+const REHYPE_BASE: any = [rehypeRaw, [rehypeSanitize, schema]]
+/* `common` covers the everyday languages (js/ts, python, json, bash, yaml,
+ * sql, html/css, …). The full `all` set is ~1.2 MB of grammars for languages
+ * that essentially never show up, and unknown languages are skipped anyway
+ * (`ignoreMissing` below). */
+const REHYPE_HIGHLIGHT: any = [rehypeHighlight, { detect: false, ignoreMissing: true, languages: common }]
+
+/* KaTeX plus its fonts is far larger than the rest of the pipeline and only
+ * matters for replies that actually contain math, so the plugin and its
+ * stylesheet load on first use. Until they arrive the math source renders as
+ * plain text (remark-math's fallback), which is readable and stable. */
+let katexPlugins: any[] | null = null
+let katexLoad: Promise<void> | null = null
+const loadKatex = (): Promise<void> => (katexLoad ??= Promise.all([
+  import('rehype-katex'),
+  import('katex/dist/katex.min.css'),
+]).then(([m]) => { katexPlugins = [[m.default, { throwOnError: false, strict: 'ignore', errorColor: 'var(--er)' }]] }))
 
 /* ---- components ---- */
 const E = (T: string, c: string) => ({ node, className, ...p }: any) => createElement(T, { ...p, className: cx(c, className) })
@@ -207,25 +174,35 @@ const makeC = (bare: boolean, cites?: CiteMap): any => ({
   },
 })
 
-export default memo(function Rich({ t, fadeEvents = [], fade = 0, bare = false, cites }: { t: string; fadeEvents?: FadeEvent[]; fade?: number; bare?: boolean; cites?: CiteMap }) {
+export default memo(function Rich({ t, bare = false, cites }: { t: string; bare?: boolean; cites?: CiteMap }) {
+  /* `pre` re-runs over the whole reply on each streamed chunk by design: it is
+   * a handful of linear regex passes (measured well under 0.1 ms for a 13 KB
+   * reply) while the markdown parse below dominates. An incremental version
+   * would have to guess whether the new tail closes a fence, definition list
+   * or `$$` block, and a wrong guess re-renders earlier text as prose. */
   const src = useMemo(() => pre(t), [t])
-  const [, refresh] = useState(0)
+  const [katexReady, setKatexReady] = useState(() => katexPlugins !== null)
+  // Rebuilding the ~30 element renderers on every streamed word is pure churn;
+  // they only depend on the rarely-changing bare/cites props.
+  const components = useMemo(() => makeC(bare, cites), [bare, cites])
+  const wantsMath = MATH.test(src)
   useEffect(() => {
-    // Only animate events from this session: stale (future-stamped) events are
-    // ignored so they neither hide text nor keep the refresh timer alive.
-    if (fade <= 0 || !activeFadeEvents(fadeEvents, performance.now(), fade * 1000).length) return
-    const timer = window.setInterval(() => {
-      refresh((n) => n + 1)
-      if (!activeFadeEvents(fadeEvents, performance.now(), fade * 1000).length) window.clearInterval(timer)
-    }, 32)
-    return () => window.clearInterval(timer)
-  }, [fadeEvents, fade])
+    if (!wantsMath || katexReady) return
+    let live = true
+    void loadKatex().then(() => { if (live) setKatexReady(true) })
+    return () => { live = false }
+  }, [wantsMath, katexReady])
+  // KaTeX renders after sanitising and before highlighting, as before.
+  const rehypePlugins = useMemo(
+    () => (katexReady && katexPlugins ? [...REHYPE_BASE, ...katexPlugins, REHYPE_HIGHLIGHT] : [...REHYPE_BASE, REHYPE_HIGHLIGHT]),
+    [katexReady],
+  )
   return (
-    <div className="md leading-7" style={{ '--word-fade-duration': `${fade}s` } as CSSProperties}>
+    <div className="md leading-7">
       <ReactMarkdown
-        remarkPlugins={[[remarkGfm, { singleTilde: false }], remarkMath, remarkBreaks, remarkEmoji, fadeFragments(fadeEvents, fade)]}
-        rehypePlugins={[rehypeRaw, [rehypeSanitize, schema], [rehypeKatex, { throwOnError: false, strict: 'ignore', errorColor: 'var(--er)' }], [rehypeHighlight, { detect: false, ignoreMissing: true, languages: all }]]}
-        components={makeC(bare, cites)}
+        remarkPlugins={BASE_PLUGINS}
+        rehypePlugins={rehypePlugins}
+        components={components}
       >
         {src}
       </ReactMarkdown>

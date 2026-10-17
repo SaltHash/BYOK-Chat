@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { X, Plus, Trash2, ArrowUp, ArrowDown, ChevronRight, Eye, EyeOff, Play, ShieldCheck, Shield, Download, Upload, Check, CircleCheck, Cpu, Route, GripVertical, Server, ListMusic, ScrollText, Terminal, Wrench, Palette, FolderOpen, FileText, PanelRight, TrendingUp, Keyboard, Search, Brain, Pencil, Sparkles, RotateCcw, SlidersHorizontal, FlaskConical, Library, Database, Lock, LockOpen, LayoutTemplate, Share2 } from 'lucide-react'
-import { useS, PRE, THEMES, DARK_THEMES, LIGHT_THEMES, THEME_COLOR_KEYS, THEME_COLOR_LABELS, SEARCH_PROVIDERS, FEATURES, LIBRARY_ITEMS, FEATURE_TABS, FEATURE_WIDGETS, DEFAULT_LIBRARY_SHOW, DEFAULT_ADVANCED, featOn, normSearch, normResearch, normAdvanced, normDocs, usable, modelsOf, modelNameOf, helperRef, splitHelperRef, effortClassifierOf, TOOL_ROUNDS_DEFAULT, TOOL_ROUNDS_MIN, TOOL_ROUNDS_BASE_MAX, TOOL_ROUNDS_MAX, toolRoundLimitOf, isToolRoundsUnlimited, type Kind, type FeatureId, type DocPrefs } from '../store'
+import { useS, useSConfig, PRE, THEMES, DARK_THEMES, LIGHT_THEMES, THEME_COLOR_KEYS, THEME_COLOR_LABELS, SEARCH_PROVIDERS, FEATURES, LIBRARY_ITEMS, FEATURE_TABS, FEATURE_WIDGETS, DEFAULT_LIBRARY_SHOW, DEFAULT_ADVANCED, featOn, normSearch, normResearch, normAdvanced, normDocs, usable, modelsOf, modelNameOf, helperRef, splitHelperRef, effortClassifierOf, TOOL_ROUNDS_DEFAULT, TOOL_ROUNDS_MIN, TOOL_ROUNDS_BASE_MAX, TOOL_ROUNDS_MAX, toolRoundLimitOf, isToolRoundsUnlimited, type Kind, type FeatureId, type DocPrefs } from '../store'
 import { RESEARCH_TIERS, type ResearchTierId } from '../research'
 import { normSkills, resolveSkill, validateCustomSkill, enabledSkills, BUILTIN_SKILLS, SKILL_TOOL_NAME, type SkillState } from '../skills'
 import { findDuplicatePairs, mergeMemory } from '../recall'
@@ -10,7 +10,7 @@ import { SETTINGS_TABS, splitSettingTarget, settingDomId } from '../settingsCata
 import { DataTab, StatsTab, KeysTab, TestRow, TestAllEndpoints } from './Extra'
 import { Btn, Field, Input, Area, Sel, Toggle, Seg, RangeSlider, Checkbox, HelpTip, Modal, Surface, Chip, cx, type Ic } from './ui'
 import { SortableList, type SortHandleProps, type SortItemApi } from './dnd'
-import { fetchModelCatalog, filterCatalogByEndpoint, prioritizeProviderRows, type CatalogEntry } from '../catalog'
+import { fetchModelCatalog, fetchModelProviders, filterCatalogByEndpoint, prioritizeProviderRows, type CatalogEntry, type CatalogProvider } from '../catalog'
 import { WORKSPACE_TEMPLATES } from '../workspace'
 
 const TABS = SETTINGS_TABS
@@ -147,7 +147,7 @@ const modelIdCompare = (a: string, b: string) => {
 const contextLabel = (n: number) => n >= 1e6 ? `${(n / 1e6).toFixed(2).replace(/\.00$/, '')}M` : n >= 1e3 ? `${(n / 1e3).toFixed(0)}K` : String(n)
 
 function Acts({ k, id }: { k: Kind; id: string }) {
-  const { move, del } = useS()
+  const { move, del } = useSConfig()
   return (
     <div className="flex items-center gap-1 pt-1">
       <Btn icon={ArrowUp} title="Move up" onClick={() => move(k, id, -1)} />
@@ -156,6 +156,78 @@ function Acts({ k, id }: { k: Kind; id: string }) {
       <Btn v="danger" icon={Trash2} onClick={() => del(k, id)}>Remove</Btn>
     </div>
   )
+}
+
+/** Per-model inference provider picker (OpenRouter only). Kept behind one
+ *  low-key button under a model row so it stays out of the way for the many
+ *  users who never care which provider serves a model. */
+function ProviderPicker({ e, model, openRouter, update }: { e: any; model: string; openRouter: boolean; update: (p: object) => void }) {
+  const [open, setOpen] = useState(false)
+  const [status, setStatus] = useState('')
+  const [providers, setProviders] = useState<CatalogProvider[]>([])
+  const [manual, setManual] = useState('')
+  const current: { tag: string; name: string } | undefined = e.modelProviders?.[model]
+  if (!openRouter || !model) return null
+  const load = async () => {
+    setOpen(true); setStatus('Loading providers…')
+    const { providers: found, error } = await fetchModelProviders(model, e)
+    setProviders(found)
+    setStatus(error && !found.length ? `${error} You can enter a provider slug below.`
+      : found.length ? `${found.length} provider${found.length === 1 ? '' : 's'} currently serve this model.`
+        : 'No providers were returned. You can enter a provider slug below.')
+  }
+  const pick = (tag: string, name: string) => {
+    update({ modelProviders: { ...(e.modelProviders ?? {}), [model]: { tag, name } } })
+    setOpen(false)
+  }
+  const clear = () => {
+    const next = { ...(e.modelProviders ?? {}) }
+    delete next[model]
+    update({ modelProviders: next })
+    setOpen(false)
+  }
+  return <>
+    <button type="button" onClick={() => void load()} title="Choose the inference provider for this model" className="inline-flex items-center gap-1.5 rounded-md px-1.5 py-0.5 hover:bg-hov hover:text-tx">
+      <Server size={12} />Provider: <span className={current ? 'font-medium text-tx' : ''}>{current?.name ?? 'Automatic'}</span>
+    </button>
+    {open && <Modal close={() => setOpen(false)}>
+      <div className="flex max-h-[80dvh] w-full max-w-lg flex-col gap-3 rounded-2xl bg-bg p-5 shadow-2xl">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h3 className="font-semibold">Inference provider</h3>
+            <p className="mt-0.5 truncate text-xs text-mu">{model}</p>
+          </div>
+          <button onClick={() => setOpen(false)} className="grid size-8 shrink-0 place-items-center rounded-lg text-mu hover:bg-hov hover:text-tx" aria-label="Close provider picker"><X size={16} /></button>
+        </div>
+        <p className="text-xs text-mu">Choose which OpenRouter provider serves this model. Requests use only the selected provider, with no fallback. The list comes from OpenRouter's live endpoint data.</p>
+        <button onClick={() => void load()} className="self-start rounded-lg bg-hov px-3 py-2 text-xs text-tx">Refresh providers</button>
+        <p className="text-xs text-mu">{status}</p>
+        <div className="min-h-0 flex-1 space-y-1 overflow-auto">
+          <button onClick={clear} className={cx('flex w-full items-center gap-3 rounded-md px-2 py-2 text-left text-sm hover:bg-hov', !current && 'bg-hov')}>
+            <span className={cx('mt-0.5 grid size-4 shrink-0 place-items-center self-start rounded-full border', !current ? 'border-ac' : 'border-mu/60')}>{!current && <span className="size-2 rounded-full bg-ac" />}</span>
+            <span className="min-w-0"><span className="block">Automatic</span><span className="block text-xs text-mu">Let OpenRouter route and load-balance.</span></span>
+          </button>
+          {providers.map((p) => {
+            const on = current?.tag === p.tag
+            return <button key={p.tag} onClick={() => pick(p.tag, p.name)} className={cx('flex w-full items-center gap-3 rounded-md px-2 py-2 text-left text-sm hover:bg-hov', on && 'bg-hov')}>
+              <span className={cx('mt-0.5 grid size-4 shrink-0 place-items-center self-start rounded-full border', on ? 'border-ac' : 'border-mu/60')}>{on && <span className="size-2 rounded-full bg-ac" />}</span>
+              <span className="min-w-0 flex-1">
+                <span className="block truncate">{p.name}</span>
+                <span className="block truncate text-xs text-mu">{[p.context ? `${contextLabel(p.context)} context` : '', p.throughput ? `${Math.round(p.throughput)} tok/s` : '', p.inputPrice !== undefined ? `$${p.inputPrice.toFixed(2)}/M in` : '', p.outputPrice !== undefined ? `$${p.outputPrice.toFixed(2)}/M out` : '', p.cacheReadPrice !== undefined ? `$${p.cacheReadPrice.toFixed(2)}/M cache read` : '', p.quantization].filter(Boolean).join(' · ')}</span>
+              </span>
+            </button>
+          })}
+        </div>
+        <div className="space-y-1.5">
+          <span className="text-xs font-medium">Or enter a provider slug</span>
+          <div className="flex gap-2">
+            <input value={manual} onChange={(ev) => setManual(ev.target.value)} placeholder="e.g. amazon-bedrock" className="min-w-0 flex-1 rounded-lg bg-surf px-3 py-2 text-sm outline-none" />
+            <button disabled={!manual.trim()} onClick={() => pick(manual.trim(), manual.trim())} className="rounded-lg bg-ac px-3 py-2 text-xs text-acx disabled:opacity-40">Use</button>
+          </div>
+        </div>
+      </div>
+    </Modal>}
+  </>
 }
 
 function ModelsEditor({ e, update }: { e: any; update: (p: object) => void }) {
@@ -198,7 +270,8 @@ function ModelsEditor({ e, update }: { e: any; update: (p: object) => void }) {
       const detected = Object.fromEntries(detectedEntries.map(x => [storedId(x.id), x.efforts]))
       const detectedSources = Object.fromEntries(detectedEntries.map(x => [storedId(x.id), 'auto']))
       const providedNames = Object.fromEntries(found.filter(x => models.includes(storedId(x.id)) && x.name && !e.modelNames?.[storedId(x.id)]).map(x => [storedId(x.id), x.name]))
-      if (Object.keys(detected).length || Object.keys(providedNames).length) update({ modelEfforts: { ...e.modelEfforts, ...detected }, modelEffortSource: { ...e.modelEffortSource, ...detectedSources }, modelNames: { ...e.modelNames, ...providedNames } })
+      const providedContext = Object.fromEntries(found.filter(x => models.includes(storedId(x.id)) && x.context && Number(x.context) > 0).map(x => [storedId(x.id), Number(x.context)]))
+      if (Object.keys(detected).length || Object.keys(providedNames).length || Object.keys(providedContext).length) update({ modelEfforts: { ...e.modelEfforts, ...detected }, modelEffortSource: { ...e.modelEffortSource, ...detectedSources }, modelNames: { ...e.modelNames, ...providedNames }, modelContext: { ...e.modelContext, ...providedContext } })
       setCatalogState(found.length ? `${found.length} models found. Catalog entries are suggestions; confirm any model ID.` : 'No catalog entries were returned. Enter a model ID below.')
     } catch (err: any) { setCatalogState(`${err?.message || 'Catalog lookup failed.'} You can still enter a model ID below.`) }
   }
@@ -207,7 +280,8 @@ function ModelsEditor({ e, update }: { e: any; update: (p: object) => void }) {
     if (!clean) return
     if (!models.includes(clean)) setModels([...models.filter(Boolean), clean])
     const providedName = catalog.find(x => storedId(x.id) === clean)?.name
-    update({ modelEfforts: { ...e.modelEfforts, [clean]: efforts }, modelEffortSource: { ...e.modelEffortSource, [clean]: autoDetected ? (efforts.length ? 'auto' : catalog.find(x => storedId(x.id) === clean)?.source ?? 'manual') : 'manual' }, ...(providedName && !e.modelNames?.[clean] ? { modelNames: { ...e.modelNames, [clean]: providedName } } : {}) })
+    const providedCtx = catalog.find(x => storedId(x.id) === clean)?.context
+    update({ modelEfforts: { ...e.modelEfforts, [clean]: efforts }, modelEffortSource: { ...e.modelEffortSource, [clean]: autoDetected ? (efforts.length ? 'auto' : catalog.find(x => storedId(x.id) === clean)?.source ?? 'manual') : 'manual' }, ...(providedName && !e.modelNames?.[clean] ? { modelNames: { ...e.modelNames, [clean]: providedName } } : {}), ...(providedCtx && Number(providedCtx) > 0 ? { modelContext: { ...e.modelContext, [clean]: Number(providedCtx) } } : {}) })
     setPicker(false); setQuery(''); setSearchIdea(null)
   }
   return <div className="space-y-2">
@@ -230,7 +304,10 @@ function ModelsEditor({ e, update }: { e: any; update: (p: object) => void }) {
       <input value={model ? modelNameOf(e, model).replace(/^~+/, '') : ''} onChange={(ev) => update({ modelNames: { ...e.modelNames, [model]: ev.target.value } })} placeholder="Model name" aria-label={`Model name ${i + 1}`} className="min-w-0 rounded-md bg-surf px-2 py-1 text-sm outline-none" />
       <button title="Remove model" onClick={() => setModels(models.filter((_, j) => j !== i))} className="grid size-7 place-items-center rounded-md text-mu hover:bg-hov hover:text-er"><Trash2 size={14} /></button>
       </div>
-      {!!model && e.modelEffortSource?.[model] !== 'auto' && <div className="ml-8 mt-1 flex flex-wrap items-center gap-2 text-xs text-mu"><span>Reasoning effort support:</span>{(['low','medium','high','xhigh','max','minimal','none'] as const).map(level => { const levels: string[] = e.modelEfforts?.[model] ?? []; const checked = levels.includes(level); return <button key={level} type="button" role="checkbox" aria-checked={checked} onClick={() => update({ modelEfforts: { ...e.modelEfforts, [model]: checked ? levels.filter(x => x !== level) : [...new Set([...levels, level])] }, modelEffortSource: { ...e.modelEffortSource, [model]: 'manual' } })} className="inline-flex items-center gap-1.5 capitalize"><span className={cx('grid size-4 place-items-center rounded border transition-colors', checked ? 'border-ac bg-ac text-acx' : 'border-mu bg-surf')}>{checked && <Check size={12} strokeWidth={3}/>}</span>{level}</button> })}<span className="opacity-70">(manual)</span></div>}
+      {!!model && (isOpenRouter || e.modelEffortSource?.[model] !== 'auto') && <div className="ml-8 mt-1 flex flex-wrap items-center gap-3 text-xs text-mu">
+        <ProviderPicker e={e} model={model} openRouter={isOpenRouter} update={update} />
+        {e.modelEffortSource?.[model] !== 'auto' && <span className="flex flex-wrap items-center gap-2"><span>Reasoning effort support:</span>{(['low','medium','high','xhigh','max','minimal','none'] as const).map(level => { const levels: string[] = e.modelEfforts?.[model] ?? []; const checked = levels.includes(level); return <button key={level} type="button" role="checkbox" aria-checked={checked} onClick={() => update({ modelEfforts: { ...e.modelEfforts, [model]: checked ? levels.filter(x => x !== level) : [...new Set([...levels, level])] }, modelEffortSource: { ...e.modelEffortSource, [model]: 'manual' } })} className="inline-flex items-center gap-1.5 capitalize"><span className={cx('grid size-4 place-items-center rounded border transition-colors', checked ? 'border-ac bg-ac text-acx' : 'border-mu bg-surf')}>{checked && <Check size={12} strokeWidth={3}/>}</span>{level}</button> })}<span className="opacity-70">(manual)</span></span>}
+      </div>}
     </div>
       }}
     />
@@ -243,13 +320,13 @@ function ModelsEditor({ e, update }: { e: any; update: (p: object) => void }) {
       <div className="min-h-0 flex-1 space-y-1 overflow-auto">{[...catalog].sort((a,b) => modelIdCompare(storedId(a.id).replace(/^~+/, ''), storedId(b.id).replace(/^~+/, ''))).filter(x => `${x.name.replace(/^~+/, '')} ${storedId(x.id).replace(/^~+/, '')}`.toLowerCase().includes(query.toLowerCase()) && !models.includes(storedId(x.id))).slice(0,250).map(x => { const id = storedId(x.id), visibleId = id.replace(/^~+/, ''), checked = selectedModels.includes(id); return <button key={x.id} onClick={() => setSelectedModels(checked ? selectedModels.filter(m => m !== id) : [...selectedModels, id])} className="flex w-full items-center gap-3 rounded-md px-2 py-2 text-left text-sm hover:bg-hov"><span className={cx('grid size-4 shrink-0 place-items-center rounded border', checked ? 'border-ac bg-ac text-acx' : 'border-mu/60')}>{checked && <Check size={12}/>}</span><span className="min-w-0 flex-1"><span className="block truncate">{visibleId}</span>{(x.context || x.inputPrice !== undefined || x.outputPrice !== undefined) && <span className="block text-xs text-mu">{[x.context ? `${contextLabel(x.context)} context` : '', x.inputPrice !== undefined ? `$${x.inputPrice.toFixed(2)}/M in` : '', x.outputPrice !== undefined ? `$${x.outputPrice.toFixed(2)}/M out` : ''].filter(Boolean).join(' · ')}</span>}</span></button>})}
         {query.trim() && !models.includes(catalogId(query.trim())) && <button type="button" role="checkbox" aria-checked={searchIdea === catalogId(query.trim())} onClick={() => setSearchIdea(searchIdea === catalogId(query.trim()) ? null : catalogId(query.trim()))} className="flex w-full items-center gap-3 rounded-md px-2 py-2 text-left text-sm hover:bg-hov"><span aria-hidden="true" className={cx('grid size-4 shrink-0 place-items-center rounded border', searchIdea === catalogId(query.trim()) ? 'border-ac bg-ac text-acx' : 'border-mu/60')}>{searchIdea === catalogId(query.trim()) && <Check size={12}/>}</span><span className="min-w-0 truncate">Add “{catalogId(query.trim())}” model</span></button>}
       </div>
-      {(selectedModels.length > 0 || searchIdea) && <button onClick={() => { const adding = [...new Set([...selectedModels, ...(searchIdea ? [searchIdea] : [])])]; const next = [...new Set([...models.filter(Boolean), ...adding])]; const effortEntries = selectedModels.map(id => { const item = catalog.find(x => storedId(x.id) === id); return item ? [id, item.efforts] as const : null }).filter(Boolean) as [string, string[]][]; const modelNames = Object.fromEntries(adding.map(id => [id, catalog.find(x => storedId(x.id) === id)?.name]).filter(([, name]) => !!name)); update({ models: next, model: next[0] ?? '', modelNames: { ...e.modelNames, ...modelNames }, modelEfforts: { ...e.modelEfforts, ...Object.fromEntries(effortEntries) }, modelEffortSource: { ...e.modelEffortSource, ...Object.fromEntries(effortEntries.map(([id, levels]) => [id, levels.length ? 'auto' : catalog.find(x => storedId(x.id) === id)?.source ?? 'manual'])) } }); setPicker(false); setSelectedModels([]); setSearchIdea(null) }} className="self-start rounded-lg bg-ac px-3 py-2 text-xs text-acx">Add selected models ({selectedModels.length + (searchIdea ? 1 : 0)})</button>}
+      {(selectedModels.length > 0 || searchIdea) && <button onClick={() => { const adding = [...new Set([...selectedModels, ...(searchIdea ? [searchIdea] : [])])]; const next = [...new Set([...models.filter(Boolean), ...adding])]; const effortEntries = selectedModels.map(id => { const item = catalog.find(x => storedId(x.id) === id); return item ? [id, item.efforts] as const : null }).filter(Boolean) as [string, string[]][]; const modelNames = Object.fromEntries(adding.map(id => [id, catalog.find(x => storedId(x.id) === id)?.name]).filter(([, name]) => !!name)); const modelCtx = Object.fromEntries(adding.map(id => [id, catalog.find(x => storedId(x.id) === id)?.context]).filter(([, ctx]) => Number(ctx) > 0)); update({ models: next, model: next[0] ?? '', modelNames: { ...e.modelNames, ...modelNames }, modelContext: { ...e.modelContext, ...modelCtx }, modelEfforts: { ...e.modelEfforts, ...Object.fromEntries(effortEntries) }, modelEffortSource: { ...e.modelEffortSource, ...Object.fromEntries(effortEntries.map(([id, levels]) => [id, levels.length ? 'auto' : catalog.find(x => storedId(x.id) === id)?.source ?? 'manual'])) } }); setPicker(false); setSelectedModels([]); setSearchIdea(null) }} className="self-start rounded-lg bg-ac px-3 py-2 text-xs text-acx">Add selected models ({selectedModels.length + (searchIdea ? 1 : 0)})</button>}
     </div></Modal>}
   </div>
 }
 
 function FeaturesTab() {
-  const s = useS()
+  const s = useSConfig()
   const F = s.features
   const setF = (id: FeatureId, on: boolean) => s.patch({ features: { ...F, [id]: on } })
   const [confirm, setConfirm] = useState<'stats' | 'memory' | null>(null)
@@ -326,7 +403,7 @@ function FeaturesTab() {
 }
 
 function HelperModels() {
-  const s = useS()
+  const s = useSConfig()
   const [open, setOpen] = useState(false)
   const clsRef = helperRef(s.memoryPrefs.classifierEp, s.memoryPrefs.classifierModel)
   const titleRef = helperRef(s.prefs.titleEp, s.prefs.titleModel)
@@ -391,7 +468,7 @@ function HelperModels() {
 }
 
 function Eps() {
-  const { eps, upd } = useS()
+  const { eps, upd } = useSConfig()
   const [show, setShow] = useState('')
   const [editingName, setEditingName] = useState('')
   const [advanced, setAdvanced] = useState<string[]>([])
@@ -449,7 +526,7 @@ function Eps() {
                     const item = body.data?.find((x: any) => x.id === model)
                     if (!item?.pricing?.prompt || !item?.pricing?.completion) throw Error('This model has no published token pricing in the catalog.')
                     const round2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100
-                    u({ prices: { ...e.prices, [model]: { input: round2(Number(item.pricing.prompt) * 1e6), output: round2(Number(item.pricing.completion) * 1e6), source: 'openrouter' } } })
+                    u({ prices: { ...e.prices, [model]: { input: round2(Number(item.pricing.prompt) * 1e6), output: round2(Number(item.pricing.completion) * 1e6), source: 'openrouter' } }, ...(Number(item.context_length) > 0 ? { modelContext: { ...e.modelContext, [model]: Number(item.context_length) } } : {}) })
                   } catch (x: any) { useS.getState().patch({ notice: { t: x?.message ?? 'Could not detect a price.' } }) }
                 }
                 const setPrice = (kind: 'input' | 'output', value: string) => u({ prices: { ...e.prices, [model]: { ...price, [kind]: Math.max(0, Math.round(((Number(value) || 0) + Number.EPSILON) * 100) / 100), source: 'manual' } } })
@@ -476,7 +553,7 @@ function Eps() {
 }
 
 function Prompts() {
-  const { prompts, upd, patch, globalPrompt } = useS()
+  const { prompts, upd, patch, globalPrompt } = useSConfig()
   const g = globalPrompt ?? { on: false, text: '' }
   const setG = (v: Partial<{ on: boolean; text: string }>) => patch({ globalPrompt: { ...g, ...v } })
   return (
@@ -507,7 +584,7 @@ function Prompts() {
 }
 
 function Pls() {
-  const { pls, eps, upd } = useS()
+  const { pls, eps, upd } = useSConfig()
   const routingMode = useS((s) => s.prefs.routingMode ?? 'ordered')
   const routeStats = useS((s) => s.routeStats ?? {})
   const statRows = Object.entries(routeStats)
@@ -589,7 +666,7 @@ function Pls() {
 }
 
 function Cmds() {
-  const { cmds, pls, upd } = useS()
+  const { cmds, pls, upd } = useSConfig()
   return (
     <Panel id="cmds" k="cmds" n={cmds.length} add="Add command">
       <Anchor id="add-command"><span className="block text-xs text-mu">Use Add command above; each command below is individually addressable.</span></Anchor>
@@ -620,7 +697,7 @@ function Cmds() {
 }
 
 function ToolLimitCard() {
-  const s = useS()
+  const s = useSConfig()
   const p = s.params as { maxToolRounds?: unknown; highToolsUnlocked?: unknown }
   const unlocked = p?.highToolsUnlocked === true
   const unlimited = isToolRoundsUnlimited(p)
@@ -666,7 +743,7 @@ function ToolLimitCard() {
 }
 
 function DocumentsCard() {
-  const s = useS()
+  const s = useSConfig()
   const d = normDocs(s.docPrefs)
   const set = (p: Partial<DocPrefs>) => s.patch({ docPrefs: { ...d, ...p } })
   const visionEps = s.eps.filter((e) => usable(e) && can(e, 'img'))
@@ -700,7 +777,7 @@ function DocumentsCard() {
 }
 
 function Tools() {
-  const s = useS()
+  const s = useSConfig()
   const [ask, setAsk] = useState<string | null>(null)
   const [showSearchKey, setShowSearchKey] = useState(false)
   const [health, setHealth] = useState<{ searchConfigured?: boolean; apiProviders?: Record<string, { label: string; configured: boolean; needsZone?: boolean }> } | null>(null)
@@ -717,8 +794,8 @@ function Tools() {
       <DocumentsCard />
       <Anchor id="deep-research">
       <Card icon={Brain} title="Deep research" sub="@research(query)">
-        <p className="text-sm">Multi-step investigation: parallel searches for breadth, then model follow-ups for depth, ending in a long cited report shown in a document-styled side panel.</p>
-        <p className="text-sm text-mu">Start with @research(topic), the + menu → Deep research…, or a model-suggested “Deep research …” chip. Every run asks for Quick, Standard, or Thorough first.</p>
+        <p className="text-sm">Multi-step investigation: the model drafts a research plan for you to review, then searches and reads on its own within the depth budget, narrating progress as it goes, ending in a long cited report opened from a card in a document-styled side panel.</p>
+        <p className="text-sm text-mu">Start with @research(topic), the + menu → Deep research…, or a model-suggested “Deep research …” chip. Every run asks for Quick, Standard, or Thorough, then shows a plan you can edit or start; a stopped run can be resumed where it left off.</p>
         <Field label="Default depth" hint="Preselected in the tier picker. Quick is fastest; Thorough uses the largest search and read budgets.">
           <Seg v={normResearch(s.research).defaultTier} set={(defaultTier) => s.patch({ research: { ...normResearch(s.research), defaultTier } })} opts={RESEARCH_TIERS.map((t) => [t.id, `${t.label} · ${t.blurb}`] as [ResearchTierId, string])} />
         </Field>
@@ -849,7 +926,7 @@ function Tools() {
 }
 
 function SkillsTab() {
-  const s = useS()
+  const s = useSConfig()
   const { skills, warnings } = normSkills(s.skills)
   const setSkills = (next: SkillState[]) => s.patch({ skills: next })
   const upd = (id: string, p: Partial<SkillState>) => setSkills(skills.map((x) => (x.id === id ? { ...x, ...p } : x)))
@@ -903,7 +980,7 @@ function SkillsTab() {
 }
 
 function MemoryTab() {
-  const s = useS(), mp = s.memoryPrefs
+  const s = useSConfig(), mp = s.memoryPrefs
   const [draft, setDraft] = useState('')
   const [category, setCategory] = useState('General')
   const [dupes, setDupes] = useState<{ a: string; b: string; score: number }[] | null>(null)
@@ -978,7 +1055,7 @@ function MemoryTab() {
 }
 
 function WidgetsTab() {
-  const s = useS()
+  const s = useSConfig()
   const wp = s.widgetPrefs
   const setWp = (p: Partial<typeof wp>) => s.patch({ widgetPrefs: { ...wp, ...p } })
   const blockedBy = (k: string): string | null => {
@@ -1008,7 +1085,6 @@ function WidgetsTab() {
           </div></Anchor>}
           {k === 'last' && <Anchor id="last-settings"><div className="space-y-3"><div className="rounded-xl bg-bg p-3"><Checkbox checked={wp.lastSpeed} set={(lastSpeed) => setWp({ lastSpeed })} label="Show response speed" /></div><Field label="Time unit"><Seg v={wp.timeUnit} set={(timeUnit) => setWp({ timeUnit })} opts={[["auto", "Auto"], ["ms", "Milliseconds"], ["s", "Seconds"]]} /></Field></div></Anchor>}
           {k === 'keys' && <Anchor id="shortcut-list"><div className="grid gap-2 rounded-xl bg-bg p-3 sm:grid-cols-2">{KEYS.map(([id, label]) => <Checkbox key={id} checked={wp.shortcuts.includes(id)} set={(checked) => setWp({ shortcuts: checked ? [...wp.shortcuts, id] : wp.shortcuts.filter((x) => x !== id) })} label={label} />)}</div></Anchor>}
-          {k === 'ctx' && <Anchor id="context-limit"><Field label="Estimated context limit" hint="Sets the scale of the meter. This does not change the model's actual context window."><Input type="number" min="1000" step="1000" value={wp.contextLimit} set={(v) => setWp({ contextLimit: Math.max(1000, Number(v) || 1000) })} /></Field></Anchor>}
           {k === 'eps' && <Anchor id="show-disabled"><div className="rounded-xl bg-bg p-3"><Checkbox checked={wp.showDisabledEndpoints} set={(showDisabledEndpoints) => setWp({ showDisabledEndpoints })} label="Show disabled endpoints" /></div></Anchor>}
           {k === 'pad' && <Anchor id="scratch-rows"><Field label="Visible note height" hint="Number of text rows before scrolling."><Input type="number" min="2" max="20" value={wp.scratchRows} set={(v) => setWp({ scratchRows: Math.min(20, Math.max(2, Number(v) || 6)) })} /></Field></Anchor>}
           {k === 'snips' && <Anchor id="snippet-limit"><Field label="Maximum snippets shown" hint="Older snippets remain saved and can be found by removing newer ones."><Input type="number" min="1" max="100" value={wp.snippetLimit} set={(v) => setWp({ snippetLimit: Math.min(100, Math.max(1, Number(v) || 20)) })} /></Field></Anchor>}
@@ -1025,7 +1101,7 @@ function WidgetsTab() {
   )
 }
 
-const PAL: Record<string, string[]> = { plum: ['#120c16', '#17101c', '#dc8ad8'], claude: ['#151413', '#1c1b1a', '#d97757'], nord: ['#242933', '#2e3440', '#88c0d0'], amoled: ['#000000', '#0a0a0a', '#3b82f6'], paper: ['#f1f1ec', '#fbfbf9', '#3b5bdb'], sepia: ['#ede2ca', '#f6eedd', '#9c4a1a'], porcelain: ['#f0f0ee', '#f8f8f7', '#4f46e5'], sand: ['#f3ead8', '#fbf7ef', '#b45309'] }
+const PAL: Record<string, string[]> = { plum: ['#120c16', '#17101c', '#dc8ad8'], claude: ['#1c1c1a', '#262624', '#d97757'], obsidian: ['#090c10', '#0f141c', '#2dd4bf'], bronze: ['#120e0c', '#1b1512', '#f59e0b'], paper: ['#f1f1ec', '#fbfbf9', '#3b5bdb'], sage: ['#e6ece8', '#f4f7f5', '#0d9488'], frost: ['#eef2f6', '#f8fafc', '#2563eb'], sunset: ['#efe6dd', '#faf5f0', '#ea580c'] }
 
 function FontPicker({ value, set, options }: { value: string; set: (v: string) => void; options: [string, string][] }) {
   const [query, setQuery] = useState(value === 'system' ? '' : value)
@@ -1046,14 +1122,12 @@ function FontPicker({ value, set, options }: { value: string; set: (v: string) =
 }
 
 function Look() {
-  const s = useS()
+  const s = useSConfig()
   const settingsWidth = s.prefs.settingsWidth ?? 1024
   const settingsHeight = s.prefs.settingsHeight ?? 780
   const modelPickerHeight = s.prefs.modelPickerHeight ?? 480
   const [colorPicker, setColorPicker] = useState<string | null>(null)
-  const [fadeInput, setFadeInput] = useState(String(s.prefs.fade))
-  useEffect(() => setFadeInput(String(s.prefs.fade)), [s.prefs.fade])
-  const row = (anchor: string, k: 'showBy' | 'showLog' | 'showTps' | 'enterSends' | 'autoTitle' | 'temporaryByDefault', t: string, d: string) => (
+  const row = (anchor: string, k: 'showBy' | 'showLog' | 'showTps' | 'enterSends' | 'autoTitle' | 'temporaryByDefault' | 'streamMd', t: string, d: string) => (
     <Anchor id={anchor}>
     <div className="flex items-center gap-3 rounded-xl bg-surf p-3">
       <div className="flex flex-1 items-center gap-2 text-sm font-medium">{t}<HelpTip text={d} label={`Help: ${t}`} /></div>
@@ -1155,6 +1229,14 @@ function Look() {
         <div className="text-xs text-mu">Adds per-model pricing fields to each endpoint. Off by default.</div>
       </div>
       </Anchor>
+      <Anchor id="context-meter">
+      <div className="rounded-xl bg-surf p-3 space-y-3">
+        <label className="flex items-center justify-between gap-3 text-sm">Show context meter<Toggle on={s.prefs.showContextMeter ?? true} set={(showContextMeter) => s.patch({ prefs: { ...s.prefs, showContextMeter } })} /></label>
+        <div className="text-xs text-mu">A ring in the chat header showing estimated tokens in the open chat. Click it for the reported input, output, and cache-token breakdown.</div>
+        <Anchor id="context-limit"><Field label="Manual context limit" hint="Fallback scale when the model has no published context size. This does not change the model's actual context window."><Input type="number" min="1000" step="1000" value={s.widgetPrefs.contextLimit} set={(v) => s.patch({ widgetPrefs: { ...s.widgetPrefs, contextLimit: Math.max(1000, Number(v) || 1000) } })} /></Field></Anchor>
+        <Field label="Characters per estimated token" hint="A rough estimate; 4 is a common default for English text."><Input type="number" min="1" max="10" value={s.widgetPrefs.charsPerToken} set={(v) => s.patch({ widgetPrefs: { ...s.widgetPrefs, charsPerToken: Math.min(10, Math.max(1, Number(v) || 4)) } })} /></Field>
+      </div>
+      </Anchor>
       <Anchor id="overlay">
       <div className="rounded-xl bg-surf p-3 space-y-3">
         <div><div className="text-sm font-medium">Overlay appearance</div><div className="text-xs text-mu">Control how dialogs and the settings panel sit over the workspace.</div></div>
@@ -1162,17 +1244,16 @@ function Look() {
         <Field label={`Settings background opacity · ${s.prefs.settingsOpacity}%`} hint="How much the settings backdrop dims the workspace behind the settings panel."><RangeSlider label="Settings background opacity" min={0} max={100} step={5} value={s.prefs.settingsOpacity} set={(settingsOpacity) => s.patch({ prefs: { ...s.prefs, settingsOpacity } })} className="w-full" /></Field>
       </div>
       </Anchor>
-      <Anchor id="fade-duration">
-      <div className="rounded-xl bg-surf p-3 space-y-2">
-        <div className="text-sm font-medium">Text fade-in duration</div>
-        <div className="text-xs text-mu">Set to 0 to turn it off, or choose up to 1 second.</div>
+      <Anchor id="stream-fade">
+      <div className="rounded-xl bg-surf p-3 space-y-3">
+        <div><div className="text-sm font-medium">Reply fade-in</div><div className="text-xs text-mu">Each chunk of a streaming reply fades in as it arrives. Off disables it entirely.</div></div>
         <div className="flex items-center gap-3">
-          <RangeSlider label="Text fade-in duration" min={0} max={1} step={0.1} value={s.prefs.fade} set={(fade) => s.patch({ prefs: { ...s.prefs, fade } })} className="flex-1" />
-          <input aria-label="Text fade-in seconds" type="number" min="0" max="1" step="0.1" value={fadeInput} onChange={(e) => setFadeInput(e.target.value)} onBlur={() => { const x = Number(fadeInput); if (fadeInput !== '' && Number.isFinite(x)) s.patch({ prefs: { ...s.prefs, fade: Math.max(0, Math.min(1, Math.round(x * 10) / 10)) } }); else setFadeInput(String(s.prefs.fade)) }} onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur() }} className="w-20 rounded-lg bg-bg px-2 py-1.5 text-sm" />
-          <span className="text-sm text-mu">seconds</span>
+          <RangeSlider label="Reply fade-in duration" min={0} max={1} step={0.1} value={s.prefs.streamFade} set={(streamFade) => s.patch({ prefs: { ...s.prefs, streamFade } })} className="flex-1" />
+          <span className="w-24 text-right text-sm">{s.prefs.streamFade === 0 ? 'Off' : `${Math.round(s.prefs.streamFade * 1000)}ms`}</span>
         </div>
       </div>
       </Anchor>
+      {row('stream-md', 'streamMd', 'Render markdown while streaming', 'Format each completed line as markdown as it arrives instead of plain text. Off shows plain text until the reply finishes.')}
       <Anchor id="temp-retention">
       <div className="rounded-xl bg-surf p-3 space-y-2">
         <div className="text-sm font-medium">Temporary chat retention</div>
@@ -1197,7 +1278,7 @@ const FONT_OPTIONS: [string, string][] = [['system', 'System default'], ['Arial'
 const MONO_OPTIONS: [string, string][] = [['system', 'System monospace'], ['Consolas', 'Consolas'], ['Menlo', 'Menlo'], ['Monaco', 'Monaco'], ['Courier New', 'Courier New'], ['Cascadia Code', 'Cascadia Code'], ['JetBrains Mono', 'JetBrains Mono'], ['Fira Code', 'Fira Code']]
 
 function AdvancedTab() {
-  const s = useS()
+  const s = useSConfig()
   if (!featOn(s, 'advanced')) return null
   const a = { ...DEFAULT_ADVANCED, ...s.advanced }
   const setA = (p: Partial<typeof a>) => s.patch({ advanced: { ...a, ...p } })

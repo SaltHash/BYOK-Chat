@@ -15,6 +15,10 @@ npm run dev
 
 There are no committed environment files. Search tuning lives in the app under Settings → Tools → Web search and grounding (results per search, request timeout, snippet length, evidence budget, retries, retry delay) and is sent with each search request; the server only enforces hard caps (8 results, 3000 characters per snippet, 16000 total evidence characters, 1–30s timeout, 0–4 retries).
 
+## Inference providers per model
+
+For OpenRouter endpoints each model row under Settings → Endpoints has a low-key **Provider** button. It opens a modal listing the providers currently serving that model, fetched live from OpenRouter's `/api/v1/models/{id}/endpoints` API (Amazon Bedrock, Anthropic, Google Vertex, region/variant endpoints, …). Picking one pins every request for that model to it — the body carries `provider: { order: [tag], allow_fallbacks: false }` — while **Automatic** keeps OpenRouter's default price-load-balanced routing. A provider slug can also be typed by hand when a model is not listed. Non-OpenRouter endpoints never show the button, and the choice is stored per model and travels with config exports.
+
 ## AI search providers
 
 Search is bring-your-own-key: paste a provider key in Settings → Tools → Web search and grounding. It is stored only in the browser (like model keys) and sent with each search request; the server never stores browser keys. Server-side keys remain supported as a shared fallback when the browser sends none. Providers: TinyFish, You.com, Exa, Firecrawl, or Bright Data.
@@ -161,4 +165,4 @@ Routing learns from experience: every attempt records latency and failures per e
 
 ## Checks
 
-Run the search helper tests with `node --test` and create a production build with `npm run build`. Search provider tests live in `server/search.test.mjs`, citation tests in `src/citations.test.mjs`, reader tests in `server/extract.test.mjs`, document parser tests in `src/docs.test.mjs`, recall and routing tests in `src/recall.test.mjs`. `npm test` also runs the Node integration suite (`tests/integration/server.test.mjs`) and the Worker suite (`tests/worker/worker.test.mjs`); `npm run test:worker` boots `wrangler dev` and checks the deployed routing contract (static assets, SPA fallback, `/api/*`) end to end after `npm run build`.
+Run the search helper tests with `node --test` and create a production build with `npm run build`. Search provider tests live in `server/search.test.mjs`, citation tests in `src/citations.test.mjs`, reader tests in `server/extract.test.mjs`, document parser tests in `src/docs.test.mjs`, recall and routing tests in `src/recall.test.mjs`, and model provider-routing tests in `src/providers.test.mjs`. `npm test` also runs the Node integration suite (`tests/integration/server.test.mjs`) and the Worker suite (`tests/worker/worker.test.mjs`); `npm run test:worker` boots `wrangler dev` and checks the deployed routing contract (static assets, SPA fallback, `/api/*`) end to end after `npm run build`.

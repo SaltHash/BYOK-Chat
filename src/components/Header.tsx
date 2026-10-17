@@ -1,6 +1,8 @@
 import { PanelLeft, PanelRight, Download, Eraser, Command, SlidersHorizontal } from 'lucide-react'
+import { useShallow } from 'zustand/react/shallow'
 import { useS, exportChat, featOn } from '../store'
 import { Btn, Pop, Toggle, RangeSlider } from './ui'
+import { ContextMeter } from './ContextMeter'
 
 const Slider = ({ l, v, min, max, step, set, off }: { l: string; v: number; min: number; max: number; step: number; set: (n: number) => void; off: boolean }) => (
   <div className={off ? 'opacity-40' : ''}>
@@ -10,14 +12,14 @@ const Slider = ({ l, v, min, max, step, set, off }: { l: string; v: number; min:
 )
 
 export function Header({ side, toggle, cfg, pal, title }: { side: boolean; toggle: () => void; cfg: (t: string) => void; pal: () => void; title: string }) {
-  const s = useS()
-  const p = s.params
-  const u = (x: Partial<typeof p>) => s.patch({ params: { ...p, ...x } })
-  const anyW = featOn(s, 'widgets') && Object.values(s.widgets).some(Boolean)
+  const { params: p, patch, widgets, rail, features } = useS(useShallow((s) => ({ params: s.params, patch: s.patch, widgets: s.widgets, rail: s.rail, features: s.features })))
+  const u = (x: Partial<typeof p>) => patch({ params: { ...p, ...x } })
+  const anyW = featOn({ features }, 'widgets') && Object.values(widgets).some(Boolean)
   return (
     <header className="flex h-14 shrink-0 items-center gap-1 px-3">
       {!side && <Btn icon={PanelLeft} title="Show sidebar" onClick={toggle} />}
       <h1 className="min-w-0 flex-1 truncate px-2 font-medium">{title}</h1>
+      <ContextMeter />
       <Btn icon={Command} title="Command palette" onClick={pal} />
       <Pop right w="w-72" trigger={() => <Btn icon={SlidersHorizontal} title="Generation parameters" />}>
         {() => (
@@ -30,8 +32,8 @@ export function Header({ side, toggle, cfg, pal, title }: { side: boolean; toggl
         )}
       </Pop>
       <Btn icon={Download} title="Export chat" onClick={exportChat} />
-      <Btn icon={Eraser} title="Clear chat" onClick={() => s.patch({ chats: s.chats.map((c) => (c.id === s.chat ? { ...c, msgs: [] } : c)) })} />
-      {featOn(s, 'widgets') && <Btn icon={PanelRight} title="Widgets" onClick={() => (anyW ? s.patch({ rail: !s.rail }) : cfg('widgets'))} />}
+      <Btn icon={Eraser} title="Clear chat" onClick={() => { const st = useS.getState(); patch({ chats: st.chats.map((c) => (c.id === st.chat ? { ...c, msgs: [] } : c)) }) }} />
+      {featOn({ features }, 'widgets') && <Btn icon={PanelRight} title="Widgets" onClick={() => (anyW ? patch({ rail: !rail }) : cfg('widgets'))} />}
     </header>
   )
 }

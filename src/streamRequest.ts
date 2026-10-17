@@ -37,6 +37,20 @@ export function buildStreamRequest(
     u = b + '/chat/completions'
     if (e.key) h.authorization = 'Bearer ' + e.key
     body = { model: e.model, stream: true, messages: sys ? [{ role: 'system', content: sys }, ...ms] : ms }
+    // Ask providers to include token usage (and, for OpenRouter, cost) in
+    // the final streamed chunk. Without this most OpenAI-compatible APIs
+    // omit `usage`, forcing token estimates and a $0 cost.
+    body.stream_options = { include_usage: true }
+    // OpenRouter reports per-request cost in `usage.cost`, but only when
+    // explicitly requested. Harmless to other providers; only send there.
+    if (/openrouter\.ai/i.test(b)) {
+      body.usage = { include: true }
+      // Per-model provider pin (Settings → Endpoints → model → Provider).
+      // `order` alone only prioritizes, so also block fallbacks: picking a
+      // provider must mean that provider. Absent = OpenRouter's default routing.
+      const providerTag = e.modelProviders?.[e.model]?.tag
+      if (providerTag) body.provider = { order: [providerTag], allow_fallbacks: false }
+    }
     if (availableTools.length) { body.tools = availableTools; body.tool_choice = 'auto' }
     if (o.max != null) body.max_tokens = o.max
     if (o.temp != null) body.temperature = o.temp

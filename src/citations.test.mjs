@@ -50,3 +50,39 @@ test('truncates snippets and hosts safely', () => {
   assert.equal(c.hostOf('https://www.example.com/x'), 'example.com')
   assert.equal(c.hostOf('junk'), '')
 })
+
+test('preserves absolute evidence ids across searches and reuses duplicate urls', () => {
+  const second = evidence(1)
+    .replace('[Source S1]', '[Source S3]').replace('https://one.example/a', 'https://three.example/c')
+    .replace('[Source S2]', '[Source S4]').replace('https://two.example/b', 'https://one.example/a')
+  const rounds = [
+    { calls: [{ name: 'search', arguments: '{}', result: evidence(0) }] },
+    { calls: [{ name: 'search', arguments: '{}', result: second }] },
+  ]
+  const sources = c.collectMessageSources(rounds)
+  // S4 duplicates https://one.example/a (already S1), so only S1, S2, S3 survive.
+  assert.deepEqual(sources.map((s) => s.citeId), ['S1', 'S2', 'S3'])
+  assert.deepEqual(c.citationCoverage('see [S3]', sources).unknown, [])
+})
+
+test('colliding legacy per-search ids are reassigned to the next free number', () => {
+  const fresh = evidence(1)
+    .replace('https://one.example/a', 'https://nine.example/z')
+    .replace('https://two.example/b', 'https://ten.example/y')
+  const rounds = [
+    { calls: [{ name: 'search', arguments: '{}', result: evidence(0) }] },
+    { calls: [{ name: 'search', arguments: '{}', result: fresh }] },
+  ]
+  const sources = c.collectMessageSources(rounds)
+  // Second block reuses S1/S2 labels for new urls; S1/S2 stay, newcomers become S3/S4.
+  assert.deepEqual(sources.map((s) => s.citeId), ['S1', 'S2', 'S3', 'S4'])
+})
+
+test('parses labelled page excerpts and strips trailing punctuation from urls', () => {
+  const labelled = 'Page excerpt [Source S5] for https://d.example/x.\nTitle: D\n<page_excerpt>\nhello world\n</page_excerpt>'
+  const s = c.parsePageExcerpt(labelled)
+  assert.equal(s?.citeId, 'S5')
+  assert.equal(s?.url, 'https://d.example/x')
+  const rounds = [{ calls: [{ name: 'fetch_page', arguments: '{}', result: labelled }] }]
+  assert.deepEqual(c.collectMessageSources(rounds).map((x) => x.citeId), ['S5'])
+})

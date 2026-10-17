@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { zipSync, strToU8, deflateSync } from 'fflate'
+import { zipSync, gzipSync, strToU8, deflateSync } from 'fflate'
 
 const d = await import('./docs.ts')
 
@@ -113,4 +113,31 @@ test('normDocs fills safe defaults and clamps budgets', () => {
   assert.equal(d.normDocs({ ocr: 'always', perFileChars: 999999 }).perFileChars, 200000)
   assert.equal(d.normDocs({ ocr: 'bogus' }).ocr, 'auto')
   assert.equal(d.normDocs({ pdfText: false }).pdfText, false)
+})
+
+test('runExtraction dispatches every job kind to the shared extractors', () => {
+  const docx = zipSync({ 'word/document.xml': strToU8('<w:document><w:body><w:p><w:r><w:t>Hi docx</w:t></w:r></w:p></w:body></w:document>') })
+  assert.equal(d.runExtraction('docx', docx).paragraphs, 1)
+  assert.match(d.runExtraction('docx', docx).text, /Hi docx/)
+  assert.equal(d.runExtraction('pdf', new Uint8Array([1, 2, 3])).pages, 0)
+  assert.equal(d.runExtraction('rtf', strToU8('{\\rtf1 Hello}')).text.trim(), 'Hello')
+  const zip = zipSync({ 'a.txt': strToU8('a') })
+  assert.equal(d.runExtraction('unzip', zip).entries.length, 1)
+  const gz = gzipSync(strToU8('compressed'))
+  const member = d.runExtraction('gunzip', gz, 'notes.txt.gz')
+  assert.equal(member.name, 'notes.txt')
+  assert.equal(new TextDecoder().decode(member.bytes), 'compressed')
+})
+
+test('extractOffThread falls back to in-process extraction without workers', async () => {
+  assert.equal(typeof Worker, 'undefined', 'this fallback path is what runs when workers are unavailable')
+  const xlsx = zipSync({
+    'xl/sharedStrings.xml': strToU8('<sst><si><t>Name</t></si></sst>'),
+    'xl/worksheets/sheet1.xml': strToU8('<worksheet><sheetData><row><c t="s"><v>0</v></c></row></sheetData></worksheet>'),
+  })
+  const sheet = await d.extractOffThread('xlsx', xlsx)
+  assert.equal(sheet.sheets, 1)
+  assert.match(sheet.text, /Name/)
+  const bad = await d.extractOffThread('docx', zipSync({ 'other.txt': strToU8('x') })).then(() => null, (e) => e)
+  assert.match(bad.message, /Word document/)
 })
