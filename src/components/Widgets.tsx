@@ -5,6 +5,7 @@ import { useS, modelsOf, uid, widgetOn } from '../store'
 import { clampWidgetWidth } from '../layout'
 import { fmtDuration, KEYS, WIDGETS } from '../meta'
 import { estimateHistoryTokens, fmt } from '../engine'
+import { qualityPrompt } from '../flair'
 import { allAttemptAts, allAttemptLogs, groupUsage, lastLogMessage, usageRange } from '../usage'
 import { Btn, Surface, cx, type Ic } from './ui'
 import { SortableList, type SortHandleProps } from './dnd'
@@ -40,7 +41,8 @@ const ContextMeterWidget = memo(({ handle }: WidgetProps) => {
   // Numbers, so a streamed chunk only re-renders the meter when the estimate
   // actually moves (the whole-chat selector below stays off the text path).
   const tokens = useS((s) => {
-    const sysLen = (s.globalPrompt?.on ? s.globalPrompt.text : '') + (s.prompts.find((p) => p.id === s.pr)?.text ?? '')
+    const global = s.globalPrompt
+    const sysLen = (global?.on ? global.text + ((global.qualities?.length ?? 0) ? '\n\n' + qualityPrompt(global.qualities) : '') : '') + (s.prompts.find((p) => p.id === s.pr)?.text ?? '')
     const msgs = s.chats.find((c) => c.id === s.chat)?.msgs ?? []
     return estimateHistoryTokens(msgs, sysLen, Math.max(1, s.widgetPrefs?.charsPerToken ?? 4))
   })

@@ -92,7 +92,7 @@ export const SETTING_LINKS: SettingLink[] = [
   { tab: 'eps', anchor: 'test-connection', title: 'Test endpoint connections', keywords: 'test connection reachable all endpoints' },
 
   // Prompts
-  { tab: 'prompts', anchor: 'global-prompt', title: 'Global system prompt', keywords: 'global system prompt every message' },
+  { tab: 'prompts', anchor: 'global-prompt', title: 'Global system prompt', keywords: 'global system prompt every message qualities tone concise warm direct curious practical playful' },
   { tab: 'prompts', anchor: 'add-prompt', title: 'Add prompt', keywords: 'add prompt new reusable' },
 
   // Skills

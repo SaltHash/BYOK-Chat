@@ -2,6 +2,7 @@ import { TOOLS } from './meta'
 import { can } from './engine'
 import { enabledSkills, normSkills, composeSystemPrompt } from './skills'
 import { modelsOf, usable } from './models'
+import { qualityPrompt, type GlobalPrompt } from './flair'
 import type { Ep, Pl, Cmd, Msg, Notice, FeatureId } from './store'
 
 export const splitEntry = (ref: string) => {
@@ -13,7 +14,7 @@ type PlanState = {
   eps: Ep[]; pls: Pl[]; cmds: Cmd[]
   prompts: { id: string; text: string }[]
   pr: string; sel: { k: 'ep' | 'pl'; id: string; model?: string } | null
-  globalPrompt: { on: boolean; text: string }
+  globalPrompt: GlobalPrompt
   features?: Record<FeatureId, boolean>
   tools: Record<string, boolean>
   skills: unknown
@@ -58,7 +59,9 @@ export function planRequest(s: PlanState, um: Msg, defaultFeatures: Record<Featu
     .filter((model) => !(s.sel?.k === 'ep' && s.sel.id === e.id && s.sel.model) || s.sel?.model === model)
     .map((model) => ({ ...e, model })))
   const scoped = F.prompts ? cmd?.sys || s.prompts.find((x) => x.id === s.pr)?.text || (pl && !cmd ? pl.sys : '') || '' : ''
-  const globalSys = F.prompts && s.globalPrompt?.on && s.globalPrompt.text.trim() ? s.globalPrompt.text.trim() : ''
+  const globalSys = F.prompts && s.globalPrompt?.on
+    ? [s.globalPrompt.text.trim(), qualityPrompt(s.globalPrompt.qualities)].filter(Boolean).join('\n\n')
+    : ''
   const baseSys = [globalSys, scoped].filter(Boolean).join('\n\n')
   const enabledTools = F.tools ? TOOLS.filter(([name]) => s.tools[name] === true).map(([name]) => name) : []
   const toolSys = enabledTools.length ? `${baseSys}${baseSys ? '\n\n' : ''}You may use the enabled tools when needed to answer the user. Call a tool for requests that need its actual result, then base your answer on the returned result.` : baseSys

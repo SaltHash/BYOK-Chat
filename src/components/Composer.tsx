@@ -367,7 +367,7 @@ export function Composer({ cfg }: { cfg: (t: string) => void }) {
             <button className={chip}><ScrollText size={16} /><span className="max-w-32 truncate">{pr ? pr.name : 'No prompt'}</span>{s.globalPrompt?.on && <span className="size-1.5 shrink-0 rounded-full bg-ac" title="Global system prompt on" />}<ChevronRight size={14} className={cx('transition-transform', o && 'rotate-90')} /></button>
           )}>
             {(close) => {
-              const g = s.globalPrompt ?? { on: false, text: '' }
+              const g = s.globalPrompt ?? { on: false, text: '', qualities: [] }
               return (
                 <>
                   <Item icon={X} on={!s.pr} onClick={() => { s.patch({ pr: '' }); close() }}>No override</Item>
@@ -377,7 +377,7 @@ export function Composer({ cfg }: { cfg: (t: string) => void }) {
                       <span className="min-w-0 flex-1 text-sm font-medium">Global system prompt</span>
                       <Toggle on={g.on} set={(on) => s.patch({ globalPrompt: { ...g, on } })} label="Toggle global system prompt" />
                     </div>
-                    <p className="mt-1 text-xs leading-relaxed text-mu">{g.on ? (g.text.trim() ? 'On — applies to every message in every chat.' : 'On, but no text set yet — add one in Manage.') : 'Off — applies to every message in every chat when on.'}</p>
+                    <p className="mt-1 text-xs leading-relaxed text-mu">{g.on ? (g.text.trim() || (g.qualities?.length ?? 0) ? 'On — applies to every message in every chat.' : 'On, but no text set yet — add one in Manage.') : 'Off — applies to every message in every chat when on.'}</p>
                     <Item icon={Settings} onClick={() => { close(); cfg('prompts') }}>Manage global…</Item>
                   </div>
                   <Item icon={Settings} onClick={() => { close(); cfg('prompts') }}>Manage…</Item>

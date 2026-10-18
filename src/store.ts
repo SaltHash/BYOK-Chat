@@ -9,7 +9,7 @@ export { BLANK_RESEARCH, normResearch, tierOf, RESEARCH_TIERS }
 export type { ResearchState, ResearchTierId, ResearchPlan, ResearchPlanStep } from './research'
 import { collectMessageSources, citationCoverage } from './citations'
 import { hintForLog, getErrorCode, classifyModelError, type ErrorCode } from './errors'
-import { celebrate } from './flair'
+import { celebrate, normGlobalPrompt, type GlobalPrompt } from './flair'
 // Set by workspace writes; read once when a reply ends to decide on the completion cue.
 let workspaceWritesPending = false
 /* Guards the awaited vision-OCR pass inside send(): `busy` is not set yet at
@@ -166,7 +166,7 @@ export const PRE: Record<string, ['openai' | 'anthropic', string, string, 'autho
   OpenRouter: ['openai', 'https://openrouter.ai/api/v1', '', 'author'],
   'Other OpenAI-compatible': ['openai', '', '', 'author'],
 }
-export const GENERAL_PROMPT_TEXT = 'You are a helpful general-purpose assistant. Follow the user\u2019s instructions carefully and answer directly. Be clear, accurate, and concise, adapting the level of detail to what the request needs. Reason step by step when a problem calls for it, and distinguish what you know from what you infer. Ask a brief clarifying question only when it would materially change your answer. Never present invented content as fact, and never fabricate sources, quotes, or capabilities. Write naturally, like a thoughtful person speaking plainly: use varied, concrete language and avoid stock phrases, filler transitions, and cliches. Never use em dashes (—); use commas, periods, colons, or parentheses instead. This applies even when summarizing, structuring, or formatting: no em dashes anywhere in your reply.'
+export const GENERAL_PROMPT_TEXT = 'You are a helpful general-purpose assistant. Follow the user\u2019s instructions carefully and answer directly. Match the length and detail to the request. Work through problems carefully, and explain the key reasoning when it helps.\n\nBe honest about what you know, what you infer, and what you are unsure about. Do not present guesses as facts, and never fabricate sources, quotes, links, or capabilities. Ask a brief clarifying question only when the answer would materially change your response. If you can proceed with a reasonable assumption, state it and continue.\n\nWrite clearly and naturally, with concrete, varied language. Avoid filler, stock phrases, and clich\u00e9s. In your own prose, avoid em dashes; use commas, periods, colons, or parentheses instead. Keep them when quoting, preserving user text, or when they are part of code or a title. Reply in the language of the user\u2019s latest message unless they ask for a translation or another language. Use light markdown when it aids readability, and plain prose for conversational replies. When someone seems distressed, respond with warmth before problem-solving.\n\nMake responses interactive when it genuinely helps the user act on the answer. Prefer links you found through tools or that the user provided, and never invent a URL. When a request is ambiguous or has a few reasonable paths, offer short, concrete choices. If the app provides follow-up buttons or choice cards, use them; otherwise keep next steps to one short line. Skip these elements for simple answers, casual chat, or anything where they would add clutter.\n\nFollow any tool, skill, or memory instructions appended to this prompt. If the user has enabled additional instructions, follow them. Where they conflict with these defaults, the more specific instruction wins, except that the honesty and safety rules in this prompt always apply.\n\nRefuse requests that would cause serious harm, briefly and without lecturing.'
 export const CREATIVITY_PROMPT_TEXT = 'You are a creativity-focused assistant. Favor original ideas, imaginative angles, and unconventional approaches over the most obvious answer. Explore multiple possibilities, make surprising but useful connections between seemingly unrelated concepts, and write richly and expressively when the task calls for it. Adapt to the user\u2019s requested style, tone, genre, and constraints, and experiment freely within them. Stay factually honest: never present invented content as fact, and never fabricate sources, evidence, quotes, or capabilities.'
 export const CONCISE_PROMPT_TEXT = 'Answer briefly and directly. Skip preamble.'
 export const uid = () => Math.random().toString(36).slice(2, 9)
@@ -284,7 +284,7 @@ type S = {
   search: SearchPrefs
   skills: SkillState[]
   sel: { k: 'ep' | 'pl'; id: string; model?: string } | null; pr: string
-  globalPrompt: { on: boolean; text: string }
+  globalPrompt: GlobalPrompt
   features: Record<FeatureId, boolean>
   featureOrder: FeatureId[]
   libraryShow: Record<string, boolean>
@@ -1361,7 +1361,7 @@ export const useS = create<S>()(
         params: { ...DEFAULT_PARAMS }, effort: {},
         workspacePrefs: { defaultView: 'latest', autoOpen: true, autoFollow: true },
         advanced: { ...DEFAULT_ADVANCED },
-        sel: null, pr: 'general', globalPrompt: { on: false, text: '' }, features: { ...DEFAULT_FEATURES }, featureOrder: FEATURES.map(([id]) => id), libraryShow: { ...DEFAULT_LIBRARY_SHOW }, themeMode: 'dark', themeDark: 'plum', themeLight: 'paper', customDarkColors: { ...DEFAULT_CUSTOM_COLORS }, customLightColors: { ...DEFAULT_CUSTOM_LIGHT_COLORS }, setupDone: false, prefs: { ...DEFAULT_PREFS },
+        sel: null, pr: 'general', globalPrompt: { on: false, text: '', qualities: [] }, features: { ...DEFAULT_FEATURES }, featureOrder: FEATURES.map(([id]) => id), libraryShow: { ...DEFAULT_LIBRARY_SHOW }, themeMode: 'dark', themeDark: 'plum', themeLight: 'paper', customDarkColors: { ...DEFAULT_CUSTOM_COLORS }, customLightColors: { ...DEFAULT_CUSTOM_LIGHT_COLORS }, setupDone: false, prefs: { ...DEFAULT_PREFS },
         stats: ZERO(), keys: Object.fromEntries(KEYS.map(([k, , d]) => [k, d])),
         folders: [], price: { in: 0, out: 0 }, todos: [],
         routeStats: {}, flashMsg: null,
@@ -1728,9 +1728,7 @@ export const useS = create<S>()(
           p.pr = 'general'
         }
         p.memories = Array.isArray(p.memories) ? p.memories : []
-        p.globalPrompt = { on: false, text: '', ...(typeof p.globalPrompt === 'object' && p.globalPrompt ? p.globalPrompt : {}) }
-        if (typeof p.globalPrompt.on !== 'boolean') p.globalPrompt.on = false
-        if (typeof p.globalPrompt.text !== 'string') p.globalPrompt.text = ''
+        p.globalPrompt = normGlobalPrompt(p.globalPrompt)
         p.features = { ...DEFAULT_FEATURES, ...(typeof p.features === 'object' && p.features ? p.features : {}) }
         for (const k of Object.keys(DEFAULT_FEATURES) as FeatureId[]) if (typeof (p.features as Record<string, unknown>)[k] !== 'boolean') (p.features as Record<string, unknown>)[k] = DEFAULT_FEATURES[k]
         // Persisted feature order: drop unknown ids, append any missing features in default order.

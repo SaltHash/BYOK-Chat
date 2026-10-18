@@ -1,17 +1,85 @@
-// Personality microcopy and small completion flourishes. Kept free of store
-// imports so both the store and the components can use it.
+// Personality microcopy, prompt qualities, and small completion flourishes.
+// Kept free of store imports so both the store and the components can use it.
 
 const pick = <T,>(list: readonly T[], seed: number): T => list[((seed % list.length) + list.length) % list.length]
 
+/* Holiday lines: short, evocative, and never a flat greeting. */
+const HALLOWEEN = [
+  'Something is stirring tonight. What now?',
+  'The candles are lit. Where to?',
+  'A cold wind tonight. Where do we start?',
+  'The pumpkins are glowing. What first?',
+]
+
+const CHRISTMAS = [
+  'The tree is up. What are we making?',
+  'Lights everywhere. Where do we start?',
+  'Something warm is in the oven.',
+  'Frost on the sill. What now?',
+]
+
+const NEW_YEAR = [
+  'The clock is turning. Where to?',
+  'A blank page. What now?',
+  'One year closing. What next?',
+]
+
+const VALENTINE = [
+  'Something sweet in the air. What first?',
+  'A little more warmth today.',
+]
+
+/* Each holiday opens a window around its own day. Halloween and Christmas run
+   three weeks early and two days late; the list order breaks any overlap, so
+   Christmas ends before the New Year window opens. */
+type Season = { month: number; day: number; daysBefore: number; daysAfter: number; lines: readonly string[] }
+
+const HOLIDAYS: readonly Season[] = [
+  { month: 10, day: 31, daysBefore: 21, daysAfter: 2, lines: HALLOWEEN },
+  { month: 12, day: 25, daysBefore: 21, daysAfter: 2, lines: CHRISTMAS },
+  { month: 1, day: 1, daysBefore: 4, daysAfter: 1, lines: NEW_YEAR },
+  { month: 2, day: 14, daysBefore: 0, daysAfter: 0, lines: VALENTINE },
+]
+
+const DAY_MS = 86_400_000
+
+/** A local calendar day as a UTC-midnight stamp, so window math never drifts on DST. */
+const stamp = (year: number, month: number, day: number) => Date.UTC(year, month, day)
+
+/** The holiday covering `now`, with a key identifying that year's window. */
+function windowFor(now: Date): { key: string; lines: readonly string[] } | null {
+  const today = stamp(now.getFullYear(), now.getMonth(), now.getDate())
+  for (const h of HOLIDAYS) {
+    /* Check the neighbouring years too, so windows that wrap the year end
+       (New Year, and Christmas in late December) match at either end. */
+    for (const year of [now.getFullYear() - 1, now.getFullYear(), now.getFullYear() + 1]) {
+      const day = stamp(year, h.month - 1, h.day)
+      if (today < day - h.daysBefore * DAY_MS || today > day + h.daysAfter * DAY_MS) continue
+      return { key: `${h.month}-${h.day}-${year}`, lines: h.lines }
+    }
+  }
+  return null
+}
+
+/** Every line the date's holiday can show, or null when no holiday is near. */
+export function seasonalLines(now: Date): readonly string[] | null {
+  return windowFor(now)?.lines ?? null
+}
+
+/* One draw per window, so the greeting is random on each load but does not
+   change under the reader on every render. */
+const drawn = new Map<string, string>()
+
 /** Seasonal greeting for the current date, or null when no holiday is near. */
 export function seasonalLine(now: Date): string | null {
-  const m = now.getMonth() + 1
-  const d = now.getDate()
-  if (m === 10 && d >= 25) return 'Spooky season. What are we building?'
-  if (m === 12 && d >= 1 && d <= 26) return 'Festive coding season. What should we build?'
-  if (m === 12 && d >= 27 || m === 1 && d <= 2) return 'Fresh year, fresh commits. Where do we start?'
-  if (m === 2 && d === 14) return 'Love is in the air, and in the logs.'
-  return null
+  const hit = windowFor(now)
+  if (!hit) return null
+  let line = drawn.get(hit.key)
+  if (!line) {
+    line = pick(hit.lines, Math.floor(Math.random() * 1e6))
+    drawn.set(hit.key, line)
+  }
+  return line
 }
 
 const GREETINGS = {
@@ -72,13 +140,48 @@ export function activityLine(toolNames: readonly string[], seed: string): string
   return pick(ACTIVITY[last] ?? GENERIC_ACTIVITY, hashSeed(seed + last))
 }
 
-export type Tone = 'terse' | 'neutral' | 'playful'
+export type PromptQuality = 'concise' | 'warm' | 'direct' | 'curious' | 'practical' | 'playful'
 
-/** Global system prompt presets for the Settings tone picker. */
-export const TONE_PRESETS: Record<Tone, { label: string; text: string }> = {
-  terse: { label: 'Terse', text: 'Be brief. Lead with the answer, skip filler, and use the fewest words that stay correct.' },
-  neutral: { label: 'Neutral', text: 'Be clear and direct. Explain reasoning when it helps, and keep a measured, professional tone.' },
-  playful: { label: 'Playful', text: 'Be warm and a little playful. Keep the answer accurate and useful, and add light humor only where it fits.' },
+export type GlobalPrompt = { on: boolean; text: string; qualities: PromptQuality[] }
+
+/** Optional qualities appended to the global system prompt. Each one adds a
+ *  short tone instruction without replacing the user's base prompt. */
+export const PROMPT_QUALITIES: { id: PromptQuality; label: string; text: string }[] = [
+  { id: 'concise', label: 'Concise', text: 'Lead with the answer, keep supporting detail brief, and stop when the request is satisfied.' },
+  { id: 'warm', label: 'Warm', text: 'Use a friendly, encouraging tone, and acknowledge the user\u2019s effort or situation.' },
+  { id: 'direct', label: 'Direct', text: 'State the answer and any caveats plainly, without hedging or padding.' },
+  { id: 'curious', label: 'Curious', text: 'Consider alternative angles when they are useful, and ask a follow-up only when it would materially improve the answer.' },
+  { id: 'practical', label: 'Practical', text: 'Favor concrete steps, examples, and tradeoffs, and explain abstract ideas only when they help.' },
+  { id: 'playful', label: 'Playful', text: 'Use light humor and informal phrasing when the context allows, while keeping the answer accurate.' },
+]
+
+const QUALITY_IDS = new Set<string>(PROMPT_QUALITIES.map((q) => q.id))
+
+/** Keep known quality ids, drop duplicates and anything stored by an older version. */
+export function normQualities(value: unknown): PromptQuality[] {
+  if (!Array.isArray(value)) return []
+  const out: PromptQuality[] = []
+  for (const raw of value) {
+    if (typeof raw !== 'string' || !QUALITY_IDS.has(raw) || out.includes(raw as PromptQuality)) continue
+    out.push(raw as PromptQuality)
+  }
+  return out
+}
+
+export function normGlobalPrompt(value: unknown): GlobalPrompt {
+  const v = value && typeof value === 'object' ? value as Record<string, unknown> : {}
+  return { on: v.on === true, text: typeof v.text === 'string' ? v.text : '', qualities: normQualities(v.qualities) }
+}
+
+/** The block appended after the base global prompt. Empty when nothing is selected. */
+export function qualityPrompt(value: unknown): string {
+  const ids = normQualities(value)
+  if (!ids.length) return ''
+  const lines = ids.map((id) => {
+    const q = PROMPT_QUALITIES.find((x) => x.id === id)!
+    return `- ${q.label}: ${q.text}`
+  })
+  return `# Selected qualities\nApply these qualities to your reply. They shape tone and emphasis only, and do not override the other instructions in this prompt:\n${lines.join('\n')}`
 }
 
 const FORTUNES = [

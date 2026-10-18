@@ -7,7 +7,7 @@ import { findDuplicatePairs, mergeMemory } from '../recall'
 import { TOOL_REGISTRY, can } from '../engine'
 import { CI, TOOLS, WIDGETS, KEYS } from '../meta'
 import { SETTINGS_TABS, splitSettingTarget, settingDomId } from '../settingsCatalog'
-import { TONE_PRESETS, type Tone } from '../flair'
+import { PROMPT_QUALITIES, type GlobalPrompt } from '../flair'
 import { DataTab, StatsTab, KeysTab, TestRow, TestAllEndpoints } from './Extra'
 import { Btn, Field, Input, Area, Sel, Toggle, Seg, RangeSlider, Checkbox, HelpTip, Modal, Surface, Chip, cx, type Ic } from './ui'
 import { SortableList, type SortHandleProps, type SortItemApi } from './dnd'
@@ -608,19 +608,29 @@ function Eps() {
 
 function Prompts() {
   const { prompts, upd, patch, globalPrompt } = useSConfig()
-  const g = globalPrompt ?? { on: false, text: '' }
-  const setG = (v: Partial<{ on: boolean; text: string }>) => patch({ globalPrompt: { ...g, ...v } })
+  const g = globalPrompt ?? { on: false, text: '', qualities: [] }
+  const qualities = g.qualities ?? []
+  const setG = (v: Partial<GlobalPrompt>) => patch({ globalPrompt: { ...g, ...v } })
   return (
     <Panel id="prompts" k="prompts" n={prompts.length} add="Add prompt">
-      <Anchor id="global-prompt"><Card icon={ScrollText} title="Global system prompt" sub={g.on ? (g.text.trim() ? 'On · applies to every message in every chat' : 'On · no text yet') : 'Off by default'} muted={!g.on} open0>
+      <Anchor id="global-prompt"><Card icon={ScrollText} title="Global system prompt" sub={g.on ? (g.text.trim() || qualities.length ? 'On · applies to every message in every chat' : 'On · no text yet') : 'Off by default'} muted={!g.on} open0>
         <div className="flex items-center justify-between gap-3"><div><div className="text-sm font-medium">Apply to every message</div><div className="text-xs text-mu">Added before everything else in every chat, alongside the per-chat prompt.</div></div><Toggle on={g.on} set={(on) => setG({ on })} /></div>
         <Field label="Or pick an existing prompt" hint="Copies its text into the global box.">
           <Sel value="" set={(v) => { const p = prompts.find((x) => x.id === v); if (p) setG({ text: p.text }) }} opts={[['', 'Choose a prompt…'], ...prompts.map((p) => [p.id, p.name] as [string, string])]} />
         </Field>
-        <Field label="Tone preset" hint="Fills the global box with a ready-made tone. Edit it freely afterwards.">
-          <div className="flex flex-wrap gap-2">{(Object.keys(TONE_PRESETS) as Tone[]).map((t) => <button key={t} onClick={() => setG({ on: true, text: TONE_PRESETS[t].text })} className="rounded-full border border-bor bg-surf px-3 py-1 text-sm text-tx transition-colors hover:bg-hov">{TONE_PRESETS[t].label}</button>)}</div>
+        <Field label="Qualities" hint="Adds a short tone instruction after the base prompt. Pick any that fit; the base stays authoritative.">
+          <div className="flex flex-wrap gap-2">{PROMPT_QUALITIES.map((q) => {
+            const on = qualities.includes(q.id)
+            return <button key={q.id} type="button" aria-pressed={on} title={q.text} onClick={() => {
+              const next = on ? qualities.filter((id) => id !== q.id) : [...qualities, q.id]
+              setG({ qualities: next, ...(on ? {} : { on: true }) })
+            }} className={cx('inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-sm transition-colors', on ? 'border-ac/50 bg-ac/10 text-tx' : 'border-bor bg-surf text-mu hover:bg-hov hover:text-tx')}>
+              {on && <Check size={13} strokeWidth={3} className="text-ac" />}
+              {q.label}
+            </button>
+          })}</div>
         </Field>
-        <Field label="Global system prompt" hint="Write one from scratch, or copy an existing prompt above."><Area rows={6} value={g.text} set={(v) => setG({ text: v })} /></Field>
+        <Field label="Global system prompt" hint="This is the base. Write one from scratch, or copy an existing prompt above."><Area rows={6} value={g.text} set={(v) => setG({ text: v })} /></Field>
       </Card></Anchor>
       <Anchor id="add-prompt"><span className="block text-xs text-mu">Use Add prompt above for per-chat prompts; each prompt below is individually addressable.</span></Anchor>
       <SortableCards k="prompts" ids={prompts.map((x) => x.id)} label="Prompt" renderCard={(pid, handle) => {
@@ -1166,7 +1176,7 @@ function WidgetsTab() {
   )
 }
 
-const PAL: Record<string, string[]> = { plum: ['#120c16', '#17101c', '#dc8ad8'], claude: ['#181817', '#1c1c1b', '#d97757'], obsidian: ['#090c10', '#0f141c', '#2dd4bf'], bronze: ['#120e0c', '#1b1512', '#f59e0b'], paper: ['#f1f1ec', '#fbfbf9', '#3b5bdb'], sage: ['#e6ece8', '#f4f7f5', '#0d9488'], frost: ['#eef2f6', '#f8fafc', '#2563eb'], sunset: ['#efe6dd', '#faf5f0', '#ea580c'] }
+const PAL: Record<string, string[]> = { plum: ['#120c16', '#17101c', '#dc8ad8'], claude: ['#121211', '#181817', '#d97757'], obsidian: ['#090c10', '#0f141c', '#2dd4bf'], bronze: ['#120e0c', '#1b1512', '#f59e0b'], paper: ['#f1f1ec', '#fbfbf9', '#3b5bdb'], sage: ['#e6ece8', '#f4f7f5', '#0d9488'], frost: ['#eef2f6', '#f8fafc', '#2563eb'], sunset: ['#efe6dd', '#faf5f0', '#ea580c'] }
 
 function FontPicker({ value, set, options }: { value: string; set: (v: string) => void; options: [string, string][] }) {
   const [query, setQuery] = useState(value === 'system' ? '' : value)
