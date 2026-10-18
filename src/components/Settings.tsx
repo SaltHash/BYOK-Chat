@@ -7,6 +7,7 @@ import { findDuplicatePairs, mergeMemory } from '../recall'
 import { TOOL_REGISTRY, can } from '../engine'
 import { CI, TOOLS, WIDGETS, KEYS } from '../meta'
 import { SETTINGS_TABS, splitSettingTarget, settingDomId } from '../settingsCatalog'
+import { TONE_PRESETS, type Tone } from '../flair'
 import { DataTab, StatsTab, KeysTab, TestRow, TestAllEndpoints } from './Extra'
 import { Btn, Field, Input, Area, Sel, Toggle, Seg, RangeSlider, Checkbox, HelpTip, Modal, Surface, Chip, cx, type Ic } from './ui'
 import { SortableList, type SortHandleProps, type SortItemApi } from './dnd'
@@ -562,6 +563,9 @@ function Prompts() {
         <div className="flex items-center justify-between gap-3"><div><div className="text-sm font-medium">Apply to every message</div><div className="text-xs text-mu">Added before everything else in every chat, alongside the per-chat prompt.</div></div><Toggle on={g.on} set={(on) => setG({ on })} /></div>
         <Field label="Or pick an existing prompt" hint="Copies its text into the global box.">
           <Sel value="" set={(v) => { const p = prompts.find((x) => x.id === v); if (p) setG({ text: p.text }) }} opts={[['', 'Choose a prompt…'], ...prompts.map((p) => [p.id, p.name] as [string, string])]} />
+        </Field>
+        <Field label="Tone preset" hint="Fills the global box with a ready-made tone. Edit it freely afterwards.">
+          <div className="flex flex-wrap gap-2">{(Object.keys(TONE_PRESETS) as Tone[]).map((t) => <button key={t} onClick={() => setG({ on: true, text: TONE_PRESETS[t].text })} className="rounded-full border border-hov bg-surf px-3 py-1 text-sm text-tx transition-colors hover:bg-hov">{TONE_PRESETS[t].label}</button>)}</div>
         </Field>
         <Field label="Global system prompt" hint="Write one from scratch, or copy an existing prompt above."><Area rows={6} value={g.text} set={(v) => setG({ text: v })} /></Field>
       </Card></Anchor>
@@ -1127,11 +1131,11 @@ function Look() {
   const settingsHeight = s.prefs.settingsHeight ?? 780
   const modelPickerHeight = s.prefs.modelPickerHeight ?? 480
   const [colorPicker, setColorPicker] = useState<string | null>(null)
-  const row = (anchor: string, k: 'showBy' | 'showLog' | 'showTps' | 'enterSends' | 'autoTitle' | 'temporaryByDefault' | 'streamMd', t: string, d: string) => (
+  const row = (anchor: string, k: 'showBy' | 'showLog' | 'showTps' | 'enterSends' | 'autoTitle' | 'temporaryByDefault' | 'streamMd' | 'seasonal' | 'cues', t: string, d: string) => (
     <Anchor id={anchor}>
     <div className="flex items-center gap-3 rounded-xl bg-surf p-3">
       <div className="flex flex-1 items-center gap-2 text-sm font-medium">{t}<HelpTip text={d} label={`Help: ${t}`} /></div>
-      <Toggle on={s.prefs[k]} set={(v) => s.patch({ prefs: { ...s.prefs, [k]: v } })} />
+      <Toggle on={k === 'seasonal' ? s.prefs[k] !== false : !!s.prefs[k]} set={(v) => s.patch({ prefs: { ...s.prefs, [k]: v } })} />
     </div>
     </Anchor>
   )
@@ -1181,6 +1185,8 @@ function Look() {
       {row('show-tps', 'showTps', 'Show generation speed', 'Show tokens per second below each reply.')}
       {row('enter-sends', 'enterSends', 'Enter sends the message', 'Turn off to send with the button and use Enter for new lines.')}
       {row('auto-title', 'autoTitle', 'Auto-generate chat names', 'Automatically generate a concise title after the first reply.')}
+      {row('seasonal', 'seasonal', 'Seasonal touches', 'Show a festive greeting on holidays. Turn off to keep the greeting plain.')}
+      {row('completion-cues', 'cues', 'Completion cues', 'A soft chime and a little confetti when deep research or a workspace update finishes.')}
       {row('temporary-default', 'temporaryByDefault', 'New chats are temporary by default', 'New chats are deleted after the retention period, or when you leave if retention is set to Immediate.')}
       <Anchor id="model-picker-labels">
       <div className="rounded-xl bg-surf p-3 space-y-2">

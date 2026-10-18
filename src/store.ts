@@ -9,6 +9,9 @@ export { BLANK_RESEARCH, normResearch, tierOf, RESEARCH_TIERS }
 export type { ResearchState, ResearchTierId, ResearchPlan, ResearchPlanStep } from './research'
 import { collectMessageSources, citationCoverage } from './citations'
 import { hintForLog, getErrorCode, classifyModelError, type ErrorCode } from './errors'
+import { celebrate } from './flair'
+// Set by workspace writes; read once when a reply ends to decide on the completion cue.
+let workspaceWritesPending = false
 import { usable, modelsOf, modelNameOf } from './models'
 import { splitEntry, playlistEntries, applyCommandTemplate, composeFullInput, planRequest } from './chatPlan'
 import { migrateLegacyCanvasGroups, applyWorkspaceCall, type Workspace, type WorkspaceRevision } from './workspace'
@@ -211,7 +214,7 @@ export const dl = (n: string, t: string, m: string) => { const a = document.crea
 export const chatMd = (c: Chat) => `# ${c.title}\n\n` + c.msgs.map((m) => `**${m.r === 'user' ? 'You' : m.by || 'Assistant'}**\n\n${m.t}`).join('\n\n---\n\n')
 export const exportChat = () => {
   const s = useS.getState(), c = s.chats.find((x) => x.id === s.chat)
-  if (!c || !c.msgs.length) return s.patch({ notice: { t: 'This chat is empty, so there is nothing to export.' } })
+  if (!c || !c.msgs.length) return s.patch({ notice: { t: 'This chat is empty, so there is nothing to export yet. Send a message first, then try again.' } })
   dl(c.title.replace(/[^\w-]+/g, '_') + '.md', chatMd(c), 'text/markdown')
 }
 
@@ -280,7 +283,7 @@ type S = {
   customDarkColors: ThemeColors
   customLightColors: ThemeColors
   setupDone: boolean
-  prefs: { showBy: boolean; showLog: boolean; showTps: boolean; enterSends: boolean; autoTitle: boolean; temporaryByDefault: boolean; showModelPricing: boolean; showContextMeter: boolean; titleEp: string; titleModel?: string; effortEp: string; effortModel?: string; recallEp: string; recallModel?: string; tempHours: number; fontBody: string; fontMono: string; fontHeader: string; modelPrimary: 'id' | 'name'; modelSecondary: 'none' | 'provider' | 'id' | 'name'; modelDisplay?: 'none' | 'name' | 'provider' | 'both'; paletteMax: number; chatWidth: 'narrow' | 'standard' | 'wide'; settingsWidth: number; settingsHeight: number; modelPickerHeight: number; sidebarWidth?: number; widgetWidth?: number; workspaceWidth?: number; workspaceSplit?: number; modalBlur: number; settingsOpacity: number; routingMode?: RoutingMode; streamFade: number; streamMd: boolean }
+  prefs: { showBy: boolean; showLog: boolean; showTps: boolean; enterSends: boolean; autoTitle: boolean; temporaryByDefault: boolean; seasonal?: boolean; cues?: boolean; showModelPricing: boolean; showContextMeter: boolean; titleEp: string; titleModel?: string; effortEp: string; effortModel?: string; recallEp: string; recallModel?: string; tempHours: number; fontBody: string; fontMono: string; fontHeader: string; modelPrimary: 'id' | 'name'; modelSecondary: 'none' | 'provider' | 'id' | 'name'; modelDisplay?: 'none' | 'name' | 'provider' | 'both'; paletteMax: number; chatWidth: 'narrow' | 'standard' | 'wide'; settingsWidth: number; settingsHeight: number; modelPickerHeight: number; sidebarWidth?: number; widgetWidth?: number; workspaceWidth?: number; workspaceSplit?: number; modalBlur: number; settingsOpacity: number; routingMode?: RoutingMode; streamFade: number; streamMd: boolean }
   widgets: Record<string, boolean>; widgetPrefs: { usageGroup: 'endpoint' | 'model'; usageMode: 'success' | 'tokens'; usageFormat: string; usageTotal: boolean; usagePeriod: 'session' | 'day' | 'week' | 'custom' | 'all'; usageFrom?: string; usageTo?: string; lastSpeed: boolean; timeUnit: 'ms' | 's' | 'auto'; widgetOrder: string[]; shortcuts: string[]; contextLimit: number; showDisabledEndpoints: boolean; scratchRows: number; snippetLimit: number; costDecimals: number; activePromptsOnly: boolean; charsPerToken: number; hideDoneTodos: boolean }; rail: boolean; pad: string; snips: string[]
   params: { def: boolean; temp: number; topp: number; max: number; maxToolRounds: number; highToolsUnlocked: boolean }; effort: Record<string, string>
   workspacePrefs: WorkspacePrefs
@@ -973,6 +976,7 @@ export const useS = create<S>()(
             if (!txt) throw Error('The model returned no report text.')
             log.push({ n: e.name, m: e.model, detail: `Deep research (${tier.label}) on “${query.slice(0, 80)}”: ${usedSearches} searches, ${usedReads} reads`, ms: Date.now() - t0, tin, tout, cacheRead, cacheWrite, cost: usageCost, at: Date.now() })
             edit(chatId, mid, (m) => ({ ...m, t: txt, toolRounds: liveRounds.length ? liveRounds : x.rounds, toolFinal: txt, sys: system, log, research: m.research ? { ...m.research, status: 'done', finishedAt: Date.now() } : m.research }))
+            celebrate(get().prefs.cues === true)
             ok = true
             break
           } catch (x: any) {
@@ -1193,6 +1197,7 @@ export const useS = create<S>()(
                   workspaces: { ...s.workspaces, [wid]: workspaces[wid] },
                   selectedRevision: { ...s.selectedRevision, [wid]: selectedRevisionId },
                 }))
+                if (action !== 'delete') workspaceWritesPending = true
                 return JSON.stringify({ ...result, action: action === 'delete' && !(files ?? []).length ? 'deleted' : 'ready' })
               },
               // Live tool deltas feed the ephemeral streaming preview; rewritten
@@ -1250,6 +1255,10 @@ export const useS = create<S>()(
             : { ...m, sys: system, log, err: true, by: 'No model responded', t: log.filter((x) => x.err).map((x) => `${x.n}${x.m ? ' · ' + x.m : ''}: ${x.err}`).join('\n') + hint(log) })
           if (prev) edit(id, mid, (m) => ({ ...m, alts: [...prev, snap(m)], ai: prev.length }))
         }
+        // Workspace cue: only for a reply that wrote a workspace and finished without an error.
+        const workspaceTouched = workspaceWritesPending
+        workspaceWritesPending = false
+        if (ok && !r.stopped && workspaceTouched) celebrate(get().prefs.cues === true)
         if (cur === r) { cur = null; set({ busy: false }) }
         // Auto-push sync slot when enabled (fire-and-forget, never blocks UI).
         try {
@@ -1290,7 +1299,7 @@ export const useS = create<S>()(
         params: { def: true, temp: 0.7, topp: 1, max: 4096, maxToolRounds: 8, highToolsUnlocked: false }, effort: {},
         workspacePrefs: { defaultView: 'latest', autoOpen: true, autoFollow: true },
         advanced: { ...DEFAULT_ADVANCED },
-        sel: null, pr: 'general', globalPrompt: { on: false, text: '' }, features: { ...DEFAULT_FEATURES }, featureOrder: FEATURES.map(([id]) => id), libraryShow: { ...DEFAULT_LIBRARY_SHOW }, themeMode: 'dark', themeDark: 'claude', themeLight: 'paper', customDarkColors: { ...DEFAULT_CUSTOM_COLORS }, customLightColors: { ...DEFAULT_CUSTOM_LIGHT_COLORS }, setupDone: false, prefs: { showBy: true, showLog: true, showTps: false, enterSends: true, autoTitle: true, temporaryByDefault: false, showModelPricing: false, showContextMeter: true, titleEp: '', titleModel: '', effortEp: '', effortModel: '', recallEp: '', recallModel: '', tempHours: 3, fontBody: 'system', fontMono: 'system', fontHeader: 'system', modelPrimary: 'name', modelSecondary: 'none', paletteMax: 320, chatWidth: 'standard', settingsWidth: 1024, settingsHeight: 780, modelPickerHeight: 480, sidebarWidth: 288, widgetWidth: 320, workspaceWidth: 0.4, workspaceSplit: 0.2, modalBlur: 12, settingsOpacity: 55, streamFade: 0.3, streamMd: false },
+        sel: null, pr: 'general', globalPrompt: { on: false, text: '' }, features: { ...DEFAULT_FEATURES }, featureOrder: FEATURES.map(([id]) => id), libraryShow: { ...DEFAULT_LIBRARY_SHOW }, themeMode: 'dark', themeDark: 'claude', themeLight: 'paper', customDarkColors: { ...DEFAULT_CUSTOM_COLORS }, customLightColors: { ...DEFAULT_CUSTOM_LIGHT_COLORS }, setupDone: false, prefs: { showBy: true, showLog: true, showTps: false, enterSends: true, autoTitle: true, temporaryByDefault: false, seasonal: true, cues: false, showModelPricing: false, showContextMeter: true, titleEp: '', titleModel: '', effortEp: '', effortModel: '', recallEp: '', recallModel: '', tempHours: 3, fontBody: 'system', fontMono: 'system', fontHeader: 'system', modelPrimary: 'name', modelSecondary: 'none', paletteMax: 320, chatWidth: 'standard', settingsWidth: 1024, settingsHeight: 780, modelPickerHeight: 480, sidebarWidth: 288, widgetWidth: 320, workspaceWidth: 0.4, workspaceSplit: 0.2, modalBlur: 12, settingsOpacity: 55, streamFade: 0.3, streamMd: false },
         stats: ZERO(), keys: Object.fromEntries(KEYS.map(([k, , d]) => [k, d])),
         folders: [], price: { in: 0, out: 0 }, todos: [],
         routeStats: {}, flashMsg: null,
@@ -1498,7 +1507,7 @@ export const useS = create<S>()(
         editMsg: (id, t) => {
           const s = get(), c = s.chats.find((x) => x.id === s.chat), i = c ? c.msgs.findIndex((m) => m.id === id) : -1
           if (!c || i < 0) return
-          if (s.busy) { set({ notice: { t: 'Stop the current reply before editing a message.' } }); return }
+          if (s.busy) { set({ notice: { t: 'A reply is still in progress. Stop it first, then edit your message.' } }); return }
           const o = c.msgs[i]
           if (!t.trim() && !o.att?.length) return
           const m = t.match(/^\/(\S+)(?:\s+([\s\S]*))?$/), cmd = m && featOn(s, 'commands') ? s.cmds.find((x) => x.name === m[1]) : (!m && featOn(s, 'commands') ? s.cmds.find((x) => x.id === o.cmd) : undefined)

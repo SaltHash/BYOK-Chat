@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
-import { dndDirection, insertionIndex } from '../dndShared'
+import { dndDirection, flipDelta, insertionIndex } from '../dndShared'
 
 /* Cohesive pointer-based drag-and-drop system (replaces the old HTML5 DnD handlers).
  *
@@ -83,18 +83,44 @@ export function DndLiveRegion({ message }: { message: string }) {
   )
 }
 
+type FlipRec = { raf: number; timeout: number; onEnd: (() => void) | null }
+
+/** Element top in scroll-independent coordinates.
+ *
+ * Viewport-relative `getBoundingClientRect().top` changes whenever an ancestor
+ * scroller scrolls (auto-scroll during drags), even when the row's layout did
+ * not move. Adding the scroll offsets back keeps FLIP deltas from folding a
+ * scroll amount into the next transform. */
+function layoutTop(el: HTMLElement): number {
+  let top = el.getBoundingClientRect().top + window.scrollY
+  for (let p = el.parentElement; p && p !== document.body && p !== document.documentElement; p = p.parentElement) {
+    top += p.scrollTop
+  }
+  return top
+}
+
 /* Shared FLIP animator for rows around the live placeholder.
  *
  * Stability rules (fast drags must not compound):
  * - Runs only when the layout signature changes (order/placeholder/drag id),
  *   never on unrelated re-renders.
- * - Before measuring, any in-flight item animation is cancelled and the item
- *   is snapped back to its true layout position. Measuring an element while a
- *   previous invert transform is still applied is what made rapid drags
- *   oscillate: each frame's delta was computed against a shifted position and
- *   the error compounded. Reset-first keeps every frame's delta exact.
- * - Restarting a short (180ms) transition toward the new position each frame
- *   yields smooth trailing motion instead of snaps.
+ * - The animation origin is the row's *current visual* position, not its
+ *   previous layout slot:
+ *
+ *       previousVisual = previousLayout + leftoverTranslate
+ *
+ *   Resetting the transform first and using `previousLayout` as the origin
+ *   throws away the in-flight interpolation. A fast drag moves the placeholder
+ *   several rows per commit, so that reset teleported each sibling almost a
+ *   whole step ahead every frame (and backwards on direction changes) — the
+ *   "rows flying off their tracks" effect. Reading each row while its transform
+ *   is still applied captures the interrupted position; the style-free
+ *   measurement taken right after is the true target.
+ * - Positions are measured in scroll-independent coordinates (`layoutTop`) so
+ *   auto-scrolling the list cannot leak into a transform.
+ * - Restarting a short (180ms) transition toward the new position after each
+ *   commit yields smooth trailing motion that continues from wherever the row
+ *   actually is, instead of snapping between layout slots.
  */
 export function useFlipAnimate(
   elsRef: React.RefObject<Map<string, HTMLElement>>,
@@ -103,50 +129,64 @@ export function useFlipAnimate(
   layoutKey: string,
 ) {
   const prev = useRef(new Map<string, number>())
-  const recs = useRef(new Map<string, { raf: number; timeout: number; onEnd: (() => void) | null }>())
+  const recs = useRef(new Map<string, FlipRec>())
   useLayoutEffect(() => {
     if (disabled) return
+    const els = elsRef.current
+    if (!els) return
+
+    // 1. Visual positions, measured with any in-flight FLIP transform applied.
+    const visual = new Map<string, number>()
+    els.forEach((el, id) => visual.set(id, layoutTop(el)))
+
+    // 2. Cancel in-flight motion, then snap to the committed layout.
     recs.current.forEach((rec, id) => {
       cancelAnimationFrame(rec.raf)
       clearTimeout(rec.timeout)
-      const el = elsRef.current?.get(id)
-      if (el) {
-        if (rec.onEnd) el.removeEventListener('transitionend', rec.onEnd)
-        el.style.transition = ''
-        el.style.transform = ''
-      }
+      const el = els.get(id)
+      if (el && rec.onEnd) el.removeEventListener('transitionend', rec.onEnd)
     })
     recs.current.clear()
-    const tops = new Map<string, number>()
-    elsRef.current?.forEach((el, id) => tops.set(id, el.getBoundingClientRect().top))
-    if (prev.current.size) {
-      elsRef.current?.forEach((el, id) => {
-        if (id === activeId) return
-        const a = prev.current.get(id)
-        const b = tops.get(id)
-        if (a == null || b == null) return
-        const delta = a - b
-        if (Math.abs(delta) <= 2) return
-        el.style.transition = 'none'
-        el.style.transform = `translateY(${delta}px)`
-        const rec: { raf: number; timeout: number; onEnd: (() => void) | null } = { raf: 0, timeout: 0, onEnd: null }
-        rec.raf = requestAnimationFrame(() => {
-          el.style.transition = 'transform 180ms ease'
+    els.forEach((el) => {
+      el.style.transition = ''
+      el.style.transform = ''
+    })
+
+    // 3. True layout positions. `visual - target` is the residual translation of
+    //    an interrupted animation (0 for rows that were at rest).
+    const target = new Map<string, number>()
+    els.forEach((el, id) => target.set(id, layoutTop(el)))
+
+    els.forEach((el, id) => {
+      if (id === activeId) return
+      const before = prev.current.get(id)
+      const b = target.get(id)
+      const v = visual.get(id)
+      if (before == null || b == null || v == null) return
+      // Continue from where the row currently is, then ease into its new slot.
+      const delta = flipDelta(before, v, b)
+      if (Math.abs(delta) <= 2) return
+      el.style.transition = 'none'
+      el.style.transform = `translateY(${delta}px)`
+      const rec: FlipRec = { raf: 0, timeout: 0, onEnd: null }
+      rec.raf = requestAnimationFrame(() => {
+        el.style.transition = 'transform 180ms ease'
+        el.style.transform = ''
+        const clear = () => {
+          el.style.transition = ''
           el.style.transform = ''
-          const clear = () => {
-            el.style.transition = ''
-            el.style.transform = ''
-            el.removeEventListener('transitionend', clear)
-            if (recs.current.get(id) === rec) recs.current.delete(id)
-          }
-          rec.onEnd = clear
-          el.addEventListener('transitionend', clear)
-          rec.timeout = window.setTimeout(clear, 220)
-        })
-        recs.current.set(id, rec)
+          el.removeEventListener('transitionend', clear)
+          if (recs.current.get(id) === rec) recs.current.delete(id)
+        }
+        rec.onEnd = clear
+        el.addEventListener('transitionend', clear)
+        rec.timeout = window.setTimeout(clear, 220)
       })
-    }
-    prev.current = tops
+      recs.current.set(id, rec)
+    })
+    // Only mounted rows are stored, so a row that leaves (the dragged item) and
+    // later remounts cannot animate from a stale pre-drag slot.
+    prev.current = target
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [layoutKey, activeId, disabled])
 }

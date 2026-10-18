@@ -174,7 +174,7 @@ const makeC = (bare: boolean, cites?: CiteMap): any => ({
   },
 })
 
-export default memo(function Rich({ t, bare = false, cites }: { t: string; bare?: boolean; cites?: CiteMap }) {
+export default memo(function Rich({ t, bare = false, cites, blocks = false }: { t: string; bare?: boolean; cites?: CiteMap; blocks?: boolean }) {
   /* `pre` re-runs over the whole reply on each streamed chunk by design: it is
    * a handful of linear regex passes (measured well under 0.1 ms for a 13 KB
    * reply) while the markdown parse below dominates. An incremental version
@@ -197,15 +197,18 @@ export default memo(function Rich({ t, bare = false, cites }: { t: string; bare?
     () => (katexReady && katexPlugins ? [...REHYPE_BASE, ...katexPlugins, REHYPE_HIGHLIGHT] : [...REHYPE_BASE, REHYPE_HIGHLIGHT]),
     [katexReady],
   )
-  return (
-    <div className="md leading-7">
-      <ReactMarkdown
-        remarkPlugins={BASE_PLUGINS}
-        rehypePlugins={rehypePlugins}
-        components={components}
-      >
-        {src}
-      </ReactMarkdown>
-    </div>
+  const body = (
+    <ReactMarkdown
+      remarkPlugins={BASE_PLUGINS}
+      rehypePlugins={rehypePlugins}
+      components={components}
+    >
+      {src}
+    </ReactMarkdown>
   )
+  /* `blocks` renders the elements without the `.md` container: a streamed reply
+   * is one document split across two renders (settled blocks and the block
+   * still arriving), and both halves have to live in a single `.md` so the
+   * spacing between them is the same as in the finished reply. */
+  return blocks ? body : <div className="md leading-7">{body}</div>
 })

@@ -61,7 +61,7 @@ function ModelMenu({ close, cfg }: { close: () => void; cfg: (t: string) => void
             </>}
         </div>
       ))}
-      {!L.length && <p className="px-2.5 py-3 text-sm text-mu">Nothing here yet.</p>}
+      {!L.length && <p className="px-2.5 py-3 text-sm text-mu">Nothing here yet. Suspiciously quiet.</p>}
       </div>
       <div className="shrink-0 border-t border-hov px-1 pt-2">
         <Item icon={Settings} className="bg-surf/70 hover:bg-surf" onClick={() => { close(); cfg(t === 'pl' && plsOn ? 'pls' : 'eps') }}>Manage…</Item>
@@ -157,10 +157,10 @@ export function Composer({ cfg }: { cfg: (t: string) => void }) {
       const page = await fetchPage(u)
       const txtChars = att.reduce((a, x) => a + (x.text?.length ?? 0), 0)
       const { text } = fitDoc(page.text, Math.min(normDocs(s.docPrefs).perFileChars, 200000))
-      if (txtChars + text.length > 500000) { s.patch({ notice: { t: 'Page not attached: the message text budget is full.' } }); return }
+      if (txtChars + text.length > 500000) { s.patch({ notice: { t: 'That page did not fit, because this message is already at its text limit. Shorten the message or remove an attachment, then try again.' } }); return }
       setAtt((a) => [...a, { name: (page.title || u).slice(0, 80), kind: 'txt', size: `${Math.round(text.length / 1024)} KB`, source: 'url', text: `[from URL: ${page.url}]\n${text}` }])
       setUrlVal(''); setUrlOpen(false)
-    } catch (x: any) { s.patch({ notice: { t: `Could not attach that page: ${String(x?.message ?? x)}` } }) }
+    } catch (x: any) { s.patch({ notice: { t: `That page could not be attached (${String(x?.message ?? x)}). Check the link is reachable, or paste the text instead.` } }) }
     finally { setUrlBusy(false) }
   }
   const [ocrBusy, setOcrBusy] = useState<number | null>(null)
@@ -171,13 +171,13 @@ export function Composer({ cfg }: { cfg: (t: string) => void }) {
     const vex = s.eps.find((e) => e.id === dp.ocrEp && usable(e) && can(e, 'img'))
       ?? s.eps.find((e) => usable(e) && can(e, 'img'))
       ?? (ep && can(ep, 'img') ? ep : undefined)
-    if (!vex) { s.patch({ notice: { t: 'No usable vision-capable endpoint for transcription. Add one in Settings → Endpoints.', tab: 'eps', label: 'Open endpoints' } }); return }
+    if (!vex) { s.patch({ notice: { t: 'Transcription needs a vision-capable endpoint, and none is set up yet. Add one in Settings → Endpoints, then try again.', tab: 'eps', label: 'Open endpoints' } }); return }
     setOcrBusy(i)
     try {
       const model = vex.id === dp.ocrEp && dp.ocrModel ? dp.ocrModel : vex.model
       const text = await ocrImage(vex, model, a)
       setAtt((list) => list.map((x, j) => j === i ? { ...x, text: `[ocr: transcribed from ${x.name}]\n${text}`, source: 'ocr' } : x))
-    } catch (x: any) { s.patch({ notice: { t: `Transcription failed: ${String(x?.message ?? x)}` } }) }
+    } catch (x: any) { s.patch({ notice: { t: `Transcription did not finish (${String(x?.message ?? x)}). Try again, or pick a different endpoint in Settings.` } }) }
     finally { setOcrBusy(null) }
   }
   const ready = !!v.trim() || att.length > 0
@@ -185,7 +185,7 @@ export function Composer({ cfg }: { cfg: (t: string) => void }) {
     if (s.busy) return
     if (!s.eps.length) {
       s.add('eps')
-      s.patch({ notice: { t: 'I opened a new endpoint for you. Choose a provider preset, add a model and key, then test the connection before sending again.', tab: 'eps', label: 'Add endpoint' } })
+      s.patch({ notice: { t: 'No endpoint is ready yet. Choose a provider preset, add a model and key, test the connection, then send again.', tab: 'eps', label: 'Add endpoint' } })
       cfg('eps')
       return
     }

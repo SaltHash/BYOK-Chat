@@ -437,7 +437,7 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
             <span title={c.expiresAt ? `Deletes in ${timeLeft(c)}` : 'Deletes when you leave'} className="shrink-0 text-xs text-mu">{timeLeft(c)}</span>
             <button title="Delete chat" onClick={() => setDeleteId(c.id)} className={cx(act, 'ml-1 hidden group-hover:grid hover:text-er')}><Trash2 size={14} /></button>
           </div>)}
-          {!temporary.length && <p className="px-2.5 py-1 text-sm text-mu">No temporary chats.</p>}
+          {!temporary.length && <p className="px-2.5 py-1 text-sm text-mu">No temporary chats. Nothing to clean up, nice.</p>}
         </div>
         <div className="flex items-center justify-between px-2.5 text-xs font-medium text-mu">
           <span>Folders</span>
@@ -490,7 +490,7 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
         <Btn icon={Settings} className="flex-1 justify-start" onClick={() => cfg('eps')}>Settings</Btn>
         <Btn icon={Palette} title={`Theme: ${THEMES[themeKeyOf(s)]}`} onClick={() => s.patch(s.themeMode === 'light' ? { themeLight: thNext as typeof s.themeLight } : { themeDark: thNext as typeof s.themeDark })} />
       </div>
-      <p className="flex items-center gap-1.5 px-1 text-xs text-mu"><Lock size={12} />Keys stay in this browser</p>
+      <p className="flex items-center gap-1.5 px-1 text-xs text-mu"><Lock size={12} />Your keys never leave this browser. Pinky promise.</p>
       {menu && (
         <div onMouseDown={(e) => e.stopPropagation()} style={{ left: menu.x, top: menu.y }} className="fixed z-40 w-52 rounded-xl bg-hov p-1.5">
           <button onClick={() => { s.moveChat(menu.id, ''); setMenu(null) }} className={item}><FolderMinus size={16} className="text-mu" />No folder</button>

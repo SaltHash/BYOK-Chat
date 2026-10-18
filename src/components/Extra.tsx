@@ -26,7 +26,7 @@ export function Notice({ cfg }: { cfg: (t: string) => void }) {
 export function Tutorial({ cfg }: { cfg: (t: string) => void }) {
   const { eps, add } = useS(useShallow((s) => ({ eps: s.eps, add: s.add })))
   const steps: [Ic, string, string][] = [
-    [Server, 'Add an endpoint', 'Pick a provider preset or enter any base URL, then paste your API key and the model id. Keys stay in this browser.'],
+    [Server, 'Add an endpoint', 'Pick a provider preset or enter any base URL, then paste your API key and the model id. Your keys never leave this browser. Pinky promise.'],
     [Play, 'Test it', 'Press Test connection on the endpoint. You will see whether it answers and how long it takes.'],
     [MessageSquare, 'Send a message', 'Type below and press Enter. Type / for commands and @ for tools.'],
   ]

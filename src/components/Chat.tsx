@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import { GitBranch, ChevronLeft, ChevronRight, Sparkles, Server, Cpu, Copy, Check, RefreshCw, Trash2, ListOrdered, CircleCheck, CircleX, TriangleAlert, Paperclip, CornerDownLeft } from 'lucide-react'
 import { useS, useLive, usable, featOn, previewSysFor, type Msg } from '../store'
@@ -11,6 +11,8 @@ import { Composer } from './Composer'
 import { Header } from './Header'
 import { Tutorial } from './Extra'
 import { Md, UserText } from './Md'
+import { activityLine, greetingFor, seasonalLine, thinkingLine } from '../flair'
+import { splitStream } from '../streamMd'
 import { WorkspaceTile, WorkspacePanel } from './Workspace'
 import { ResearchTierPicker, ResearchPlanCard, ResearchProgressCard, ResearchTile, ResearchPanel } from './Research'
 import { SourcesPanel, scrollToSource } from './Sources'
@@ -145,7 +147,10 @@ function MessageActions({ calls }: { calls: { id: string; name: string; argument
  * are cleared and the normal markdown renderer takes over. */
 function StreamedText({ chunks, fade }: { chunks: string[]; fade: number }) {
   return (
-    <span className="md leading-7">
+    /* `whitespace-pre-wrap` keeps the line breaks the model sent: without it the
+     * whole reply collapses into one paragraph and wraps wherever the pane
+     * happens to break, then reflows when the finished markdown takes over. */
+    <span className="md whitespace-pre-wrap leading-7">
       {chunks.map((t, i) => (
         <span key={i} className={fade > 0 ? 'animate-reply-in' : undefined} style={fade > 0 ? { '--reply-in-duration': `${fade}s` } as React.CSSProperties : undefined}>
           {t}
@@ -155,35 +160,36 @@ function StreamedText({ chunks, fade }: { chunks: string[]; fade: number }) {
   )
 }
 
-/* Markdown during streaming, updated incrementally. Only the longest prefix
- * that ends at a line boundary is parsed as markdown; the incomplete tail stays
- * plain text so an open fence or emphasis is never half-rendered. Because the
- * committed prefix is unchanged between boundaries, <Md> is not re-parsed on
- * every chunk — only when a new line completes — so a long reply does not
- * re-render the whole message on each token. */
-const STREAM_TAIL_CAP = 400
-
+/* Markdown during streaming, parsed incrementally. The reply is split at its
+ * last settled block boundary (see `splitStream`): the settled blocks are
+ * parsed once and re-parsed only when another block completes, while the block
+ * still being written is parsed on its own. Both halves share one `.md`
+ * container, so the live text sits inside the structure it belongs to — list
+ * items keep their indent, quotes their background, tables their column widths
+ * — and a growing paragraph is never broken onto a new line mid-sentence. */
 function StreamedMd({ chunks, fade }: { chunks: string[]; fade: number }) {
   const full = useMemo(() => chunks.join(''), [chunks])
-  const committed = useMemo(() => {
-    const nl = full.lastIndexOf('\n')
-    if (nl >= 0 && full.length - nl - 1 <= STREAM_TAIL_CAP) return full.slice(0, nl + 1)
-    if (full.length > STREAM_TAIL_CAP) {
-      const cut = full.lastIndexOf(' ', full.length - STREAM_TAIL_CAP)
-      return cut > 0 ? full.slice(0, cut + 1) : ''
-    }
-    return ''
-  }, [full])
-  const tail = full.slice(committed.length)
+  /* Tokens arrive far faster than a long reply can be parsed. Handing React the
+   * newest text at a lower priority lets it skip the intermediate tokens while
+   * a parse is still in flight, instead of queueing one parse per token. */
+  const text = useDeferredValue(full)
+  const { head, tail } = useMemo(() => splitStream(text), [text])
   return (
-    <>
-      {committed && <Md t={committed} />}
+    <div className="md leading-7">
+      {head && <Md t={head} blocks />}
       {tail && (
-        <span className={cx('leading-7', fade > 0 && 'animate-reply-in')} style={fade > 0 ? { '--reply-in-duration': `${fade}s` } as React.CSSProperties : undefined}>
-          {tail}
-        </span>
+        /* Keyed by the settled length so the fade runs once per block instead of
+         * restarting on every chunk. The first/last child margins are flattened
+         * so the seam between the two halves matches a normal block gap. */
+        <div
+          key={head.length}
+          className={cx('[&>*:first-child]:mt-0 [&>*:last-child]:mb-0', fade > 0 && 'animate-reply-in')}
+          style={fade > 0 ? { '--reply-in-duration': `${fade}s` } as React.CSSProperties : undefined}
+        >
+          <Md t={tail} blocks />
+        </div>
       )}
-    </>
+    </div>
   )
 }
 
@@ -293,7 +299,7 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
             </div>
           )}
           <ol className="space-y-1.5">
-            {m.log!.length === 0 && !m.toolRounds?.length && <li className="text-mu">Nothing happening yet...</li>}
+            {m.log!.length === 0 && !m.toolRounds?.length && <li className="text-mu">{thinkingLine(m.id)}</li>}
             {m.log!.filter((t) => /\(classifier\)$/.test(t.n) || t.n === 'Memory recall').map((t, i) => (
               <li key={`classifier-${i}`} className="flex items-center gap-2">
                 {t.err ? <CircleX size={14} className="shrink-0 text-er" /> : <CircleCheck size={14} className="shrink-0 text-ac" />}
@@ -361,10 +367,18 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
             <span className="ml-2 text-mu">Writing {writingPath}…</span>
           </span>
         ) : (() => {
-          const names = ((live ?? []) as { name?: string }[]).map((t) => t.name ?? '')
-          const status = names.includes('search') ? 'Searching…' : names.includes('fetch_page') ? 'Reading page…' : names.includes('use_skill') ? 'Checking skills…' : 'Thinking…'
+          const status = activityLine(((live ?? []) as { name?: string }[]).map((t) => t.name ?? ''), m.id)
           return (
-            <span className="reply-thinking" role="status" aria-label={status === 'Thinking…' ? 'Waiting for a reply' : status}>
+            <span className="reply-thinking" role="status" aria-label={status}>
+              <span className="reply-dots" aria-hidden="true"><i /><i /><i /></span>
+              <span className="ml-2 text-mu">{status}</span>
+            </span>
+          )
+        })()}
+        {m.t && !m.err && !writingPath && (live ?? []).length > 0 && (() => {
+          const status = activityLine(((live ?? []) as { name?: string }[]).map((t) => t.name ?? ''), m.id)
+          return (
+            <span className="reply-thinking mt-2 block" role="status" aria-label={status}>
               <span className="reply-dots" aria-hidden="true"><i /><i /><i /></span>
               <span className="ml-2 text-mu">{status}</span>
             </span>
@@ -559,7 +573,7 @@ export function Chat({ side, toggle, cfg, pal }: { side: boolean; toggle: () => 
             ) : (
               <div className="mx-auto flex h-full max-w-xl flex-col items-center justify-center gap-6 px-4 text-center">
                 <span className="grid size-12 place-items-center rounded-2xl bg-surf text-ac"><Sparkles size={22} /></span>
-                <h2 className="text-xl font-semibold">What do you want to work on?</h2>
+                <h2 className="text-xl font-semibold">{(s.prefs.seasonal !== false && seasonalLine(new Date())) || greetingFor(new Date(), s.chats.length)}</h2>
                 <div className="grid w-full gap-2 sm:grid-cols-2">
                   {!s.eps.length && <Tile icon={Server} t="Add an endpoint" d="Connect a model with your own key" on={() => cfg('eps')} />}
                   {tiles.map((k) => <Tile key={k.id} icon={CI[k.in]} t={'/' + k.name} d={k.desc} on={() => s.patch({ draft: '/' + k.name + ' ' })} />)}

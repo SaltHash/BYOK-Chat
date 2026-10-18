@@ -378,6 +378,8 @@ export function WorkspacePanel({ msg, live, workspace, selectedRevisionId, setSe
   const [renaming, setRenaming] = useState(false)
   const [nameDraft, setNameDraft] = useState(workspace.name)
   const [gistOpen, setGistOpen] = useState(false)
+  const [flash, setFlash] = useState<'copy' | 'download' | null>(null)
+  const flashFor = (k: 'copy' | 'download') => { setFlash(k); setTimeout(() => setFlash(null), 1200) }
   const split = clampWorkspaceSplit(storedSplit)
   const setSplit = (v: number) => {
     const st = useS.getState()
@@ -569,9 +571,9 @@ export function WorkspacePanel({ msg, live, workspace, selectedRevisionId, setSe
                   </button>
                 ))}
               </div>
-              <Btn sm icon={Download} title="Download file" onClick={() => downloadOne(selectedFile.path, selectedFile.content)} />
+              <Btn sm icon={flash === 'download' ? Check : Download} title="Download file" onClick={() => { downloadOne(selectedFile.path, selectedFile.content); flashFor('download') }} />
               <Btn sm icon={Pencil} title="Edit locally" onClick={() => { setDraft(selectedFile.content); setEditing(true); setView('code') }} />
-              <Btn sm icon={Copy} title="Copy file" onClick={() => copy(selectedFile.content)} />
+              <Btn sm icon={flash === 'copy' ? Check : Copy} title="Copy file" onClick={() => { copy(selectedFile.content); flashFor('copy') }} />
               <Btn sm icon={Send} title="Ask about this file in chat" onClick={askAboutFile} />
               <Btn sm icon={Trash2} title="Delete file" onClick={() => setConfirmDelete(true)} />
             </div>

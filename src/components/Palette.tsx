@@ -8,6 +8,7 @@ import { visibleTabs } from './Settings'
 import { normSkills, resolveSkill } from '../skills'
 import { CI, TOOLS, WIDGETS, KEYS } from '../meta'
 import { WORKSPACE_TEMPLATES } from '../workspace'
+import { pickFortune } from '../flair'
 import { Modal, cx, type Ic } from './ui'
 
 const TAB_FEATURE: Record<string, FeatureId> = {
@@ -50,6 +51,8 @@ export function Palette({ close, cfg, toggleSide }: { close: () => void; cfg: (t
     action(PanelRight, 'Toggle widgets panel', 'Action', 'sidebar widgets panel show hide', () => (featOn(s, 'widgets') ? s.patch({ rail: !s.rail }) : cfg('features#feature-widgets'))),
     action(Maximize2, 'Toggle sidebar', 'Action', 'navigation chats sidebar show hide', toggleSide),
     action(Download, 'Export current chat', 'Action', 'download markdown save', exportChat),
+    action(Sparkles, 'Surprise me', 'Action', 'random theme shuffle surprise fun', () => { const keys = (Object.keys(THEMES) as (keyof typeof THEMES)[]).filter((k) => k !== 'custom'); s.patch(themePatch(s, keys[Math.floor(Math.random() * keys.length)])) }),
+    action(Sparkles, 'Fortune cookie', 'Action', 'fortune cookie tip luck random', () => s.patch({ notice: { t: pickFortune() } })),
     action(Trash2, 'Clear model selection', 'Action', 'reset automatic endpoints models', () => s.patch({ sel: null })),
     ...(featOn(s, 'prompts') ? [action(Type, 'Clear prompt selection', 'Action', 'reset system instructions', () => s.patch({ pr: '' }))] : []),
     ...(featOn(s, 'commands') ? s.cmds.filter((c) => c.on).map((c) => action(CI[c.in], '/' + c.name, c.desc || 'Command', `command slash ${c.name} ${c.desc}`, () => s.patch({ draft: '/' + c.name + ' ' }))) : []),
@@ -122,7 +125,7 @@ export function Palette({ close, cfg, toggleSide }: { close: () => void; cfg: (t
               </button>
             )
           })}
-          {!L.length && <p className="px-3 py-6 text-center text-sm text-mu">No matches.</p>}
+          {!L.length && <p className="px-3 py-6 text-center text-sm text-mu">No matches. Try a shorter search.</p>}
         </div>
       </div>
     </Modal>
