@@ -94,6 +94,36 @@ const REHYPE_BASE: any = [rehypeRaw, rehypeFixAnchors, [rehypeSanitize, schema]]
  * (`ignoreMissing` below). */
 const REHYPE_HIGHLIGHT: any = [rehypeHighlight, { detect: false, ignoreMissing: true, languages: common }]
 
+/* Streamed tail: text that starts at or after `at` (source offset of what is
+ * already on screen) is wrapped in an `.animate-reply-in` span, so new words
+ * fade in wherever they land. A table that starts after `at` fades once as a
+ * whole; its cells do not fade separately. Runs last, so only nodes that carry
+ * source positions (not highlighted code or math) are affected. */
+const fadeNew = ({ at }: { at: number }) => (tree: any) => {
+  const fade = (value: string) => ({ type: 'element', tagName: 'span', properties: { className: ['animate-reply-in'] }, children: [{ type: 'text', value }] })
+  /* One span per word: a span that already finished its animation would not
+   * replay when more text is appended to it, so each new word mounts fresh. */
+  const fadeWords = (value: string) => value.split(/(?<=\s)/).filter(Boolean).map(fade)
+  const walk = (parent: any) => {
+    const kids: any[] = []
+    for (const n of parent.children ?? []) {
+      const s = n.position?.start?.offset
+      const e = n.position?.end?.offset
+      if (n.type === 'element') {
+        if (n.tagName === 'table' && typeof s === 'number' && s >= at) n.properties = { ...n.properties, dataFade: true }
+        else walk(n)
+        kids.push(n)
+      } else if (n.type === 'text' && typeof s === 'number' && typeof e === 'number' && e > at) {
+        const cut = Math.min(Math.max(at - s, 0), n.value.length)
+        if (cut > 0) kids.push({ type: 'text', value: n.value.slice(0, cut) })
+        if (cut < n.value.length) kids.push(...fadeWords(n.value.slice(cut)))
+      } else kids.push(n)
+    }
+    parent.children = kids
+  }
+  walk(tree)
+}
+
 /* KaTeX plus its fonts is far larger than the rest of the pipeline and only
  * matters for replies that actually contain math, so the plugin and its
  * stylesheet load on first use. Until they arrive the math source renders as
@@ -142,7 +172,7 @@ function RemoteImage({ src, alt, title }: { src?: string; alt?: string; title?: 
   let host = src ?? ''
   try { host = new URL(src ?? '').host || host } catch { /* keep the raw URL */ }
   return (
-    <span className="my-3 flex flex-wrap items-center gap-2 rounded-xl border border-hov bg-surf px-3 py-2 text-xs text-mu">
+    <span className="my-3 flex flex-wrap items-center gap-2 rounded-xl border border-bor bg-surf px-3 py-2 text-xs text-mu">
       <ImageOff size={14} className="shrink-0 text-ac" aria-hidden="true" />
       <span className="min-w-0 flex-1 truncate">Remote image{alt ? ` — ${alt}` : ''} from {host}</span>
       <button type="button" onClick={() => setLoaded(true)} className="rounded-lg bg-hov px-2.5 py-1 font-medium text-tx hover:opacity-80">Load image</button>
@@ -201,7 +231,7 @@ const makeC = (bare: boolean, cites?: CiteMap): any => ({
     : <a {...p} href={href} target="_blank" rel="noopener noreferrer nofollow" className={link}>{children}</a>)
   },
   img: ({ node, src, alt, title }: any) => <RemoteImage src={src} alt={alt} title={title} />,
-  table: ({ children }: any) => <div className="my-4 overflow-x-auto rounded-xl bg-surf"><table className="w-full border-collapse text-sm">{children}</table></div>,
+  table: ({ children, node }: any) => <div className={cx('my-4 overflow-x-auto rounded-xl bg-surf', node?.properties?.dataFade && 'animate-reply-in')}><table className="w-full border-collapse text-sm">{children}</table></div>,
   thead: E('thead', 'bg-hov text-left'),
   tr: E('tr', 'even:bg-bg/40'),
   th: ({ node, align, className, ...p }: any) => createElement('th', { ...p, style: align ? { textAlign: align } : p.style, className: cx('px-3 py-2 font-semibold', className) }),
@@ -218,7 +248,7 @@ const makeC = (bare: boolean, cites?: CiteMap): any => ({
   },
 })
 
-export default memo(function Rich({ t, bare = false, cites, blocks = false }: { t: string; bare?: boolean; cites?: CiteMap; blocks?: boolean }) {
+export default memo(function Rich({ t, bare = false, cites, blocks = false, fadeFrom }: { t: string; bare?: boolean; cites?: CiteMap; blocks?: boolean; fadeFrom?: number }) {
   /* `pre` re-runs over the whole reply on each streamed chunk by design: it is
    * a handful of linear regex passes (measured well under 0.1 ms for a 13 KB
    * reply) while the markdown parse below dominates. An incremental version
@@ -237,10 +267,13 @@ export default memo(function Rich({ t, bare = false, cites, blocks = false }: { 
     return () => { live = false }
   }, [wantsMath, katexReady])
   // KaTeX renders after sanitising and before highlighting, as before.
-  const rehypePlugins = useMemo(
-    () => (katexReady && katexPlugins ? [...REHYPE_BASE, ...katexPlugins, REHYPE_HIGHLIGHT] : [...REHYPE_BASE, REHYPE_HIGHLIGHT]),
-    [katexReady],
-  )
+  // `fadeFrom` counts raw reply characters; map it through the same pre-pass so
+  // it lines up with the source offsets the parser reports.
+  const fadeAt = fadeFrom === undefined ? undefined : pre(t.slice(0, fadeFrom)).length
+  const rehypePlugins = useMemo(() => {
+    const base = katexReady && katexPlugins ? [...REHYPE_BASE, ...katexPlugins, REHYPE_HIGHLIGHT] : [...REHYPE_BASE, REHYPE_HIGHLIGHT]
+    return fadeAt === undefined ? base : [...base, [fadeNew, { at: fadeAt }]]
+  }, [katexReady, fadeAt])
   const body = (
     <ReactMarkdown
       remarkPlugins={BASE_PLUGINS}

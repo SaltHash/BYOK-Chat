@@ -339,7 +339,7 @@ function ModelsEditor({ e, update }: { e: any; update: (p: object) => void }) {
     </div>
       }}
     />
-    <button onClick={() => { setPicker(true); setSelectedModels([]); void loadCatalog() }} className="flex w-full items-center justify-center gap-2 rounded-lg border border-dashed border-hov py-2 text-sm text-mu hover:text-tx"><Plus size={14} />Add model</button>
+    <button onClick={() => { setPicker(true); setSelectedModels([]); void loadCatalog() }} className="flex w-full items-center justify-center gap-2 rounded-lg border border-dashed border-bor py-2 text-sm text-mu hover:text-tx"><Plus size={14} />Add model</button>
     {picker && <Modal close={() => setPicker(false)} keyboard={false}><div className="flex max-h-[80dvh] w-full max-w-xl flex-col gap-3 rounded-2xl bg-bg p-5 shadow-2xl">
       <div className="flex items-center justify-between"><div><h3 className="font-semibold">Choose a model</h3><p className="mt-0.5 text-xs text-mu">{e.name}{endpointId ? ` · ${endpointId}` : ''}</p></div><button onClick={() => setPicker(false)} className="grid size-8 place-items-center rounded-lg text-mu hover:bg-hov hover:text-tx" aria-label="Close model picker"><X size={16}/></button></div>
       <button onClick={loadCatalog} className="self-start rounded-lg bg-hov px-3 py-2 text-xs text-tx">{catalog.length ? 'Refresh model catalog' : 'Load available models'}</button>
@@ -618,7 +618,7 @@ function Prompts() {
           <Sel value="" set={(v) => { const p = prompts.find((x) => x.id === v); if (p) setG({ text: p.text }) }} opts={[['', 'Choose a prompt…'], ...prompts.map((p) => [p.id, p.name] as [string, string])]} />
         </Field>
         <Field label="Tone preset" hint="Fills the global box with a ready-made tone. Edit it freely afterwards.">
-          <div className="flex flex-wrap gap-2">{(Object.keys(TONE_PRESETS) as Tone[]).map((t) => <button key={t} onClick={() => setG({ on: true, text: TONE_PRESETS[t].text })} className="rounded-full border border-hov bg-surf px-3 py-1 text-sm text-tx transition-colors hover:bg-hov">{TONE_PRESETS[t].label}</button>)}</div>
+          <div className="flex flex-wrap gap-2">{(Object.keys(TONE_PRESETS) as Tone[]).map((t) => <button key={t} onClick={() => setG({ on: true, text: TONE_PRESETS[t].text })} className="rounded-full border border-bor bg-surf px-3 py-1 text-sm text-tx transition-colors hover:bg-hov">{TONE_PRESETS[t].label}</button>)}</div>
         </Field>
         <Field label="Global system prompt" hint="Write one from scratch, or copy an existing prompt above."><Area rows={6} value={g.text} set={(v) => setG({ text: v })} /></Field>
       </Card></Anchor>
@@ -1166,7 +1166,7 @@ function WidgetsTab() {
   )
 }
 
-const PAL: Record<string, string[]> = { plum: ['#120c16', '#17101c', '#dc8ad8'], claude: ['#1f1f1d', '#232322', '#d97757'], obsidian: ['#090c10', '#0f141c', '#2dd4bf'], bronze: ['#120e0c', '#1b1512', '#f59e0b'], paper: ['#f1f1ec', '#fbfbf9', '#3b5bdb'], sage: ['#e6ece8', '#f4f7f5', '#0d9488'], frost: ['#eef2f6', '#f8fafc', '#2563eb'], sunset: ['#efe6dd', '#faf5f0', '#ea580c'] }
+const PAL: Record<string, string[]> = { plum: ['#120c16', '#17101c', '#dc8ad8'], claude: ['#181817', '#1c1c1b', '#d97757'], obsidian: ['#090c10', '#0f141c', '#2dd4bf'], bronze: ['#120e0c', '#1b1512', '#f59e0b'], paper: ['#f1f1ec', '#fbfbf9', '#3b5bdb'], sage: ['#e6ece8', '#f4f7f5', '#0d9488'], frost: ['#eef2f6', '#f8fafc', '#2563eb'], sunset: ['#efe6dd', '#faf5f0', '#ea580c'] }
 
 function FontPicker({ value, set, options }: { value: string; set: (v: string) => void; options: [string, string][] }) {
   const [query, setQuery] = useState(value === 'system' ? '' : value)
@@ -1243,7 +1243,7 @@ function Look() {
           <button type="button" aria-label={`Choose ${THEME_COLOR_LABELS[key]} color`} aria-expanded={colorPicker === key} onClick={() => setColorPicker(colorPicker === key ? null : key)} className="size-9 shrink-0 rounded-lg border border-white/30 shadow-sm" style={{ backgroundColor: custom[key] }} />
           <span className="min-w-0 flex-1 leading-tight">{THEME_COLOR_LABELS[key]}</span>
           <input aria-label={`${THEME_COLOR_LABELS[key]} hex color`} value={custom[key]} onChange={(e) => { const value = e.target.value; if (/^#[\da-f]{0,6}$/i.test(value)) setCustom({ ...custom, [key]: value }) }} onBlur={() => { if (!/^#[\da-f]{6}$/i.test(custom[key])) setCustom({ ...custom, [key]: '#000000' }) }} className="w-20 rounded-md border border-white/20 bg-transparent px-1.5 py-1 font-mono text-xs uppercase" />
-          {colorPicker === key && <div className="settings-dropdown absolute left-2 top-full z-30 mt-1 w-56 rounded-xl bg-bg p-3"><label className="flex items-center justify-between gap-3 text-xs text-mu">Choose color<input type="color" aria-label={`Choose ${THEME_COLOR_LABELS[key]} color`} value={custom[key]} onChange={(e) => setCustom({ ...custom, [key]: e.target.value })} className="h-9 w-12 cursor-pointer rounded-md border border-hov bg-transparent p-1" /></label></div>}
+          {colorPicker === key && <div className="settings-dropdown absolute left-2 top-full z-30 mt-1 w-56 rounded-xl bg-bg p-3"><label className="flex items-center justify-between gap-3 text-xs text-mu">Choose color<input type="color" aria-label={`Choose ${THEME_COLOR_LABELS[key]} color`} value={custom[key]} onChange={(e) => setCustom({ ...custom, [key]: e.target.value })} className="h-9 w-12 cursor-pointer rounded-md border border-bor bg-transparent p-1" /></label></div>}
         </div>)}</div>
       </div>
       </Anchor>
@@ -1281,6 +1281,10 @@ function Look() {
         <Seg v={s.prefs.chatWidth} set={(chatWidth) => s.patch({ prefs: { ...s.prefs, chatWidth } })} opts={[["narrow", "Narrow"], ["standard", "Standard"], ["wide", "Wide"]]} />
       </div>
       </Anchor>
+      <div className="rounded-xl bg-surf p-3 space-y-2">
+        <label className="flex items-center justify-between gap-3 text-sm">Glass composer<Toggle on={s.prefs.glassComposer !== false} set={(glassComposer) => s.patch({ prefs: { ...s.prefs, glassComposer } })} /></label>
+        <div className="text-xs text-mu">Give the message box a translucent, blurred surface.</div>
+      </div>
       <Anchor id="settings-size">
       <div className="rounded-xl bg-surf p-3 space-y-3">
         <div><div className="text-sm font-medium">Settings window size</div><div className="text-xs text-mu">Set the maximum width and height of the settings window. Smaller screens constrain it to fit.</div></div>
@@ -1452,7 +1456,7 @@ export function Settings({ tab, setTab }: { tab: string; setTab: (t: string) => 
   return (
     <Modal close={() => setTab('')} blur={false} opacity={settingsOpacity}>
       <div style={{ width: `min(${settingsWidth}px, 96vw)`, height: `min(${settingsHeight}px, 92dvh)` }} className="settings-root flex overflow-hidden rounded-2xl bg-bg">
-        <nav className="hidden w-56 shrink-0 flex-col bg-side p-3 sm:flex">
+        <nav className="hidden w-56 shrink-0 flex-col border-r border-bor bg-side p-3 sm:flex">
           <div className="min-h-0 flex-1 space-y-0.5 overflow-y-auto">
             {tabs.map(([k, l, I], i) => (
               <div key={k}>

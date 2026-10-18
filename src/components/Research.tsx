@@ -65,7 +65,7 @@ export function ResearchPlanCard({ msg }: { msg: Msg }) {
   return (
     <div className="max-w-xl space-y-3">
       <p className="text-sm">{PLAN_INTRO}</p>
-      <section aria-label="Research plan" aria-live="polite" className="space-y-4 rounded-2xl border border-hov bg-surf p-4">
+      <section aria-label="Research plan" aria-live="polite" className="space-y-4 rounded-2xl border border-bor bg-surf p-4">
         <h3 className="text-sm font-medium">{plan?.title || rs.query.slice(0, 90)}</h3>
         {planning ? (
           <p role="status" aria-label="Generating research plan" className="flex items-center text-sm text-mu">
@@ -130,7 +130,7 @@ export function ResearchTierPicker({ msg }: { msg: Msg }) {
   const rs = msg.research
   if (!rs || rs.status !== 'tier-pick') return null
   return (
-    <section aria-label="Choose research depth" className="max-w-xl space-y-3 rounded-xl border border-hov bg-surf p-4">
+    <section aria-label="Choose research depth" className="max-w-xl space-y-3 rounded-xl border border-bor bg-surf p-4">
       <div>
         <h3 className="text-sm font-medium">Deep research on “{rs.query.slice(0, 120)}”</h3>
         <p className="mt-1 text-xs text-mu">Pick a depth. The model then drafts a research plan for you to review, and only searches the web and reads pages once you start it.</p>
@@ -142,7 +142,7 @@ export function ResearchTierPicker({ msg }: { msg: Msg }) {
             disabled={busy}
             onClick={() => choose(msg.id, t.id as ResearchTierId)}
             title={`${t.label}: up to ${t.maxSearches} searches and ${t.maxReads} page reads`}
-            className={cx('rounded-lg border px-3 py-2.5 text-left transition-colors hover:bg-hov disabled:opacity-50', rs.tier === t.id ? 'border-ac bg-ac/10' : 'border-hov')}
+            className={cx('rounded-lg border px-3 py-2.5 text-left transition-colors hover:bg-hov disabled:opacity-50', rs.tier === t.id ? 'border-ac bg-ac/10' : 'border-bor')}
             aria-pressed={rs.tier === t.id}
           >
             <span className="flex items-center gap-1.5 text-sm font-medium">{t.label}{def === t.id && <span className="rounded bg-hov px-1.5 py-0.5 text-[10px] font-medium text-mu">default</span>}</span>
@@ -192,7 +192,7 @@ export function ResearchProgressCard({ msg }: { msg: Msg }) {
   const usedSearches = rs.steps.filter((s) => s.kind === 'search').length
   const canResume = rs.status === 'stopped' && usedSearches < tier.maxSearches && !!msg.toolRounds?.length
   return (
-    <section aria-label="Deep research progress" aria-live="polite" className="max-w-xl space-y-2 rounded-xl border border-hov bg-surf p-4">
+    <section aria-label="Deep research progress" aria-live="polite" className="max-w-xl space-y-2 rounded-xl border border-bor bg-surf p-4">
       <div className="flex items-center gap-2 text-sm">
         <ListOrdered size={15} className="shrink-0 text-ac" />
         <span className="min-w-0 flex-1 truncate font-medium">
@@ -221,7 +221,7 @@ export function ResearchProgressCard({ msg }: { msg: Msg }) {
         {rs.steps.map((s) => (
           <li key={s.id} className="space-y-1.5">
             {/* What the model wrote right before this set of searches. */}
-            {s.lead && <p className="whitespace-pre-wrap border-l-2 border-hov pl-2.5 text-xs leading-relaxed text-mu">{s.lead}</p>}
+            {s.lead && <p className="whitespace-pre-wrap border-l-2 border-bor pl-2.5 text-xs leading-relaxed text-mu">{s.lead}</p>}
             <div className="flex items-center gap-2 text-sm">
               {s.state === 'done' ? <Check size={14} className="shrink-0 text-ac" /> : s.state === 'running' ? <span className="size-2 shrink-0 animate-pulse rounded-full bg-ac" /> : s.state === 'error' ? <X size={14} className="shrink-0 text-er" /> : <span className="size-2 shrink-0 rounded-full bg-hov" />}
               <span className="min-w-0 flex-1 truncate">{s.label}{s.query ? <span className="text-mu"> · {s.query.slice(0, 70)}</span> : ''}</span>
@@ -232,7 +232,7 @@ export function ResearchProgressCard({ msg }: { msg: Msg }) {
         {/* The round streaming right now. It moves onto the step this round is
             about to produce, so it stays above the searches it leads to. */}
         {rs.status === 'running' && note && (
-          <li><p className="whitespace-pre-wrap border-l-2 border-hov pl-2.5 text-xs leading-relaxed text-mu">{note}</p></li>
+          <li><p className="whitespace-pre-wrap border-l-2 border-bor pl-2.5 text-xs leading-relaxed text-mu">{note}</p></li>
         )}
       </ol>
       {rs.status === 'running' && !toolBusy && !note && (
@@ -276,7 +276,7 @@ export function ResearchTile({ msg, onOpen }: { msg: Msg; onOpen: () => void }) 
       tabIndex={0}
       onClick={onOpen}
       onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen() } }}
-      className="max-w-xl cursor-pointer space-y-2 rounded-xl border border-hov bg-surf/50 p-3 transition-colors hover:border-ac/50"
+      className="max-w-xl cursor-pointer space-y-2 rounded-xl border border-bor bg-surf/50 p-3 transition-colors hover:border-ac/50"
     >
       <div className="flex items-center gap-2 text-sm">
         {writing ? <span className="size-2 shrink-0 animate-pulse rounded-full bg-ac" /> : <BookOpen size={15} className="shrink-0 text-ac" />}
@@ -350,7 +350,7 @@ export function ResearchPanel({ msg, onClose }: { msg: Msg; onClose: () => void 
   }
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex items-center gap-2 border-b border-hov px-3 py-2">
+      <div className="flex items-center gap-2 border-b border-bor px-3 py-2">
         <BookOpen size={15} className="shrink-0 text-ac" />
         <span className="min-w-0 flex-1 truncate text-sm font-medium">Research · {rs?.query.slice(0, 80)}</span>
         <div role="tablist" aria-label="Research view" className="inline-flex items-center gap-1 rounded-lg bg-hov p-0.5">
@@ -382,7 +382,7 @@ export function ResearchPanel({ msg, onClose }: { msg: Msg; onClose: () => void 
             {blocks.map((b) => (
               <div key={b.id} className="space-y-1">
                 <p className="text-xs font-medium text-mu">{b.label}{b.query ? ` · ${b.query.slice(0, 80)}` : ''}</p>
-                <p className="whitespace-pre-wrap border-l-2 border-hov pl-2.5 text-xs leading-relaxed text-mu">{b.lead}</p>
+                <p className="whitespace-pre-wrap border-l-2 border-bor pl-2.5 text-xs leading-relaxed text-mu">{b.lead}</p>
               </div>
             ))}
             {trace.map((t, i) => (

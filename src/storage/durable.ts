@@ -218,14 +218,16 @@ export function joinPersistedForSync(settings: Record<string, unknown>, chats: u
 export function compactChatsForDurable(chats: Array<{ temporary?: boolean; expiresAt?: number; msgs: Array<{ id: string; r: string; reasoning?: string }> }>, now = Date.now()): { chats: typeof chats; droppedChats: number } {
   const alive = chats.filter((c) => !(c.temporary && c.expiresAt != null && c.expiresAt <= now))
   const droppedChats = chats.length - alive.length
-  const lastReasoning = new Map<string, string>()
+  /* Key by the chat object itself: coercing a chat to a string would collapse
+   * every chat onto "[object Object]" and keep only one reasoning trace. */
+  const lastReasoning = new Map<object, string>()
   for (const c of alive) {
     const last = [...c.msgs].reverse().find((m) => m.r === 'assistant' && m.reasoning)
-    if (last) lastReasoning.set(c as unknown as string, last.id)
+    if (last) lastReasoning.set(c, last.id)
   }
   const pruned = alive.map((c) => ({
     ...c,
-    msgs: c.msgs.map((m) => ({ ...m, reasoning: (m as { id: string }).id === lastReasoning.get(c as unknown as string) ? m.reasoning : undefined })),
+    msgs: c.msgs.map((m) => ({ ...m, reasoning: m.id === lastReasoning.get(c) ? m.reasoning : undefined })),
   })) as typeof chats
   return { chats: pruned, droppedChats }
 }

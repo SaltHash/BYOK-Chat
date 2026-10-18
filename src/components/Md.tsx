@@ -9,10 +9,10 @@ import type { CiteMap } from './Rich'
 // The full renderer (tables, math, highlighting) loads on first use to keep the first paint light.
 const Rich = lazy(() => import('./Rich'))
 
-export function Md({ t, bare = false, cites, blocks = false }: { t: string; bare?: boolean; cites?: CiteMap; blocks?: boolean }) {
+export function Md({ t, bare = false, cites, blocks = false, fadeFrom }: { t: string; bare?: boolean; cites?: CiteMap; blocks?: boolean; fadeFrom?: number }) {
   return (
     <Suspense fallback={<p className="whitespace-pre-wrap">{t}</p>}>
-      <Rich t={t} bare={bare} cites={cites} blocks={blocks} />
+      <Rich t={t} bare={bare} cites={cites} blocks={blocks} fadeFrom={fadeFrom} />
     </Suspense>
   )
 }

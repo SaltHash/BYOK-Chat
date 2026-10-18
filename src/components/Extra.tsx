@@ -423,7 +423,7 @@ export function DataTab() {
         await durableEraseAll().catch(() => {})
         location.reload()
       })() }} />}
-      {cf === 3 && <Modal close={() => setCf(0)}><section role="dialog" aria-modal="true" aria-labelledby="export-title" className="w-full max-w-xl space-y-5 rounded-2xl border border-hov bg-bg p-5 shadow-2xl">
+      {cf === 3 && <Modal close={() => setCf(0)}><section role="dialog" aria-modal="true" aria-labelledby="export-title" className="w-full max-w-xl space-y-5 rounded-2xl border border-bor bg-bg p-5 shadow-2xl">
         <div><h2 id="export-title" className="text-lg font-semibold">Export data</h2><p className="mt-1 text-sm text-mu">Choose the data to include in this file.</p></div>
         <div className="grid grid-cols-2 gap-2 rounded-xl bg-surf p-3 sm:grid-cols-3">{categories.map(([id, label]) => <Checkbox key={id} checked={exports[id]} set={(checked) => setExports({ ...exports, [id]: checked })} label={label} />)}</div>
         {exports.eps && <div className="rounded-xl bg-surf p-3"><Checkbox checked={withKeys} set={setWithKeys} label="Include API keys" /></div>}
@@ -433,13 +433,13 @@ export function DataTab() {
         </div>
         <div className="flex justify-end gap-2"><Btn v="soft" onClick={() => setCf(0)}>Cancel</Btn><Btn v="solid" icon={Download} onClick={() => { void exp(); setCf(0) }}>Export</Btn></div>
       </section></Modal>}
-      {pendingEnc && <Modal close={() => setPendingEnc(null)}><section role="dialog" aria-modal="true" aria-labelledby="decrypt-title" className="w-full max-w-sm space-y-4 rounded-2xl border border-hov bg-bg p-5 shadow-2xl">
+      {pendingEnc && <Modal close={() => setPendingEnc(null)}><section role="dialog" aria-modal="true" aria-labelledby="decrypt-title" className="w-full max-w-sm space-y-4 rounded-2xl border border-bor bg-bg p-5 shadow-2xl">
         <div><h2 id="decrypt-title" className="text-lg font-semibold">Encrypted file</h2><p className="mt-1 text-sm text-mu">This data file is password-protected. Enter the password used when it was exported.</p></div>
         <Input type="password" value={impPw} set={setImpPw} placeholder="File password" />
         {impErr && <p className="text-sm text-er">{impErr}</p>}
         <div className="flex justify-end gap-2"><Btn v="soft" onClick={() => setPendingEnc(null)}>Cancel</Btn><Btn v="solid" disabled={!impPw} onClick={() => void decryptAndLoad()}>Decrypt</Btn></div>
       </section></Modal>}
-      {fileData && <Modal close={() => setFileData(null)}><section role="dialog" aria-modal="true" aria-labelledby="import-title" className="w-full max-w-xl space-y-5 rounded-2xl border border-hov bg-bg p-5 shadow-2xl">
+      {fileData && <Modal close={() => setFileData(null)}><section role="dialog" aria-modal="true" aria-labelledby="import-title" className="w-full max-w-xl space-y-5 rounded-2xl border border-bor bg-bg p-5 shadow-2xl">
         <div><h2 id="import-title" className="text-lg font-semibold">Import data</h2><p className="mt-1 text-sm text-mu">Choose the parts of this file to import. Sections not included in the file are unavailable.</p></div>
         <div className="grid grid-cols-2 gap-2 rounded-xl bg-surf p-3 sm:grid-cols-3">{categories.map(([id, label]) => <Checkbox key={id} checked={imports[id]} disabled={!available[id]} set={(checked) => setImports({ ...imports, [id]: checked })} label={label} />)}</div>
         <div className="rounded-xl bg-surf p-3"><Checkbox checked={merge} set={setMerge} label="Merge with existing data" /></div>

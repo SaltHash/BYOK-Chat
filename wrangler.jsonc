@@ -13,11 +13,12 @@
   "assets": {
     "directory": "./dist",
     "binding": "ASSETS",
-    // SPA fallback: unknown non-API paths serve index.html with HTTP 200,
-    // including paths that look like missing assets (/assets/foo.js).
-    // server.mjs serves the shell for unknown extensionless paths but 404s
-    // asset-like paths, so this parity gap is intentional on Cloudflare only.
-    "not_found_handling": "single-page-application",
+    // No SPA fallback on the asset layer: missing files (including stale
+    // hashed chunks like /assets/foo.js) 404, matching server.mjs. The app
+    // routes entirely on the URL hash, so no unknown server path needs the
+    // shell. worker/index.mjs keeps the extension-aware fallback for direct
+    // Worker hits (shell for extensionless paths, JSON 404 for assets).
+    "not_found_handling": "none",
     // Only API requests run the Worker before asset routing; everything else
     // is served as static assets (and does not count as a Worker request).
     "run_worker_first": ["/api", "/api/*"]

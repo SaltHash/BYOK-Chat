@@ -113,7 +113,7 @@ export function SyncBox() {
       {status && <p className="text-xs text-mu">{status}</p>}
       {linked && (
         <Modal close={() => setLinked(null)}>
-          <section role="dialog" aria-modal="true" aria-labelledby="merge-title" className="w-full max-w-lg space-y-4 rounded-2xl border border-hov bg-bg p-5 shadow-2xl">
+          <section role="dialog" aria-modal="true" aria-labelledby="merge-title" className="w-full max-w-lg space-y-4 rounded-2xl border border-bor bg-bg p-5 shadow-2xl">
             <div>
               <h2 id="merge-title" className="text-lg font-semibold">You are linking a device</h2>
               <p className="mt-1 text-sm text-mu">Both devices already hold data. How should this device combine them? Chats and workspaces are de-duplicated either way, and folders with the same name become one folder.</p>

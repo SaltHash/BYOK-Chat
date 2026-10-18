@@ -1,6 +1,6 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useShallow } from 'zustand/react/shallow'
-import { Plus, Clock, Search, PanelLeftClose, Pin, Pencil, Trash2, MessageSquare, Server, ListMusic, ScrollText, Terminal, Wrench, Settings, Palette, Lock, PanelRight, Folder, FolderPlus, FolderMinus, ChevronRight, Bookmark, Download } from 'lucide-react'
+import { Plus, Clock, Search, PanelLeftClose, Pin, Pencil, Trash2, MessageSquare, Server, ListMusic, ScrollText, Terminal, Wrench, Settings, Palette, PanelRight, Folder, FolderPlus, FolderMinus, ChevronRight, Bookmark, Download } from 'lucide-react'
 import { useS, chatMd, dl, THEMES, DARK_THEMES, LIGHT_THEMES, themeKeyOf, DEFAULT_LIBRARY_SHOW, featOn, type Chat, type FeatureId } from '../store'
 import { searchChats } from '../recall'
 import { clampSidebarWidth } from '../layout'
@@ -416,7 +416,7 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
   const item = 'flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm hover:bg-surf'
   const safeWidth = clampSidebarWidth(width)
   return (
-    <aside style={{ width: safeWidth, maxWidth: '90vw' }} className="z-20 flex min-w-0 shrink-0 flex-col gap-3 bg-side p-3 max-md:fixed max-md:inset-y-0">
+    <aside style={{ width: safeWidth, maxWidth: '90vw' }} className="z-20 flex min-w-0 shrink-0 flex-col gap-3 border-r border-bor bg-side p-3 max-md:fixed max-md:inset-y-0">
       <div className="flex gap-2">
         <Btn v="solid" icon={s.prefs.temporaryByDefault ? Clock : Plus} title={s.prefs.temporaryByDefault ? 'New temporary chat' : 'New chat'} className="flex-1" onClick={() => s.newChat()}>{s.prefs.temporaryByDefault ? 'Temporary chat' : 'New chat'}</Btn>
         <Btn icon={s.prefs.temporaryByDefault ? Plus : Clock} title={s.prefs.temporaryByDefault ? 'New regular chat' : 'New temporary chat'} onClick={() => s.newChat(!s.prefs.temporaryByDefault)} />
@@ -451,12 +451,12 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
         {!!pinned.length && <div><div className="px-2.5 pb-1 text-xs font-medium text-mu">Pinned</div>{rows(pinned, 'pinned')}</div>}
         <div className="rounded-lg">
           <div className="px-2.5 pb-1 text-xs font-medium text-mu">Temporary chats</div>
-          {temporary.map((c) => <div key={c.id} className="group flex items-center rounded-lg pr-2 text-sm hover:bg-surf">
-            <button onClick={() => s.patch({ chat: c.id })} className={cx('flex min-w-0 flex-1 items-center gap-2.5 px-2.5 py-2 text-left', s.chat === c.id && 'bg-hov')}>
+          {temporary.map((c) => <div key={c.id} className={cx('group flex items-center rounded-lg pr-2 text-sm', s.chat === c.id ? 'bg-hov' : 'hover:bg-surf')}>
+            <button onClick={() => s.patch({ chat: c.id })} className="flex min-w-0 flex-1 items-center gap-2.5 rounded-lg px-2.5 py-2 text-left">
               <Clock size={15} className="shrink-0 text-mu" /><span className="truncate">{c.title}</span>
             </button>
             <span title={c.expiresAt ? `Deletes in ${timeLeft(c)}` : 'Deletes when you leave'} className="shrink-0 text-xs text-mu">{timeLeft(c)}</span>
-            <button title="Delete chat" onClick={() => setDeleteId(c.id)} className={cx(act, 'ml-1 hidden group-hover:grid hover:text-er')}><Trash2 size={14} /></button>
+            <button title="Delete chat (hold Shift to skip confirmation)" onClick={(e) => del(c.id, e.shiftKey)} className={cx(act, 'ml-1 hidden group-hover:grid hover:text-er')}><Trash2 size={14} /></button>
           </div>)}
           {!temporary.length && <p className="px-2.5 py-1 text-sm text-mu">No temporary chats. Nothing to clean up, nice.</p>}
         </div>
@@ -511,7 +511,6 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
         <Btn icon={Settings} className="flex-1 justify-start" onClick={() => cfg('eps')}>Settings</Btn>
         <Btn icon={Palette} title={`Theme: ${THEMES[themeKeyOf(s)]}`} onClick={() => s.patch(s.themeMode === 'light' ? { themeLight: thNext as typeof s.themeLight } : { themeDark: thNext as typeof s.themeDark })} />
       </div>
-      <p className="flex items-center gap-1.5 px-1 text-xs text-mu"><Lock size={12} />Your keys never leave this browser. Pinky promise.</p>
       {menu && (
         <div onMouseDown={(e) => e.stopPropagation()} style={{ left: Math.min(menu.x, Math.max(8, (typeof window !== 'undefined' ? window.innerWidth : 0) - 216)), top: Math.min(menu.y, Math.max(8, (typeof window !== 'undefined' ? window.innerHeight : 0) - (60 + (s.folders.length + 1) * 36))) }} className="fixed z-40 w-52 rounded-xl bg-hov p-1.5">
           <button onClick={() => { s.moveChat(menu.id, ''); setMenu(null) }} className={item}><FolderMinus size={16} className="text-mu" />No folder</button>

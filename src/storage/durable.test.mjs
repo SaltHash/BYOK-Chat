@@ -25,6 +25,18 @@ test('compact drops expired temp chats and old reasoning', () => {
   assert.equal(out[0].msgs[0].reasoning, undefined)
 })
 
+test('compact keeps the latest reasoning trace of every chat', () => {
+  // Regression: keying the last-reasoning map by a stringified chat used to
+  // collapse all chats onto "[object Object]", dropping all but one trace.
+  const chats = [
+    { id: 'a', msgs: [{ id: 'm1', r: 'assistant', reasoning: 'first' }, { id: 'm2', r: 'user' }] },
+    { id: 'b', msgs: [{ id: 'm3', r: 'assistant', reasoning: 'second' }] },
+  ]
+  const { chats: out } = compactChatsForDurable(chats)
+  assert.equal(out[0].msgs[0].reasoning, 'first')
+  assert.equal(out[1].msgs[0].reasoning, 'second')
+})
+
 test('blob memory fallback stores and retrieves', async () => {
   await blobPut('test-id', 'hello-blob')
   assert.equal(await blobGet('test-id'), 'hello-blob')

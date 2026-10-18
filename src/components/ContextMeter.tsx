@@ -97,7 +97,7 @@ export function ContextMeter() {
             ) : (
               <p className="px-2 text-xs text-mu">No replies yet — reported tokens appear here after the first answer.</p>
             )}
-            <div className="border-t border-hov pt-2">
+            <div className="border-t border-bor pt-2">
               <div className="px-2 pb-1 text-xs text-mu">This chat</div>
               <Row k="Context tokens" v={`${fmtInt(tok)} of ${fmtInt(limit)}`} />
               <Row k="Cost" v={costLabel} />

@@ -49,7 +49,7 @@ export function SentMentionBanner({ kind }: { kind: 'search' | 'research' }) {
 export function MentionInfo({ m, cmds, className, style }: { m: Mention; cmds: Cmd[]; className?: string; style?: CSSProperties }) {
   const I = mentionIcon(m, cmds)
   return (
-    <div style={style} className={cx('pointer-events-none z-30 w-64 max-w-[80vw] rounded-xl border border-hov bg-hov p-2.5 shadow-lg', className)}>
+    <div style={style} className={cx('pointer-events-none z-30 w-64 max-w-[80vw] rounded-xl border border-bor bg-hov p-2.5 shadow-lg', className)}>
       <div className="flex items-center gap-2 text-sm font-medium">
         <I size={14} className="shrink-0 text-ac" aria-hidden="true" />
         <span className="truncate">{m.label}</span>

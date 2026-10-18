@@ -74,7 +74,7 @@ export function SourcesPanel({ msgId, text, sources, defaultOpen, strict, open, 
         <button
           onClick={() => setIsOpen(!isOpen)}
           aria-expanded={isOpen}
-          className="inline-flex min-h-9 items-center gap-2 rounded-full border border-hov bg-surf px-3 py-1.5 text-sm text-tx transition-colors hover:bg-hov"
+          className="inline-flex min-h-9 items-center gap-2 rounded-full border border-bor bg-surf px-3 py-1.5 text-sm text-tx transition-colors hover:bg-hov"
         >
           <BookOpen size={14} className="text-ac" />
           Sources · {sources.length}

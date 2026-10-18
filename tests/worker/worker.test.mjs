@@ -246,6 +246,29 @@ test('non-API requests fall back to the ASSETS binding', async () => {
   assert.match(await res.text(), /id="root"/)
 })
 
+test('a missing asset-like path 404s while extensionless paths get the shell', async () => {
+  // Mirrors server.mjs: `not_found_handling: "none"` makes the asset layer 404
+  // missing files, and the Worker must not answer a missing .js with HTML.
+  const env = {
+    ASSETS: {
+      fetch: async (req) => {
+        const path = new URL(req.url).pathname
+        if (path === '/index.html') return new Response('<div id="root"></div>', { status: 200, headers: { 'content-type': 'text/html; charset=utf-8' } })
+        return new Response('not found', { status: 404 })
+      },
+    },
+  }
+  const asset = await call('/assets/missing.js', {}, env)
+  assert.equal(asset.status, 404)
+  isJson(asset)
+  assert.equal((await asset.json()).error, 'Not found')
+
+  const route = await call('/some/spa/route', {}, env)
+  assert.equal(route.status, 200)
+  assert.match(route.headers.get('content-type') || '', /text\/html/)
+  assert.match(await route.text(), /id="root"/)
+})
+
 test('cross-origin sync writes are refused, token or not', async () => {
   const token = `byok1-${'a'.repeat(16)}-${'b'.repeat(43)}`
   const crossOrigin = (path, body) => call(path, {

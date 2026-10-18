@@ -12,12 +12,13 @@
   --color-er: var(--er);
   --color-code: var(--code);
   --color-codeh: var(--codeh);
+  --color-bor: var(--bor);
   --font-sans: var(--font-body, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif);
 }
 
 /* c2..c5 are the syntax colors for strings, numbers, titles and types in each theme */
 [data-t=plum] { color-scheme: dark; --bg:#17101c; --side:#120c16; --surf:#211828; --hov:#2c2036; --tx:#f3eaf7; --mu:#a893b4; --ac:#dc8ad8; --acx:#1b1020; --er:#ff8fa3; --code:#100b15; --codeh:#2f2040; --c2:#9fe3c5; --c3:#f2b98b; --c4:#8fb9ff; --c5:#c7a6ff }
-[data-t=claude] { color-scheme: dark; --bg:#232322; --side:#1f1f1d; --surf:#2b2b29; --hov:#353532; --tx:#e6e4e0; --mu:#aeaca6; --ac:#d97757; --acx:#121110; --er:#f28b82; --code:#151310; --codeh:#1f1f1d; --c2:#7ec699; --c3:#f4a58a; --c4:#7cace8; --c5:#e8c47c }
+[data-t=claude] { color-scheme: dark; --bg:#1c1c1b; --side:#181817; --surf:#252524; --hov:#2f2f2e; --tx:#ece7db; --mu:#aea797; --ac:#d97757; --acx:#181817; --er:#f28b82; --code:#141413; --codeh:#181817; --c2:#7ec699; --c3:#f4a58a; --c4:#7cace8; --c5:#e8c47c }
 [data-t=obsidian] { color-scheme: dark; --bg:#0f141c; --side:#090c10; --surf:#161e2b; --hov:#222e40; --tx:#e1e7ed; --mu:#788896; --ac:#2dd4bf; --acx:#0b1e1c; --er:#f87171; --code:#0a0d12; --codeh:#131a24; --c2:#34d399; --c3:#fbbf24; --c4:#38bdf8; --c5:#c084fc }
 [data-t=bronze] { color-scheme: dark; --bg:#1b1512; --side:#120e0c; --surf:#251e1a; --hov:#362b25; --tx:#f3ebe6; --mu:#9e8d85; --ac:#f59e0b; --acx:#1b1512; --er:#ef4444; --code:#130e0b; --codeh:#201814; --c2:#a3e635; --c3:#fb923c; --c4:#facc15; --c5:#e879f9 }
 [data-t=paper] { color-scheme: light; --bg:#fbfbf9; --side:#f1f1ec; --surf:#efefe9; --hov:#e4e4dc; --tx:#1d1d1b; --mu:#6f6f66; --ac:#3b5bdb; --acx:#ffffff; --er:#c92a2a; --code:#e6e5dd; --codeh:#d3d2c6; --c2:#2b8a3e; --c3:#d9480f; --c4:#7048e8; --c5:#0b7285 }
@@ -94,6 +95,26 @@
 /* Deep-link flash for palette jumps to an individual setting. */
 .setting-flash { outline: 2px solid var(--ac); outline-offset: 3px; border-radius: 12px; transition: outline-color 1.2s ease; }
 @media (prefers-reduced-motion: reduce) { .setting-flash { outline: none; } }
+
+/* Glass composer: a translucent, blurred panel. Falls back to an opaque surface
+   where backdrop-filter is unsupported. */
+/* Glass: a top-lit gradient over a light blur, so the surface reads as layered
+   rather than flat frosted. */
+.glass-composer {
+  background: linear-gradient(180deg,
+    color-mix(in srgb, var(--surf) 58%, transparent),
+    color-mix(in srgb, var(--surf) 78%, transparent));
+  -webkit-backdrop-filter: blur(10px) saturate(160%);
+  backdrop-filter: blur(10px) saturate(160%);
+}
+
+/* Hairline edges: panes, menus and dialogs read as separate surfaces. */
+/* --bor is the single border color used across the app; --edge aliases it. */
+:root { --bor: color-mix(in srgb, var(--hov) 80%, var(--mu)); --edge: var(--bor); }
+.edge-border, .settings-dropdown, [role="dialog"] > div { border: 1px solid var(--edge); }
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .glass-composer { background: var(--surf); }
+}
 
 /* Mention pills: the composer mirrors the draft into a backdrop layer behind a
    transparent textarea. Equal and opposite padding/margin keeps a pill from

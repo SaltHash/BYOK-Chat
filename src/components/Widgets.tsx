@@ -90,7 +90,7 @@ const UsageWidget = memo(({ handle }: WidgetProps) => {
   return (
     <WidgetCard handle={handle} icon={Layers} t="Usage">
       {usageMode === 'success' ? grouped.map((x) => <div key={x.key} className="flex items-center gap-2 text-sm"><span className="flex-1 truncate">{x.key}</span><span className="text-xs text-ac">{x.ok} ok</span><span className="text-xs text-er">{x.bad} failed</span></div>) : grouped.map((x) => <div key={x.key} className="flex items-center gap-2 text-sm"><span className="flex-1 truncate">{x.key}</span><span className="text-xs text-mu">{usageText(x.tin, x.tout)}</span></div>)}
-      {usageTotal && <div className="border-t border-hov pt-2 text-xs"><span className="text-mu">Total usage</span><span className="float-right font-medium">{usageMode === 'tokens' ? usageText(totals.tin, totals.tout) : `${totals.ok} ok · ${totals.bad} fails`}</span></div>}
+      {usageTotal && <div className="border-t border-bor pt-2 text-xs"><span className="text-mu">Total usage</span><span className="float-right font-medium">{usageMode === 'tokens' ? usageText(totals.tin, totals.tout) : `${totals.ok} ok · ${totals.bad} fails`}</span></div>}
       {!grouped.length && <p className="text-xs text-mu">No usage in this period.</p>}
     </WidgetCard>
   )
@@ -262,7 +262,7 @@ export function Widgets({ width = 320 }: { width?: number }) {
   }, [])
 
   return (
-    <aside style={{ width: safeWidth }} className="z-10 flex min-w-0 shrink-0 flex-col gap-3 overflow-y-auto bg-side p-3 max-lg:hidden">
+    <aside style={{ width: safeWidth }} className="z-10 flex min-w-0 shrink-0 flex-col gap-3 overflow-y-auto border-l border-bor bg-side p-3 max-lg:hidden">
       <div className="flex items-center justify-between px-1">
         <span className="text-sm font-medium">Widgets</span>
         <Btn sm icon={X} title="Close panel" onClick={() => patch({ rail: false })} />

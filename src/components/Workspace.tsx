@@ -128,8 +128,8 @@ export function FilePreview({ path, language, content }: { path: string; languag
     return (
       <div className="min-h-0 flex-1 overflow-auto px-4 py-3">
         <table className="w-full border-collapse text-xs">
-          <thead><tr>{rows[0].map((c, i) => <th key={i} className="border border-hov bg-surf px-2 py-1 text-left font-semibold">{c}</th>)}</tr></thead>
-          <tbody>{rows.slice(1).map((r, i) => <tr key={i}>{r.map((c, j) => <td key={j} className="border border-hov px-2 py-1">{c}</td>)}</tr>)}</tbody>
+          <thead><tr>{rows[0].map((c, i) => <th key={i} className="border border-bor bg-surf px-2 py-1 text-left font-semibold">{c}</th>)}</tr></thead>
+          <tbody>{rows.slice(1).map((r, i) => <tr key={i}>{r.map((c, j) => <td key={j} className="border border-bor px-2 py-1">{c}</td>)}</tr>)}</tbody>
         </table>
       </div>
     )
@@ -282,7 +282,7 @@ export function WorkspaceTile({ msg, live, workspace, selectedRevisionId, onOpen
   }
 
   return (
-    <section aria-label="Workspace files" className="space-y-2 rounded-xl border border-hov bg-surf/50 p-3">
+    <section aria-label="Workspace files" className="space-y-2 rounded-xl border border-bor bg-surf/50 p-3">
       <div className="flex items-center gap-2 text-sm">
         <Files size={15} className="shrink-0 text-ac" />
         {renaming ? (
@@ -304,7 +304,7 @@ export function WorkspaceTile({ msg, live, workspace, selectedRevisionId, onOpen
         )}
         {total > WORKSPACE_MAX_FILES && <span className="shrink-0 text-xs text-mu">(showing first {WORKSPACE_MAX_FILES})</span>}
       </div>
-      <div className="max-h-200 overflow-y-auto space-y-1 border-t border-hov pt-2 mt-1">
+      <div className="max-h-200 overflow-y-auto space-y-1 border-t border-bor pt-2 mt-1">
         <WorkspaceFileTree
           tree={folderTree}
           expanded={expandedFolders}
@@ -339,7 +339,7 @@ function WorkspaceRevisionPicker({ workspace, selectedId, onSelect, className }:
     <div className={cx('relative', className)}>
       <button
         onClick={() => setOpen(!open)}
-        className="flex w-full items-center gap-2 rounded-lg border border-hov bg-bg px-2.5 py-1.5 text-left text-sm hover:bg-hov"
+        className="flex w-full items-center gap-2 rounded-lg border border-bor bg-bg px-2.5 py-1.5 text-left text-sm hover:bg-hov"
         aria-haspopup="listbox"
         aria-expanded={open}
       >
@@ -349,7 +349,7 @@ function WorkspaceRevisionPicker({ workspace, selectedId, onSelect, className }:
         <span className="shrink-0">{open ? '▲' : '▼'}</span>
       </button>
       {open && (
-        <div className="absolute bottom-full left-0 right-0 mb-1 max-h-60 overflow-y-auto rounded-xl border border-hov bg-surf shadow-lg z-10">
+        <div className="absolute bottom-full left-0 right-0 mb-1 max-h-60 overflow-y-auto rounded-xl border border-bor bg-surf shadow-lg z-10">
           {workspace.revisions.map((rev, i) => (
             <button
               key={rev.id}
@@ -523,7 +523,7 @@ export function WorkspacePanel({ msg, live, workspace, selectedRevisionId, setSe
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex items-center gap-2 border-b border-hov px-3 py-2">
+      <div className="flex items-center gap-2 border-b border-bor px-3 py-2">
         <Files size={15} className="shrink-0 text-ac" />
         {renaming ? (
           <input autoFocus value={nameDraft} onChange={(e) => setNameDraft(e.target.value)} onBlur={saveName} onKeyDown={(e) => { if (e.key === 'Enter') saveName(); if (e.key === 'Escape') setRenaming(false) }} className="min-w-0 flex-1 rounded-md bg-bg px-2 py-1 text-sm outline-none focus:ring-2 focus:ring-ac/40" />
@@ -542,7 +542,7 @@ export function WorkspacePanel({ msg, live, workspace, selectedRevisionId, setSe
         <Btn sm icon={Share2} title="Share via GitHub Gist (optional token)" onClick={() => setGistOpen(true)} />
         <Btn sm icon={X} title="Close workspace panel" onClick={() => { setSelectedFilePath(null); onClose(); }} />
       </div>
-      <div role="tree" aria-label="Workspace files" className="min-h-0 overflow-y-auto border-b border-hov px-2 py-2" style={{ flex: `0 0 ${split * 100}%` }}>
+      <div role="tree" aria-label="Workspace files" className="min-h-0 overflow-y-auto border-b border-bor px-2 py-2" style={{ flex: `0 0 ${split * 100}%` }}>
         <WorkspaceFileTree
           tree={folderTree}
           expanded={expandedFolders}
@@ -670,7 +670,7 @@ function GistModal({ workspace, revision, close }: { workspace: Workspace; revis
   }
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-black/50 p-4" onMouseDown={(e) => { if (e.target === e.currentTarget) close() }}>
-      <div role="dialog" aria-modal="true" aria-label="Share workspace via Gist" className="w-full max-w-md space-y-4 rounded-2xl border border-hov bg-bg p-5">
+      <div role="dialog" aria-modal="true" aria-label="Share workspace via Gist" className="w-full max-w-md space-y-4 rounded-2xl border border-bor bg-bg p-5">
         <div className="flex items-center gap-2 font-semibold"><Share2 size={18} className="text-ac" />Share via GitHub Gist</div>
         <p className="text-sm text-mu">Optional: shares the {revision.files.length} file{revision.files.length === 1 ? '' : 's'} of “{revision.name}” as a gist. Needs a classic personal access token with the <b>gist</b> scope; it stays in this browser.</p>
         <Field label="GitHub token (gist scope)">

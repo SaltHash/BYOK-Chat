@@ -2,7 +2,7 @@
 /* End-to-end smoke test for the Cloudflare Workers + Static Assets
  * deployment model. Boots the real `wrangler dev` runtime (workerd) with
  * wrangler.jsonc, then exercises the deployed HTTP surface over the network:
- * static files, SPA fallback, /api/* routing, error handling and sync.
+ * static files, unknown-path 404s, /api/* routing, error handling and sync.
  *
  * Run with `npm run test:worker` (requires a prior `npm run build`).
  * This is intentionally not part of `npm test` because it boots workerd. */
@@ -80,20 +80,20 @@ try {
     assert((await res.text()).includes('id="root"'), 'missing root element')
   })
 
-  await check('SPA fallback serves index.html for unknown client routes', async () => {
+  await check('extensionless client routes still serve the SPA shell (matches server.mjs)', async () => {
+    // A non-navigation request that misses an asset invokes the Worker, whose
+    // fallback serves the shell for extensionless paths, exactly like Node.
     const res = await get('/chats/example-route')
     assert(res.status === 200, `status ${res.status}`)
     assert((await res.text()).includes('id="root"'), 'missing root element')
   })
 
-  await check('missing static assets fall back to the SPA shell on Cloudflare (documented platform behavior)', async () => {
-    // Cloudflare's `not_found_handling: single-page-application` answers the
-    // SPA shell for unknown paths, including asset-like ones. The Node server
-    // (server.mjs) 404s missing asset-like paths instead; this check pins the
-    // deployed Worker contract so the difference stays intentional.
+  await check('missing static assets 404 instead of serving the SPA shell (matches server.mjs)', async () => {
+    // A 200 text/html answer for a missing .js path breaks dynamic imports
+    // and confuses caches. server.mjs 404s missing asset-like paths, and the
+    // Worker must too.
     const res = await get('/assets/definitely-missing.js')
-    assert(res.status === 200, `status ${res.status}`)
-    assert(await res.text(), 'expected the SPA shell body')
+    assert(res.status === 404, `status ${res.status}`)
   })
 
   await check('built JS/CSS assets are served with correct types', async () => {

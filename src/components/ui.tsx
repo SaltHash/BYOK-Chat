@@ -39,7 +39,7 @@ export const Surface = ({ children, className, padded = true }: { children: Reac
 /* Single dropdown-menu primitive: one bg, radius, shadow, max-h for Pop,
  * SearchSelect, Palette and ModelMenu. */
 export const Menu = ({ children, className }: { children: ReactNode; className?: string }) => (
-  <div className={cx('rounded-xl bg-hov p-1.5 shadow-md', className)}>{children}</div>
+  <div className={cx('edge-border rounded-xl bg-hov p-1.5 shadow-md', className)}>{children}</div>
 )
 
 export function Checkbox({ checked, set, label, disabled = false, className = '' }: { checked: boolean; set: (v: boolean) => void; label: string; disabled?: boolean; className?: string }) {

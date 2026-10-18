@@ -37,7 +37,7 @@ function ModelMenu({ close, cfg }: { close: () => void; cfg: (t: string) => void
         <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-mu" />
         <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search" className="h-9 w-full rounded-lg bg-surf pl-9 pr-3 text-sm outline-none" />
       </div>
-      {activeModel && effortChoices.length > 0 && <div className="shrink-0 border-b border-hov px-2.5 py-3" onClick={(e) => e.stopPropagation()}>
+      {activeModel && effortChoices.length > 0 && <div className="shrink-0 border-b border-bor px-2.5 py-3" onClick={(e) => e.stopPropagation()}>
         <div className="mb-1 flex items-center justify-between text-xs"><span className="truncate pr-2 font-medium text-tx">Effort · {modelNameOf(activeEp!, activeModel).replace(/^~+/, '')}</span><span className="text-ac capitalize">{activeEffort}</span></div>
         <RangeSlider label={`${modelNameOf(activeEp!, activeModel).replace(/^~+/, '')} reasoning effort`} min={0} max={effortChoices.length - 1} step={1} value={effortIndex} valueText={effortChoices[effortIndex]} set={(n) => s.patch({ effort: { ...s.effort, [activeModel]: effortChoices[n] } })} className="mt-1 w-full" />
         <div className="mt-1 flex justify-between text-xs capitalize text-mu"><span>{effortChoices[0]}</span><span>{effortChoices.at(-1)}</span></div>
@@ -63,7 +63,7 @@ function ModelMenu({ close, cfg }: { close: () => void; cfg: (t: string) => void
       ))}
       {!L.length && <p className="px-2.5 py-3 text-sm text-mu">Nothing here yet. Suspiciously quiet.</p>}
       </div>
-      <div className="shrink-0 border-t border-hov px-1 pt-2">
+      <div className="shrink-0 border-t border-bor px-1 pt-2">
         <Item icon={Settings} className="bg-surf/70 hover:bg-surf" onClick={() => { close(); cfg(t === 'pl' && plsOn ? 'pls' : 'eps') }}>Manage…</Item>
       </div>
     </div>
@@ -256,12 +256,13 @@ export function Composer({ cfg }: { cfg: (t: string) => void }) {
     if (typed?.kind === 'search' && typed.m) { s.patch({ draft: stripMention(v, typed.m) }); ta.current?.focus() }
   }
   return (
-    <div className="mx-auto w-full self-center px-4 pb-4" style={{ maxWidth: composerWidth(s.prefs.chatWidth) }}>
+    <div className="w-full self-center">
+      <div className="mx-auto w-full px-4" style={{ maxWidth: composerWidth(s.prefs.chatWidth) }}>
       <Notice cfg={cfg} />
-      <div ref={box} className="relative rounded-2xl bg-surf p-3" onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); add(e.dataTransfer.files) }}>
+      <div ref={box} className={cx('relative rounded-2xl p-3 transition-colors', s.prefs.glassComposer !== false ? 'glass-composer border border-hov hover:border-bor focus-within:border-bor shadow-lg shadow-black/10' : 'edge-border bg-surf hover:border-bor focus-within:border-bor')} onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); add(e.dataTransfer.files) }}>
         {banner && <MentionBanner kind={banner} onDismiss={dismissBanner} warning={banner === 'search' && !searchEnabled ? 'Web search is off.' : undefined} onEnable={banner === 'search' && !searchEnabled ? () => { s.patch({ features: { ...s.features, tools: true }, tools: { ...s.tools, search: true } }) } : undefined} />}
         {menu && !menuOff && (
-          <div className="absolute inset-x-0 bottom-full mb-2 rounded-xl bg-hov p-1.5">
+          <div className="edge-border absolute inset-x-0 bottom-full mb-2 rounded-xl bg-hov p-1.5">
             {menu.length ? menu.map((o, i) => (
               <Item key={o.k} icon={o.icon} on={i === hl} sub={o.hint} onClick={() => { o.pick(); ta.current?.focus() }}>{o.label}</Item>
             )) : <p className="px-2.5 py-3 text-sm text-mu">{tw ? 'No tool matches.' : 'No enabled command matches. Manage commands in Settings.'}</p>}
@@ -324,7 +325,7 @@ export function Composer({ cfg }: { cfg: (t: string) => void }) {
             onCompositionEnd={() => setIme(false)}
             onBlur={() => setActive(null)}
             onPaste={(e) => { if (e.clipboardData.files.length) { e.preventDefault(); add(e.clipboardData.files) } }}
-            className={cx('mention-input relative max-h-52 w-full resize-none rounded-md bg-transparent px-1 py-1 outline-none focus-visible:ring-2 focus-visible:ring-ac/40', ime ? 'text-tx' : 'text-transparent caret-ac')}
+            className={cx('mention-input relative max-h-52 w-full resize-none rounded-md bg-transparent px-1 py-1 outline-none', ime ? 'text-tx' : 'text-transparent caret-ac')}
           />
         </div>
         {active && !ime && (
@@ -390,7 +391,11 @@ export function Composer({ cfg }: { cfg: (t: string) => void }) {
           </button>
         </div>
       </div>
-      <p className="pt-2 text-center text-xs text-mu">{`${s.prefs.enterSends ? 'Enter to send · Shift+Enter for a new line' : 'Enter adds a new line · send with the button'} · ${fmt(s.keys.palette ?? 'Mod+K')} for the palette`}</p>
+      </div>
+      {/* Solid strip from the bottom of the composer to the bottom of the screen. */}
+      <div className="bg-bg px-4 pb-4">
+        <p className="mx-auto pt-2 text-center text-xs text-mu" style={{ maxWidth: composerWidth(s.prefs.chatWidth) }}>{`${s.prefs.enterSends ? 'Enter to send · Shift+Enter for a new line' : 'Enter adds a new line · send with the button'} · ${fmt(s.keys.palette ?? 'Mod+K')} for the palette`}</p>
+      </div>
     </div>
   )
 }

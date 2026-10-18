@@ -19,6 +19,15 @@ function toResponse(result) {
   return new Response(result.body === null ? null : JSON.stringify(result.body), { status: result.status, headers: result.headers })
 }
 
+/* Extension of a URL path ("" when none). Mirrors node:path.extname for the
+ * static-asset decision below without depending on node:path. */
+function pathExtension(pathname) {
+  const i = pathname.lastIndexOf('/')
+  const name = i < 0 ? pathname : pathname.slice(i + 1)
+  const dot = name.lastIndexOf('.')
+  return dot > 0 ? name.slice(dot) : ''
+}
+
 export default {
   async fetch(request, env) {
     try {
@@ -31,7 +40,23 @@ export default {
     }
     // Non-API requests are normally served before the Worker runs; this
     // fallback keeps direct Worker hits and `run_worker_first: true` working.
-    if (env?.ASSETS?.fetch) return env.ASSETS.fetch(request)
+    // It mirrors server.mjs: with `not_found_handling: "none"` the asset layer
+    // 404s missing files, so a missing asset-like path must 404 (a 200
+    // text/html answer breaks dynamic imports and confuses caches) while an
+    // extensionless path still gets the SPA shell.
+    if (env?.ASSETS?.fetch) {
+      const assetResponse = await env.ASSETS.fetch(request)
+      if (assetResponse.status !== 404) return assetResponse
+      const { pathname } = new URL(request.url)
+      if (pathExtension(pathname) && pathname !== '/index.html') {
+        return toResponse(jsonResult(404, { error: 'Not found' }))
+      }
+      const shell = await env.ASSETS.fetch(new Request(new URL('/index.html', request.url), { headers: request.headers }))
+      if (shell.status === 404) {
+        return toResponse(jsonResult(404, { error: 'Application files not found. Run npm run build first.' }))
+      }
+      return shell
+    }
     return toResponse(jsonResult(404, { error: 'Not found' }))
   },
 }

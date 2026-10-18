@@ -123,15 +123,15 @@ function MessageActions({ calls }: { calls: { id: string; name: string; argument
   return <div className="space-y-2 pt-1">
     {actions.map((call) => {
       const args = parse(call.arguments)
-      if (call.name === 'prompt_chip') return <button key={call.id} disabled={busy || used[call.id]} onClick={() => { void run(call.id, String(args.prompt ?? '')) }} className="inline-flex min-h-9 items-center gap-2 rounded-full border border-hov bg-surf px-3 py-1.5 text-sm text-tx transition-colors hover:bg-hov focus-visible:ring-2 focus-visible:ring-ac disabled:opacity-50"><CornerDownLeft size={14} className="text-ac" />{String(args.label || 'Continue')}</button>
+      if (call.name === 'prompt_chip') return <button key={call.id} disabled={busy || used[call.id]} onClick={() => { void run(call.id, String(args.prompt ?? '')) }} className="inline-flex min-h-9 items-center gap-2 rounded-full border border-bor bg-surf px-3 py-1.5 text-sm text-tx transition-colors hover:bg-hov focus-visible:ring-2 focus-visible:ring-ac disabled:opacity-50"><CornerDownLeft size={14} className="text-ac" />{String(args.label || 'Continue')}</button>
       const options = Array.isArray(args.options) ? args.options.map((o: any) => typeof o === 'string' ? { label: o, prompt: o } : o).filter((o: any) => o && typeof o.label === 'string').slice(0, 6) : []
       const selected = chosen[call.id] ?? []
       const multi = args.mode === 'multiple'
       const pick = (index: number) => setChosen((v) => ({ ...v, [call.id]: multi ? selected.includes(index) ? selected.filter((x) => x !== index) : [...selected, index] : [index] }))
-      return <section key={call.id} aria-label="Assistant choice" className="max-w-xl rounded-xl border border-hov bg-surf p-4">
+      return <section key={call.id} aria-label="Assistant choice" className="max-w-xl rounded-xl border border-bor bg-surf p-4">
         <h3 className="text-sm font-medium">{String(args.question || 'Choose an option')}</h3>
         <div role={multi ? 'group' : 'radiogroup'} aria-label={String(args.question || 'Choose an option')} className="mt-3 grid gap-2 sm:grid-cols-2">
-          {options.map((option: any, index: number) => <button key={index} type="button" role={multi ? 'checkbox' : 'radio'} aria-checked={selected.includes(index)} disabled={used[call.id] || busy} onClick={() => pick(index)} onKeyDown={(e) => { if (!multi && ['ArrowDown', 'ArrowRight', 'ArrowUp', 'ArrowLeft'].includes(e.key)) { e.preventDefault(); const next = (index + (e.key === 'ArrowDown' || e.key === 'ArrowRight' ? 1 : -1) + options.length) % options.length; pick(next); e.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>('[role="radio"]')[next]?.focus() } }} className={cx('flex min-h-10 items-center gap-2 rounded-lg border px-3 py-2 text-left text-sm transition-colors hover:bg-hov disabled:opacity-50', selected.includes(index) ? 'border-ac bg-ac/10' : 'border-hov')}>
+          {options.map((option: any, index: number) => <button key={index} type="button" role={multi ? 'checkbox' : 'radio'} aria-checked={selected.includes(index)} disabled={used[call.id] || busy} onClick={() => pick(index)} onKeyDown={(e) => { if (!multi && ['ArrowDown', 'ArrowRight', 'ArrowUp', 'ArrowLeft'].includes(e.key)) { e.preventDefault(); const next = (index + (e.key === 'ArrowDown' || e.key === 'ArrowRight' ? 1 : -1) + options.length) % options.length; pick(next); e.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>('[role="radio"]')[next]?.focus() } }} className={cx('flex min-h-10 items-center gap-2 rounded-lg border px-3 py-2 text-left text-sm transition-colors hover:bg-hov disabled:opacity-50', selected.includes(index) ? 'border-ac bg-ac/10' : 'border-bor')}>
             <span aria-hidden="true" className={cx('grid size-4 shrink-0 place-items-center border', multi ? 'rounded' : 'rounded-full', selected.includes(index) ? 'border-ac bg-ac text-acx' : 'border-mu/60')} >{selected.includes(index) && <Check size={11} strokeWidth={3} />}</span>{option.label}
           </button>)}
         </div>
@@ -174,21 +174,21 @@ function StreamedMd({ chunks, fade }: { chunks: string[]; fade: number }) {
    * a parse is still in flight, instead of queueing one parse per token. */
   const text = useDeferredValue(full)
   const { head, tail } = useMemo(() => splitStream(text), [text])
+  /* Characters of the reply already on screen before this render. Only text
+   * past this point fades in, and the ref moves forward after each commit. */
+  const shown = useRef(0)
+  useEffect(() => { shown.current = text.length })
+  const seen = fade > 0 ? shown.current : undefined
   return (
-    <div className="md leading-7">
-      {head && <Md t={head} blocks />}
+    <div className="md leading-7" style={fade > 0 ? { '--reply-in-duration': `${fade}s` } as React.CSSProperties : undefined}>
+      {head && <Md t={head} blocks fadeFrom={seen} />}
       {tail && (
         /* Deliberately not keyed by the settled length: remounting the tail at
-         * every block boundary threw away an in-progress text selection and
-         * re-ran the fade. The fade now plays once when the live tail first
-         * appears; finished blocks commit instantly above it. The first/last
-         * child margins are flattened so the seam between the two halves
-         * matches a normal block gap. */
-        <div
-          className={cx('[&>*:first-child]:mt-0 [&>*:last-child]:mb-0', fade > 0 && 'animate-reply-in')}
-          style={fade > 0 ? { '--reply-in-duration': `${fade}s` } as React.CSSProperties : undefined}
-        >
-          <Md t={tail} blocks />
+         * every block boundary would throw away an in-progress text selection.
+         * The first/last child margins are flattened so the seam between the
+         * two halves matches a normal block gap. */
+        <div className="[&>*:first-child]:mt-0 [&>*:last-child]:mb-0">
+          <Md t={tail} blocks fadeFrom={seen === undefined ? undefined : Math.max(0, seen - head.length)} />
         </div>
       )}
     </div>
@@ -360,7 +360,7 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
               {showRawErr ? 'Hide raw error' : 'Show raw error'}
             </button>
             {showRawErr && (
-              <pre className="overflow-x-auto whitespace-pre-wrap break-words rounded-lg bg-bg p-3 font-mono text-xs text-mu border border-hov">{(() => { try { return JSON.stringify(JSON.parse(m.t || '{}'), null, 2) } catch { return m.t || '' } })()}</pre>
+              <pre className="overflow-x-auto whitespace-pre-wrap break-words rounded-lg bg-bg p-3 font-mono text-xs text-mu border border-bor">{(() => { try { return JSON.stringify(JSON.parse(m.t || '{}'), null, 2) } catch { return m.t || '' } })()}</pre>
             )}
           </div>
         ) : hideBody ? null : (() => {
@@ -554,6 +554,20 @@ export function Chat({ side, toggle, cfg, pal }: { side: boolean; toggle: () => 
   }, [busy, liveTools, c, workspacePrefs.autoOpen, workspacePanel])
 
   const rowRef = useRef<HTMLDivElement>(null)
+  // The composer floats over the message list; track its height so the list can
+  // keep its last message clear of it and fade out just above it.
+  const composerRef = useRef<HTMLDivElement>(null)
+  const [composerH, setComposerH] = useState(0)
+  useEffect(() => {
+    const el = composerRef.current
+    if (!el) return
+    const f = () => setComposerH(el.offsetHeight)
+    f()
+    const ro = new ResizeObserver(f)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
+  const glass = s.prefs.glassComposer !== false
   const [wide, setWide] = useState(() => typeof matchMedia === 'function' && matchMedia('(min-width: 640px)').matches)
   useEffect(() => {
     const q = matchMedia('(min-width: 640px)')
@@ -592,13 +606,13 @@ export function Chat({ side, toggle, cfg, pal }: { side: boolean; toggle: () => 
       <Header side={side} toggle={toggle} cfg={cfg} pal={pal} title={c?.title ?? 'New chat'} />
       <div ref={rowRef} className="flex min-h-0 flex-1 flex-col sm:flex-row">
         <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
-          <div ref={box} onScroll={onScrollBox} className="min-h-0 flex-1 overflow-y-auto" style={{ WebkitMaskImage: 'linear-gradient(to bottom, black calc(100% - 32px), rgba(0,0,0,0.1) 100%)', maskImage: 'linear-gradient(to bottom, black calc(100% - 32px), rgba(0,0,0,0.1) 100%)' }}>
+          <div ref={box} onScroll={onScrollBox} className="absolute inset-0 overflow-y-auto" style={glass ? { paddingBottom: composerH } : { paddingBottom: composerH, WebkitMaskImage: `linear-gradient(to bottom, black calc(100% - ${composerH + 32}px), rgba(0,0,0,0.1) calc(100% - ${composerH}px))`, maskImage: `linear-gradient(to bottom, black calc(100% - ${composerH + 32}px), rgba(0,0,0,0.1) calc(100% - ${composerH}px))` }}>
             {c && c.msgs.length ? (
               <div className="mx-auto space-y-8 px-4 py-6" style={{ maxWidth: CHAT_WIDTH[s.prefs.chatWidth] }}>
                 {c.msgs.map((m, i) => <M key={m.id} m={m} cfg={cfg} last={i === c.msgs.length - 1} onOpenWorkspace={openWorkspace} onOpenResearch={openResearch} selectedWorkspaceId={workspacePanel?.mid === m.id ? selectedRevId : null} />)}
                 {c.msgs[c.msgs.length - 1]?.r === 'user' && !busy && (
                   <div className="flex justify-center pt-2">
-                    <button onClick={() => useS.getState().regen()} className="inline-flex min-h-9 items-center gap-2 rounded-full border border-hov bg-surf px-4 py-1.5 text-sm text-tx transition-colors hover:bg-hov focus-visible:ring-2 focus-visible:ring-ac">
+                    <button onClick={() => useS.getState().regen()} className="inline-flex min-h-9 items-center gap-2 rounded-full border border-bor bg-surf px-4 py-1.5 text-sm text-tx transition-colors hover:bg-hov focus-visible:ring-2 focus-visible:ring-ac">
                       <RefreshCw size={14} className="text-ac" />Get AI reply
                     </button>
                   </div>
@@ -617,17 +631,19 @@ export function Chat({ side, toggle, cfg, pal }: { side: boolean; toggle: () => 
               </div>
             )}
           </div>
-          {!atEnd && c && c.msgs.length > 0 && (
-            <button type="button" onClick={() => { stick.current = true; setAtEnd(true); followBottom.call() }} className="absolute bottom-28 left-1/2 z-10 inline-flex min-h-8 -translate-x-1/2 items-center gap-1.5 rounded-full border border-hov bg-surf px-3 py-1 text-xs text-tx shadow-md transition-colors hover:bg-hov focus-visible:ring-2 focus-visible:ring-ac">
-              <ChevronDown size={13} className="text-ac" />Jump to latest
-            </button>
-          )}
-          <Composer cfg={cfg} />
+          <div ref={composerRef} className="absolute inset-x-0 bottom-0 z-10 flex flex-col">
+            {!atEnd && c && c.msgs.length > 0 && (
+              <button type="button" onClick={() => { stick.current = true; setAtEnd(true); followBottom.call() }} className="absolute bottom-full left-1/2 z-10 mb-2 inline-flex min-h-8 -translate-x-1/2 items-center gap-1.5 rounded-full border border-bor bg-surf px-3 py-1 text-xs text-tx shadow-md transition-colors hover:bg-hov focus-visible:ring-2 focus-visible:ring-ac">
+                <ChevronDown size={13} className="text-ac" />Jump to latest
+              </button>
+            )}
+            <Composer cfg={cfg} />
+          </div>
         </div>
         {workspaceMsg && workspace && workspacePanel && (
           <>
             <div role="separator" aria-orientation="vertical" aria-label="Resize workspace panel" onPointerDown={startResize} className="hidden w-1.5 shrink-0 cursor-col-resize bg-transparent hover:bg-ac/50 sm:block" />
-            <aside aria-label="Workspace side panel" style={wide ? { flex: `0 0 ${workspaceFrac * 100}%`, maxWidth: '70%', minWidth: '15%' } : { height: '45dvh', width: '100%' }} className="flex min-h-0 shrink-0 flex-col border-t border-hov bg-surf/40 sm:border-l sm:border-t-0">
+            <aside aria-label="Workspace side panel" style={wide ? { flex: `0 0 ${workspaceFrac * 100}%`, maxWidth: '70%', minWidth: '15%' } : { height: '45dvh', width: '100%' }} className="flex min-h-0 shrink-0 flex-col border-t border-bor bg-surf/40 sm:border-l sm:border-t-0">
               <WorkspacePanel key={`${workspaceMsg.id}:${workspaceMsg.ai ?? 0}:${workspacePanel.workspaceId}:${workspacePanel.initialFilePath ?? ''}`} msg={workspaceMsg} live={liveTools[workspaceMsg.id]} workspace={workspace} selectedRevisionId={selectedRevId ?? workspace.revisions[workspace.revisions.length - 1].id} setSelectedRevisionId={(id) => s.patch({ selectedRevision: { ...s.selectedRevision, [workspacePanel.workspaceId]: id } })} onClose={() => setWorkspacePanel(null)} initialFilePath={workspacePanel.initialFilePath} />
             </aside>
           </>
@@ -635,7 +651,7 @@ export function Chat({ side, toggle, cfg, pal }: { side: boolean; toggle: () => 
         {researchMsg && (
           <>
             <div role="separator" aria-orientation="vertical" aria-label="Resize research panel" onPointerDown={startResize} className="hidden w-1.5 shrink-0 cursor-col-resize bg-transparent hover:bg-ac/50 sm:block" />
-            <aside aria-label="Research side panel" style={wide ? { flex: `0 0 ${workspaceFrac * 100}%`, maxWidth: '70%', minWidth: '15%' } : { height: '45dvh', width: '100%' }} className="flex min-h-0 shrink-0 flex-col border-t border-hov bg-surf/40 sm:border-l sm:border-t-0">
+            <aside aria-label="Research side panel" style={wide ? { flex: `0 0 ${workspaceFrac * 100}%`, maxWidth: '70%', minWidth: '15%' } : { height: '45dvh', width: '100%' }} className="flex min-h-0 shrink-0 flex-col border-t border-bor bg-surf/40 sm:border-l sm:border-t-0">
               <ResearchPanel key={`${researchMsg.id}:${researchMsg.research?.finishedAt ?? 0}`} msg={researchMsg} onClose={() => s.patch({ researchPanel: null })} />
             </aside>
           </>

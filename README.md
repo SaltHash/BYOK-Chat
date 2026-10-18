@@ -89,7 +89,7 @@ Set `PORT` if the host assigns a port. The Node server serves `dist/` and expose
 
 ### Cloudflare Workers (static assets + API)
 
-`wrangler.jsonc` deploys one Worker that serves the built frontend from `dist/` and executes `/api/*` (the shared core in `server/api.mjs`, also used by `server.mjs`). `assets.run_worker_first` is limited to `/api/*`, so static asset requests never invoke the Worker and do not count against the Workers request quota; unknown `/api/*` paths always answer with JSON, never `index.html`.
+`wrangler.jsonc` deploys one Worker that serves the built frontend from `dist/` and executes `/api/*` (the shared core in `server/api.mjs`, also used by `server.mjs`). `assets.run_worker_first` is limited to `/api/*`, so static asset requests never invoke the Worker and do not count against the Workers request quota; unknown `/api/*` paths always answer with JSON, never `index.html`. The asset layer uses `not_found_handling: "none"`, so missing files (including stale hashed chunks such as `/assets/foo.js`) 404 exactly like the Node server instead of answering with the HTML shell; the app routes entirely on the URL hash, so no unknown server path needs the shell.
 
 ```sh
 npm run deploy        # npm run build && wrangler deploy
@@ -167,4 +167,4 @@ Routing learns from experience: every attempt records latency and failures per e
 
 ## Checks
 
-Run the search helper tests with `node --test` and create a production build with `npm run build`. Search provider tests live in `server/search.test.mjs`, citation tests in `src/citations.test.mjs`, reader tests in `server/extract.test.mjs`, document parser tests in `src/docs.test.mjs`, recall and routing tests in `src/recall.test.mjs`, and model provider-routing tests in `src/providers.test.mjs`. `npm test` also runs the Node integration suite (`tests/integration/server.test.mjs`) and the Worker suite (`tests/worker/worker.test.mjs`); `npm run test:worker` boots `wrangler dev` and checks the deployed routing contract (static assets, SPA fallback, `/api/*`) end to end after `npm run build`.
+Run the search helper tests with `node --test` and create a production build with `npm run build`. Search provider tests live in `server/search.test.mjs`, citation tests in `src/citations.test.mjs`, reader tests in `server/extract.test.mjs`, document parser tests in `src/docs.test.mjs`, recall and routing tests in `src/recall.test.mjs`, and model provider-routing tests in `src/providers.test.mjs`. `npm test` also runs the Node integration suite (`tests/integration/server.test.mjs`) and the Worker suite (`tests/worker/worker.test.mjs`); `npm run test:worker` boots `wrangler dev` and checks the deployed routing contract (static assets, unknown-path 404s, `/api/*`) end to end after `npm run build`.
