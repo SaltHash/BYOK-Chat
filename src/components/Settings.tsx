@@ -470,6 +470,7 @@ function HelperModels() {
 
 function Eps() {
   const { eps, upd } = useSConfig()
+  const s = useSConfig()
   const [show, setShow] = useState('')
   const [editingName, setEditingName] = useState('')
   const [advanced, setAdvanced] = useState<string[]>([])
@@ -481,6 +482,12 @@ function Eps() {
   return (
     <Panel id="eps" k="eps" n={eps.length} add="Add endpoint">
       <HelperModels />
+      <Anchor id="model-pricing-toggle">
+      <div className="rounded-xl bg-surf p-3 space-y-2">
+        <label className="flex items-center justify-between gap-3 text-sm">Show model pricing controls<Toggle on={s.prefs.showModelPricing} set={(showModelPricing) => s.patch({ prefs: { ...s.prefs, showModelPricing } })} /></label>
+        <div className="text-xs text-mu">Adds per-model pricing fields to each endpoint. Off by default.</div>
+      </div>
+      </Anchor>
       <SortableCards k="eps" ids={eps.map((x) => x.id)} label="Endpoint" renderCard={(eid, handle) => {
         const e = eps.find((x) => x.id === eid)
         if (!e) return null
@@ -1070,6 +1077,14 @@ function WidgetsTab() {
   }
   return (
     <Panel id="widgets">
+      <Anchor id="context-meter">
+      <div className="rounded-xl bg-surf p-3 space-y-3">
+        <label className="flex items-center justify-between gap-3 text-sm">Show context meter<Toggle on={s.prefs.showContextMeter ?? true} set={(showContextMeter) => s.patch({ prefs: { ...s.prefs, showContextMeter } })} /></label>
+        <div className="text-xs text-mu">A ring in the chat header showing estimated tokens in the open chat. Click it for the reported input, output, and cache-token breakdown.</div>
+        <Anchor id="context-limit"><Field label="Manual context limit" hint="Fallback scale when the model has no published context size. This does not change the model's actual context window."><Input type="number" min="1000" step="1000" value={s.widgetPrefs.contextLimit} set={(v) => s.patch({ widgetPrefs: { ...s.widgetPrefs, contextLimit: Math.max(1000, Number(v) || 1000) } })} /></Field></Anchor>
+        <Field label="Characters per estimated token" hint="A rough estimate; 4 is a common default for English text."><Input type="number" min="1" max="10" value={s.widgetPrefs.charsPerToken} set={(v) => s.patch({ widgetPrefs: { ...s.widgetPrefs, charsPerToken: Math.min(10, Math.max(1, Number(v) || 4)) } })} /></Field>
+      </div>
+      </Anchor>
       {WIDGETS.map(([k, n, I, d]) => {
         const blocked = blockedBy(k)
         return (
@@ -1125,13 +1140,11 @@ function FontPicker({ value, set, options }: { value: string; set: (v: string) =
   </div>
 }
 
-function Look() {
-  const s = useSConfig()
-  const settingsWidth = s.prefs.settingsWidth ?? 1024
-  const settingsHeight = s.prefs.settingsHeight ?? 780
-  const modelPickerHeight = s.prefs.modelPickerHeight ?? 480
-  const [colorPicker, setColorPicker] = useState<string | null>(null)
-  const row = (anchor: string, k: 'showBy' | 'showLog' | 'showTps' | 'enterSends' | 'autoTitle' | 'temporaryByDefault' | 'streamMd' | 'seasonal' | 'cues', t: string, d: string) => (
+type PrefToggle = 'showBy' | 'showLog' | 'showTps' | 'enterSends' | 'autoTitle' | 'temporaryByDefault' | 'streamMd' | 'seasonal' | 'cues'
+
+/** One boolean preference rendered as a labelled toggle row. */
+function prefRow(s: ReturnType<typeof useSConfig>, anchor: string, k: PrefToggle, t: string, d: string) {
+  return (
     <Anchor id={anchor}>
     <div className="flex items-center gap-3 rounded-xl bg-surf p-3">
       <div className="flex flex-1 items-center gap-2 text-sm font-medium">{t}<HelpTip text={d} label={`Help: ${t}`} /></div>
@@ -1139,6 +1152,15 @@ function Look() {
     </div>
     </Anchor>
   )
+}
+
+function Look() {
+  const s = useSConfig()
+  const settingsWidth = s.prefs.settingsWidth ?? 1024
+  const settingsHeight = s.prefs.settingsHeight ?? 780
+  const modelPickerHeight = s.prefs.modelPickerHeight ?? 480
+  const [colorPicker, setColorPicker] = useState<string | null>(null)
+  const row = (anchor: string, k: PrefToggle, t: string, d: string) => prefRow(s, anchor, k, t, d)
   return (
     <Panel id="look">
       <Anchor id="appearance-mode">
@@ -1180,14 +1202,8 @@ function Look() {
       </div>
       </Anchor>
       })()}
-      {row('show-by', 'showBy', 'Show which model answered', 'Label each reply with the endpoint and model that produced it.')}
-      {row('show-log', 'showLog', 'Show model-use details', 'List every model called for a reply, including classifiers and failures.')}
-      {row('show-tps', 'showTps', 'Show generation speed', 'Show tokens per second below each reply.')}
-      {row('enter-sends', 'enterSends', 'Enter sends the message', 'Turn off to send with the button and use Enter for new lines.')}
-      {row('auto-title', 'autoTitle', 'Auto-generate chat names', 'Automatically generate a concise title after the first reply.')}
       {row('seasonal', 'seasonal', 'Seasonal touches', 'Show a festive greeting on holidays. Turn off to keep the greeting plain.')}
       {row('completion-cues', 'cues', 'Completion cues', 'A soft chime and a little confetti when deep research or a workspace update finishes.')}
-      {row('temporary-default', 'temporaryByDefault', 'New chats are temporary by default', 'New chats are deleted after the retention period, or when you leave if retention is set to Immediate.')}
       <Anchor id="model-picker-labels">
       <div className="rounded-xl bg-surf p-3 space-y-2">
         <div className="text-sm font-medium">Model picker main label</div>
@@ -1229,42 +1245,11 @@ function Look() {
       <Anchor id="model-picker-height">
       <div className="rounded-xl bg-surf p-3 space-y-2"><div className="text-sm font-medium">Model picker height</div><div className="text-xs text-mu">Maximum height of the model and playlist menu. Smaller screens constrain it to fit.</div><Field label={`Height · ${modelPickerHeight}px`}><RangeSlider label="Model picker height" min={320} max={720} step={20} value={modelPickerHeight} set={(modelPickerHeight) => s.patch({ prefs: { ...s.prefs, modelPickerHeight } })} className="w-full" /></Field></div>
       </Anchor>
-      <Anchor id="model-pricing-toggle">
-      <div className="rounded-xl bg-surf p-3 space-y-2">
-        <label className="flex items-center justify-between gap-3 text-sm">Show model pricing controls<Toggle on={s.prefs.showModelPricing} set={(showModelPricing) => s.patch({ prefs: { ...s.prefs, showModelPricing } })} /></label>
-        <div className="text-xs text-mu">Adds per-model pricing fields to each endpoint. Off by default.</div>
-      </div>
-      </Anchor>
-      <Anchor id="context-meter">
-      <div className="rounded-xl bg-surf p-3 space-y-3">
-        <label className="flex items-center justify-between gap-3 text-sm">Show context meter<Toggle on={s.prefs.showContextMeter ?? true} set={(showContextMeter) => s.patch({ prefs: { ...s.prefs, showContextMeter } })} /></label>
-        <div className="text-xs text-mu">A ring in the chat header showing estimated tokens in the open chat. Click it for the reported input, output, and cache-token breakdown.</div>
-        <Anchor id="context-limit"><Field label="Manual context limit" hint="Fallback scale when the model has no published context size. This does not change the model's actual context window."><Input type="number" min="1000" step="1000" value={s.widgetPrefs.contextLimit} set={(v) => s.patch({ widgetPrefs: { ...s.widgetPrefs, contextLimit: Math.max(1000, Number(v) || 1000) } })} /></Field></Anchor>
-        <Field label="Characters per estimated token" hint="A rough estimate; 4 is a common default for English text."><Input type="number" min="1" max="10" value={s.widgetPrefs.charsPerToken} set={(v) => s.patch({ widgetPrefs: { ...s.widgetPrefs, charsPerToken: Math.min(10, Math.max(1, Number(v) || 4)) } })} /></Field>
-      </div>
-      </Anchor>
       <Anchor id="overlay">
       <div className="rounded-xl bg-surf p-3 space-y-3">
         <div><div className="text-sm font-medium">Overlay appearance</div><div className="text-xs text-mu">Control how dialogs and the settings panel sit over the workspace.</div></div>
         <Field label={`Modal background blur · ${s.prefs.modalBlur}px`} hint="Blur behind confirmation and selection dialogs. Settings itself stays sharp."><RangeSlider label="Modal background blur" min={0} max={24} step={1} value={s.prefs.modalBlur} set={(modalBlur) => s.patch({ prefs: { ...s.prefs, modalBlur } })} className="w-full" /></Field>
         <Field label={`Settings background opacity · ${s.prefs.settingsOpacity}%`} hint="How much the settings backdrop dims the workspace behind the settings panel."><RangeSlider label="Settings background opacity" min={0} max={100} step={5} value={s.prefs.settingsOpacity} set={(settingsOpacity) => s.patch({ prefs: { ...s.prefs, settingsOpacity } })} className="w-full" /></Field>
-      </div>
-      </Anchor>
-      <Anchor id="stream-fade">
-      <div className="rounded-xl bg-surf p-3 space-y-3">
-        <div><div className="text-sm font-medium">Reply fade-in</div><div className="text-xs text-mu">Each chunk of a streaming reply fades in as it arrives. Off disables it entirely.</div></div>
-        <div className="flex items-center gap-3">
-          <RangeSlider label="Reply fade-in duration" min={0} max={1} step={0.1} value={s.prefs.streamFade} set={(streamFade) => s.patch({ prefs: { ...s.prefs, streamFade } })} className="flex-1" />
-          <span className="w-24 text-right text-sm">{s.prefs.streamFade === 0 ? 'Off' : `${Math.round(s.prefs.streamFade * 1000)}ms`}</span>
-        </div>
-      </div>
-      </Anchor>
-      {row('stream-md', 'streamMd', 'Render markdown while streaming', 'Format each completed line as markdown as it arrives instead of plain text. Off shows plain text until the reply finishes.')}
-      <Anchor id="temp-retention">
-      <div className="rounded-xl bg-surf p-3 space-y-2">
-        <div className="text-sm font-medium">Temporary chat retention</div>
-        <div className="text-xs text-mu">Temporary chats are removed automatically after this time. Immediate also removes them when you start another chat or leave this page.</div>
-        <div className="flex items-center gap-3"><RangeSlider label="Temporary chat retention" min={0} max={48} step={1} value={s.prefs.tempHours} set={(tempHours) => s.patch({ prefs: { ...s.prefs, tempHours } })} className="flex-1" /><span className="w-24 text-right text-sm">{s.prefs.tempHours === 0 ? 'Immediate' : `${s.prefs.tempHours} hours`}</span></div>
       </div>
       </Anchor>
       <Anchor id="fonts">
@@ -1275,7 +1260,6 @@ function Look() {
         <Field label="Monospace font"><FontPicker value={s.prefs.fontMono} set={(fontMono) => s.patch({ prefs: { ...s.prefs, fontMono } })} options={MONO_OPTIONS} /></Field>
       </div>
       </Anchor>
-      <HelperPointer anchor="title-model" title="Title generation model" desc="Set in Endpoints → Helper models. Names new chats automatically; when empty, the model that answered is used." current={helperLabel(s, helperRef(s.prefs.titleEp, s.prefs.titleModel), 'Default (model that answered)')} />
     </Panel>
   )
 }
@@ -1357,7 +1341,40 @@ function WorkspaceTab() {
   )
 }
 
-const VIEWS: Record<string, () => ReactNode> = { features: FeaturesTab, eps: Eps, prompts: Prompts, skills: SkillsTab, pls: Pls, cmds: Cmds, workspace: WorkspaceTab, tools: Tools, memory: MemoryTab, widgets: WidgetsTab, look: Look, stats: StatsTab, keys: KeysTab, data: DataTab, adv: AdvancedTab }
+function Chats() {
+  const s = useSConfig()
+  const row = (anchor: string, k: PrefToggle, t: string, d: string) => prefRow(s, anchor, k, t, d)
+  return (
+    <Panel id="chats">
+      {row('show-by', 'showBy', 'Show which model answered', 'Label each reply with the endpoint and model that produced it.')}
+      {row('show-log', 'showLog', 'Show model-use details', 'List every model called for a reply, including classifiers and failures.')}
+      {row('show-tps', 'showTps', 'Show generation speed', 'Show tokens per second below each reply.')}
+      {row('enter-sends', 'enterSends', 'Enter sends the message', 'Turn off to send with the button and use Enter for new lines.')}
+      {row('auto-title', 'autoTitle', 'Auto-generate chat names', 'Automatically generate a concise title after the first reply.')}
+      {row('temporary-default', 'temporaryByDefault', 'New chats are temporary by default', 'New chats are deleted after the retention period, or when you leave if retention is set to Immediate.')}
+      <Anchor id="temp-retention">
+      <div className="rounded-xl bg-surf p-3 space-y-2">
+        <div className="text-sm font-medium">Temporary chat retention</div>
+        <div className="text-xs text-mu">Temporary chats are removed automatically after this time. Immediate also removes them when you start another chat or leave this page.</div>
+        <div className="flex items-center gap-3"><RangeSlider label="Temporary chat retention" min={0} max={48} step={1} value={s.prefs.tempHours} set={(tempHours) => s.patch({ prefs: { ...s.prefs, tempHours } })} className="flex-1" /><span className="w-24 text-right text-sm">{s.prefs.tempHours === 0 ? 'Immediate' : `${s.prefs.tempHours} hours`}</span></div>
+      </div>
+      </Anchor>
+      <Anchor id="stream-fade">
+      <div className="rounded-xl bg-surf p-3 space-y-3">
+        <div><div className="text-sm font-medium">Reply fade-in</div><div className="text-xs text-mu">Each chunk of a streaming reply fades in as it arrives. Off disables it entirely.</div></div>
+        <div className="flex items-center gap-3">
+          <RangeSlider label="Reply fade-in duration" min={0} max={1} step={0.1} value={s.prefs.streamFade} set={(streamFade) => s.patch({ prefs: { ...s.prefs, streamFade } })} className="flex-1" />
+          <span className="w-24 text-right text-sm">{s.prefs.streamFade === 0 ? 'Off' : `${Math.round(s.prefs.streamFade * 1000)}ms`}</span>
+        </div>
+      </div>
+      </Anchor>
+      {row('stream-md', 'streamMd', 'Render markdown while streaming', 'Format each completed line as markdown as it arrives instead of plain text. Off shows plain text until the reply finishes.')}
+      <HelperPointer anchor="title-model" title="Title generation model" desc="Set in Endpoints → Helper models. Names new chats automatically; when empty, the model that answered is used." current={helperLabel(s, helperRef(s.prefs.titleEp, s.prefs.titleModel), 'Default (model that answered)')} />
+    </Panel>
+  )
+}
+
+const VIEWS: Record<string, () => ReactNode> = { features: FeaturesTab, eps: Eps, prompts: Prompts, skills: SkillsTab, pls: Pls, cmds: Cmds, workspace: WorkspaceTab, tools: Tools, memory: MemoryTab, widgets: WidgetsTab, look: Look, chats: Chats, stats: StatsTab, keys: KeysTab, data: DataTab, adv: AdvancedTab }
 
 export function Settings({ tab, setTab }: { tab: string; setTab: (t: string) => void }) {
   const features = useS((s) => s.features)

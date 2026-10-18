@@ -149,6 +149,51 @@ test('tool loop executes calls and sends their results back before final generat
   } finally { globalThis.fetch = originalFetch; globalThis.requestAnimationFrame = originalRaf }
 })
 
+test('text written around a tool call is separated by a blank line', async () => {
+  const originalFetch = globalThis.fetch, originalRaf = globalThis.requestAnimationFrame
+  globalThis.requestAnimationFrame = (fn) => setTimeout(fn, 0)
+  let requestCount = 0
+  globalThis.fetch = async () => {
+    requestCount++
+    if (requestCount === 1) return jsonResponse({ choices: [{ message: {
+      content: 'Checking that now.',
+      tool_calls: [{ id: 'calc-1', type: 'function', function: { name: 'calc', arguments: '{"expression":"6*7"}' } }],
+    } }] })
+    return jsonResponse({ choices: [{ message: { content: 'The result is 42.' } }] })
+  }
+  try {
+    const chunks = []
+    const result = await runToolLoop(openai, '', (rounds) => wire(openai, [
+      { id: 'u', r: 'user', t: 'What is 6 times 7?' },
+      { id: 'a', r: 'assistant', t: '', toolRounds: rounds },
+    ]), { calc: true }, (t) => chunks.push(t), new AbortController())
+    assert.equal(result.text, 'Checking that now.\n\nThe result is 42.')
+    // The separator reaches the streaming callback too, so the live view matches.
+    assert.equal(chunks.join(''), result.text)
+  } finally { globalThis.fetch = originalFetch; globalThis.requestAnimationFrame = originalRaf }
+})
+
+test('no extra blank line is added when the text already has whitespace', async () => {
+  const originalFetch = globalThis.fetch, originalRaf = globalThis.requestAnimationFrame
+  globalThis.requestAnimationFrame = (fn) => setTimeout(fn, 0)
+  let requestCount = 0
+  globalThis.fetch = async () => {
+    requestCount++
+    if (requestCount === 1) return jsonResponse({ choices: [{ message: {
+      content: 'Checking that now.\n',
+      tool_calls: [{ id: 'calc-1', type: 'function', function: { name: 'calc', arguments: '{"expression":"6*7"}' } }],
+    } }] })
+    return jsonResponse({ choices: [{ message: { content: 'The result is 42.' } }] })
+  }
+  try {
+    const result = await runToolLoop(openai, '', (rounds) => wire(openai, [
+      { id: 'u', r: 'user', t: 'What is 6 times 7?' },
+      { id: 'a', r: 'assistant', t: '', toolRounds: rounds },
+    ]), { calc: true }, () => {}, new AbortController())
+    assert.equal(result.text, 'Checking that now.\nThe result is 42.')
+  } finally { globalThis.fetch = originalFetch; globalThis.requestAnimationFrame = originalRaf }
+})
+
 test('a handler can withdraw its own tool mid-run so the model must answer in text', async () => {
   // This is how deep research ends: once the search budget is spent the tool is
   // removed from the enabled set, so the next request carries no tools at all

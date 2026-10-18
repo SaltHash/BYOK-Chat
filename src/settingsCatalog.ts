@@ -1,7 +1,7 @@
 import {
   SlidersHorizontal, Server, ScrollText, Sparkles, ListMusic, Terminal,
   FolderOpen, Wrench, Brain, PanelRight, Palette as PaletteIcon, Keyboard,
-  TrendingUp, Database, FlaskConical,
+  TrendingUp, Database, FlaskConical, MessagesSquare,
 } from 'lucide-react'
 import type { Ic } from './components/ui'
 
@@ -13,7 +13,7 @@ import type { Ic } from './components/ui'
  */
 export type SettingsTabId =
   | 'features' | 'eps' | 'prompts' | 'skills' | 'pls' | 'cmds'
-  | 'workspace' | 'tools' | 'memory' | 'widgets' | 'look'
+  | 'workspace' | 'tools' | 'memory' | 'widgets' | 'look' | 'chats'
   | 'keys' | 'stats' | 'data' | 'adv'
 
 export const SETTINGS_TABS: [SettingsTabId, string, Ic][] = [
@@ -28,6 +28,7 @@ export const SETTINGS_TABS: [SettingsTabId, string, Ic][] = [
   ['memory', 'Memory', Brain],
   ['widgets', 'Widgets', PanelRight],
   ['look', 'Appearance', PaletteIcon],
+  ['chats', 'Chats', MessagesSquare],
   ['keys', 'Shortcuts', Keyboard],
   ['stats', 'Stats', TrendingUp],
   ['data', 'Data controls', Database],
@@ -45,7 +46,8 @@ export const TAB_KEYWORDS: Record<SettingsTabId, string> = {
   tools: 'tools helpers search fetch calculator date time clipboard location workspace memory navigate prompt poll count json base64 uuid random hash execution limit documents ocr pdf office archives citations reader',
   memory: 'memory tool mode recall method classifier add stored duplicates categories',
   widgets: 'widgets panels context meter endpoint status usage scratchpad snippets cost last reply prompts shortcuts draft counter checklist',
-  look: 'appearance fonts theme display layout max height width message settings model picker palette blur opacity retention title pricing',
+  look: 'appearance fonts theme display layout max height width message settings model picker palette blur opacity',
+  chats: 'chats conversation replies temporary retention hours immediate expires enter send title auto streaming markdown fade speed model answered log',
   keys: 'shortcuts keybinds keyboard reset bindings',
   stats: 'stats usage tokens cost messages chats reset totals',
   data: 'data import backup privacy export erase sync encrypted history storage compact',
@@ -155,26 +157,26 @@ export const SETTING_LINKS: SettingLink[] = [
 
   // Appearance
   { tab: 'look', anchor: 'appearance-mode', title: 'Appearance mode (dark / light)', keywords: 'dark light mode theme' },
-  { tab: 'look', anchor: 'context-meter', title: 'Context meter', keywords: 'context meter tokens circle header appearance' },
+  { tab: 'widgets', anchor: 'context-meter', title: 'Context meter', keywords: 'context meter tokens circle header appearance' },
   { tab: 'look', anchor: 'context-limit', title: 'Context meter limit', keywords: 'context limit estimated meter tokens' },
   { tab: 'look', anchor: 'theme-picker', title: 'Theme picker', keywords: 'theme plum claude obsidian bronze paper sage frost sunset custom' },
   { tab: 'look', anchor: 'custom-colors', title: 'Custom theme colors', keywords: 'custom colors hex background accent text code syntax' },
-  { tab: 'look', anchor: 'show-by', title: 'Show which model answered', keywords: 'show model answered label byline' },
-  { tab: 'look', anchor: 'show-log', title: 'Show model-use details', keywords: 'process log details classifiers failures' },
-  { tab: 'look', anchor: 'show-tps', title: 'Show generation speed', keywords: 'tokens per second speed tps' },
-  { tab: 'look', anchor: 'enter-sends', title: 'Enter sends the message', keywords: 'enter sends newline button' },
-  { tab: 'look', anchor: 'auto-title', title: 'Auto-generate chat names', keywords: 'auto title chat names concise' },
-  { tab: 'look', anchor: 'temporary-default', title: 'New chats are temporary by default', keywords: 'temporary default retention expires' },
+  { tab: 'chats', anchor: 'show-by', title: 'Show which model answered', keywords: 'show model answered label byline' },
+  { tab: 'chats', anchor: 'show-log', title: 'Show model-use details', keywords: 'process log details classifiers failures' },
+  { tab: 'chats', anchor: 'show-tps', title: 'Show generation speed', keywords: 'tokens per second speed tps' },
+  { tab: 'chats', anchor: 'enter-sends', title: 'Enter sends the message', keywords: 'enter sends newline button' },
+  { tab: 'chats', anchor: 'auto-title', title: 'Auto-generate chat names', keywords: 'auto title chat names concise' },
+  { tab: 'chats', anchor: 'temporary-default', title: 'New chats are temporary by default', keywords: 'temporary default retention expires' },
   { tab: 'look', anchor: 'model-picker-labels', title: 'Model picker labels', keywords: 'model picker primary secondary name id provider' },
   { tab: 'look', anchor: 'palette-height', title: 'Command palette height', keywords: 'palette height maximum result list scroll' },
   { tab: 'look', anchor: 'chat-width', title: 'Message width', keywords: 'narrow standard wide conversation column' },
   { tab: 'look', anchor: 'settings-size', title: 'Settings window size', keywords: 'settings width height window' },
   { tab: 'look', anchor: 'model-picker-height', title: 'Model picker height', keywords: 'model menu height picker' },
-  { tab: 'look', anchor: 'model-pricing-toggle', title: 'Show model pricing controls', keywords: 'pricing fields endpoint per model' },
+  { tab: 'eps', anchor: 'model-pricing-toggle', title: 'Show model pricing controls', keywords: 'pricing fields endpoint per model' },
   { tab: 'look', anchor: 'overlay', title: 'Overlay appearance', keywords: 'modal blur settings opacity backdrop dim' },
-  { tab: 'look', anchor: 'stream-fade', title: 'Reply fade-in', keywords: 'fade in streaming chunks duration ms' },
-  { tab: 'look', anchor: 'stream-md', title: 'Render markdown while streaming', keywords: 'markdown streaming live rich text format incremental' },
-  { tab: 'look', anchor: 'temp-retention', title: 'Temporary chat retention', keywords: 'temporary retention hours immediate expires' },
+  { tab: 'chats', anchor: 'stream-fade', title: 'Reply fade-in', keywords: 'fade in streaming chunks duration ms' },
+  { tab: 'chats', anchor: 'stream-md', title: 'Render markdown while streaming', keywords: 'markdown streaming live rich text format incremental' },
+  { tab: 'chats', anchor: 'temp-retention', title: 'Temporary chat retention', keywords: 'temporary retention hours immediate expires' },
   { tab: 'look', anchor: 'fonts', title: 'Fonts', keywords: 'body heading monospace font google' },
   { tab: 'look', anchor: 'title-model', title: 'Title generation model', keywords: 'title model chat names endpoint helper endpoints' },
 

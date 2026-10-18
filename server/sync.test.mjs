@@ -7,7 +7,7 @@ const req = (body, query = '') => {
   const text = typeof body === 'string' ? body : JSON.stringify(body ?? {})
   return { method: 'POST', url: `/api/sync/push${query}`, headers: {}, [Symbol.asyncIterator]: async function* () { yield text } }
 }
-const getReq = (token) => ({ method: 'GET', url: `/api/sync/pull?token=${encodeURIComponent(token)}`, headers: {} })
+const getReq = (token) => ({ method: 'GET', url: '/api/sync/pull', headers: { authorization: `Bearer ${token}` } })
 
 test('token parsing accepts generated shape and rejects junk', () => {
   assert.throws(() => parseToken('nope'), /Invalid sync token/)
@@ -28,6 +28,7 @@ test('push then pull round-trips with auth, wrong secret rejected', async () => 
   const pulled = await handleSyncPull(getReq(token), backend)
   assert.deepEqual(pulled.payload.settings, { themeMode: 'dark' })
   await assert.rejects(() => handleSyncPull(getReq(`byok1-${id}-${'x'.repeat(43)}`), backend), /Unknown or incorrect/)
+  await assert.rejects(() => handleSyncPull({ method: 'GET', url: `/api/sync/pull?token=${encodeURIComponent(token)}`, headers: {} }, backend), /Missing sync token/)
 })
 
 test('payload size limit enforced', async () => {

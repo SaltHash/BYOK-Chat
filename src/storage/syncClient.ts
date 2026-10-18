@@ -9,7 +9,7 @@ export async function syncPush(token: string, payload: SyncPayload): Promise<{ u
 }
 
 export async function syncPull(token: string): Promise<{ payload: SyncPayload; storeVersion: number; exportVersion: number; updatedAt: number; backend: string }> {
-  const r = await fetch(`/api/sync/pull?token=${encodeURIComponent(token)}`, { headers: { authorization: `Bearer ${token}` } })
+  const r = await fetch('/api/sync/pull', { headers: { authorization: `Bearer ${token}` } })
   const data = await r.json().catch(() => ({}))
   if (!r.ok) throw Error(data?.error || `Sync pull failed (HTTP ${r.status})`)
   if (!data?.payload) throw Error('Sync slot is empty. Push from the other device first.')

@@ -100,8 +100,13 @@ export function groupWorkspaceVersions(calls: WorkspaceCallLike[], limit = WORKS
   const order: string[] = []
   const map = new Map<string, WorkspaceVersion[]>()
   for (const c of calls) {
-    if (c?.name !== WORKSPACE_TOOL && c?.name) continue
+    if (c?.name !== WORKSPACE_TOOL) continue
     const a = parseWorkspaceArgsPartial(typeof c.arguments === 'string' ? c.arguments : '')
+    // Skip calls that have not streamed a real file target yet: an empty path
+    // is not a file named "file.txt", it is just arguments still arriving.
+    const hasPath = typeof a.path === 'string' && a.path.trim().length > 0
+    const hasFiles = Array.isArray(a.files) && a.files.length > 0
+    if (!hasPath && !hasFiles) continue
     const path = sanitizePath(a.path ?? '')
     const v: WorkspaceVersion = {
       action: typeof a.action === 'string' && a.action ? a.action : 'create',
@@ -177,14 +182,16 @@ export function extractWorkspaceIds(calls: { name: string; arguments: string; re
   return ids
 }
 
-/** Pending (not-yet-committed) live calls vs completed final calls. */
+/** Pending (not-yet-committed) live calls vs completed final calls. Only calls
+ *  that have actually named the workspace tool are pending: a nameless live
+ *  call is some other tool whose name has not streamed yet, not a file write. */
 export function pendingLiveCalls(
   live: LiveCallLike[] | undefined,
   finalCalls: { id: string }[],
   tool = WORKSPACE_TOOL,
 ): LiveCallLike[] {
   const done = new Set(finalCalls.map((c) => c.id))
-  return (live ?? []).filter((c) => c.name === tool || !c.name).filter((c) => !c.id || !done.has(c.id))
+  return (live ?? []).filter((c) => c.name === tool).filter((c) => !c.id || !done.has(c.id))
 }
 
 /** Path of the file currently being written, or null when idle. */
@@ -197,20 +204,6 @@ export function findWritingPath(
   const pending = pendingLiveCalls(live as LiveCallLike[] | undefined, finalCalls, tool)
   if (!pending.length) return null
   const groups = groupWorkspaceVersions(pending.map((c) => ({ ...c, name: tool })))
-  return groups[groups.length - 1]?.path ?? null
-}
-
-/** Last path across final + pending calls (used for the "Writing…" fallback in Chat). */
-export function findLastWorkspacePath(
-  live: LiveCallLike[] | undefined,
-  toolRounds: { calls: WorkspaceCallLike[] }[] | undefined,
-  tool = WORKSPACE_TOOL,
-): string | null {
-  const finalCalls = (toolRounds ?? []).flatMap((r) => r.calls).filter((c) => c.name === tool)
-  const pending = pendingLiveCalls(live as LiveCallLike[] | undefined, finalCalls, tool)
-  const all = [...pending.map((c) => ({ ...c, name: tool })), ...finalCalls.map((c) => ({ ...c })) as WorkspaceCallLike[]]
-  if (!all.length) return null
-  const groups = groupWorkspaceVersions(all)
   return groups[groups.length - 1]?.path ?? null
 }
 

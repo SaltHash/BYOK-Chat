@@ -361,7 +361,7 @@ export function DataTab() {
       </Box>
       </Anchor>
       {cf === 1 && <Confirm title="Delete all chats?" text="Every saved chat is removed. Stats and settings are kept." ok="Delete all" close={() => setCf(0)} run={() => patch({ chats: [], chat: '' })} />}
-      {cf === 2 && <Confirm title="Erase everything?" text="Endpoints, API keys, prompts, playlists, commands, skills, memories, chats, stats and all other settings are removed from this browser. This cannot be undone." ok="Erase" close={() => setCf(0)} run={() => { localStorage.removeItem('byok.v1'); location.reload() }} />}
+      {cf === 2 && <Confirm title="Erase everything?" text="Endpoints, API keys, prompts, playlists, commands, skills, memories, chats, stats and all other settings are removed from this browser. This cannot be undone." ok="Erase" close={() => setCf(0)} run={() => { localStorage.removeItem('byok.v1'); void import('../storage/durable').then(({ durableEraseAll }) => durableEraseAll()).catch(() => {}).finally(() => location.reload()) }} />}
       {cf === 3 && <Modal close={() => setCf(0)}><section role="dialog" aria-modal="true" aria-labelledby="export-title" className="w-full max-w-xl space-y-5 rounded-2xl border border-hov bg-bg p-5 shadow-2xl">
         <div><h2 id="export-title" className="text-lg font-semibold">Export configuration</h2><p className="mt-1 text-sm text-mu">Choose the settings to include in this file.</p></div>
         <div className="grid grid-cols-2 gap-2 rounded-xl bg-surf p-3 sm:grid-cols-3">{categories.map(([id, label]) => <Checkbox key={id} checked={exports[id]} set={(checked) => setExports({ ...exports, [id]: checked })} label={label} />)}</div>

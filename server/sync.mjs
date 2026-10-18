@@ -48,9 +48,8 @@ export async function handleSyncPush(req, backend) {
 }
 
 export async function handleSyncPull(req, backend) {
-  const url = new URL(req.url || '/', 'http://localhost')
-  const fromQuery = url.searchParams.get('token')
-  let token = fromQuery || bearerToken(req)
+  // Token travels only in the Authorization header (or POST body): URLs end up in logs and history.
+  let token = bearerToken(req)
   if (!token && (req.method === 'POST')) {
     const body = await readJson(req).catch(() => ({}))
     token = body.token || token

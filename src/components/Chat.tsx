@@ -17,7 +17,7 @@ import { WorkspaceTile, WorkspacePanel } from './Workspace'
 import { ResearchTierPicker, ResearchPlanCard, ResearchProgressCard, ResearchTile, ResearchPanel } from './Research'
 import { SourcesPanel, scrollToSource } from './Sources'
 import { collectMessageSources, linkifyCitations, parseSearchEvidence, stripCitations } from '../citations'
-import { findLastWorkspacePath, findWritingPath, extractWorkspaceIds, type WorkspaceCallLike } from '../workspace'
+import { findWritingPath, extractWorkspaceIds, type WorkspaceCallLike } from '../workspace'
 
 function toolStep(name: string, rawArgs: string, result?: string) {
   let args: Record<string, unknown> = {}
@@ -245,7 +245,7 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
     onCite: openCite,
   }, [searchPrefs?.citeStyle, sources, openCite])
   const writingPath = useMemo(
-    () => findLastWorkspacePath(live as { id: string; name?: string; arguments: string }[] | undefined, m.toolRounds),
+    () => findWritingPath(live as { id: string; name?: string; arguments: string }[] | undefined, m.toolRounds),
     [m.toolRounds, live],
   )
   // Research reports live in the side panel (opened from the report card),
@@ -353,35 +353,35 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
               <pre className="overflow-x-auto whitespace-pre-wrap break-words rounded-lg bg-bg p-3 font-mono text-xs text-mu border border-hov">{(() => { try { return JSON.stringify(JSON.parse(m.t || '{}'), null, 2) } catch { return m.t || '' } })()}</pre>
             )}
           </div>
-        ) : hideBody ? null : m.t ? (
-          <div className="inline">
-            {liveChunks && liveChunks.length ? (
-              streamMd ? <StreamedMd chunks={liveChunks} fade={streamFade} /> : <StreamedText chunks={liveChunks} fade={streamFade} />
-            ) : (
-              <Md t={citedText} cites={cites} />
-            )}
-          </div>
-        ) : writingPath ? (
-          <span className="reply-thinking" role="status" aria-label={`Writing ${writingPath}`}>
-            <span className="reply-dots" aria-hidden="true"><i /><i /><i /></span>
-            <span className="ml-2 text-mu">Writing {writingPath}…</span>
-          </span>
-        ) : (() => {
-          const status = activityLine(((live ?? []) as { name?: string }[]).map((t) => t.name ?? ''), m.id)
+        ) : hideBody ? null : (() => {
+          const finalIds = new Set((m.toolRounds ?? []).flatMap((r) => r.calls).map((c) => c.id))
+          const pendingNames = ((live ?? []) as { id?: string; name?: string }[])
+            .filter((t) => t.name && (!t.id || !finalIds.has(t.id)))
+            .map((t) => t.name!)
+          const status = writingPath ? `Writing ${writingPath}…` : activityLine(pendingNames, m.id)
+          // Keep the status line visible for the whole time this message is the
+          // one being worked on: text may already have streamed, a tool may be
+          // running, or the model may be between rounds. It only disappears
+          // once the reply is finished and nothing is pending.
+          const active = !!writingPath || (live?.length ?? 0) > 0 || (liveChunks?.length ?? 0) > 0 || (last && busy && !m.t)
           return (
-            <span className="reply-thinking" role="status" aria-label={status}>
-              <span className="reply-dots" aria-hidden="true"><i /><i /><i /></span>
-              <span className="ml-2 text-mu">{status}</span>
-            </span>
-          )
-        })()}
-        {m.t && !m.err && !writingPath && (live ?? []).length > 0 && (() => {
-          const status = activityLine(((live ?? []) as { name?: string }[]).map((t) => t.name ?? ''), m.id)
-          return (
-            <span className="reply-thinking mt-2 block" role="status" aria-label={status}>
-              <span className="reply-dots" aria-hidden="true"><i /><i /><i /></span>
-              <span className="ml-2 text-mu">{status}</span>
-            </span>
+            <>
+              {m.t && (
+                <div className="inline">
+                  {liveChunks && liveChunks.length ? (
+                    streamMd ? <StreamedMd chunks={liveChunks} fade={streamFade} /> : <StreamedText chunks={liveChunks} fade={streamFade} />
+                  ) : (
+                    <Md t={citedText} cites={cites} />
+                  )}
+                </div>
+              )}
+              {active && (
+                <span className={cx('reply-thinking', m.t && 'mt-2 block')} role="status" aria-label={status}>
+                  <span className="reply-dots" aria-hidden="true"><i /><i /><i /></span>
+                  <span className="ml-2 text-mu">{status}</span>
+                </span>
+              )}
+            </>
           )
         })()}
       </div>

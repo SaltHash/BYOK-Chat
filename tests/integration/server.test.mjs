@@ -107,11 +107,14 @@ test('sync push then pull round-trips over HTTP; wrong secret rejected', async (
   const pushed = await post('/api/sync/push', { token, payload })
   assert.equal(pushed.status, 200)
   assert.equal((await pushed.json()).ok, true)
-  const pulled = await fetch(`${base}/api/sync/pull?token=${encodeURIComponent(token)}`)
+  const pulled = await fetch(`${base}/api/sync/pull`, { headers: { authorization: `Bearer ${token}` } })
   assert.equal(pulled.status, 200)
   assert.deepEqual((await pulled.json()).payload.settings, { themeMode: 'dark' })
-  const wrong = await fetch(`${base}/api/sync/pull?token=${encodeURIComponent(`byok1-${id}-${'x'.repeat(43)}`)}`)
+  const wrong = await fetch(`${base}/api/sync/pull`, { headers: { authorization: `Bearer byok1-${id}-${'x'.repeat(43)}` } })
   assert.equal(wrong.status, 401)
+  // Tokens in the URL are refused so they never reach access logs.
+  const inUrl = await fetch(`${base}/api/sync/pull?token=${encodeURIComponent(token)}`)
+  assert.equal(inUrl.status, 401)
 })
 
 test('sync pull without token is 401, not 500', async () => {

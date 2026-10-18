@@ -106,8 +106,6 @@ export async function apiSearch(req, env = process.env) {
   const maxRetries = boundedInt(parsed?.maxRetries, 2, 0, 4)
   const retryBaseMs = boundedInt(parsed?.retryBaseMs, 300, 50, 2000)
   const cacheKey = `${provider}:${requested}:${maxSnippetChars}:${evidenceBudget}:${query.toLowerCase()}`
-  const cached = searchCache.get(cacheKey)
-  if (cached && now - cached.at < 60_000) return jsonResult(200, cached.data, { 'cache-control': 'private, max-age=30' })
   const limits = { maxResults: requested, maxSnippetChars, evidenceBudget }
   const retry = { maxRetries, baseMs: retryBaseMs }
   const apiKey = resolveApiKey(provider, clientKey, env)
@@ -120,6 +118,9 @@ export async function apiSearch(req, env = process.env) {
   }
   try {
     if (providerNeedsKey(provider) && !apiKey) throw missingKeyError()
+    // Checked after credential validation so a request without a key still gets its configuration error.
+    const cached = searchCache.get(cacheKey)
+    if (cached && now - cached.at < 60_000) return jsonResult(200, cached.data, { 'cache-control': 'private, max-age=30' })
     const results = await runApiSearch(provider, query, { apiKey, zone, baseUrl, timeoutMs, limits, retry })
     const data = { query, results, searchedAt: new Date().toISOString(), provider, mode: 'api' }
     searchCache.set(cacheKey, { at: now, data })

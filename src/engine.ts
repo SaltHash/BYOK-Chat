@@ -100,7 +100,10 @@ export function parseUsage(usage: any): UsageBreakdown {
     usage.prompt_tokens_details?.cache_creation, usage.cache_creation,
   )
   const cached = cacheRead + cacheWrite
-  const input = cached > 0 && rawInput >= cached ? rawInput - cached : rawInput
+  // Anthropic-shaped usage (input_tokens) already excludes cache tokens; only
+  // OpenAI-shaped prompt_tokens includes them.
+  const anthropicShape = usage.prompt_tokens === undefined && usage.input_tokens !== undefined
+  const input = !anthropicShape && cached > 0 && rawInput >= cached ? rawInput - cached : rawInput
   const total = numOf(usage.total_tokens, rawInput + output)
   return { input, output, cacheRead, cacheWrite, total: total || rawInput + output }
 }
@@ -246,7 +249,7 @@ export const TOOL_REGISTRY: Record<string, ToolSpec> = {
   } },
   prompt_chip: { description: 'Offer an optional follow-up button when it would help continue the answer. Omit it for simple acknowledgements or urgent requests. Use a short label and a clear follow-up request. When the reply would benefit from multi-source investigation, offer deep research with a label variant such as "Deep research …" or "Perform deep research on …" and a prompt like "Deep research on <topic>".', parameters: { type: 'object', properties: { label: textArg('Button label.'), prompt: textArg('Follow-up request to send when selected.') }, required: ['label', 'prompt'], additionalProperties: false }, run: ({ label }) => `Follow-up ready: ${label}` },
   inline_poll: { description: 'Ask a focused multiple-choice question in a custom card below your answer. Use 2–6 concise options as either plain strings or objects with label and prompt. For strings, use the same text as the follow-up prompt. Use mode single or multiple.', parameters: { type: 'object', properties: { question: textArg('The question shown above the choices.'), mode: { type: 'string', enum: ['single', 'multiple'], description: 'Whether the user may choose one option or several.' }, options: { type: 'array', minItems: 2, maxItems: 6, items: { anyOf: [{ type: 'string' }, { type: 'object', properties: { label: textArg('Visible choice label.'), prompt: textArg('Follow-up prompt sent for this choice.') }, required: ['label', 'prompt'], additionalProperties: false }] } } }, required: ['question', 'options'], additionalProperties: false }, run: ({ question }) => `Choice card ready: ${question}` },
-  workspace_upsert: { description: 'Create, update, or delete file artifacts in a Workspace (preview shown beside the reply, with versioning and a dedicated download button). Do not give download links in your text — use the panel button instead. Before calling, write the file path in your reply text (for example: Writing src/app.py…). Provide workspaceId to append to an existing workspace, or createNew with workspaceName to start a new one. Always supply a human-readable revisionName (e.g. "Add auth form"). When naming a workspace, prefer readability-first names (for example, "Habit Tracker" instead of "habit-tracker"). Action: create, update, delete, continue (append, for truncated files), or patch (apply a unified diff from content to the existing file). Prefer patch with a small unified diff over resending whole files. Send files: [{path, language?, content?, action?}] to change several files in one call (one revision). A create call (action create, or any files entry with action create) may add only one file in total; create multiple files with separate calls. Send template: "static-site" | "python-script" | "markdown-notes" with createNew to scaffold a starter project, then edit from there.', parameters: { type: 'object', properties: { workspaceId: textArg('Existing workspace ID to append to.'), createNew: { type: 'boolean', description: 'Create a new workspace (requires workspaceName).' }, workspaceName: textArg('Name for the new workspace (required if createNew).'), revisionName: textArg('Human-readable name for this revision, e.g. "Add auth form". Required.'), action: { type: 'string', enum: ['create', 'update', 'delete', 'continue', 'patch'], description: 'File action. patch applies content as a unified diff.' }, path: textArg('Relative path inside the download bundle, e.g. src/app.py.'), language: textArg('Programming language for syntax highlighting, e.g. python.'), content: textArg('Full file content, or a unified diff for patch. Omitted for delete.'), files: { type: 'array', description: 'Batch several file changes in one call (one revision).', items: { type: 'object', properties: { path: textArg('Relative path.'), language: textArg('Programming language.'), content: textArg('Full content, or unified diff when action is patch.'), action: { type: 'string', enum: ['create', 'update', 'delete', 'continue', 'patch'] } }, required: ['path'], additionalProperties: false } }, template: textArg('Starter template id: static-site, python-script, or markdown-notes (use with createNew).') }, required: ['revisionName', 'action', 'path'], additionalProperties: false }, run: ({ action, path, content, workspaceId, createNew, workspaceName, revisionName, files, template }) => {
+  workspace_upsert: { description: 'Create, update, or delete file artifacts in a Workspace (preview shown beside the reply, with versioning and a dedicated download button). Do not give download links in your text — use the panel button instead. Provide workspaceId to append to an existing workspace, or createNew with workspaceName to start a new one. Always supply a human-readable revisionName (e.g. "Add auth form"). When naming a workspace, prefer readability-first names (for example, "Habit Tracker" instead of "habit-tracker"). Action: create, update, delete, continue (append, for truncated files), or patch (apply a unified diff from content to the existing file). Prefer patch with a small unified diff over resending whole files. Send files: [{path, language?, content?, action?}] to change several files in one call (one revision). A create call (action create, or any files entry with action create) may add only one file in total; create multiple files with separate calls. Send template: "static-site" | "python-script" | "markdown-notes" with createNew to scaffold a starter project, then edit from there.', parameters: { type: 'object', properties: { workspaceId: textArg('Existing workspace ID to append to.'), createNew: { type: 'boolean', description: 'Create a new workspace (requires workspaceName).' }, workspaceName: textArg('Name for the new workspace (required if createNew).'), revisionName: textArg('Human-readable name for this revision, e.g. "Add auth form". Required.'), action: { type: 'string', enum: ['create', 'update', 'delete', 'continue', 'patch'], description: 'File action. patch applies content as a unified diff.' }, path: textArg('Relative path inside the download bundle, e.g. src/app.py.'), language: textArg('Programming language for syntax highlighting, e.g. python.'), content: textArg('Full file content, or a unified diff for patch. Omitted for delete.'), files: { type: 'array', description: 'Batch several file changes in one call (one revision).', items: { type: 'object', properties: { path: textArg('Relative path.'), language: textArg('Programming language.'), content: textArg('Full content, or unified diff when action is patch.'), action: { type: 'string', enum: ['create', 'update', 'delete', 'continue', 'patch'] } }, required: ['path'], additionalProperties: false } }, template: textArg('Starter template id: static-site, python-script, or markdown-notes (use with createNew).') }, required: ['revisionName', 'action', 'path'], additionalProperties: false }, run: ({ action, path, content, workspaceId, createNew, workspaceName, revisionName, files, template }) => {
     if (action !== 'create' && action !== 'update' && action !== 'delete' && action !== 'continue' && action !== 'patch') throw Error('action must be create, update, delete, continue, or patch')
     if (!workspaceId && !createNew) throw Error('Must provide workspaceId or createNew:true')
     if (createNew && !workspaceName) throw Error('workspaceName required when createNew:true')
@@ -742,6 +745,11 @@ export async function stream(e: Ep, sys: string, ms: Wire[], on: (t: string) => 
 export async function runToolLoop(e: Ep, sys: string, messages: (rounds: { text: string; calls: ToolResult[] }[]) => Wire[], enabled: Record<string, boolean>, on: (text: string) => void, ac: AbortController, o: O = {}, onSummary: (text: string) => void = () => {}, onRound: (rounds: { text: string; calls: ToolResult[] }[]) => void = () => {}, maxRounds = 8, handlers: Record<string, (args: any) => unknown | Promise<unknown>> = {}, onToolDelta: (calls: ToolCall[]) => void = () => {}, execTools: { serialize?: string[]; maxParallel?: number } = {}) {
   const rounds: { text: string; calls: ToolResult[] }[] = []
   let text = '', finalText = '', tin = 0, tout = 0, cost = 0, cacheRead = 0, cacheWrite = 0, roundCount = 0
+  // Text written in one round and text written after a tool call are separate
+  // blocks, but they arrive as one stream. Track whether the next round still
+  // needs a blank line before its first characters so the two do not run
+  // together in the reply.
+  let pendingSep = false
   // Total wall-clock time spent inside stream() across every round. This is
   // the honest denominator for tokens/s: it includes the LLM generation time
   // of intermediate tool-call rounds, while local tool execution (which
@@ -749,9 +757,20 @@ export async function runToolLoop(e: Ep, sys: string, messages: (rounds: { text:
   let streamMs = 0
   for (;;) {
     let x
+    let sepDone = !pendingSep
+    const onChunk = (t: string) => {
+      if (!t) return
+      if (!sepDone) {
+        sepDone = true
+        // Only insert whitespace when both sides would otherwise touch.
+        if (text && !/\s$/.test(text) && !/^\s/.test(t)) { text += '\n\n'; on('\n\n') }
+      }
+      text += t
+      on(t)
+    }
     const streamStart = Date.now()
     try {
-      x = await stream(e, sys, messages(rounds), on, ac, o, onSummary, toolsFor(enabled, e.type), onToolDelta)
+      x = await stream(e, sys, messages(rounds), onChunk, ac, o, onSummary, toolsFor(enabled, e.type), onToolDelta)
     } catch (error) {
       // Count the stream's active time, then propagate. The reply is not
       // preserved: a cancelled or failed attempt stores nothing.
@@ -759,7 +778,7 @@ export async function runToolLoop(e: Ep, sys: string, messages: (rounds: { text:
       throw error
     }
     streamMs += Math.max(0, Date.now() - streamStart)
-    tin += x.tin; tout += x.tout; text += x.text
+    tin += x.tin; tout += x.tout
     if (typeof (x as { cost?: unknown }).cost === 'number' && Number.isFinite((x as { cost?: number }).cost!) && (x as { cost?: number }).cost! > 0) cost += (x as { cost?: number }).cost!
     if (typeof (x as { cacheRead?: unknown }).cacheRead === 'number' && Number.isFinite((x as { cacheRead?: number }).cacheRead!)) cacheRead += (x as { cacheRead?: number }).cacheRead!
     if (typeof (x as { cacheWrite?: unknown }).cacheWrite === 'number' && Number.isFinite((x as { cacheWrite?: number }).cacheWrite!)) cacheWrite += (x as { cacheWrite?: number }).cacheWrite!
@@ -770,6 +789,7 @@ export async function runToolLoop(e: Ep, sys: string, messages: (rounds: { text:
     const calls = await executeToolCalls(x.toolCalls, enabled, handlers, execTools)
     rounds.push({ text: x.text, calls })
     onRound(rounds)
+    pendingSep = true
   }
   return { text, finalText, rounds, tin, tout, streamMs, cost, cacheRead, cacheWrite }
 }

@@ -28,37 +28,35 @@ export function greetingFor(now: Date, seed: number): string {
   return pick(slot, seed)
 }
 
-const THINKING = ['Thinking it over…', 'Turning it over in my head…', 'Weighing the options…', 'Connecting the dots…', 'Chewing on this…', 'Sketching an answer…']
+const THINKING = ['Thinking…']
 
-/** A playful status line, stable for a given message so it does not flicker. */
-export function thinkingLine(seed: string): string {
-  let h = 0
-  for (const c of seed) h = (h * 31 + c.charCodeAt(0)) | 0
-  return pick(THINKING, Math.abs(h))
+/** A plain status line, stable for a given message so it does not flicker. */
+export function thinkingLine(_seed: string): string {
+  return THINKING[0]
 }
 
-const GENERIC_ACTIVITY = ['Working on it…', 'Getting it done…', 'On the case…']
+const GENERIC_ACTIVITY = ['Working…']
 
-/** Playful status lines per tool, so each kind of action reads differently. */
+/** Plain, matter-of-fact status lines per tool. */
 const ACTIVITY: Record<string, readonly string[]> = {
-  search: ['Rummaging through the web…', 'Asking the internet nicely…', 'Digging for sources…'],
-  fetch_page: ['Skimming the page…', 'Reading every word so you don’t have to…', 'Opening the link…'],
-  use_skill: ['Flipping through my skill book…', 'Checking what I can do here…'],
-  workspace_upsert: ['Filing it in the workspace…', 'Tidying up the workspace…', 'Writing it down properly…'],
-  prompt_chip: ['Dreaming up a follow-up…'],
-  inline_poll: ['Preparing a little choice for you…'],
-  time: ['Checking the clock…'],
-  date: ['Flipping to the right page of the calendar…'],
-  calc: ['Crunching numbers…', 'Doing the math carefully…'],
-  count: ['Counting every character…'],
-  json: ['Tidying up the braces…'],
-  base64: ['Encoding with care…'],
-  location: ['Looking around, approximately…'],
-  clipboard: ['Peeking at the clipboard…'],
-  uuid: ['Rolling a fresh UUID…'],
-  random: ['Rolling the dice…', 'Shaking the number jar…'],
-  hash: ['Mixing it into a hash…'],
-  memory: ['Rifling through my notes…', 'Jotting that down…'],
+  search: ['Searching the web…'],
+  fetch_page: ['Reading the page…'],
+  use_skill: ['Loading skill…'],
+  workspace_upsert: ['Writing file…'],
+  prompt_chip: ['Preparing follow-up…'],
+  inline_poll: ['Preparing choices…'],
+  time: ['Checking the time…'],
+  date: ['Checking the date…'],
+  calc: ['Calculating…'],
+  count: ['Counting…'],
+  json: ['Formatting JSON…'],
+  base64: ['Encoding…'],
+  location: ['Checking location…'],
+  clipboard: ['Reading clipboard…'],
+  uuid: ['Generating UUID…'],
+  random: ['Generating random number…'],
+  hash: ['Hashing…'],
+  memory: ['Checking memory…'],
 }
 
 function hashSeed(seed: string): number {

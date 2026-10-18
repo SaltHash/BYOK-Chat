@@ -12,16 +12,21 @@ function isPublicHttp(url) {
   let u
   try { u = new URL(url) } catch { return false }
   if (!['http:', 'https:'].includes(u.protocol)) return false
-  const host = u.hostname.toLowerCase()
+  // URL keeps IPv6 literals bracketed; strip them so the checks below see the address.
+  const host = u.hostname.toLowerCase().replace(/^\[|\]$/g, '')
   if (!host || host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local') || host.endsWith('.internal')) return false
-  // Literal private/loopback/link-local/reserved IPs (v4 + common v6).
+  // Literal private/loopback/link-local/reserved IPs (v4 + v6).
   if (/^\d+\.\d+\.\d+\.\d+$/.test(host)) {
     const p = host.split('.').map(Number)
     if (p.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return false
     const [a, b] = p
-    if (a === 10 || a === 127 || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 0) || a >= 224) return false
+    if (a === 10 || a === 127 || a === 0 || a >= 224) return false
+    if ((a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168)) return false
+    if (a === 100 && b >= 64 && b <= 127) return false // carrier-grade NAT
+    if (a === 192 && b === 0) return false // IETF protocol assignments
   }
-  if (host === '[::1]' || host === '::1' || /^(fc|fd)[0-9a-f]*:/i.test(host) || /^fe80:/i.test(host)) return false
+  // Loopback, unspecified, unique-local, link-local and IPv4-mapped (::ffff:a.b.c.d) IPv6.
+  if (host.includes(':') && (host === '::1' || host === '::' || host.startsWith('::ffff:') || /^f[cd][0-9a-f]{0,2}:/.test(host) || /^fe[89ab][0-9a-f]:/.test(host))) return false
   return true
 }
 
@@ -47,6 +52,23 @@ export function htmlToText(html) {
   return { title: decodeEntities(title).replace(/\s+/g, ' ').trim().slice(0, 300), text: kept.join('\n').replace(/\n{3,}/g, '\n\n').trim() }
 }
 
+/* Redirects are followed by hand so every hop is checked against the same
+ * public-address rules. Automatic following would let a public URL bounce the
+ * server onto a private address. */
+async function fetchFollowingPublic(fetchFn, url, init, maxHops = 5) {
+  let current = url
+  for (let hop = 0; ; hop++) {
+    const res = await fetchFn(current, { ...init, redirect: 'manual' })
+    const location = res.status >= 300 && res.status < 400 ? res.headers.get?.('location') : null
+    if (!location) return res
+    await res.body?.cancel?.().catch(() => {})
+    if (hop >= maxHops) throw Object.assign(Error('The page redirected too many times.'), { code: 'bad_response', status: 502, retryable: false })
+    const next = new URL(location, current).href
+    if (!isPublicHttp(next)) throw Object.assign(Error('The page redirected to a non-public address.'), { code: 'bad_url' })
+    current = next
+  }
+}
+
 export async function fetchPageText(url, { timeoutMs = 8000, fetchFn = fetch } = {}) {
   if (!isPublicHttp(url)) {
     const e = Error('Only public http(s) pages can be read.')
@@ -59,7 +81,7 @@ export async function fetchPageText(url, { timeoutMs = 8000, fetchFn = fetch } =
   const ac = new AbortController()
   const timer = setTimeout(() => ac.abort(), timeoutMs)
   let res
-  try { res = await fetchFn(url, { signal: ac.signal, headers: { accept: 'text/html,application/xhtml+xml', 'user-agent': 'byok-chat-reader/1.0' }, redirect: 'follow' }) }
+  try { res = await fetchFollowingPublic(fetchFn, url, { signal: ac.signal, headers: { accept: 'text/html,application/xhtml+xml', 'user-agent': 'byok-chat-reader/1.0' } }) }
   catch (e) {
     clearTimeout(timer)
     const err = Error(e?.name === 'AbortError' ? 'The page took too long to respond.' : `Could not reach the page (${e?.message || 'network error'}).`)

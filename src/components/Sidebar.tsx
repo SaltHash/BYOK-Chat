@@ -5,8 +5,8 @@ import { useS, chatMd, dl, THEMES, DARK_THEMES, LIGHT_THEMES, themeKeyOf, DEFAUL
 import { searchChats } from '../recall'
 import { clampSidebarWidth } from '../layout'
 import { Btn, Confirm, cx } from './ui'
-import { DndPlaceholder, DndLiveRegion, showDragOverlay, moveDragOverlay, hideDragOverlay, measureBox, DND_ACTIVATION_PX, useFlipAnimate } from './dnd'
-import { dndDirection, insertionIndex } from '../dndShared'
+import { DndPlaceholder, DndLiveRegion, showDragOverlay, moveDragOverlay, hideDragOverlay, measureBox, DND_ACTIVATION_PX, useFlipAnimate, restDocTop, pointerDocY, edgeScroll } from './dnd'
+import { stepInsertion } from '../dndShared'
 
 const act = 'grid size-7 place-items-center rounded-md text-mu hover:text-tx'
 
@@ -168,27 +168,29 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
       const r = el.getBoundingClientRect()
       if (clientY < r.top - 8 || clientY > r.bottom + 8) continue
       const rows = liveMembers(key, exclude)
+      // Transform-free midpoints: live rects include in-flight FLIP offsets and
+      // would feed back into the placement decision.
       const mids: number[] = []
       for (const c of rows) {
         const row = rowEls.current.get(c.id)
         if (!row) continue
-        const rr = row.getBoundingClientRect()
-        mids.push(rr.top + rr.height / 2)
+        mids.push(restDocTop(row) + row.getBoundingClientRect().height / 2)
       }
-      const dir = d ? dndDirection(clientY, d.lastY) : 1
-      if (d) d.lastY = clientY
-      return { folder: key, at: insertionIndex(mids, clientY, dir) }
+      const prev = dragState.current.target
+      const current = prev && prev.folder === key ? prev.at : rows.length
+      return { folder: key, at: stepInsertion(mids, pointerDocY(clientY, el), current) }
     }
     return null
   }
 
   // Stable: reads the drag state through refs, so it can be a dependency of the
   // once-attached window listeners and of the memoized row handlers.
-  const endDrag = useCallback((commit: boolean) => {
+  const endDrag = useCallback((commit: boolean, override?: { folder: string; at: number } | null) => {
     const d = dragRef.current
     const st = dragState.current
     const id = d?.id ?? st.dragId
-    const t = st.target
+    // Pointer releases pass a target computed from the latest pointer position.
+    const t = override !== undefined ? override : st.target
     if (d) cancelAnimationFrame(d.raf)
     dragRef.current = null
     pending.current = null
@@ -203,7 +205,8 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
       if (cur >= 0) {
         const [chat] = all.splice(cur, 1)
         const updated: Chat = { ...chat, folder: t.folder || undefined, ...(chat.pin ? { pin: false } : null) }
-        const list = liveMembers(t.folder)
+        // Exclude the dragged chat so `t.at` (computed without it) indexes the same list.
+        const list = liveMembers(t.folder, id)
         const before = list[Math.min(t.at, list.length)]
         let idx = all.length
         if (before) {
@@ -232,20 +235,14 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
       if (d) {
         e.preventDefault()
         const { clientX, clientY } = e
+        d.lastY = clientY
         cancelAnimationFrame(d.raf)
         d.raf = requestAnimationFrame(() => {
           moveDragOverlay(clientX, clientY, d.dx, d.dy)
           const t = computeTarget(clientY)
           const cur = dragState.current.target
           if ((t?.folder !== cur?.folder || t?.at !== cur?.at) && !(t == null && cur == null)) setTarget(t)
-          const nav = navRef.current
-          if (nav && nav.scrollHeight > nav.clientHeight + 4) {
-            const r = nav.getBoundingClientRect()
-            if (clientY < r.top + 56) nav.scrollTop -= 10
-            else if (clientY > r.bottom - 56) nav.scrollTop += 10
-          }
-          if (clientY < 72) window.scrollBy(0, -10)
-          else if (clientY > window.innerHeight - 72) window.scrollBy(0, 10)
+          edgeScroll(clientY, [navRef.current])
         })
         return
       }
@@ -268,9 +265,24 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
         setDndMsg(`${src.title} lifted. Move to choose a folder and position, release to drop, Escape to cancel.`)
       }
     }
+    // A release over a row button makes the browser dispatch a click on it. That
+    // click would open the chat and re-render the list right after the drop, so
+    // swallow the first click that follows a drag.
+    let swallowClick = false
+    const swallow = (e: MouseEvent) => {
+      if (!swallowClick) return
+      swallowClick = false
+      e.stopPropagation()
+      e.preventDefault()
+    }
     const up = () => {
-      if (dragRef.current) endDrag(!!dragState.current.target)
-      else pending.current = null
+      const d = dragRef.current
+      if (d) {
+        const t = computeTarget(d.lastY)
+        swallowClick = true
+        setTimeout(() => { swallowClick = false }, 50)
+        endDrag(!!t, t)
+      } else pending.current = null
     }
     const cancel = () => { if (dragRef.current) endDrag(false); else pending.current = null }
     const key = (e: KeyboardEvent) => {
@@ -284,7 +296,9 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
     window.addEventListener('pointerup', up)
     window.addEventListener('pointercancel', cancel)
     window.addEventListener('keydown', key, true)
+    window.addEventListener('click', swallow, true)
     return () => {
+      window.removeEventListener('click', swallow, true)
       window.removeEventListener('pointermove', mvWindow)
       window.removeEventListener('pointerup', up)
       window.removeEventListener('pointercancel', cancel)
@@ -298,7 +312,7 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
   // unrelated re-renders (e.g. the clock tick) never disturb in-flight motion.
   const reducedMotion = typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
   const flipKey = `${L.map((c) => c.id).join(',')}|${dragId ?? ''}|${target ? `${target.folder}:${target.at}` : ''}`
-  useFlipAnimate(rowEls, dragId, !!reducedMotion, flipKey)
+  useFlipAnimate(rowEls, !!reducedMotion, flipKey)
 
   // Stable row handlers: depend only on refs and setState, so memoized rows
   // keep their props between renders (including during a drag, apart from the

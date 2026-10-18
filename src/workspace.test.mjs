@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-const { sanitizePath, parseWorkspaceArgsPartial, truncateWorkspaceContent, groupWorkspaceVersions, countWorkspaceFiles, buildZipEntries, zipFilename, WORKSPACE_MAX_CONTENT, WORKSPACE_MAX_FILES, migrateLegacyCanvasGroups, applyUnifiedDiff, diffLines, diffStat, changedFilesBetween, sanitizeHtmlPreview, previewKindFor, parseCsvPreview, WORKSPACE_TEMPLATES, templateById } = await import('./workspace.ts')
+const { sanitizePath, parseWorkspaceArgsPartial, truncateWorkspaceContent, groupWorkspaceVersions, countWorkspaceFiles, buildZipEntries, zipFilename, WORKSPACE_MAX_CONTENT, WORKSPACE_MAX_FILES, migrateLegacyCanvasGroups, applyUnifiedDiff, diffLines, diffStat, changedFilesBetween, sanitizeHtmlPreview, previewKindFor, parseCsvPreview, WORKSPACE_TEMPLATES, templateById, pendingLiveCalls, findWritingPath } = await import('./workspace.ts')
 
 test('sanitizePath keeps valid relative paths and never throws', () => {
   assert.equal(sanitizePath('src/app.py'), 'src/app.py')
@@ -63,6 +63,39 @@ test('content truncation marks oversized files', () => {
   assert.ok(text.startsWith('x'.repeat(WORKSPACE_MAX_CONTENT)))
   assert.match(text, /truncated/)
   assert.equal(truncateWorkspaceContent('small').truncated, false)
+})
+
+test('grouping skips calls that have not streamed a path yet', () => {
+  const calls = [
+    { id: '1', name: 'workspace_upsert', arguments: '{"action":"create"' },
+    { id: '2', name: 'workspace_upsert', arguments: '{}' },
+    { id: '3', name: 'workspace_upsert', arguments: '' },
+    { id: '4', name: '', arguments: '{"path":"ghost.py"}' },
+    { id: '5', name: 'workspace_upsert', arguments: JSON.stringify({ action: 'create', path: 'real.py', content: 'x' }) },
+  ]
+  const groups = groupWorkspaceVersions(calls)
+  assert.deepEqual(groups.map((g) => g.path), ['real.py'])
+})
+
+test('pending live calls ignore nameless tools and completed rounds', () => {
+  const live = [
+    { id: 'a', name: '', arguments: '{"query":"x"}' },
+    { id: 'b', name: 'workspace_upsert', arguments: JSON.stringify({ path: 'done.py' }) },
+    { id: 'c', name: 'workspace_upsert', arguments: JSON.stringify({ path: 'live.py' }) },
+  ]
+  const pending = pendingLiveCalls(live, [{ id: 'b' }])
+  assert.deepEqual(pending.map((c) => c.id), ['c'])
+})
+
+test('findWritingPath reports only a real, still-pending file path', () => {
+  // A nameless live call (e.g. a search whose name has not arrived) is not a write.
+  assert.equal(findWritingPath([{ id: 's', name: '', arguments: '{"query":"hello"}' }], []), null)
+  // A workspace call whose path has not streamed yet must not become "file.txt".
+  assert.equal(findWritingPath([{ id: 'w', name: 'workspace_upsert', arguments: '{"action":"create"' }], []), null)
+  // Once a path and the name are present, it is reported.
+  assert.equal(findWritingPath([{ id: 'w', name: 'workspace_upsert', arguments: JSON.stringify({ path: 'src/app.py' }) }], []), 'src/app.py')
+  // A call already committed to a completed round is no longer pending.
+  assert.equal(findWritingPath([{ id: 'w', name: 'workspace_upsert', arguments: JSON.stringify({ path: 'src/app.py' }) }], [{ calls: [{ id: 'w', name: 'workspace_upsert', arguments: '' }] }]), null)
 })
 
 test('grouping collects versions by path in message order and caps files', () => {

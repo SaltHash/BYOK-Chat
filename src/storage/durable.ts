@@ -179,6 +179,28 @@ export async function durableSetMeta(m: DurableMeta): Promise<void> {
   await idbSet(DURABLE_META_KEY, m)
 }
 
+/* Erase every durable copy (chats, workspaces, blobs, meta). Without this a
+ * reload after "Erase everything" restores the chats from IndexedDB/OPFS. */
+export async function durableEraseAll(): Promise<void> {
+  mem.clear()
+  if (hasIDB()) {
+    await new Promise<void>((resolve) => {
+      try {
+        const req = indexedDB.deleteDatabase(DURABLE_DB)
+        req.onsuccess = () => resolve()
+        req.onerror = () => resolve()
+        req.onblocked = () => resolve()
+      } catch { resolve() }
+    })
+  }
+  if (opfsSupported()) {
+    try {
+      const root = await (navigator.storage as unknown as { getDirectory: () => Promise<FileSystemDirectoryHandle> }).getDirectory()
+      await root.removeEntry('byok-blobs', { recursive: true })
+    } catch { /* folder may not exist */ }
+  }
+}
+
 /* Split a persisted `byok.v1` JSON blob into settings (keep in localStorage)
  * vs durable (chats, workspaces, selectedRevision). Pure + unit-testable. */
 export function splitPersistedForDurable(parsed: Record<string, unknown>): { settings: Record<string, unknown>; chats: unknown; workspaces: unknown; selectedRevision: unknown } {

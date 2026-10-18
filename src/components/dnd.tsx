@@ -1,23 +1,30 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
-import { dndDirection, flipDelta, insertionIndex } from '../dndShared'
+import { flipDelta, parseTranslateY, stepInsertion } from '../dndShared'
 
-/* Cohesive pointer-based drag-and-drop system (replaces the old HTML5 DnD handlers).
+/* Pointer-based drag-and-drop, shared by SortableList and the Sidebar.
  *
- * Design (checked against dnd-kit docs: DndContext/useDraggable/useDroppable +
- * DragOverlay/transform pattern; sortable on top):
- * - Pointer activation constraint (~6px) so clicks/text selection still work.
- * - On lift the item's content is cloned into a fixed-position overlay that
- *   follows the pointer via translate3d (compositor-friendly, direct DOM writes,
- *   no React re-render per mousemove).
- * - The item's slot becomes a filled placeholder box (very dark in dark themes,
- *   light-but-darker-than-side in light themes, 2px dashed outline) that
- *   occupies real layout space; siblings FLIP-animate around it continuously
- *   while dragging (spatial reflow, not drop-time swap).
- * - Midpoint collision with small hysteresis prevents boundary flicker.
- * - Pointer capture is window-level so direction reversals work mid-drag.
- * - Auto-scroll near scroll-container edges; Escape cancels; keyboard reorder
- *   (Space lift, arrows move, Enter drop, Escape cancel) with live announcements.
- * - No new dependencies; no native HTML5 drag-and-drop visuals.
+ * Three rules keep motion stable under fast, reversing drags:
+ *
+ * 1. Placement is decided from a snapshot of the rest layout taken at lift.
+ *    Midpoints never come from live rects, because live rects include the
+ *    sibling animations we are running, and those feed back into the decision
+ *    and make the placeholder flicker. The snapshot is the slot grid; the
+ *    pointer is converted to document coordinates, so auto-scroll still works.
+ *
+ * 2. Every reflow animates from the row's *visual* position. Each row's
+ *    layout top is recorded without transforms. On the next commit the
+ *    currently applied translate is read back from computed style, and the
+ *    running animation is cancelled before the new one starts from exactly
+ *    where the row is on screen. Nothing ever teleports, and interruptions
+ *    cannot accumulate.
+ *
+ * 3. One requestAnimationFrame loop per drag does all work (overlay position,
+ *    target, edge auto-scroll). Pointer events only store coordinates, so
+ *    stale frames are never queued.
+ *
+ * Also: 6px activation threshold so clicks and text selection still work,
+ * Escape cancels, keyboard reorder is supported, and no new dependencies are
+ * needed.
  */
 
 export const DND_ACTIVATION_PX = 6
@@ -26,6 +33,32 @@ export function measureBox(el: HTMLElement) {
   const r = el.getBoundingClientRect()
   const cs = getComputedStyle(el)
   return { w: r.width, h: r.height, radius: cs.borderRadius || '12px' }
+}
+
+/** Sum of scroll offsets of everything above `el`. `rect.top + this` is a
+ *  document coordinate that stays put while any ancestor scrolls. */
+export function scrollSumAbove(el: HTMLElement): number {
+  let sum = window.scrollY
+  for (let p = el.parentElement; p && p !== document.body && p !== document.documentElement; p = p.parentElement) {
+    sum += p.scrollTop
+  }
+  return sum
+}
+
+function translateYOf(el: HTMLElement): number {
+  return parseTranslateY(getComputedStyle(el).transform)
+}
+
+/** Document-space top of an element's layout box, ignoring any animation
+ *  transform currently applied to it. */
+export function restDocTop(el: HTMLElement): number {
+  return el.getBoundingClientRect().top + scrollSumAbove(el) - translateYOf(el)
+}
+
+/** Document-space y for a viewport pointer position, relative to `el`'s
+ *  content. Same coordinate system as `restDocTop`. */
+export function pointerDocY(clientY: number, el: HTMLElement): number {
+  return clientY + scrollSumAbove(el) + el.scrollTop
 }
 
 let overlayEl: HTMLDivElement | null = null
@@ -63,6 +96,19 @@ export function hideDragOverlay() {
   }
 }
 
+/** Scroll the nearest scrollers (and the window) when the pointer nears an edge. */
+export function edgeScroll(clientY: number, scrollers: (HTMLElement | null)[]) {
+  for (const t of scrollers) {
+    if (!t || t === document.body || t === document.documentElement) continue
+    if (t.scrollHeight <= t.clientHeight + 4) continue
+    const r = t.getBoundingClientRect()
+    if (clientY < r.top + 56) t.scrollTop -= 10
+    else if (clientY > r.bottom - 56) t.scrollTop += 10
+  }
+  if (clientY < 72) window.scrollBy(0, -10)
+  else if (clientY > window.innerHeight - 72) window.scrollBy(0, 10)
+}
+
 export function DndPlaceholder({ height, radius }: { height: number; radius?: string }) {
   // The measured wrapper is often unrounded (the rounding lives on inner
   // content), which would override the rounded default with 0px. Only inherit
@@ -83,112 +129,45 @@ export function DndLiveRegion({ message }: { message: string }) {
   )
 }
 
-type FlipRec = { raf: number; timeout: number; onEnd: (() => void) | null }
+const FLIP_MS = 180
 
-/** Element top in scroll-independent coordinates.
+/** Reflow animation for rows whose layout changed. Call it in a layout effect
+ *  after each commit. `layoutKey` must change when the visible order changes.
  *
- * Viewport-relative `getBoundingClientRect().top` changes whenever an ancestor
- * scroller scrolls (auto-scroll during drags), even when the row's layout did
- * not move. Adding the scroll offsets back keeps FLIP deltas from folding a
- * scroll amount into the next transform. */
-function layoutTop(el: HTMLElement): number {
-  let top = el.getBoundingClientRect().top + window.scrollY
-  for (let p = el.parentElement; p && p !== document.body && p !== document.documentElement; p = p.parentElement) {
-    top += p.scrollTop
-  }
-  return top
-}
-
-/* Shared FLIP animator for rows around the live placeholder.
- *
- * Stability rules (fast drags must not compound):
- * - Runs only when the layout signature changes (order/placeholder/drag id),
- *   never on unrelated re-renders.
- * - The animation origin is the row's *current visual* position, not its
- *   previous layout slot:
- *
- *       previousVisual = previousLayout + leftoverTranslate
- *
- *   Resetting the transform first and using `previousLayout` as the origin
- *   throws away the in-flight interpolation. A fast drag moves the placeholder
- *   several rows per commit, so that reset teleported each sibling almost a
- *   whole step ahead every frame (and backwards on direction changes) — the
- *   "rows flying off their tracks" effect. Reading each row while its transform
- *   is still applied captures the interrupted position; the style-free
- *   measurement taken right after is the true target.
- * - Positions are measured in scroll-independent coordinates (`layoutTop`) so
- *   auto-scrolling the list cannot leak into a transform.
- * - Restarting a short (180ms) transition toward the new position after each
- *   commit yields smooth trailing motion that continues from wherever the row
- *   actually is, instead of snapping between layout slots.
- */
-export function useFlipAnimate(
-  elsRef: React.RefObject<Map<string, HTMLElement>>,
-  activeId: string | null,
-  disabled: boolean,
-  layoutKey: string,
-) {
+ *  Each row starts from its visual position and eases to its new slot. A row
+ *  that is interrupted by another commit restarts from wherever it is on
+ *  screen (see `flipDelta`), never from a stale slot. */
+export function useFlipAnimate(elsRef: React.RefObject<Map<string, HTMLElement>>, disabled: boolean, layoutKey: string) {
   const prev = useRef(new Map<string, number>())
-  const recs = useRef(new Map<string, FlipRec>())
   useLayoutEffect(() => {
-    if (disabled) return
     const els = elsRef.current
     if (!els) return
 
-    // 1. Visual positions, measured with any in-flight FLIP transform applied.
-    const visual = new Map<string, number>()
-    els.forEach((el, id) => visual.set(id, layoutTop(el)))
-
-    // 2. Cancel in-flight motion, then snap to the committed layout.
-    recs.current.forEach((rec, id) => {
-      cancelAnimationFrame(rec.raf)
-      clearTimeout(rec.timeout)
-      const el = els.get(id)
-      if (el && rec.onEnd) el.removeEventListener('transitionend', rec.onEnd)
-    })
-    recs.current.clear()
-    els.forEach((el) => {
-      el.style.transition = ''
-      el.style.transform = ''
-    })
-
-    // 3. True layout positions. `visual - target` is the residual translation of
-    //    an interrupted animation (0 for rows that were at rest).
-    const target = new Map<string, number>()
-    els.forEach((el, id) => target.set(id, layoutTop(el)))
-
+    // Read phase: the DOM already has the new layout, but running animations
+    // still apply, so `restDocTop` gives the new slot and `translateYOf` gives
+    // the translate the row is currently drawn with.
+    const next = new Map<string, number>()
+    const starts: [HTMLElement, number][] = []
     els.forEach((el, id) => {
-      if (id === activeId) return
+      const now = restDocTop(el)
+      next.set(id, now)
       const before = prev.current.get(id)
-      const b = target.get(id)
-      const v = visual.get(id)
-      if (before == null || b == null || v == null) return
-      // Continue from where the row currently is, then ease into its new slot.
-      const delta = flipDelta(before, v, b)
-      if (Math.abs(delta) <= 2) return
-      el.style.transition = 'none'
-      el.style.transform = `translateY(${delta}px)`
-      const rec: FlipRec = { raf: 0, timeout: 0, onEnd: null }
-      rec.raf = requestAnimationFrame(() => {
-        el.style.transition = 'transform 180ms ease'
-        el.style.transform = ''
-        const clear = () => {
-          el.style.transition = ''
-          el.style.transform = ''
-          el.removeEventListener('transitionend', clear)
-          if (recs.current.get(id) === rec) recs.current.delete(id)
-        }
-        rec.onEnd = clear
-        el.addEventListener('transitionend', clear)
-        rec.timeout = window.setTimeout(clear, 220)
-      })
-      recs.current.set(id, rec)
+      if (before == null || disabled) return
+      const delta = flipDelta(before, translateYOf(el), now)
+      if (Math.abs(delta) > 0.5) starts.push([el, delta])
     })
-    // Only mounted rows are stored, so a row that leaves (the dragged item) and
-    // later remounts cannot animate from a stale pre-drag slot.
-    prev.current = target
+
+    // Write phase: cancel stale motion, then start one fresh animation per row.
+    els.forEach((el) => el.getAnimations().forEach((a) => a.cancel()))
+    for (const [el, delta] of starts) {
+      el.animate([{ transform: `translateY(${delta}px)` }, { transform: 'translateY(0px)' }], {
+        duration: FLIP_MS,
+        easing: 'ease',
+      })
+    }
+    prev.current = next
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [layoutKey, activeId, disabled])
+  }, [layoutKey, disabled])
 }
 
 export type SortHandleProps = {
@@ -209,6 +188,7 @@ export type SortItemApi = {
 }
 
 type Pending = { id: string; startX: number; startY: number; dx: number; dy: number }
+type Drag = { id: string; dx: number; dy: number; x: number; y: number; pointer: boolean; raf: number }
 
 export function SortableList(props: {
   ids: string[]
@@ -228,7 +208,9 @@ export function SortableList(props: {
   const containerRef = useRef<HTMLDivElement>(null)
   const itemEls = useRef(new Map<string, HTMLElement>())
   const pending = useRef<Pending | null>(null)
-  const drag = useRef<{ id: string; from: number; dx: number; dy: number; dir: 1 | -1; lastY: number; raf: number; scrollRaf: number } | null>(null)
+  const drag = useRef<Drag | null>(null)
+  // Midpoints of the rest rows, in document space, captured at lift.
+  const slots = useRef<number[]>([])
   const stateRef = useRef({ ids, insertAt, activeId })
   stateRef.current = { ids, insertAt, activeId }
   const onCommitRef = useRef(onCommit)
@@ -247,7 +229,7 @@ export function SortableList(props: {
     [],
   )
 
-  // Visual order: source ids minus the dragged one, placeholder spliced at insertAt.
+  // Visible order: source ids minus the dragged one, placeholder at insertAt.
   const visual = useMemo(() => {
     if (!activeId) return ids.map((id) => ({ kind: 'item' as const, id }))
     const rest = ids.filter((id) => id !== activeId)
@@ -257,54 +239,32 @@ export function SortableList(props: {
     return out
   }, [ids, activeId, insertAt])
 
-  // Animate siblings around the placeholder; keyed on the visible order so
-  // unrelated re-renders never disturb in-flight motion.
   const layoutKey = visual.map((v) => (v.kind === 'item' ? v.id : '__ph')).join(',')
-  useFlipAnimate(itemEls, activeId, reducedMotion, layoutKey)
+  useFlipAnimate(itemEls, reducedMotion, layoutKey)
 
-  const computeInsertAt = useCallback((pointerY: number) => {
-    const d = drag.current
-    if (!d) return 0
-    const rest = stateRef.current.ids.filter((id) => id !== d.id)
+  const takeSnapshot = useCallback((draggedId: string) => {
     const mids: number[] = []
-    for (const id of rest) {
+    for (const id of stateRef.current.ids) {
+      if (id === draggedId) continue
       const el = itemEls.current.get(id)
       if (!el) continue
-      const r = el.getBoundingClientRect()
-      mids.push(r.top + r.height / 2)
+      mids.push(restDocTop(el) + el.getBoundingClientRect().height / 2)
     }
-    const dir = dndDirection(pointerY, d.lastY)
-    d.dir = dir
-    d.lastY = pointerY
-    // Hysteresis band keeps the placeholder stable right on a boundary.
-    return insertionIndex(mids, pointerY, dir)
+    slots.current = mids
   }, [])
 
-  const autoScroll = useCallback((pointerY: number) => {
-    const d = drag.current
-    if (!d) return
-    const scroller = containerRef.current?.closest('[data-dnd-scroll]') as HTMLElement | null
-    const targets: (HTMLElement | null)[] = [containerRef.current, scroller]
-    for (const t of targets) {
-      if (!t || t === document.body) continue
-      const r = t.getBoundingClientRect()
-      const canScroll = t.scrollHeight > t.clientHeight + 4
-      if (!canScroll) continue
-      if (pointerY < r.top + 56) t.scrollTop -= 10
-      else if (pointerY > r.bottom - 56) t.scrollTop += 10
-    }
-    if (pointerY < 72) window.scrollBy(0, -10)
-    else if (pointerY > window.innerHeight - 72) window.scrollBy(0, 10)
+  const computeInsertAt = useCallback((clientY: number) => {
+    const c = containerRef.current
+    if (!c) return stateRef.current.insertAt
+    return stepInsertion(slots.current, pointerDocY(clientY, c), stateRef.current.insertAt)
   }, [])
 
   const cleanup = useCallback(() => {
     const d = drag.current
-    if (d) {
-      cancelAnimationFrame(d.raf)
-      cancelAnimationFrame(d.scrollRaf)
-    }
+    if (d) cancelAnimationFrame(d.raf)
     drag.current = null
     pending.current = null
+    slots.current = []
     hideDragOverlay()
   }, [])
 
@@ -315,7 +275,11 @@ export function SortableList(props: {
         cleanup()
         return
       }
-      const { ids: cur, insertAt: at } = stateRef.current
+      const cur = stateRef.current.ids
+      // Pointer drops resolve the slot from the latest pointer position, not the
+      // last rendered state: a fast release can land before the frame loop's
+      // setState has committed.
+      const at = d.pointer ? computeInsertAt(d.y) : stateRef.current.insertAt
       const from = cur.indexOf(d.id)
       cleanup()
       setActiveId(null)
@@ -337,61 +301,57 @@ export function SortableList(props: {
     [cleanup, label],
   )
 
-  const onWindowMove = useCallback(
-    (e: PointerEvent) => {
-      const d = drag.current
-      const p = pending.current
-      if (d) {
-        e.preventDefault()
-        const { clientX, clientY } = e
-        cancelAnimationFrame(d.raf)
-        d.raf = requestAnimationFrame(() => {
-          moveDragOverlay(clientX, clientY, d.dx, d.dy)
-          const at = computeInsertAt(clientY)
-          if (at !== stateRef.current.insertAt) setInsertAt(at)
-          autoScroll(clientY)
-        })
-        return
-      }
-      if (p) {
-        const moved = Math.hypot(e.clientX - p.startX, e.clientY - p.startY)
-        if (moved < DND_ACTIVATION_PX) return
-        const el = itemEls.current.get(p.id)
-        if (!el) {
-          pending.current = null
-          return
-        }
-        const b = measureBox(el)
-        const from = stateRef.current.ids.indexOf(p.id)
-        drag.current = { id: p.id, from, dx: p.dx, dy: p.dy, dir: 1, lastY: e.clientY, raf: 0, scrollRaf: 0 }
-        pending.current = null
-        showDragOverlay(el, e.clientX, e.clientY)
-        setBox(b)
-        setActiveId(p.id)
-        setInsertAt(from >= 0 ? from : 0)
-        setMessage(`${label ?? 'Item'} lifted. Use arrow keys or pointer to move, release to drop, Escape to cancel.`)
-      }
-    },
-    [autoScroll, computeInsertAt, label],
-  )
+  // One frame loop per pointer drag: overlay, target, and edge scrolling.
+  const frame = useCallback(() => {
+    const d = drag.current
+    if (!d || !d.pointer) return
+    moveDragOverlay(d.x, d.y, d.dx, d.dy)
+    const at = computeInsertAt(d.y)
+    if (at !== stateRef.current.insertAt) setInsertAt(at)
+    edgeScroll(d.y, [containerRef.current, containerRef.current?.closest('[data-dnd-scroll]') as HTMLElement | null])
+    d.raf = requestAnimationFrame(frame)
+  }, [computeInsertAt])
+
+  const frameRef = useRef(frame)
+  frameRef.current = frame
+
+  const onWindowMove = useCallback((e: PointerEvent) => {
+    const d = drag.current
+    const p = pending.current
+    if (d) {
+      e.preventDefault()
+      d.x = e.clientX
+      d.y = e.clientY
+      return
+    }
+    if (!p) return
+    if (Math.hypot(e.clientX - p.startX, e.clientY - p.startY) < DND_ACTIVATION_PX) return
+    const el = itemEls.current.get(p.id)
+    pending.current = null
+    if (!el) return
+    // Snapshot the rest layout before the dragged row leaves the DOM.
+    takeSnapshot(p.id)
+    const b = measureBox(el)
+    const from = stateRef.current.ids.indexOf(p.id)
+    showDragOverlay(el, e.clientX, e.clientY)
+    drag.current = { id: p.id, dx: p.dx, dy: p.dy, x: e.clientX, y: e.clientY, pointer: true, raf: 0 }
+    drag.current.raf = requestAnimationFrame(() => frameRef.current())
+    setBox(b)
+    setActiveId(p.id)
+    setInsertAt(from >= 0 ? from : 0)
+    setMessage(`${label ?? 'Item'} lifted. Use arrow keys or pointer to move, release to drop, Escape to cancel.`)
+  }, [label, takeSnapshot])
 
   const onWindowUp = useCallback(() => {
     if (drag.current) finish(true)
-    else {
-      pending.current = null
-      cleanup()
-    }
+    else cleanup()
   }, [cleanup, finish])
 
   const onWindowCancel = useCallback(() => {
     if (drag.current) finish(false)
-    else {
-      pending.current = null
-      cleanup()
-    }
+    else cleanup()
   }, [cleanup, finish])
 
-  // Keep stable listener identities for add/remove symmetry.
   const moveRef = useRef(onWindowMove)
   moveRef.current = onWindowMove
   const upRef = useRef(onWindowUp)
@@ -419,8 +379,9 @@ export function SortableList(props: {
       window.removeEventListener('pointerup', up)
       window.removeEventListener('pointercancel', cn)
       window.removeEventListener('keydown', key, true)
+      cleanup()
     }
-  }, [])
+  }, [cleanup])
 
   const beginPending = useCallback((e: React.PointerEvent, id: string) => {
     if (e.pointerType === 'mouse' && e.button !== 0) return
@@ -439,7 +400,7 @@ export function SortableList(props: {
           e.preventDefault()
           const el = itemEls.current.get(id)
           const b = el ? measureBox(el) : { w: 0, h: 48, radius: '12px' }
-          drag.current = { id, from, dx: 0, dy: 0, dir: 1, lastY: 0, raf: 0, scrollRaf: 0 }
+          drag.current = { id, dx: 0, dy: 0, x: 0, y: 0, pointer: false, raf: 0 }
           setBox(b)
           setActiveId(id)
           setKeyboardMode(true)
@@ -448,15 +409,15 @@ export function SortableList(props: {
         }
         return
       }
-      const rest = cur.filter((x) => x !== id)
+      const restLen = cur.length - 1
+      const move = (next: number) => {
+        const clamped = Math.max(0, Math.min(restLen, next))
+        setInsertAt(clamped)
+        setMessage(`Destination position ${clamped + 1} of ${cur.length}.`)
+      }
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
         e.preventDefault()
-        const delta = e.key === 'ArrowDown' ? 1 : -1
-        setInsertAt((at) => {
-          const next = Math.max(0, Math.min(rest.length, at + delta))
-          setMessage(`Destination position ${next + 1} of ${cur.length}.`)
-          return next
-        })
+        move(stateRef.current.insertAt + (e.key === 'ArrowDown' ? 1 : -1))
       } else if (e.key === 'Enter' || e.key === ' ') {
         e.preventDefault()
         finish(true)
@@ -468,7 +429,7 @@ export function SortableList(props: {
         setInsertAt(0)
       } else if (e.key === 'End') {
         e.preventDefault()
-        setInsertAt(rest.length)
+        setInsertAt(restLen)
       }
     },
     [activeId, describe, finish, label],

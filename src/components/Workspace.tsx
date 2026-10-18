@@ -47,7 +47,7 @@ export const saveBlob = (name: string, blob: Blob) => {
 
 export function useWorkspaceFiles(msg: Msg, live?: ToolCall[], workspace?: Workspace, selectedRevisionId?: string | null) {
   const finalCalls = useMemo(() => (msg.toolRounds ?? []).flatMap((r) => r.calls).filter((c) => c.name === 'workspace_upsert'), [msg.toolRounds])
-  const liveCalls = useMemo(() => (live ?? []).filter((c) => c.name === 'workspace_upsert' || !c.name), [live])
+  const liveCalls = useMemo(() => (live ?? []).filter((c) => c.name === 'workspace_upsert'), [live])
   const groups = useMemo(() => {
     const done = new Set(finalCalls.map((c) => c.id))
     const pending = liveCalls.filter((c) => !c.id || !done.has(c.id))
@@ -388,7 +388,7 @@ export function WorkspacePanel({ msg, live, workspace, selectedRevisionId, setSe
 
   const revision = workspace.revisions.find(r => r.id === selectedRevisionId) ?? workspace.revisions[workspace.revisions.length - 1]
   const revIdx = workspace.revisions.findIndex(r => r.id === revision.id)
-  const { groups, total, isLive } = useWorkspaceFiles(msg, live)
+  const { total } = useWorkspaceFiles(msg, live)
 
   // Determine the file currently being written by the AI
   const writingPath = useMemo(() => findWritingPath(live, msg.toolRounds), [msg.toolRounds, live])
@@ -525,9 +525,8 @@ export function WorkspacePanel({ msg, live, workspace, selectedRevisionId, setSe
           workspace={workspace}
           selectedId={selectedRevisionId}
           onSelect={setSelectedRevisionId}
-          className="w-48"
+          className="w-64"
         />
-        {isLive && <span className="inline-flex shrink-0 items-center gap-1.5 text-xs text-mu"><span className="size-1.5 animate-pulse rounded-full bg-ac" />Writing…</span>}
         <Btn sm icon={Share2} title="Share via GitHub Gist (optional token)" onClick={() => setGistOpen(true)} />
         <Btn sm icon={X} title="Close workspace panel" onClick={() => { setSelectedFilePath(null); onClose(); }} />
       </div>
