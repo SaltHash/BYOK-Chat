@@ -38,7 +38,7 @@ export function UserText({ m }: { m: Msg }) {
         <p className="text-xs text-mu">Saving resends this message and replaces every reply after it. Use Branch from here first to keep the current thread.</p>
         <div className="flex justify-end gap-2">
           <Btn v="soft" onClick={() => { setV(m.t); setEd(false) }}>Cancel</Btn>
-          <Btn v="solid" icon={Check} onClick={() => { edit(m.id, v); setEd(false) }}>Save and resend</Btn>
+          <Btn v="solid" icon={Check} onClick={() => { if (edit(m.id, v)) setEd(false) }}>Save and resend</Btn>
         </div>
       </div>
     )

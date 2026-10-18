@@ -3,7 +3,7 @@ import { TOOLS } from './meta'
 import { BLANK_DOCS, expandArchives, extractOffThread, fitDoc, pairTranscripts } from './docs'
 import { WORKSPACE_MAX_CONTENT, WORKSPACE_TRUNC_MARKER, sanitizePath } from './workspace'
 import { withCode } from './errors'
-import { buildStreamRequest, splitSseBuffer, parseSseLine } from './streamRequest'
+import { buildStreamRequest, splitSseBuffer } from './streamRequest'
 
 export { supportsEffort } from './streamRequest'
 
@@ -348,7 +348,7 @@ export async function searchWeb(query: string, opts: { provider?: string; apiKey
   const q = query.trim().slice(0, 400)
   if (!q) throw Error('Enter a search query, for example @search(latest climate report)')
   const count = Number.isInteger(opts.count) ? Math.max(1, Math.min(8, opts.count as number)) : undefined
-  const cacheKey = `s:${opts.provider ?? ''}:${count ?? ''}:${q.toLowerCase()}`
+  const cacheKey = `s:${opts.provider ?? ''}:${opts.zone ?? ''}:${count ?? ''}:${opts.maxSnippetChars ?? ''}:${opts.evidenceBudget ?? ''}:${q.toLowerCase()}`
   if (opts.cache) {
     const cached = cacheGet<{ query: string; results: { id: string; title: string; url: string; snippet: string; engine?: string }[]; searchedAt: string; provider?: string }>(cacheKey)
     if (cached) return cached
@@ -507,7 +507,7 @@ export async function readAtt(f: File, existingTxtChars = 0, docs = BLANK_DOCS):
   }
   const d = await new Promise<string>((res) => { const x = new FileReader(); x.onload = () => res(String(x.result)); x.onerror = () => res(''); x.readAsDataURL(f) })
   if (!d) return fail('unreadable', `${f.name} could not be read.`)
-  return { ok: true, att: { name: f.name, kind: img ? 'img' : 'pdf', size: sz(f.size), mime: f.type, data: d.split(',')[1] } }
+  return { ok: true, att: { name: f.name, kind: img ? 'img' : 'pdf', size: sz(f.size), mime: f.type || (img ? 'image/png' : 'application/pdf'), data: d.split(',')[1] } }
 }
 
 /* Multi-file intake: expands archives, reads each file against the running
@@ -599,9 +599,12 @@ export function wire(e: Ep, msgs: Msg[]): Wire[] {
       if (a.kind !== 'img' && a.kind !== 'pdf') { t += `\n[${a.name} omitted: this model cannot process it]`; continue }
       if (!can(e, a.kind as 'img' | 'pdf')) { t += `\n[${a.name} omitted: this model cannot process it]`; continue }
       if (!a.data) { t += `\n[${a.name}: not retained after reload]`; continue }
+      // Files dragged in without a MIME mapping carry an empty `type`;
+      // never send an empty media_type to Anthropic.
+      const mime = a.mime || (a.kind === 'img' ? 'image/png' : 'application/pdf')
       c.push(e.type === 'anthropic'
-        ? { type: a.kind === 'img' ? 'image' : 'document', source: { type: 'base64', media_type: a.mime, data: a.data } }
-        : { type: 'image_url', image_url: { url: `data:${a.mime};base64,${a.data}` } })
+        ? { type: a.kind === 'img' ? 'image' : 'document', source: { type: 'base64', media_type: mime, data: a.data } }
+        : { type: 'image_url', image_url: { url: `data:${mime};base64,${a.data}` } })
     }
     return [{ role: 'user', content: c.length ? [...c, { type: 'text', text: t }] : t }]
   })
@@ -617,7 +620,11 @@ export async function stream(e: Ep, sys: string, ms: Wire[], on: (t: string) => 
   try { res = await fetch(u, { method: 'POST', headers: h, body: JSON.stringify(body), signal: ac.signal }) }
   catch (x: any) {
     if (x?.name === 'AbortError') throw withCode('Stopped', 'stopped')
-    throw withCode('Network or CORS error contacting ' + (u.split('/')[2] || u), 'cors', { retryable: true })
+    // `split('/')[2]` would keep `user:pass@` from endpoint URLs: use the URL
+    // host (credentials stripped) instead.
+    let host = u
+    try { host = new URL(u).host || u } catch { /* keep the raw string */ }
+    throw withCode('Network or CORS error contacting ' + host, 'cors', { retryable: true })
   }
   if (!res.ok) {
     const snippet = (await res.text().catch(() => '')).slice(0, 300) || res.statusText
@@ -632,6 +639,10 @@ export async function stream(e: Ep, sys: string, ms: Wire[], on: (t: string) => 
   }
   let all = '', tin = 0, tout = 0, cost = 0, cacheRead = 0, cacheWrite = 0
   const calls = new Map<number, ToolCall>()
+  // Provider `index` → the slot the call actually landed in. Needed for
+  // providers that reuse an index for a second call, or omit it entirely.
+  const callSlots = new Map<number, number>()
+  let lastCallIdx = -1
 
   /* Reported spend (USD) from the provider, when supplied. OpenRouter sends
    * `usage.cost` (total request cost) on the trailing usage chunk when the
@@ -695,12 +706,38 @@ export async function stream(e: Ep, sys: string, ms: Wire[], on: (t: string) => 
       const choice = j.choices?.[0]
       const got = choice?.delta?.tool_calls ?? choice?.message?.tool_calls
       if (Array.isArray(got)) for (const t of got) {
-        const i = t.index ?? calls.size, old = calls.get(i) ?? { id: '', name: '', arguments: '' }
+        // Some OpenAI-compatible providers omit `index` on continuation
+        // fragments, or reuse index 0 for a second call: fragments without an
+        // id continue the previous call, a different id starts a fresh slot.
+        const freshIndex = () => { let n = 0; while (calls.has(n)) n++; return n }
+        let i: number
+        if (typeof t.index === 'number') {
+          const mapped = callSlots.get(t.index)
+          const prev = mapped != null ? calls.get(mapped) : calls.get(t.index)
+          if (!prev || !prev.id) i = t.index
+          else if (t.id && prev.id === t.id) i = mapped ?? t.index
+          else if (!t.id) i = mapped ?? t.index
+          else i = freshIndex()
+          callSlots.set(t.index, i)
+        } else {
+          const prev = lastCallIdx >= 0 ? calls.get(lastCallIdx) : undefined
+          i = prev && (!t.id || prev.id === t.id) ? lastCallIdx : freshIndex()
+        }
+        const old = calls.get(i) ?? { id: '', name: '', arguments: '' }
         if (t.id) old.id = t.id
-        if (t.function?.name) old.name += t.function.name
+        const nm = t.function?.name
+        if (typeof nm === 'string' && nm) {
+          // Guard against providers that re-send the full name on every
+          // fragment (which used to turn "calc" into "calccalc").
+          if (!old.name) old.name = nm
+          else if (old.name === nm) { /* full name repeated */ }
+          else if (nm.startsWith(old.name)) old.name = nm
+          else old.name += nm
+        }
         if (t.function?.arguments) old.arguments += t.function.arguments
         if (t.extra_content) old.extra_content = t.extra_content
         calls.set(i, old)
+        lastCallIdx = i
       }
       if (Array.isArray(got) && got.length) snap()
       // Only accept provider-labelled summaries. Raw reasoning/thinking fields are private chain of thought.
@@ -717,6 +754,34 @@ export async function stream(e: Ep, sys: string, ms: Wire[], on: (t: string) => 
     } else {
       const r = res.body!.getReader(), d = new TextDecoder()
       let buf = ''
+      // SSE events are normally one complete `data:` line, but the spec allows
+      // a JSON value to span several `data:` lines. Accumulate only when a
+      // line does not parse on its own, so providers without blank-line
+      // separators keep working.
+      let pendingData: string | null = null
+      const handle = (l: string) => {
+        if (l.startsWith('data:')) {
+          const payload = l.slice(5).replace(/^ /, '')
+          if (pendingData != null) {
+            const both = pendingData + '\n' + payload
+            try { ev(JSON.parse(both)); pendingData = null; return } catch { /* try standalone */ }
+            try { ev(JSON.parse(payload)); pendingData = null; return } catch { pendingData = both; return }
+          }
+          const t = payload.trim()
+          if (!t || t === '[DONE]') return
+          try { ev(JSON.parse(payload)) } catch { pendingData = payload }
+          return
+        }
+        if (l === '' || l === '\r') {
+          // Blank line ends an event: flush anything accumulated.
+          if (pendingData == null) return
+          const s = pendingData
+          pendingData = null
+          const t = s.trim()
+          if (!t || t === '[DONE]') return
+          try { ev(JSON.parse(t)) } catch { /* malformed event: drop */ }
+        }
+      }
       for (;;) {
         const { done, value } = await r.read().catch((x: any) => {
           if (x?.name === 'AbortError') throw withCode('Stopped', 'stopped')
@@ -726,12 +791,12 @@ export async function stream(e: Ep, sys: string, ms: Wire[], on: (t: string) => 
         buf += d.decode(value, { stream: true })
         const { lines: L, rest } = splitSseBuffer(buf)
         buf = rest
-        for (const l of L) {
-          const j = parseSseLine(l)
-          if (j == null) continue
-          ev(j)
-        }
+        for (const l of L) handle(l)
       }
+      // A stream may end without a trailing newline: flush the decoder and
+      // dispatch the final line instead of dropping it.
+      const tail = buf + d.decode()
+      if (tail) handle(tail)
     }
   } catch (error) {
     throw error

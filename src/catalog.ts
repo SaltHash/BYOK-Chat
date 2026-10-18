@@ -56,9 +56,14 @@ export function parseCatalogModels(body: unknown, opts: { endpointId?: string; e
 export function filterCatalogByEndpoint(entries: CatalogEntry[], endpointId: string, endpointFilter: string): CatalogEntry[] {
   if (!endpointId) return entries
   const id = endpointId.toLowerCase()
-  return entries.filter((x) => endpointFilter === 'provider'
-    ? x.providerId.toLowerCase() === id || (!x.id.includes('/') && x.id.toLowerCase().startsWith(`${id}-`))
-    : x.id.toLowerCase().startsWith(`${id}/`))
+  if (endpointFilter === 'provider') {
+    // A provider-scoped catalog (`?providers=` on OpenRouter, or a local
+    // /models list) returns rows without a `providerId`: the response is
+    // already filtered, so keep it as-is instead of returning nothing.
+    if (entries.length && entries.every((x) => !x.providerId)) return entries
+    return entries.filter((x) => x.providerId.toLowerCase() === id || (!x.id.includes('/') && x.id.toLowerCase().startsWith(`${id}-`)))
+  }
+  return entries.filter((x) => x.id.toLowerCase().startsWith(`${id}/`))
 }
 
 /** Pin provider rows to the top for OpenRouter (same heuristic as before). */

@@ -38,11 +38,12 @@ export async function handleSyncPush(req, backend) {
   if (!payload || typeof payload !== 'object') { const e = Error('Missing payload object.'); e.code = 'bad_payload'; e.status = 400; throw e }
   const storeVersion = Number(body.storeVersion ?? payload.storeVersion ?? 18) || 18
   const exportVersion = Number(body.exportVersion ?? payload.v ?? 4) || 4
+  const secretHash = sha256Hex(secret)
   const existing = await backend.get(id)
-  if (existing && !safeEqual(sha256Hex(secret), String(existing.secretHash))) {
+  if (existing && !safeEqual(secretHash, String(existing.secretHash))) {
     const e = Error('Unknown or incorrect sync token.'); e.code = 'bad_token'; e.status = 401; throw e
   }
-  const row = { id, secretHash: sha256Hex(secret), payload, storeVersion, exportVersion, updatedAt: Date.now() }
+  const row = { id, secretHash, payload, storeVersion, exportVersion, updatedAt: Date.now() }
   await backend.put(row)
   return { ok: true, id, updatedAt: row.updatedAt, storeVersion, exportVersion, backend: backend.kind }
 }

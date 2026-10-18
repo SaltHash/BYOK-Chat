@@ -128,10 +128,12 @@ Settings stay in `localStorage` (`byok.v1`). Chats, workspaces, and attachment b
 Token sync links two devices with one super-long token (`byok1-<id>-<secret>`, `src/storage/sync.ts`). Generate it on device A, paste it on device B, then Push/Pull from Settings → Data controls. Payloads carry `{ v, storeVersion }` and older apps migrate automatically; newer payloads show a warning instead of breaking. The server stores only `sha256(secret)` plus the payload:
 
 - `POST /api/sync/push` `{ token, payload }` → `{ ok, updatedAt, backend }`
-- `GET /api/sync/pull?token=…` (or POST) → `{ payload, storeVersion, exportVersion, updatedAt }`
-- `GET /api/sync/status` → `{ backend: 'neon' | 'memory', configured }`
+- `GET /api/sync/pull` with `Authorization: Bearer <token>` (or `POST` with `{ token }`) → `{ payload, storeVersion, exportVersion, updatedAt }`
+- `GET /api/sync/status` → `{ backend: 'neon' | 'memory' | 'unavailable', configured }`
 
-Set `DATABASE_URL` to a Neon Postgres URL for persistence (apply `server/neon-schema.sql` first; RLS is deny-by-default so only the API service role touches `sync_states`). Without it the server uses in-memory storage for dev. Payloads are unencrypted on the server; use the optional password box for AES-GCM-256 + PBKDF2 encrypted file backups (`src/storage/backupCrypto.ts`). Auto-push after each reply is optional and best-effort.
+Tokens are read from the `Authorization` header or the POST body only; a token in the query string is refused so it can never reach access logs. State-changing sync calls are same-origin only, and `/api/search`, `/api/extract` and `/api/sync/*` are each limited to 30 requests per minute per client address (Cloudflare's `cf-connecting-ip`, or the socket address on Node — set `TRUST_PROXY=1` on a Node host behind a trusted reverse proxy to use `cf-connecting-ip`/`x-forwarded-for`).
+
+Set `DATABASE_URL` to a Neon Postgres URL for persistence (apply `server/neon-schema.sql` first; RLS is deny-by-default so only the API service role touches `sync_states`). Without it the server uses in-memory storage for dev (bounded to the 200 most recent slots). If `DATABASE_URL` is set but the database cannot be reached, sync fails with a 503 `sync_unavailable` instead of silently writing to memory, so devices can never diverge unnoticed. Payloads are unencrypted on the server; use the optional password box for AES-GCM-256 + PBKDF2 encrypted file backups (`src/storage/backupCrypto.ts`). Auto-push after each reply is optional and best-effort. The sync payload is capped at 8 MB.
 
 The search toggle in Settings → Tools allows automatic grounding for questions that request browsing, research, verification, or current information; it does not search ordinary messages. `@search(query)` runs an explicit search. Results are deduplicated, selected across domains, capped, and sent as snippets with stable source IDs and URLs. Retrieved text is marked as untrusted evidence in the prompt. The model is asked to cite every factual claim inline as `[S1]`, `[S2]`, etc.
 

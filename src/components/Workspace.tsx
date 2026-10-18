@@ -6,7 +6,7 @@ import { clampWorkspaceSplit } from '../layout'
 import type { ToolCall } from '../engine'
 import { Md } from './Md'
 import { Btn, Confirm, Field, Input, Toggle, cx } from './ui'
-import { WORKSPACE_MAX_FILES, buildZipEntries, workspaceLines, workspaceSize, buildFolderTree, expandedFoldersForPath, extractWorkspaceIds, findWritingPath, groupWorkspaceVersions, sanitizePath, zipFilename, diffLines, diffStat, changedFilesBetween, sanitizeHtmlPreview, previewKindFor, highlightLanguageFor, parseCsvPreview, type Workspace, type WorkspaceRevision } from '../workspace'
+import { WORKSPACE_MAX_FILES, buildZipEntries, workspaceLines, workspaceSize, buildFolderTree, expandedFoldersForPath, extractWorkspaceIds, findWritingPath, groupWorkspaceVersions, countWorkspaceFiles, sanitizePath, zipFilename, diffLines, diffStat, changedFilesBetween, sanitizeHtmlPreview, previewKindFor, highlightLanguageFor, parseCsvPreview, type Workspace, type WorkspaceRevision } from '../workspace'
 
 const fence = (lang: string, code: string) => {
   const runs = code.match(/`{3,}/g)
@@ -53,7 +53,13 @@ export function useWorkspaceFiles(msg: Msg, live?: ToolCall[], workspace?: Works
     const pending = liveCalls.filter((c) => !c.id || !done.has(c.id))
     return groupWorkspaceVersions([...finalCalls, ...pending.map((c) => ({ ...c }))])
   }, [finalCalls, liveCalls])
-  const total = groups.length
+  // Uncapped count: `groups` is capped at WORKSPACE_MAX_FILES, so its length
+  // could never trigger the "(showing first N)" hint.
+  const total = useMemo(() => {
+    const done = new Set(finalCalls.map((c) => c.id))
+    const pending = liveCalls.filter((c) => !c.id || !done.has(c.id))
+    return countWorkspaceFiles([...finalCalls, ...pending.map((c) => ({ ...c }))])
+  }, [finalCalls, liveCalls])
   const isLive = liveCalls.length > 0
   return { groups, total, isLive }
 }
@@ -261,9 +267,11 @@ export function WorkspaceTile({ msg, live, workspace, selectedRevisionId, onOpen
     setRenaming(false)
   }
 
-  // Auto-expand only folders leading to writing file; mirror panel
+  // Auto-expand only folders leading to the writing file; merge like the
+  // panel so a null writingPath does not collapse what the user expanded.
   useEffect(() => {
-    setExpandedFolders(expandedFoldersForPath(writingPath))
+    if (!writingPath) return
+    setExpandedFolders((prev) => ({ ...prev, ...expandedFoldersForPath(writingPath) }))
   }, [writingPath])
 
   // Build nested folder tree for expandable folders
@@ -444,7 +452,11 @@ export function WorkspacePanel({ msg, live, workspace, selectedRevisionId, setSe
       id: uid(),
       name: 'Local edit',
       msgId: msg.id,
-      files: latest.files.map((f) => (f.path === file.path ? { ...f, content: draft } : f)),
+      // The edited file may exist only in the selected older revision: append
+      // it instead of silently dropping the edit.
+      files: latest.files.some((f) => f.path === file.path)
+        ? latest.files.map((f) => (f.path === file.path ? { ...f, content: draft } : f))
+        : [...latest.files, { ...file, content: draft }],
       createdAt: Date.now(),
     }
     st.patch({

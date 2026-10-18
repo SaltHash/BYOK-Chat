@@ -32,6 +32,12 @@ test('bounds configurable integer settings', () => {
   assert.equal(boundedInt('99', 8, 1, 8), 8)
   assert.equal(boundedInt('0', 8, 1, 8), 1)
   assert.equal(boundedInt('invalid', 8, 1, 8), 8)
+  // Absent/blank/boolean tuning values keep the default instead of clamping to 0/1.
+  assert.equal(boundedInt(undefined, 8, 1, 8), 8)
+  assert.equal(boundedInt(null, 8, 1, 8), 8)
+  assert.equal(boundedInt('', 8, 1, 8), 8)
+  assert.equal(boundedInt(true, 8, 1, 8), 8)
+  assert.equal(boundedInt(0, 8, 1, 8), 1)
 })
 
 test('normalizes provider aliases', () => {
@@ -124,6 +130,49 @@ test('reports timeouts as retryable instead of generic failures', async () => {
     () => runApiSearch('tinyfish', 'q', { apiKey: 'k', timeoutMs: 20, limits: { maxResults: 8, maxSnippetChars: 100, evidenceBudget: 1000 }, retry: { maxRetries: 0 }, fetchFn: hanging }),
     (error) => error.code === 'timeout' && error.retryable === true,
   )
+})
+
+test('bounds a response body that stalls after the headers and retries it', async () => {
+  // Providers that answer 200 and then stream forever must not pin the request
+  // open past the timeout: the abort signal covers the body read too, and a
+  // body timeout is transient just like a header timeout.
+  let calls = 0
+  const stalling = (_url, init = {}) => {
+    calls++
+    if (calls === 1) {
+      return new Response(new ReadableStream({
+        start(controller) {
+          init.signal?.addEventListener('abort', () => {
+            const error = new Error('aborted')
+            error.name = 'AbortError'
+            controller.error(error)
+          })
+        },
+      }), { status: 200, headers: { 'content-type': 'application/json' } })
+    }
+    return new Response(JSON.stringify({ results: [{ title: 'Recovered', url: 'https://recovered.example/', snippet: 's' }] }), { headers: { 'content-type': 'application/json' } })
+  }
+  const out = await runApiSearch('tinyfish', 'q', { apiKey: 'k', timeoutMs: 20, limits: { maxResults: 8, maxSnippetChars: 100, evidenceBudget: 1000 }, retry: { maxRetries: 2, baseMs: 1 }, fetchFn: stalling })
+  assert.equal(calls, 2)
+  assert.equal(out[0].title, 'Recovered')
+  let single = 0
+  const alwaysStalls = (_url, init = {}) => {
+    single++
+    return new Response(new ReadableStream({
+      start(controller) {
+        init.signal?.addEventListener('abort', () => {
+          const error = new Error('aborted')
+          error.name = 'AbortError'
+          controller.error(error)
+        })
+      },
+    }), { status: 200, headers: { 'content-type': 'application/json' } })
+  }
+  await assert.rejects(
+    () => runApiSearch('tinyfish', 'q', { apiKey: 'k', timeoutMs: 20, limits: { maxResults: 8, maxSnippetChars: 100, evidenceBudget: 1000 }, retry: { maxRetries: 0 }, fetchFn: alwaysStalls }),
+    (error) => error.code === 'timeout' && error.retryable === true,
+  )
+  assert.equal(single, 1)
 })
 
 test('firecrawl search works without an API key', () => {

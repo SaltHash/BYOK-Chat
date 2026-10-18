@@ -119,11 +119,11 @@ function MessageActions({ calls }: { calls: { id: string; name: string; argument
   const actions = calls.filter((call) => !call.error && ['prompt_chip', 'inline_poll'].includes(call.name))
   if (!actions.length) return null
   const parse = (raw: string) => { try { return JSON.parse(raw || '{}') as Record<string, any> } catch { return {} } }
-  const run = (key: string, prompt: string) => { if (!prompt.trim() || busy) return; setUsed((v) => ({ ...v, [key]: true })); void useS.getState().send(prompt, []) }
+  const run = async (key: string, prompt: string) => { if (!prompt.trim() || busy) return; if (await useS.getState().send(prompt, [])) setUsed((v) => ({ ...v, [key]: true })) }
   return <div className="space-y-2 pt-1">
     {actions.map((call) => {
       const args = parse(call.arguments)
-      if (call.name === 'prompt_chip') return <button key={call.id} disabled={busy || used[call.id]} onClick={() => run(call.id, String(args.prompt ?? ''))} className="inline-flex min-h-9 items-center gap-2 rounded-full border border-hov bg-surf px-3 py-1.5 text-sm text-tx transition-colors hover:bg-hov focus-visible:ring-2 focus-visible:ring-ac disabled:opacity-50"><CornerDownLeft size={14} className="text-ac" />{String(args.label || 'Continue')}</button>
+      if (call.name === 'prompt_chip') return <button key={call.id} disabled={busy || used[call.id]} onClick={() => { void run(call.id, String(args.prompt ?? '')) }} className="inline-flex min-h-9 items-center gap-2 rounded-full border border-hov bg-surf px-3 py-1.5 text-sm text-tx transition-colors hover:bg-hov focus-visible:ring-2 focus-visible:ring-ac disabled:opacity-50"><CornerDownLeft size={14} className="text-ac" />{String(args.label || 'Continue')}</button>
       const options = Array.isArray(args.options) ? args.options.map((o: any) => typeof o === 'string' ? { label: o, prompt: o } : o).filter((o: any) => o && typeof o.label === 'string').slice(0, 6) : []
       const selected = chosen[call.id] ?? []
       const multi = args.mode === 'multiple'
@@ -135,7 +135,7 @@ function MessageActions({ calls }: { calls: { id: string; name: string; argument
             <span aria-hidden="true" className={cx('grid size-4 shrink-0 place-items-center border', multi ? 'rounded' : 'rounded-full', selected.includes(index) ? 'border-ac bg-ac text-acx' : 'border-mu/60')} >{selected.includes(index) && <Check size={11} strokeWidth={3} />}</span>{option.label}
           </button>)}
         </div>
-        <div className="mt-3 flex items-center justify-between"><span aria-live="polite" className="text-xs text-mu">{used[call.id] ? 'Sent' : multi ? 'Choose one or more' : 'Choose one'}</span><button disabled={!selected.length || busy || used[call.id]} onClick={() => run(call.id, options.filter((_: any, i: number) => selected.includes(i)).map((o: any) => o.prompt).join('\n\n'))} className="rounded-lg bg-ac px-3 py-1.5 text-sm font-medium text-acx transition-opacity hover:opacity-90 disabled:opacity-40">Continue</button></div>
+        <div className="mt-3 flex items-center justify-between"><span aria-live="polite" className="text-xs text-mu">{used[call.id] ? 'Sent' : multi ? 'Choose one or more' : 'Choose one'}</span><button disabled={!selected.length || busy || used[call.id]} onClick={() => { void run(call.id, options.filter((_: any, i: number) => selected.includes(i)).map((o: any) => o.prompt).join('\n\n')) }} className="rounded-lg bg-ac px-3 py-1.5 text-sm font-medium text-acx transition-opacity hover:opacity-90 disabled:opacity-40">Continue</button></div>
       </section>
     })}
   </div>
@@ -204,6 +204,9 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
   const advanced = useS((s) => s.advanced)
   const features = useS((s) => s.features)
   const workspaces = useS((s) => s.workspaces)
+  // Tile revision pickers must re-render when the selection changes even while
+  // the side panel is closed (`React.memo` would otherwise keep the stale id).
+  const selectedRevision = useS((s) => s.selectedRevision)
   const adv = featOn({ features }, 'advanced') ? advanced : undefined
   const [sysOpen, setSysOpen] = useState(false)
   const [copied, setCopied] = useState(false)
@@ -231,7 +234,12 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
   const searchPrefs = useS((s) => s.search)
   const sources = useMemo(() => collectMessageSources(m.toolRounds), [m.toolRounds])
   const displayText = m.toolFinal ?? m.t
-  const citedText = useMemo(() => searchPrefs?.citeStyle === 'off' ? stripCitations(displayText) : linkifyCitations(displayText, sources), [displayText, sources, searchPrefs?.citeStyle])
+  // While the live streamed text is on screen this output is not rendered, so
+  // skip the whole-text linkify pass that would otherwise rerun per chunk.
+  const citedText = useMemo(() => {
+    if (liveChunks?.length) return displayText
+    return searchPrefs?.citeStyle === 'off' ? stripCitations(displayText) : linkifyCitations(displayText, sources)
+  }, [displayText, sources, searchPrefs?.citeStyle, liveChunks])
   const openCite = useCallback((citeId: string) => {
     setSrcOpen(true)
     setSrcFlash(citeId.toUpperCase())
@@ -254,7 +262,7 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
   if (m.r === 'user')
     return (
       <div id={`msg-${m.id}`} className={cx('ml-auto max-w-[85%] space-y-2 rounded-xl p-1', flash && 'ring-2 ring-ac')}>
-        <div className="flex flex-wrap justify-end gap-1.5">{m.att?.map((a) => <Chip key={a.name} icon={Paperclip}>{a.name}</Chip>)}</div>
+        <div className="flex flex-wrap justify-end gap-1.5">{m.att?.map((a, i) => <Chip key={`${i}-${a.name}`} icon={Paperclip}>{a.name}</Chip>)}</div>
         {m.t && <UserText m={m} />}
       </div>
     )
@@ -398,7 +406,7 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
             {ids.map((wsId) => {
               const workspace = workspaces[wsId]
               if (!workspace) return null
-              const selectedRevId = useS.getState().selectedRevision?.[wsId] ?? workspace.revisions[workspace.revisions.length - 1].id
+              const selectedRevId = selectedRevision?.[wsId] ?? workspace.revisions[workspace.revisions.length - 1].id
               return (
                 <WorkspaceTile
                   key={wsId}
@@ -430,7 +438,7 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
       )}
       {(m.toolRounds ?? []).length > 0 && <MessageActions calls={(m.toolRounds ?? []).flatMap((round) => round.calls)} />}
       {prefs.showTps && m.tps != null && !m.err && <div className="text-xs text-mu">{m.by} · {m.tps.toLocaleString()} tokens/s</div>}
-      <div className={cx('flex items-center gap-0.5 transition-opacity', m.alts && m.alts.length > 1 ? '' : 'opacity-0 group-hover:opacity-100')}>
+      <div className={cx('flex items-center gap-0.5 transition-opacity', m.alts && m.alts.length > 1 ? '' : 'opacity-0 group-hover:opacity-100 focus-within:opacity-100')}>
         {m.alts && m.alts.length > 1 && !busy && (
           <>
             <Btn sm icon={ChevronLeft} title="Previous reply" disabled={(m.ai ?? 0) < 1} onClick={() => useS.getState().variant(m.id, (m.ai ?? 0) - 1)} />
@@ -438,7 +446,7 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
             <Btn sm icon={ChevronRight} title="Next reply" disabled={(m.ai ?? 0) >= m.alts.length - 1} onClick={() => useS.getState().variant(m.id, (m.ai ?? 0) + 1)} />
           </>
         )}
-        <Btn icon={ok ? Check : Copy} title="Copy" onClick={() => { navigator.clipboard?.writeText(m.t); setOk(true); setTimeout(() => setOk(false), 1200) }} />
+        <Btn icon={ok ? Check : Copy} title="Copy" onClick={() => { const p = navigator.clipboard?.writeText(m.t); if (!p) return; void p.then(() => { setOk(true); setTimeout(() => setOk(false), 1200) }).catch(() => {}) }} />
         {last && <Btn icon={RefreshCw} title="Regenerate" onClick={() => useS.getState().regen()} />}
         <Btn icon={GitBranch} title="Branch from here (copy this thread into a new chat)" onClick={() => useS.getState().branch(m.id)} />
         <Btn icon={Trash2} title="Delete" onClick={() => useS.getState().delMsg(m.id)} />
@@ -471,7 +479,7 @@ export function Chat({ side, toggle, cfg, pal }: { side: boolean; toggle: () => 
   const [workspacePanel, setWorkspacePanel] = useState<{ mid: string; workspaceId: string; initialFilePath?: string } | null>(null)
   const prevBusy = useRef(busy)
 
-  useEffect(() => { stick.current = true }, [s.chat])
+  useEffect(() => { stick.current = !useS.getState().flashMsg }, [s.chat])
   /* Follow-the-bottom scrolling is coalesced to at most one write per frame:
      assigning `scrollTop` forces a layout, and streamed chunks can arrive
      faster than the display refreshes. */
@@ -481,6 +489,8 @@ export function Chat({ side, toggle, cfg, pal }: { side: boolean; toggle: () => 
   }), [])
   useEffect(() => () => followBottom.cancel(), [followBottom])
   useEffect(() => {
+    // A sidebar jump owns the scroll position for its highlight window.
+    if (useS.getState().flashMsg) return
     const last = c?.msgs[c.msgs.length - 1]
     if (stick.current || last?.r === 'user') followBottom.call()
   }, [c?.msgs, s.chat, followBottom])

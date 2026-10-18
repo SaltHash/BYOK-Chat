@@ -6,7 +6,7 @@
 import { boundedInt, normalizeProvider, providerLabel, providerNeedsKey, apiKeyFor, resolveApiKey, resolveZone, apiBaseUrlFor, runApiSearch, SEARCH_API_PROVIDERS } from './search.mjs'
 import { fetchPageText } from './extract.mjs'
 import { handleSyncPush, handleSyncPull } from './sync.mjs'
-import { syncBackend } from './syncStore.mjs'
+import { syncBackend, redact } from './syncStore.mjs'
 import { clientIp, headerValue, jsonResult, readBodyText, requestHost, sameOrigin } from './http.mjs'
 
 // Hard server-side caps. Per-request tuning arrives from the user's search
@@ -21,6 +21,7 @@ const RATE_WINDOW_MS = 60_000
 
 const searchLimit = new Map()
 const extractLimit = new Map()
+const syncLimit = new Map()
 const searchCache = new Map()
 
 function overRateLimit(bucket, ip, now) {
@@ -56,7 +57,7 @@ export function apiHealth(req, env = process.env) {
  * Only genuine upstream outages/timeouts surface as 503. Configuration
  * problems (missing key/zone) are 400, rate limits propagate as 429, and
  * upstream auth/billing/request problems are 502 with a stable `code`. */
-function searchFailureStatus(error) {
+export function searchFailureStatus(error) {
   const code = error?.code || ''
   if (code === 'missing_key' || code === 'missing_zone') return 400
   if (code === 'rate_limited') return 429
@@ -66,12 +67,18 @@ function searchFailureStatus(error) {
   return 502
 }
 
-function searchFailureBody(error, provider) {
+// Codes whose retry semantics are fixed; anything else defers to the error.
+const NEVER_RETRYABLE = new Set(['missing_key', 'missing_zone', 'bad_request', 'upstream_auth', 'billing', 'bad_response'])
+const ALWAYS_RETRYABLE = new Set(['rate_limited', 'timeout', 'network', 'upstream_unavailable'])
+
+export function searchFailureBody(error, provider) {
+  const code = error?.code || 'upstream_unavailable'
+  const retryable = NEVER_RETRYABLE.has(code) ? false : ALWAYS_RETRYABLE.has(code) ? true : error?.retryable !== false
   return {
     error: error?.message || 'Could not reach the search provider.',
-    code: error?.code || 'upstream_unavailable',
+    code,
     provider,
-    retryable: error?.retryable !== false && error?.code !== 'missing_key' && error?.code !== 'missing_zone',
+    retryable,
   }
 }
 
@@ -84,9 +91,12 @@ function logSearchFailure(provider, mode, queryLength, error, ms) {
 export async function apiSearch(req, env = process.env) {
   if (req.method !== 'POST') return jsonResult(405, { error: 'Method not allowed' }, { allow: 'POST' })
   if (!sameOrigin(headerValue(req, 'origin'), requestHost(req))) return jsonResult(403, { error: 'Cross-origin request refused' })
-  const ip = clientIp(req)
+  const ip = clientIp(req, env)
   const now = Date.now()
   if (overRateLimit(searchLimit, ip, now)) return jsonResult(429, { error: 'Search limit reached. Try again in a minute.' }, { 'retry-after': '60' })
+  // Every request counts against the limit — invalid payloads must not be a
+  // free way to keep hammering the endpoint.
+  bumpRateLimit(searchLimit, ip, now)
   const raw = await readBodyText(req, SEARCH_BODY_LIMIT)
   if (raw === null) return jsonResult(413, { error: 'Request is too large' })
   let parsed
@@ -96,7 +106,6 @@ export async function apiSearch(req, env = process.env) {
   const provider = normalizeProvider(parsed?.provider ?? 'tinyfish', 'tinyfish')
   const clientKey = typeof parsed?.apiKey === 'string' ? parsed.apiKey.slice(0, 500) : ''
   const clientZone = typeof parsed?.zone === 'string' ? parsed.zone.slice(0, 200) : ''
-  bumpRateLimit(searchLimit, ip, now)
   const query = q.trim()
   // Per-request tuning from the user's search settings, bounded by hard caps.
   const requested = boundedInt(parsed?.count, MAX_RESULTS, 1, MAX_RESULTS)
@@ -136,13 +145,13 @@ export async function apiSearch(req, env = process.env) {
 export async function apiExtract(req, env = process.env) {
   if (req.method !== 'GET') return jsonResult(405, { error: 'Method not allowed' }, { allow: 'GET' })
   if (!sameOrigin(headerValue(req, 'origin'), requestHost(req))) return jsonResult(403, { error: 'Cross-origin request refused' })
-  const ip = clientIp(req)
+  const ip = clientIp(req, env)
   const now = Date.now()
   if (overRateLimit(extractLimit, ip, now)) return jsonResult(429, { error: 'Reader limit reached. Try again in a minute.' }, { 'retry-after': '60' })
+  bumpRateLimit(extractLimit, ip, now)
   const url = new URL(req.url || '/', 'http://localhost')
   const target = (url.searchParams.get('url') || '').trim().slice(0, 2000)
   if (!target) return jsonResult(400, { error: 'Missing url parameter' })
-  bumpRateLimit(extractLimit, ip, now)
   try {
     const data = await fetchPageText(target, { timeoutMs: EXTRACT_TIMEOUT_MS })
     return jsonResult(200, { ...data, fetchedAt: new Date().toISOString() }, { 'cache-control': 'private, max-age=300' })
@@ -154,19 +163,51 @@ export async function apiExtract(req, env = process.env) {
   }
 }
 
+/* Map a sync failure to a response body. Configuration/auth/payload problems
+ * (4xx) keep their message; backend failures (5xx) become a stable code and a
+ * generic message so driver/database internals never reach the client. */
+export function syncFailureResult(error) {
+  const status = typeof error?.status === 'number' ? error.status : 503
+  const code = error?.code || 'sync_unavailable'
+  if (status >= 500) return jsonResult(status, { error: 'Sync storage is unavailable. Try again in a moment.', code })
+  return jsonResult(status, { error: error?.message || 'Sync failed.', code })
+}
+
 export async function apiSync(req, env = process.env) {
   const url = new URL(req.url || '/', 'http://localhost')
   if (!url.pathname.startsWith('/api/sync/')) return null
-  const backend = await syncBackend(env)
+  // Sync payloads are large; count every request so anonymous pushes cannot
+  // hammer the endpoint (and the database) unchecked.
+  const ip = clientIp(req, env)
+  const now = Date.now()
+  if (overRateLimit(syncLimit, ip, now)) return jsonResult(429, { error: 'Sync limit reached. Try again in a minute.' }, { 'retry-after': '60' })
+  bumpRateLimit(syncLimit, ip, now)
+  // State-changing sync calls are same-origin only. Pulls authenticate with a
+  // bearer token, which cross-origin pages cannot attach without a CORS
+  // preflight, so GET /api/sync/pull stays available to browsers as-is.
+  if (req.method !== 'GET' && !sameOrigin(headerValue(req, 'origin'), requestHost(req))) {
+    return jsonResult(403, { error: 'Cross-origin request refused' })
+  }
   try {
+    if (url.pathname === '/api/sync/status' && req.method === 'GET') {
+      try {
+        const backend = await syncBackend(env)
+        return jsonResult(200, { ok: true, backend: backend.kind, configured: Boolean(env.DATABASE_URL) })
+      } catch {
+        // Keep status cheap and always 200 so the UI can show that sync is
+        // configured but currently unreachable.
+        return jsonResult(200, { ok: false, backend: 'unavailable', configured: Boolean(env.DATABASE_URL) })
+      }
+    }
+    const backend = await syncBackend(env)
     if (url.pathname === '/api/sync/push' && req.method === 'POST') return jsonResult(200, await handleSyncPush(req, backend))
     if (url.pathname === '/api/sync/pull' && (req.method === 'GET' || req.method === 'POST')) return jsonResult(200, await handleSyncPull(req, backend))
-    if (url.pathname === '/api/sync/status' && req.method === 'GET') {
-      return jsonResult(200, { ok: true, backend: backend.kind, configured: Boolean(env.DATABASE_URL) })
-    }
     return jsonResult(404, { error: 'Unknown sync route.' })
   } catch (e) {
-    return jsonResult(e.status ?? 400, { error: e.message || 'Sync failed.', code: e.code || 'sync_error' })
+    if ((typeof e?.status !== 'number' ? 503 : e.status) >= 500) {
+      console.error(`[sync] ${e?.code || 'sync_unavailable'}: ${redact(e?.stack || e)}`)
+    }
+    return syncFailureResult(e)
   }
 }
 

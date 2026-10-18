@@ -4,6 +4,10 @@ import { attachFlushOnHide, createCoalescedPersistStorage, type CoalescedPersist
 
 export const QUOTA_FLAG = 'byok.v1:quota-full'
 
+/** Persist payload version — single source for the zustand persist wrapper,
+ *  durable migration metadata, and sync payloads. */
+export const STORE_VERSION = 19
+
 export const isQuotaError = (x: unknown) =>
   !!x && ((x as { name?: unknown }).name === 'QuotaExceededError' || (x as { code?: unknown }).code === 22 || /quota/i.test(String((x as { message?: unknown })?.message ?? '')))
 
@@ -152,6 +156,14 @@ export const createPersistMapper = () => {
   })
 }
 
+/* Temporary chats past their expiry are session-scoped by design. Drop them
+ * from persisted copies (localStorage and the durable mirror) so a reload or
+ * a boot on another device never resurrects an expired chat. Pure. */
+export const withoutExpiredTemps = <C extends { temporary?: boolean; expiresAt?: number }>(chats: C[], now = Date.now()): C[] =>
+  chats.some((c) => c.temporary && c.expiresAt != null && c.expiresAt <= now)
+    ? chats.filter((c) => !(c.temporary && c.expiresAt != null && c.expiresAt <= now))
+    : chats
+
 /* ---- zustand storage ----
  * Writes are coalesced (see storage/coalesce.ts): the payload is held by
  * reference and serialized/written at most once per window, so streamed
@@ -168,8 +180,8 @@ const rawStorage: StateStorage = {
         try { localStorage.setItem(k, pruned); localStorage.removeItem(QUOTA_FLAG); return }
         catch { /* fall through to flag */ }
       }
-      try { localStorage.setItem(QUOTA_FLAG, String(Date.now())) } catch { /* ignore */ }
-      if (!isQuotaError(x)) throw x
+      if (isQuotaError(x)) { try { localStorage.setItem(QUOTA_FLAG, String(Date.now())) } catch { /* ignore */ } }
+      else throw x
     }
   },
   removeItem: (k: string) => { try { localStorage.removeItem(k); localStorage.removeItem(QUOTA_FLAG) } catch { /* ignore */ } },
@@ -185,6 +197,6 @@ export const PERSIST_WRITE_WINDOW_MS = 400
  *  break the app. */
 export const persistStorage: CoalescedPersistStorage<any> = createCoalescedPersistStorage<any>(rawStorage, {
   wait: PERSIST_WRITE_WINDOW_MS,
-  onError: () => { try { localStorage.setItem(QUOTA_FLAG, String(Date.now())) } catch { /* ignore */ } },
+  onError: (x) => { if (isQuotaError(x)) { try { localStorage.setItem(QUOTA_FLAG, String(Date.now())) } catch { /* ignore */ } } },
 })
 attachFlushOnHide(persistStorage.flush)

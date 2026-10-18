@@ -98,7 +98,7 @@ function Code({ lang, code, children, bare }: { lang: string; code: string; chil
     <div className="my-4 overflow-hidden rounded-xl bg-code">
       <div className="flex items-center justify-between bg-codeh px-4 py-2 text-xs">
         <span className="font-medium text-mu">{lang || 'text'}</span>
-        <button onClick={() => { navigator.clipboard?.writeText(code); setOk(true); setTimeout(() => setOk(false), 1200) }} className="inline-flex items-center gap-1.5 text-mu hover:text-tx">
+        <button onClick={() => { const p = navigator.clipboard?.writeText(code); if (!p) return; void p.then(() => { setOk(true); setTimeout(() => setOk(false), 1200) }).catch(() => {}) }} className="inline-flex items-center gap-1.5 text-mu hover:text-tx">
           {ok ? <Check size={13} /> : <Copy size={13} />}{ok ? 'Copied' : 'Copy'}
         </button>
       </div>

@@ -23,25 +23,58 @@ export function bearerToken(req) {
 }
 
 /* Reads a request body as text from either an async-iterable Node stream or
- * a Fetch API Request, capping it at `max` characters. Returns null when the
- * body exceeds the cap so callers can answer with 413. */
+ * a Fetch API Request, capping it at `max` (characters; bytes for Node
+ * streams, which is at least as strict). Returns null when the body exceeds
+ * the cap so callers can answer with 413. Bodies are decoded as UTF-8 across
+ * chunk boundaries (a multi-byte character split between two chunks would
+ * otherwise be corrupted) and oversized bodies are dropped as soon as the cap
+ * is crossed instead of being buffered whole. */
 export async function readBodyText(req, max = 16_384) {
+  const declared = Number(headerValue(req, 'content-length'))
+  if (Number.isFinite(declared) && declared > max) return null
   if (typeof req?.text === 'function') {
-    const declared = Number(headerValue(req, 'content-length'))
-    if (Number.isFinite(declared) && declared > max) return null
+    if (typeof req.body?.getReader === 'function') {
+      const reader = req.body.getReader()
+      const decoder = new TextDecoder()
+      let raw = ''
+      let overflow = false
+      try {
+        for (;;) {
+          const { done, value } = await reader.read()
+          if (done) break
+          raw += decoder.decode(value, { stream: true })
+          if (raw.length > max) { overflow = true; break }
+        }
+      } finally {
+        if (overflow) await reader.cancel().catch(() => {})
+      }
+      return overflow ? null : raw + decoder.decode()
+    }
     const raw = await req.text()
     return raw.length > max ? null : raw
   }
-  let raw = ''
+  const chunks = []
+  let size = 0
   for await (const chunk of req) {
-    raw += chunk
-    if (raw.length > max) return null
+    const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
+    size += buf.length
+    if (size > max) return null
+    chunks.push(buf)
   }
-  return raw
+  return Buffer.concat(chunks).toString('utf8')
 }
 
-export function clientIp(req) {
-  return headerValue(req, 'cf-connecting-ip') || req?.socket?.remoteAddress || 'unknown'
+/* Best-effort client identifier for rate limiting. Proxy headers decide the
+ * address only where they cannot be spoofed: Cloudflare always rewrites
+ * `cf-connecting-ip` (and Worker requests have no socket), while a Node
+ * deployment must opt in with TRUST_PROXY=1 when it sits behind a trusted
+ * reverse proxy. Otherwise the socket address wins, so a client cannot forge
+ * a fresh identity per request to bypass the rate limits. */
+export function clientIp(req, env = {}) {
+  const socket = req?.socket?.remoteAddress
+  const forwarded = headerValue(req, 'cf-connecting-ip') || headerValue(req, 'x-forwarded-for').split(',')[0].trim()
+  if (!socket) return forwarded || 'unknown'
+  return env.TRUST_PROXY ? forwarded || socket : socket
 }
 
 /* Same-origin guard for state-changing endpoints. Browsers send Origin on
@@ -49,7 +82,7 @@ export function clientIp(req) {
  * without an Origin header (curl, workers-to-workers) pass unguarded. */
 export function sameOrigin(origin, host) {
   if (!origin) return true
-  try { return new URL(origin).host === host } catch { return false }
+  try { return new URL(origin).host.toLowerCase() === String(host || '').toLowerCase() } catch { return false }
 }
 
 /* Plain response descriptor produced by server/api.mjs. Each host adapts it:

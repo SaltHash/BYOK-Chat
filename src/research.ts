@@ -516,15 +516,26 @@ export function sanitizeCitations(text: string, validIds: Iterable<string>): { t
       .replace(/\band\b/gi, '')
       .replace(/S\d+/gi, '')
       .replace(/[,;+\s&]/g, '')
-    if (stripped !== '') return full
     const ids = (inner.match(/S\d+/gi) ?? []).map((id) => id.toUpperCase())
     if (!ids.length) return full
+    if (stripped !== '') {
+      // Prose that happens to contain S-ids ("see [S9 above]"): strip only the
+      // unknown ids from the prose and log them, instead of leaving a
+      // citation-looking token untouched.
+      const bad = [...new Set(ids.filter((id) => !valid.has(id)))]
+      if (!bad.length) return full
+      for (const id of bad) removed.add(id)
+      let cleaned = ` ${String(inner)} `
+      for (const id of bad) cleaned = cleaned.replace(new RegExp(`(\\s*[,;]\\s*|\\s+)${id}\\b`, 'gi'), '')
+      cleaned = cleaned.replace(/\s{2,}/g, ' ').trim()
+      return cleaned ? `${sp ? ' ' : ''}[${cleaned}]` : ''
+    }
     const known = ids.filter((id) => valid.has(id))
     for (const id of ids) if (!valid.has(id)) removed.add(id)
     if (!known.length) return ''
     if (known.length === ids.length) return full
     return `${sp ? ' ' : ''}[${[...new Set(known)].join(', ')}]`
-  }).replace(/ {2,}/g, ' ').replace(/ \n/g, '\n')
+  })
   return { text: out, removed: [...removed].sort((a, b) => Number(a.slice(1)) - Number(b.slice(1))) }
 }
 

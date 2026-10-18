@@ -281,3 +281,17 @@ test('a plan followed by a second JSON object still parses the first', () => {
   const q = r.parseResearchPlan('{"a":1} {"title":"Second","steps":[{"kind":"report","label":"Create Report","items":["(1) done"]}]}')
   assert.equal(q?.title, 'Second')
 })
+
+test('sanitizeCitations strips unknown ids inside prose tokens and logs them', () => {
+  const valid = new Set(['S1'])
+  const prose = r.sanitizeCitations('See [S9 in the abstract] and [see S9 above].', valid)
+  assert.equal(prose.text, 'See [in the abstract] and [see above].')
+  assert.deepEqual(prose.removed, ['S9'])
+})
+
+test('sanitizeCitations keeps unrelated double spaces and indentation', () => {
+  const valid = new Set(['S1'])
+  const out = r.sanitizeCitations('a  b [S9]\n  indented', valid)
+  assert.equal(out.text, 'a  b\n  indented')
+  assert.deepEqual(out.removed, ['S9'])
+})

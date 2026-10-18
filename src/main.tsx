@@ -3,6 +3,7 @@ import './index.css'
 import App from './App'
 import { useS } from './store'
 import { hydrateDurable, mirrorToDurable } from './storage/boot'
+import { withoutExpiredTemps } from './persistence'
 
 createRoot(document.getElementById('root')!).render(<App />)
 
@@ -13,6 +14,6 @@ let prevChats: unknown = null, prevWs: unknown = null
 useS.subscribe((s) => {
   if (s.chats !== prevChats || s.workspaces !== prevWs) {
     prevChats = s.chats; prevWs = s.workspaces
-    mirrorToDurable(s.chats, s.workspaces)
+    mirrorToDurable(withoutExpiredTemps(s.chats), s.workspaces)
   }
 })

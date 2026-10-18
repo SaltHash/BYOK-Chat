@@ -5,7 +5,7 @@
  * Pure + unit-testable: no DOM, no store imports — the same functions run on
  * the main thread and inside the extraction worker (see extractOffThread). */
 
-import { unzipSync, gunzipSync, inflateSync } from 'fflate'
+import { unzipSync, inflateSync, Decompress } from 'fflate'
 
 export type OcrMode = 'off' | 'auto' | 'always'
 export type DocPrefs = {
@@ -47,16 +47,41 @@ const latin1 = (b: Uint8Array): string => {
   return s
 }
 
-/* Windows-1252 code points 0x80–0x9F in Unicode order. */
-const WIN1252 = '€\u201Aƒ„…†‡ˆ‰Š‹ŒŽ‘’“”•–—˜™š›œžŸ'
+/* OOXML/ODT parts are UTF-8 by definition (PDF content streams are
+ * byte-oriented and keep using `latin1` above). */
+const utf8 = (b: Uint8Array): string => new TextDecoder('utf-8').decode(b)
 
-const winChar = (b: number): string => (b < 0x80 ? String.fromCharCode(b) : b < 0xa0 ? WIN1252[b - 0x80] : b === 0xad ? '' : String.fromCharCode(b))
+/* unzipSync that refuses entries over the archive budget *before* inflating
+ * them: a compression bomb must not be expanded in full only to be rejected
+ * afterwards. A second pass drops whatever still slipped past the header
+ * sizes (streaming zip entries report size 0 in their local header). */
+const unzipCapped = (bytes: Uint8Array): Record<string, Uint8Array> => {
+  let entries = 0, total = 0
+  const out = unzipSync(bytes, {
+    filter: (f) => {
+      if (f.name.endsWith('/')) return false
+      if (entries >= DOC_MAX_ENTRIES || f.originalSize > DOC_MAX_ENTRY_BYTES || total + f.originalSize > DOC_MAX_TOTAL_BYTES) return false
+      entries++; total += f.originalSize
+      return true
+    },
+  }) as Record<string, Uint8Array>
+  for (const [k, v] of Object.entries(out)) if (v.length > DOC_MAX_ENTRY_BYTES) delete out[k]
+  return out
+}
+
+/* Windows-1252 code points 0x80–0x9F in Unicode order. The five undefined
+ * slots (0x81, 0x8D, 0x8F, 0x90, 0x9D) are empty strings so every later
+ * index stays aligned — omitting them shifted every mapping above 0x81. */
+const WIN1252 = ['€', '', '‚', 'ƒ', '„', '…', '†', '‡', 'ˆ', '‰', 'Š', '‹', 'Œ', '', 'Ž', '', '', '‘', '’', '“', '”', '•', '–', '—', '˜', '™', 'š', '›', 'œ', '', 'ž', 'Ÿ']
+
+const winChar = (b: number): string => (b < 0x80 ? String.fromCharCode(b) : b < 0xa0 ? WIN1252[b - 0x80] ?? '' : b === 0xad ? '' : String.fromCharCode(b))
 
 /** Decode a PDF literal/hex string body to Unicode. Handles \( \) \\ \n
  *  \r \t \b \f octal escapes, <hex> bodies and UTF-16BE BOMs. */
 export function decodePdfString(raw: string, hex: boolean): string {
   if (hex) {
-    const h = raw.replace(/\s+/g, '')
+    // Non-hex characters are dropped instead of parsing as NaN → NUL.
+    const h = raw.replace(/[^0-9a-fA-F]/g, '')
     const bytes: number[] = []
     for (let i = 0; i < h.length; i += 2) bytes.push(parseInt(h.slice(i, i + 2).padEnd(2, '0'), 16))
     if (bytes[0] === 0xfe && bytes[1] === 0xff) {
@@ -124,10 +149,39 @@ export function pdfContentText(content: string): string {
     return decodePdfString(h, true)
   }
   const skipSpace = () => { while (i < n && /[\s,]/y.test(content[i])) i++ }
+  // `<< … >>` dictionaries (inline-image properties, BDC attributes) may
+  // contain `(`/`<` bytes and must never be lexed as text.
+  const skipDict = () => {
+    let depth = 0
+    while (i < n) {
+      if (content[i] === '<' && content[i + 1] === '<') { depth++; i += 2; continue }
+      if (content[i] === '>' && content[i + 1] === '>') { depth--; i += 2; if (depth <= 0) return }
+      i++
+    }
+  }
+  // Inline images (`BI … ID <binary> EI`) are skipped as a unit: their binary
+  // payload routinely contains unbalanced `(` bytes that would otherwise
+  // swallow the rest of the content stream.
+  const skipInlineImage = () => {
+    let idAt = -1
+    for (let k = i; k < n - 1; k++) {
+      if (content[k] === 'I' && content[k + 1] === 'D' && /[\s]/.test(content[k - 1] ?? '') && /[\s]/.test(content[k + 2] ?? '')) { idAt = k; break }
+    }
+    if (idAt < 0) { i = n; return }
+    let j = idAt + 3
+    while (j < n) {
+      const k = content.indexOf('EI', j)
+      if (k < 0) break
+      if (/[\s]/.test(content[k - 1] ?? '') && (k + 2 >= n || /[\s\]\[<>/()]/.test(content[k + 2]))) { i = k + 2; return }
+      j = k + 2
+    }
+    i = n
+  }
   while (i < n) {
     const c = content[i]
     if (c === '(') { pending.push(readString()); continue }
-    if (c === '<' && content[i + 1] !== '<') { pending.push(readHex()); continue }
+    if (c === '<' && content[i + 1] === '<') { skipDict(); pending.length = 0; continue }
+    if (c === '<') { pending.push(readHex()); continue }
     if (c === '[') {
       i++
       const items: (string | number)[] = []
@@ -136,7 +190,8 @@ export function pdfContentText(content: string): string {
         if (i >= n) break
         if (content[i] === ']') { i++; break }
         if (content[i] === '(') { items.push(readString()); continue }
-        if (content[i] === '<' && content[i + 1] !== '<') { items.push(readHex()); continue }
+        if (content[i] === '<' && content[i + 1] === '<') { skipDict(); continue }
+        if (content[i] === '<') { items.push(readHex()); continue }
         const m = /^[+-]?(?:\d+\.?\d*|\.\d+)/.exec(content.slice(i))
         if (m) { items.push(parseFloat(m[0])); i += m[0].length; continue }
         i++
@@ -152,7 +207,8 @@ export function pdfContentText(content: string): string {
       const m = /^[A-Za-z'"]+/.exec(content.slice(i))!
       const op = m[0]
       i += op.length
-      if (op === 'Tj' || op === "'" || op === '"') {
+      if (op === 'BI') { skipInlineImage(); pending.length = 0 }
+      else if (op === 'Tj' || op === "'" || op === '"') {
         const s = pending.pop()
         if (s != null) out.push(s)
         pending.length = 0
@@ -172,7 +228,9 @@ export function pdfContentText(content: string): string {
 export function extractPdfText(bytes: Uint8Array): { text: string; pages: number } {
   try {
     const bin = latin1(bytes)
-    if (!bin.startsWith('%PDF')) return { text: '', pages: 0 }
+    // The spec allows leading bytes (BOM, whitespace) before `%PDF`, so look
+    // for the header within the first 1024 bytes instead of at offset 0.
+    if (bin.slice(0, 1024).indexOf('%PDF') < 0) return { text: '', pages: 0 }
     const pages = (bin.match(/\/Type\s*\/Page[^s]/g) ?? []).length
     const parts: string[] = []
     let pos = 0
@@ -204,27 +262,37 @@ export function extractPdfText(bytes: Uint8Array): { text: string; pages: number
   } catch { return { text: '', pages: 0 } }
 }
 
+/* Code points above U+FFFF need `fromCodePoint`: `fromCharCode` truncates an
+ * emoji to a lone BMP code unit. Never throws on malformed input. */
+const xmlCodePoint = (n: number): string => (Number.isInteger(n) && n >= 0 && n <= 0x10ffff ? String.fromCodePoint(n) : '\uFFFD')
+
 const xmlEntities = (s: string): string =>
   s.replace(/&(amp|lt|gt|quot|apos);/g, (_, e: string) => ({ amp: '&', lt: '<', gt: '>', quot: '"', apos: "'" }[e] ?? ' '))
-    .replace(/&#(\d+);/g, (_, d: string) => String.fromCharCode(Number(d)))
-    .replace(/&#x([0-9a-fA-F]+);/g, (_, h: string) => String.fromCharCode(parseInt(h, 16)))
+    .replace(/&#(\d+);/g, (_, d: string) => xmlCodePoint(Number(d)))
+    .replace(/&#x([0-9a-fA-F]+);/g, (_, h: string) => xmlCodePoint(parseInt(h, 16)))
 
 const stripXmlTags = (s: string): string => xmlEntities(s.replace(/<[^>]+>/g, '')).replace(/[ \t\u00a0]+/g, ' ')
 
 /** DOCX → paragraphs. Tables degrade to row paragraphs (cells joined). */
 export function extractDocx(bytes: Uint8Array): { text: string; paragraphs: number } {
-  const files = unzipSync(bytes)
+  const files = unzipCapped(bytes)
   const name = Object.keys(files).find((k) => /(^|\/)word\/document\.xml$/.test(k))
   if (!name) throw Error('Not a Word document (missing word/document.xml).')
-  const xml = latin1(files[name])
+  const xml = utf8(files[name])
   const paras = xml.split(/<w:p[ />]/)
   const out: string[] = []
   for (const p of paras) {
     const body = p.split(/<\/w:p>/)[0]
     if (!/<w:t[ >]/.test(body)) continue
-    const withBreaks = body.replace(/<w:tab[^/]*\/>/g, '\t').replace(/<w:br[^/]*\/>/g, '\n')
-    const texts = [...withBreaks.matchAll(/<w:t(?: [^>]*)?>([\s\S]*?)<\/w:t>/g)].map((m) => xmlEntities(m[1]))
-    const line = texts.join('').replace(/[ \t\u00a0]+/g, ' ').trim()
+    // Runs, tabs and breaks are collected in document order: the tab/break
+    // markers live *between* `<w:t>` elements, so replacing them first and
+    // then matching w:t (the old approach) dropped every one of them.
+    const parts: string[] = []
+    for (const m of body.matchAll(/<w:t(?: [^>]*)?>([\s\S]*?)<\/w:t>|<w:br\b[^>]*\/?>|<w:tab\b[^>]*\/?>/g)) {
+      if (m[1] != null) parts.push(xmlEntities(m[1]))
+      else parts.push(m[0].startsWith('<w:br') ? '\n' : '\t')
+    }
+    const line = parts.join('').replace(/[ \t\u00a0]+/g, ' ').replace(/\n{2,}/g, '\n').trim()
     if (line) out.push(line)
   }
   return { text: out.join('\n\n'), paragraphs: out.length }
@@ -232,10 +300,10 @@ export function extractDocx(bytes: Uint8Array): { text: string; paragraphs: numb
 
 /** ODT → paragraphs + headings. */
 export function extractOdt(bytes: Uint8Array): { text: string; paragraphs: number } {
-  const files = unzipSync(bytes)
+  const files = unzipCapped(bytes)
   const name = Object.keys(files).find((k) => /(^|\/)content\.xml$/.test(k))
   if (!name) throw Error('Not an OpenDocument file (missing content.xml).')
-  let xml = latin1(files[name])
+  let xml = utf8(files[name])
   xml = xml.replace(/<text:s(?: text:c="(\d+)")?\/>/g, (_, c: string) => ' '.repeat(Math.min(40, Number(c ?? 1) || 1)))
     .replace(/<text:tab\/>/g, '\t').replace(/<text:line-break\/>/g, '\n')
   const paras = xml.split(/<text:(?:p|h)[ >]/)
@@ -290,18 +358,18 @@ type XlsxData = { text: string; sheets: number; rows: number }
 
 /** XLSX → first-sheet rows (shared + inline strings). Capped at 2000 rows. */
 export function extractXlsx(bytes: Uint8Array): XlsxData {
-  const files = unzipSync(bytes)
+  const files = unzipCapped(bytes)
   const shared: string[] = []
   const ssName = Object.keys(files).find((k) => /(^|\/)xl\/sharedStrings\.xml$/.test(k))
   if (ssName) {
-    const ss = latin1(files[ssName])
+    const ss = utf8(files[ssName])
     for (const m of ss.matchAll(/<si>([\s\S]*?)<\/si>/g)) {
       shared.push([...m[1].matchAll(/<t(?: [^>]*)?>([\s\S]*?)<\/t>/g)].map((x) => xmlEntities(x[1])).join(''))
     }
   }
   const sheetNames = Object.keys(files).filter((k) => /(^|\/)xl\/worksheets\/sheet\d+\.xml$/.test(k)).sort()
   if (!sheetNames.length) throw Error('No worksheets found.')
-  const sheet = latin1(files[sheetNames[0]])
+  const sheet = utf8(files[sheetNames[0]])
   const rows = sheet.split(/<row[ >]/).slice(1)
   const out: string[] = []
   for (const r of rows.slice(0, 2000)) {
@@ -324,13 +392,13 @@ export function extractXlsx(bytes: Uint8Array): XlsxData {
 
 /** PPTX → slide texts in order. */
 export function extractPptx(bytes: Uint8Array): { text: string; slides: number } {
-  const files = unzipSync(bytes)
+  const files = unzipCapped(bytes)
   const slides = Object.keys(files)
     .filter((k) => /(^|\/)ppt\/slides\/slide\d+\.xml$/.test(k))
     .sort((a, b) => Number(/slide(\d+)\.xml/.exec(a)![1]) - Number(/slide(\d+)\.xml/.exec(b)![1]))
   if (!slides.length) throw Error('No slides found.')
   const out = slides.map((k, i) => {
-    const t = [...latin1(files[k]).matchAll(/<a:t>([\s\S]*?)<\/a:t>/g)].map((m) => xmlEntities(m[1])).join(' ').replace(/\s+/g, ' ').trim()
+    const t = [...utf8(files[k]).matchAll(/<a:t>([\s\S]*?)<\/a:t>/g)].map((m) => xmlEntities(m[1])).join(' ').replace(/\s+/g, ' ').trim()
     return t ? `[slide ${i + 1}]\n${t}` : ''
   }).filter(Boolean)
   return { text: out.join('\n\n'), slides: slides.length }
@@ -379,6 +447,9 @@ export function runExtraction(kind: DocJobKind, bytes: Uint8Array, arg?: string)
 let docWorker: Worker | null = null
 let docWorkerBroken = false
 let docJobSeq = 0
+/* A worker that never replies (hung parse, silently OOM-killed) must not
+ * leave the attachment reading forever. */
+const DOC_JOB_TIMEOUT_MS = 60_000
 const docJobs = new Map<number, { kind: DocJobKind; bytes: Uint8Array; arg?: string; resolve: (value: unknown) => void; reject: (e: unknown) => void }>()
 
 const spawnDocWorker = (): Worker | null => {
@@ -410,14 +481,22 @@ export function extractOffThread<K extends DocJobKind>(kind: K, bytes: Uint8Arra
   return new Promise((resolve, reject) => {
     const id = ++docJobSeq
     docJobs.set(id, { kind, bytes, arg, resolve: resolve as (value: unknown) => void, reject })
+    let timer: ReturnType<typeof setTimeout> | undefined
     const onMessage = (e: MessageEvent<DocWorkerReply>) => {
       if (e.data?.id !== id) return
       w.removeEventListener('message', onMessage)
+      clearTimeout(timer)
       docJobs.delete(id)
       if (e.data.ok) resolve(e.data.value as DocJobResult<K>)
       else reject(Error(e.data.error))
     }
     w.addEventListener('message', onMessage)
+    timer = setTimeout(() => {
+      w.removeEventListener('message', onMessage)
+      docJobs.delete(id)
+      failDocWorker()
+      reject(Error('Document extraction timed out.'))
+    }, DOC_JOB_TIMEOUT_MS)
     const req: DocWorkerRequest = { id, kind, bytes, arg }
     w.postMessage(req)
   })
@@ -429,12 +508,20 @@ export type ZipEntry = { name: string; bytes: Uint8Array }
 const JUNK = /(^|\/)(__MACOSX|\.DS_Store|Thumbs\.db$|desktop\.ini$)|\.DS_Store$/i
 
 export function unpackZip(bytes: Uint8Array): { entries: ZipEntry[]; skipped: number } {
-  const files = unzipSync(bytes)
   const entries: ZipEntry[] = []
-  let skipped = 0, total = 0
+  let skipped = 0, total = 0, accepted = 0, wantTotal = 0
+  // The filter runs before inflation: a bomb entry is skipped, not expanded.
+  const files = unzipSync(bytes, {
+    filter: (f) => {
+      if (f.name.endsWith('/') || JUNK.test(f.name)) { skipped++; return false }
+      if (accepted >= DOC_MAX_ENTRIES || f.originalSize > DOC_MAX_ENTRY_BYTES || wantTotal + f.originalSize > DOC_MAX_TOTAL_BYTES) { skipped++; return false }
+      accepted++; wantTotal += f.originalSize
+      return true
+    },
+  })
   for (const [name, data] of Object.entries(files)) {
-    if (name.endsWith('/') || JUNK.test(name)) { skipped++; continue }
-    if (entries.length >= DOC_MAX_ENTRIES || data.length > DOC_MAX_ENTRY_BYTES || total + data.length > DOC_MAX_TOTAL_BYTES) { skipped++; continue }
+    // Second line of defense for entries that reported size 0 up front.
+    if (data.length > DOC_MAX_ENTRY_BYTES || total + data.length > DOC_MAX_TOTAL_BYTES) { skipped++; continue }
     entries.push({ name, bytes: data as Uint8Array })
     total += data.length
   }
@@ -443,7 +530,21 @@ export function unpackZip(bytes: Uint8Array): { entries: ZipEntry[]; skipped: nu
 }
 
 export function unpackGzip(bytes: Uint8Array, fallbackName: string): ZipEntry {
-  const data = gunzipSync(bytes) as Uint8Array
+  // Stream the decompression with a hard output budget: `gunzipSync` would
+  // allocate the whole (potentially bomb-sized) payload before any check.
+  const chunks: Uint8Array[] = []
+  let total = 0, tooBig = false
+  const d = new Decompress((chunk) => {
+    if (tooBig) return
+    total += chunk.length
+    if (total > DOC_MAX_TOTAL_BYTES) { tooBig = true; throw Error('Decompressed file is too large.') }
+    chunks.push(chunk)
+  })
+  d.push(bytes, true)
+  if (tooBig) throw Error('Decompressed file is too large.')
+  const data = new Uint8Array(total)
+  let off = 0
+  for (const c of chunks) { data.set(c, off); off += c.length }
   const inner = fallbackName.replace(/\.gz$/i, '') || 'file'
   return { name: inner, bytes: data }
 }
@@ -474,7 +575,11 @@ export async function expandArchives(files: File[], prefs: Pick<DocPrefs, 'archi
         const { entries, skipped } = await extractOffThread('unzip', new Uint8Array(await f.arrayBuffer()))
         for (const e of entries) out.push(memberFile(e.name, e.bytes))
         notices.push(skipped ? `${f.name}: unpacked ${entries.length} files (${skipped} skipped).` : `${f.name}: unpacked ${entries.length} files.`)
-      } else if (lower.endsWith('.gz') || lower.endsWith('.tgz')) {
+      } else if (lower.endsWith('.tar.gz') || lower.endsWith('.tgz')) {
+        // There is no tar reader, so gunzipping these used to produce a `.tar`
+        // that then failed as "unsupported type" right after a success notice.
+        notices.push(`${f.name}: tar archives are not unpacked. Extract the files and attach them individually.`)
+      } else if (lower.endsWith('.gz')) {
         const e = await extractOffThread('gunzip', new Uint8Array(await f.arrayBuffer()), f.name)
         out.push(memberFile(e.name, e.bytes))
         notices.push(`${f.name}: decompressed to ${e.name}.`)

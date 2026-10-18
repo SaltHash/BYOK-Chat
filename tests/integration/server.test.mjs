@@ -130,3 +130,39 @@ test('extract blocks private targets at the HTTP layer', async () => {
   const data = await res.json()
   assert.equal(data.code, 'bad_url')
 })
+
+test('sync status reports the backend; unknown sync routes 404 as JSON', async () => {
+  const status = await fetch(`${base}/api/sync/status`)
+  assert.equal(status.status, 200)
+  assert.deepEqual(await status.json(), { ok: true, backend: 'memory', configured: false })
+  const unknown = await fetch(`${base}/api/sync/not-a-route`)
+  assert.equal(unknown.status, 404)
+  assert.match(unknown.headers.get('content-type') || '', /application\/json/)
+})
+
+test('cross-origin sync writes are refused before any storage happens', async () => {
+  const token = `byok1-${'a'.repeat(16)}-${'b'.repeat(43)}`
+  const res = await fetch(`${base}/api/sync/push`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', origin: 'https://evil.example' },
+    body: JSON.stringify({ token, payload: { v: 4 } }),
+  })
+  assert.equal(res.status, 403)
+  assert.match((await res.json()).error, /Cross-origin/)
+})
+
+test('spoofing proxy headers cannot bypass the per-IP search rate limit', async () => {
+  // The Node server must key the limit on the socket address, not on a header
+  // any client can set. Requests carry a fresh cf-connecting-ip every time.
+  let retryAfter = ''
+  for (let i = 0; i < 60 && !retryAfter; i++) {
+    const res = await fetch(`${base}/api/search`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'cf-connecting-ip': `spoof-${i}` },
+      body: JSON.stringify({ query: `rate limit probe ${i}` }),
+    })
+    if (res.status === 429) retryAfter = res.headers.get('retry-after') || ''
+    else assert.equal(res.status, 400) // missing_key: no search key is configured
+  }
+  assert.equal(retryAfter, '60')
+})

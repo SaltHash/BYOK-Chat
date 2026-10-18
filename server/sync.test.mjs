@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { handleSyncPush, handleSyncPull, parseToken } from './sync.mjs'
-import { memStore, sha256Hex } from './syncStore.mjs'
+import { memStore, sha256Hex, syncBackend, redact } from './syncStore.mjs'
 
 const req = (body, query = '') => {
   const text = typeof body === 'string' ? body : JSON.stringify(body ?? {})
@@ -35,4 +35,44 @@ test('payload size limit enforced', async () => {
   const backend = memStore()
   const big = 'y'.repeat(9_000_000)
   await assert.rejects(() => handleSyncPush(req({ token: `byok1-${'a'.repeat(16)}-${'b'.repeat(43)}`, payload: { big } }), backend), /too large/)
+})
+
+test('the in-memory backend stays bounded under anonymous pushes', async () => {
+  const backend = memStore()
+  const idFor = (i) => `id${String(i).padStart(14, '0')}`
+  for (let i = 0; i < 260; i++) {
+    await backend.put({ id: idFor(i), secretHash: 'h', payload: {}, storeVersion: 18, exportVersion: 4, updatedAt: i })
+  }
+  assert.equal(await backend.get(idFor(0)), null)
+  assert.ok(await backend.get(idFor(259)))
+  let count = 0
+  for (let i = 0; i < 260; i++) if (await backend.get(idFor(i))) count++
+  assert.equal(count, 200, 'the in-memory backend must hold a bounded number of rows')
+})
+
+test('the in-memory backend also bounds the total payload bytes it keeps', async () => {
+  const backend = memStore()
+  // 12 rows of ~8 MB each exceed the 64 MB budget: the oldest are evicted even
+  // though the row cap has not been reached.
+  for (let i = 0; i < 12; i++) {
+    await backend.put({ id: `big${String(i).padStart(13, '0')}`, secretHash: 'h', payload: { blob: 'x'.repeat(8_000_000) }, storeVersion: 18, exportVersion: 4, updatedAt: i })
+  }
+  assert.equal(await backend.get('big0000000000000'), null)
+  assert.ok(await backend.get('big0000000000011'))
+})
+
+test('syncBackend uses memory without DATABASE_URL and surfaces query failures', async () => {
+  assert.equal((await syncBackend({})).kind, 'memory')
+  // A configured database is never silently replaced by the in-memory store:
+  // failures reaching the store's own methods must propagate to the caller.
+  const backend = await syncBackend({ DATABASE_URL: 'postgres://user:pw@127.0.0.1:1/db' })
+  assert.equal(backend.kind, 'neon')
+  await assert.rejects(() => backend.get('anything'))
+})
+
+test('connection strings are redacted before they can reach logs', () => {
+  assert.equal(redact('connection string: postgres://user:hunter2@db.example/neondb'), 'connection string: postgres://***')
+  assert.equal(redact('Failed to parse URL from https://api.0.0.1/sql'), 'Failed to parse URL from https://***')
+  assert.equal(redact('plain message'), 'plain message')
+  assert.ok(!redact('x'.repeat(2000)).includes('x'.repeat(400)))
 })

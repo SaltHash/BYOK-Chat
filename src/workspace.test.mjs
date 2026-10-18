@@ -312,3 +312,31 @@ test('applyWorkspaceCall batches files atomically and scaffolds templates', asyn
     workspaceId: r.result.workspaceId, revisionName: 'R', action: 'patch', path: 'ghost.txt', content: '@@ -1,1 +1,1 @@\n-a\n+b\n',
   }, { msgId: 'm2', uid }), /File not found for patch/)
 })
+
+test('applyUnifiedDiff inserts zero-old-count hunks after the stated line', () => {
+  const top = applyUnifiedDiff('a\nb\nc', '@@ -0,0 +1,1 @@\n+X')
+  assert.equal(top.applied, true)
+  assert.equal(top.text, 'X\na\nb\nc')
+  const mid = applyUnifiedDiff('a\nb\nc', '@@ -2,0 +3,1 @@\n+X')
+  assert.equal(mid.applied, true)
+  assert.equal(mid.text, 'a\nb\nX\nc')
+  const end = applyUnifiedDiff('a\nb\nc', '@@ -3,0 +4,1 @@\n+X')
+  assert.equal(end.applied, true)
+  assert.equal(end.text, 'a\nb\nc\nX')
+})
+
+test('workspace call rejects entries that sanitize to the same path', async () => {
+  const { applyWorkspaceCall } = await import('./workspace.ts')
+  const uid = (() => { let n = 0; return () => `id${++n}` })()
+  assert.throws(() => applyWorkspaceCall({}, {
+    action: 'create', path: 'ok.txt', content: 'ok', revisionName: 'r1', createNew: true, workspaceName: 'W',
+    files: [{ path: 'a b.txt', content: 'one' }, { path: 'a_b.txt', content: 'two' }],
+  }, { msgId: 'm1', uid }), /same path/)
+})
+
+test('workspace update without content is rejected instead of blanking the file', async () => {
+  const { applyWorkspaceCall } = await import('./workspace.ts')
+  const uid = (() => { let n = 0; return () => `id${++n}` })()
+  const first = applyWorkspaceCall({}, { action: 'create', path: 'a.txt', content: 'hello', revisionName: 'r1', createNew: true, workspaceName: 'W' }, { msgId: 'm1', uid })
+  assert.throws(() => applyWorkspaceCall(first.workspaces, { action: 'update', path: 'a.txt', revisionName: 'r2', workspaceId: first.result.workspaceId }, { msgId: 'm2', uid }), /Missing content/)
+})

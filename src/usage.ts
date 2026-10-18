@@ -163,7 +163,12 @@ const contextLimit = (ep: Ep | undefined, model: string | undefined) => {
 export function deriveUsage({ logs, lastBy, eps, sel, manualLimit }: UsageSource): Usage {
   const last = logs.length ? logs[logs.length - 1] : undefined
   const entries = (last ?? []).filter(billable)
-  const first = entries[0]
+  // Routing-classifier and auto-effort calls are logged as helper entries
+  // (`<name> (classifier)` / `<name> (effort)`). They are billable, but they
+  // are not the model that answered, so they must not set the context limit
+  // or the header label.
+  const main = entries.filter((t) => !/ \((?:classifier|effort)\)$/.test(t.n))
+  const first = main[0] ?? entries[0]
   const replyEp = first ? endpointByName(eps, first.n) : undefined
   const selEp = sel?.k === 'ep' ? eps.find((e) => e.id === sel.id) : undefined
   // Max context follows the model: last reply's endpoint/model first, then the
@@ -173,7 +178,7 @@ export function deriveUsage({ logs, lastBy, eps, sel, manualLimit }: UsageSource
   // Header names the model that answered (display name, not id), preferring a
   // log entry whose model belongs to its endpoint over classifier/effort
   // entries whose `m` is a level or a routing pick.
-  const nameEntry = entries.find((t) => { const ep = endpointByName(eps, t.n); return !!ep && !!t.m && modelsOf(ep).includes(t.m) }) ?? first
+  const nameEntry = main.find((t) => { const ep = endpointByName(eps, t.n); return !!ep && !!t.m && modelsOf(ep).includes(t.m) }) ?? first
   const nameEp = nameEntry ? endpointByName(eps, nameEntry.n) : undefined
   const modelLabel = nameEp && nameEntry?.m ? modelNameOf(nameEp, nameEntry.m) : lastBy
 

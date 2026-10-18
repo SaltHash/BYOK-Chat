@@ -12,6 +12,10 @@ import { hintForLog, getErrorCode, classifyModelError, type ErrorCode } from './
 import { celebrate } from './flair'
 // Set by workspace writes; read once when a reply ends to decide on the completion cue.
 let workspaceWritesPending = false
+/* Guards the awaited vision-OCR pass inside send(): `busy` is not set yet at
+ * that point (the user message is only appended afterwards), so a second
+ * Enter could otherwise pass the busy check and send the message twice. */
+let sendPause = false
 import { usable, modelsOf, modelNameOf } from './models'
 import { splitEntry, playlistEntries, applyCommandTemplate, composeFullInput, planRequest } from './chatPlan'
 import { migrateLegacyCanvasGroups, applyWorkspaceCall, type Workspace, type WorkspaceRevision } from './workspace'
@@ -19,7 +23,7 @@ import { BLANK_DOCS, normDocs, type DocPrefs } from './docs'
 export { BLANK_DOCS, normDocs, type DocPrefs }
 import { rankMemories, mergeMemory, RouteCache, orderEndpoints, recordRoute, type RouteStat, type RoutingMode } from './recall'
 export type { RouteStat, RoutingMode }
-import { QUOTA_FLAG, prunePersisted, storageUsage, persistStorage, createPersistMapper } from './persistence'
+import { QUOTA_FLAG, prunePersisted, storageUsage, persistStorage, createPersistMapper, STORE_VERSION, withoutExpiredTemps } from './persistence'
 
 export { QUOTA_FLAG, prunePersisted, storageUsage }
 
@@ -223,6 +227,13 @@ export type CiteStyle = 'pills' | 'links' | 'off'
 export const SEARCH_PROVIDERS: [SearchProvider, string][] = [['tinyfish', 'TinyFish'], ['you', 'You.com'], ['exa', 'Exa'], ['firecrawl', 'Firecrawl'], ['brightdata', 'Bright Data']]
 export type SearchPrefs = { provider: SearchProvider; keys: Record<SearchProvider, string>; zone: string; maxResults: number; timeoutMs: number; maxSnippetChars: number; evidenceBudget: number; maxRetries: number; retryBaseMs: number; citeStyle: CiteStyle; sourcesOpen: boolean; reader: boolean; strictCitations: boolean }
 export const BLANK_SEARCH: SearchPrefs = { provider: 'tinyfish', keys: { tinyfish: '', you: '', exa: '', firecrawl: '', brightdata: '' }, zone: '', maxResults: 8, timeoutMs: 8000, maxSnippetChars: 1800, evidenceBudget: 12000, maxRetries: 2, retryBaseMs: 300, citeStyle: 'pills', sourcesOpen: false, reader: true, strictCitations: false }
+
+/* Default shapes for the settings objects a Data-tab import can replace
+ * wholesale: keep the initial state and import "replace" mode on the same
+ * literal so a sparse file can never leave undefined fields behind. */
+export const DEFAULT_PREFS: S['prefs'] = { showBy: true, showLog: true, showTps: false, enterSends: true, autoTitle: true, temporaryByDefault: false, seasonal: true, cues: false, showModelPricing: false, showContextMeter: true, titleEp: '', titleModel: '', effortEp: '', effortModel: '', recallEp: '', recallModel: '', tempHours: 3, fontBody: 'system', fontMono: 'system', fontHeader: 'system', modelPrimary: 'name', modelSecondary: 'none', paletteMax: 320, chatWidth: 'standard', settingsWidth: 1024, settingsHeight: 780, modelPickerHeight: 480, sidebarWidth: 288, widgetWidth: 320, workspaceWidth: 0.4, workspaceSplit: 0.2, modalBlur: 12, settingsOpacity: 55, streamFade: 0.3, streamMd: true }
+export const DEFAULT_PARAMS: S['params'] = { def: true, temp: 0.7, topp: 1, max: 4096, maxToolRounds: 8, highToolsUnlocked: false }
+export const DEFAULT_WIDGET_PREFS: S['widgetPrefs'] = { usageGroup: 'endpoint', usageMode: 'success', usageFormat: '{in}/{out}', usageTotal: false, usagePeriod: 'all', lastSpeed: true, timeUnit: 'auto', widgetOrder: WIDGETS.map(([k]) => k), shortcuts: KEYS.map(([k]) => k), contextLimit: 128000, showDisabledEndpoints: true, scratchRows: 6, snippetLimit: 20, costDecimals: 4, activePromptsOnly: false, charsPerToken: 4, hideDoneTodos: false }
 const SEARCH_VALID_PROVIDERS: SearchProvider[] = ['tinyfish', 'you', 'exa', 'firecrawl', 'brightdata']
 const clampInt = (v: unknown, fallback: number, min: number, max: number): number =>
   Number.isInteger(v) ? Math.max(min, Math.min(max, v as number)) : fallback
@@ -311,7 +322,7 @@ type S = {
   stop: () => void
   regen: () => void
   delMsg: (id: string) => void
-  editMsg: (id: string, t: string) => void
+  editMsg: (id: string, t: string) => boolean
   chooseResearchTier: (mid: string, tier: ResearchTierId) => void
   startResearch: (mid: string) => void
   resumeResearch: (mid: string) => void
@@ -1298,11 +1309,11 @@ export const useS = create<S>()(
           { id: 'k6', name: 'translate', desc: 'Translate text', in: 'text', sys: 'Translate the provided text into the language requested. If no target language is specified, ask which language.', tpl: '{{input}}', pl: '', on: true },
           { id: 'k7', name: 'brainstorm', desc: 'Generate useful ideas', in: 'text', sys: 'Generate varied, practical ideas. Keep each idea distinct and briefly explain why it may work.', tpl: '{{input}}', pl: '', on: true },
         ],
-        chats: [], chat: '', memories: [], memoryPrefs: { enabled: false, intent: 'balanced', recall: 'contextual', method: 'local', classifierEp: '', classifierModel: '' }, docPrefs: { ...BLANK_DOCS }, research: { ...BLANK_RESEARCH }, tools: { ...DEFAULT_TOOLS }, search: { ...BLANK_SEARCH, keys: { ...BLANK_SEARCH.keys } }, skills: DEFAULT_SKILL_STATE.map((s) => ({ ...s })), widgets: {}, widgetPrefs: { usageGroup: 'endpoint', usageMode: 'success', usageFormat: '{in}/{out}', usageTotal: false, usagePeriod: 'all', lastSpeed: true, timeUnit: 'auto', widgetOrder: WIDGETS.map(([k]) => k), shortcuts: KEYS.map(([k]) => k), contextLimit: 128000, showDisabledEndpoints: true, scratchRows: 6, snippetLimit: 20, costDecimals: 4, activePromptsOnly: false, charsPerToken: 4, hideDoneTodos: false }, rail: false, pad: '', snips: [],
-        params: { def: true, temp: 0.7, topp: 1, max: 4096, maxToolRounds: 8, highToolsUnlocked: false }, effort: {},
+        chats: [], chat: '', memories: [], memoryPrefs: { enabled: false, intent: 'balanced', recall: 'contextual', method: 'local', classifierEp: '', classifierModel: '' }, docPrefs: { ...BLANK_DOCS }, research: { ...BLANK_RESEARCH }, tools: { ...DEFAULT_TOOLS }, search: { ...BLANK_SEARCH, keys: { ...BLANK_SEARCH.keys } }, skills: DEFAULT_SKILL_STATE.map((s) => ({ ...s })), widgets: {}, widgetPrefs: { ...DEFAULT_WIDGET_PREFS, widgetOrder: [...DEFAULT_WIDGET_PREFS.widgetOrder], shortcuts: [...DEFAULT_WIDGET_PREFS.shortcuts] }, rail: false, pad: '', snips: [],
+        params: { ...DEFAULT_PARAMS }, effort: {},
         workspacePrefs: { defaultView: 'latest', autoOpen: true, autoFollow: true },
         advanced: { ...DEFAULT_ADVANCED },
-        sel: null, pr: 'general', globalPrompt: { on: false, text: '' }, features: { ...DEFAULT_FEATURES }, featureOrder: FEATURES.map(([id]) => id), libraryShow: { ...DEFAULT_LIBRARY_SHOW }, themeMode: 'dark', themeDark: 'claude', themeLight: 'paper', customDarkColors: { ...DEFAULT_CUSTOM_COLORS }, customLightColors: { ...DEFAULT_CUSTOM_LIGHT_COLORS }, setupDone: false, prefs: { showBy: true, showLog: true, showTps: false, enterSends: true, autoTitle: true, temporaryByDefault: false, seasonal: true, cues: false, showModelPricing: false, showContextMeter: true, titleEp: '', titleModel: '', effortEp: '', effortModel: '', recallEp: '', recallModel: '', tempHours: 3, fontBody: 'system', fontMono: 'system', fontHeader: 'system', modelPrimary: 'name', modelSecondary: 'none', paletteMax: 320, chatWidth: 'standard', settingsWidth: 1024, settingsHeight: 780, modelPickerHeight: 480, sidebarWidth: 288, widgetWidth: 320, workspaceWidth: 0.4, workspaceSplit: 0.2, modalBlur: 12, settingsOpacity: 55, streamFade: 0.3, streamMd: true },
+        sel: null, pr: 'general', globalPrompt: { on: false, text: '' }, features: { ...DEFAULT_FEATURES }, featureOrder: FEATURES.map(([id]) => id), libraryShow: { ...DEFAULT_LIBRARY_SHOW }, themeMode: 'dark', themeDark: 'claude', themeLight: 'paper', customDarkColors: { ...DEFAULT_CUSTOM_COLORS }, customLightColors: { ...DEFAULT_CUSTOM_LIGHT_COLORS }, setupDone: false, prefs: { ...DEFAULT_PREFS },
         stats: ZERO(), keys: Object.fromEntries(KEYS.map(([k, , d]) => [k, d])),
         folders: [], price: { in: 0, out: 0 }, todos: [],
         routeStats: {}, flashMsg: null,
@@ -1340,12 +1351,19 @@ export const useS = create<S>()(
           const n: Chat = { id: uid(), title: temporary ? 'Temporary chat' : 'New chat', msgs: [], temporary, expiresAt: temporary && s.prefs.tempHours > 0 ? Date.now() + s.prefs.tempHours * 3600000 : undefined }
           return { chats: [n, ...s.chats.filter((x) => !(x.temporary && s.prefs.tempHours === 0))], chat: n.id, notice: null }
         }),
-        chatOp: (id, op) => set((s) => {
-          const chats = op === 'del' ? s.chats.filter((c) => c.id !== id) : s.chats.map((c) => (c.id === id ? { ...c, pin: !c.pin } : c))
-          return { chats, chat: s.chat === id && op === 'del' ? chats[0]?.id ?? '' : s.chat }
-        }),
+        chatOp: (id, op) => {
+          if (op === 'del') {
+            const gone = get().chats.find((c) => c.id === id)
+            if (gone?.msgs.length) void import('./storage/boot').then(({ dropAttachmentBytes }) => dropAttachmentBytes(gone.msgs).catch(() => {})).catch(() => {})
+          }
+          set((s) => {
+            const chats = op === 'del' ? s.chats.filter((c) => c.id !== id) : s.chats.map((c) => (c.id === id ? { ...c, pin: !c.pin } : c))
+            return { chats, chat: s.chat === id && op === 'del' ? chats[0]?.id ?? '' : s.chat }
+          })
+        },
 
         send: async (v, att) => {
+          if (sendPause) return false
           const s = get()
           if (s.busy) return false
           const raw = v.trim()
@@ -1379,6 +1397,10 @@ export const useS = create<S>()(
             if (miss) return warn({ t: `/${cmd.name} needs ${miss}. Attach it with the + button, then send again.` })
           }
           const um: Msg = { id: uid(), r: 'user', t: raw, at: Date.now(), att, cmd: cmd?.id }
+          // The chat the user is sending from, captured before any await: the
+          // OCR pass below can take seconds and the user may switch chats
+          // while it runs.
+          const chatId = s.chat
           // Vision OCR (Documents setting): when no usable endpoint can take
           // images natively (or OCR is set to always), transcribe images to
           // text first so plan() sees text-backed attachments.
@@ -1387,39 +1409,49 @@ export const useS = create<S>()(
             const dp = normDocs((s as unknown as { docPrefs?: unknown }).docPrefs)
             const bare = att.filter((a) => a.kind === 'img' && a.data && !a.text)
             if (bare.length && dp.ocr !== 'off') {
-              const visionEps = s.eps.filter((e) => usable(e) && can(e, 'img'))
-              if (dp.ocr === 'always' || !visionEps.length) {
-                const picked = s.eps.find((e) => e.id === dp.ocrEp && usable(e) && can(e, 'img')) ?? visionEps[0]
-                if (!picked) return warn({ t: 'These images need text extraction, but no usable vision-capable endpoint is configured. Add one in Settings → Endpoints, pick it as the OCR endpoint in Settings → Tools → Documents, or remove the images.', tab: 'eps', label: 'Open endpoints' })
-                const model = picked.id === dp.ocrEp && dp.ocrModel && modelsOf(picked).includes(dp.ocrModel) ? dp.ocrModel : picked.model
-                try {
-                  files = await Promise.all(att.map(async (a) => {
-                    if (a.kind !== 'img' || !a.data || a.text) return a
-                    const text = await ocrImage(picked, model, a)
-                    return { ...a, text: `[ocr: transcribed from ${a.name}]\n${text}`, source: 'ocr' }
-                  }))
-                  um.att = files
-                } catch (x: any) {
-                  if (!visionEps.length) return warn({ t: `Image transcription failed (${String(x?.message ?? x)}). Add a vision-capable endpoint or remove the images.`, tab: 'eps', label: 'Open endpoints' })
+              // `busy` is only set once the message is appended; the flag
+              // keeps a second send from slipping through this await window.
+              sendPause = true
+              try {
+                const visionEps = s.eps.filter((e) => usable(e) && can(e, 'img'))
+                if (dp.ocr === 'always' || !visionEps.length) {
+                  const picked = s.eps.find((e) => e.id === dp.ocrEp && usable(e) && can(e, 'img')) ?? visionEps[0]
+                  if (!picked) return warn({ t: 'These images need text extraction, but no usable vision-capable endpoint is configured. Add one in Settings → Endpoints, pick it as the OCR endpoint in Settings → Tools → Documents, or remove the images.', tab: 'eps', label: 'Open endpoints' })
+                  const model = picked.id === dp.ocrEp && dp.ocrModel && modelsOf(picked).includes(dp.ocrModel) ? dp.ocrModel : picked.model
+                  try {
+                    files = await Promise.all(att.map(async (a) => {
+                      if (a.kind !== 'img' || !a.data || a.text) return a
+                      const text = await ocrImage(picked, model, a)
+                      return { ...a, text: `[ocr: transcribed from ${a.name}]\n${text}`, source: 'ocr' }
+                    }))
+                    um.att = files
+                  } catch (x: any) {
+                    if (!visionEps.length) return warn({ t: `Image transcription failed (${String(x?.message ?? x)}). Add a vision-capable endpoint or remove the images.`, tab: 'eps', label: 'Open endpoints' })
+                  }
                 }
-              }
+              } finally { sendPause = false }
             }
           }
-          void import('./storage/boot').then(({ persistAttachmentBytes }) => persistAttachmentBytes(um.id, files).catch(() => {})).catch(() => {})
-          const pre = plan(s, um)
+          // Re-read after the awaited OCR pass: plan and append against the
+          // chat the message was sent from, not whichever one is open now.
+          const s2 = get()
+          const pre = plan(s2, um)
           if (pre.err) return warn(pre.err)
+          // Attachment bytes are only worth writing once the message is really
+          // going to be stored (a failed plan must not leave orphan blobs).
+          void import('./storage/boot').then(({ persistAttachmentBytes }) => persistAttachmentBytes(um.id, files).catch(() => {})).catch(() => {})
           um.ctx = []
           // Every attachment with extracted text (txt, PDF text layer, Office
           // docs, transcripts, OCR) rides inline; native binaries (images on
           // vision endpoints, PDFs on Anthropic) ride alongside in wire().
           um.fx = files.filter((a) => a.text).map((a) => `\n\n[file: ${a.name}]\n${a.text ?? ''}`).join('')
           um.full = full(body(cmd, text), um.ctx, um.fx)
-          const previous = s.chats.find((c) => c.id === s.chat)?.msgs ?? []
-          const cpt = Math.min(10, Math.max(1, Number(s.widgetPrefs?.charsPerToken) || 4))
+          const previous = s2.chats.find((c) => c.id === chatId)?.msgs ?? []
+          const cpt = Math.min(10, Math.max(1, Number(s2.widgetPrefs?.charsPerToken) || 4))
           um.historyTokens = estimateHistoryTokens(previous, '', cpt)
           um.explicitTokens = est(um.full + JSON.stringify(files.map(a => ({ name: a.name, text: a.text }))))
           set((st) => {
-            const old = st.chats.find((c) => c.id === st.chat)
+            const old = st.chats.find((c) => c.id === chatId)
             const base: Chat = old ?? { id: uid(), title: 'New chat', msgs: [] }
             const next: Chat = { ...base, started: true, titleAuto: base.msgs.length ? base.titleAuto : st.prefs.autoTitle, title: base.msgs.length ? base.title : (raw || files[0]?.name || 'New chat').slice(0, 40), msgs: [...base.msgs, um] }
             return { chat: base.id, chats: old ? st.chats.map((c) => (c.id === base.id ? next : c)) : [next, ...st.chats], notice: null, stats: featOn(st, 'stats') ? { ...st.stats, sent: st.stats.sent + 1, chats: st.stats.chats + (base.started ? 0 : 1) } : st.stats }
@@ -1448,7 +1480,11 @@ export const useS = create<S>()(
           }
           void answer(um, prev)
         },
-        delMsg: (id) => set((s) => ({ chats: s.chats.map((c) => ({ ...c, msgs: c.msgs.filter((m) => m.id !== id) })) })),
+        delMsg: (id) => {
+          const gone = get().chats.flatMap((c) => c.msgs).find((m) => m.id === id)
+          if (gone?.att?.length) void import('./storage/boot').then(({ dropAttachmentBytes }) => dropAttachmentBytes([gone]).catch(() => {})).catch(() => {})
+          set((s) => ({ chats: s.chats.map((c) => ({ ...c, msgs: c.msgs.filter((m) => m.id !== id) })) }))
+        },
         chooseResearchTier: (mid, tier) => {
           const s = get()
           if (s.busy) return
@@ -1509,22 +1545,23 @@ export const useS = create<S>()(
         },
         editMsg: (id, t) => {
           const s = get(), c = s.chats.find((x) => x.id === s.chat), i = c ? c.msgs.findIndex((m) => m.id === id) : -1
-          if (!c || i < 0) return
-          if (s.busy) { set({ notice: { t: 'A reply is still in progress. Stop it first, then edit your message.' } }); return }
+          if (!c || i < 0) return false
+          if (s.busy) { set({ notice: { t: 'A reply is still in progress. Stop it first, then edit your message.' } }); return false }
           const o = c.msgs[i]
-          if (!t.trim() && !o.att?.length) return
+          if (!t.trim() && !o.att?.length) return false
           const m = t.match(/^\/(\S+)(?:\s+([\s\S]*))?$/), cmd = m && featOn(s, 'commands') ? s.cmds.find((x) => x.name === m[1]) : (!m && featOn(s, 'commands') ? s.cmds.find((x) => x.id === o.cmd) : undefined)
           const um: Msg = { ...o, t: t.trim(), cmd: cmd?.id, full: full(body(cmd, m && cmd ? (m[2] ?? '').trim() : t.trim()), o.ctx, o.fx) }
-          { const pre = plan(s, um); if (pre.err) { set({ notice: pre.err }); return } }
+          { const pre = plan(s, um); if (pre.err) { set({ notice: pre.err }); return false } }
           set((st) => ({ chats: st.chats.map((x) => (x.id === c.id ? { ...x, msgs: [...c.msgs.slice(0, i), um] } : x)), stats: featOn(st, 'stats') ? { ...st.stats, sent: st.stats.sent + 1 } : st.stats } ))
           // Editing a message into a @research request re-enters the research
           // flow (tier pick) instead of a plain reply.
           const rreq = parseResearchRequest(um.t ?? '')
           if (rreq && !o.att?.length) {
             startResearchTierPick(c.id, [...c.msgs.slice(0, i), um], rreq.query)
-            return
+            return true
           }
           void answer(um)
+          return true
         },
         resetStats: () => set({ stats: ZERO() }),
         compactStorage: () => {
@@ -1566,7 +1603,7 @@ export const useS = create<S>()(
       }
     },
     {
-      name: 'byok.v1', version: 19, storage: persistStorage,
+      name: 'byok.v1', version: STORE_VERSION, storage: persistStorage,
       migrate: (p: any, v: number) => {
         delete p.settingsScope
         if (v < 11) {
@@ -1721,7 +1758,7 @@ export const useS = create<S>()(
       partialize: (s) => ({
         ...s, busy: false, draft: '', notice: null, flashMsg: null,
         // Per-chat memoized: only the chat that changed is re-mapped.
-        chats: mapPersistChats(s.chats),
+        chats: mapPersistChats(withoutExpiredTemps(s.chats)),
       }),
     },
   ),

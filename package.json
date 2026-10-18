@@ -9,7 +9,7 @@
     "start": "node server.mjs",
     "deploy": "npm run build && wrangler deploy",
     "cf:dev": "wrangler dev",
-    "test": "node --experimental-loader ./tests/ts-extension-loader.mjs --test",
+    "test": "node --import ./tests/register-loader.mjs --test",
     "test:worker": "node scripts/worker-smoke.mjs"
   },
   "dependencies": {

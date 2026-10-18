@@ -37,19 +37,31 @@ export function useThemeCss(opts: {
 /** Run a horizontal pointer drag. `onMove(clientX)` fires at most once per
  *  frame plus once more on release, and text selection is locked for the
  *  duration. Returns a function that ends the drag. */
-export function startPointerDrag(e: { preventDefault: () => void; clientX: number }, onMove: (clientX: number) => void): () => void {
+export function startPointerDrag(e: { preventDefault: () => void; clientX: number; pointerId?: number; currentTarget?: EventTarget | null }, onMove: (clientX: number) => void): () => void {
   e.preventDefault()
   const frames = createFrameThrottle(onMove)
-  const move = (ev: PointerEvent) => frames.call(ev.clientX)
+  const target = e.currentTarget as (Element & { releasePointerCapture?: (id: number) => void }) | null | undefined
+  const release = () => {
+    if (target && typeof e.pointerId === 'number') { try { target.releasePointerCapture?.(e.pointerId) } catch { /* already released */ } }
+  }
+  const move = (ev: PointerEvent) => {
+    // A pointerup that happened outside the window (or on another element)
+    // leaves `buttons` at 0: stop the drag instead of tracking the cursor.
+    if (ev.buttons === 0) { stop(ev); return }
+    frames.call(ev.clientX)
+  }
   const stop = (ev?: PointerEvent) => {
     if (ev) frames.call(ev.clientX)
     frames.flush()
     window.removeEventListener('pointermove', move)
     window.removeEventListener('pointerup', stop as EventListener)
     window.removeEventListener('pointercancel', stop as EventListener)
+    release()
     if (canUseDOM() && document.body) document.body.style.userSelect = ''
   }
   if (canUseDOM() && document.body) document.body.style.userSelect = 'none'
+  // Capture keeps the drag alive when the pointer leaves the handle.
+  if (target && typeof e.pointerId === 'number') { try { target.setPointerCapture?.(e.pointerId) } catch { /* unsupported */ } }
   window.addEventListener('pointermove', move)
   window.addEventListener('pointerup', stop as EventListener)
   window.addEventListener('pointercancel', stop as EventListener)

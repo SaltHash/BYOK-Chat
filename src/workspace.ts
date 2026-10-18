@@ -362,7 +362,9 @@ export function applyUnifiedDiff(base: string, diff: string): PatchResult {
     if (line.startsWith('--- ') || line.startsWith('+++ ') || line.startsWith('Index: ') || line.startsWith('diff ')) continue
     if (line.startsWith('\\ ')) continue
     const h = /^@@ -(\d+)(?:,\d+)? \+\d+(?:,\d+)? @@/.exec(line)
-    if (h) { cur = { oldStart: Math.max(1, Number(h[1])), lines: [] }; hunks.push(cur); continue }
+    // Keep the raw old-line number: `-0,0` is how git spells an insertion at
+    // the very top of the file, and the zero-old-count branch below needs it.
+    if (h) { cur = { oldStart: Number(h[1]), lines: [] }; hunks.push(cur); continue }
     if (!cur) {
       if (!line.trim()) continue
       return fail('No hunks found: include at least one @@ -a,b +c,d @@ hunk.')
@@ -382,8 +384,11 @@ export function applyUnifiedDiff(base: string, diff: string): PatchResult {
     let at = -1
     for (let fuzz = 0; fuzz <= 3 && at < 0; fuzz++) {
       for (const dir of fuzz === 0 ? [0] : [-fuzz, fuzz]) {
-        const cand = hunk.oldStart - 1 + drift + dir
-        if (cand < 0 || cand + oldSide.length > out.length + (oldSide.length === 0 ? 1 : 0)) continue
+        // A zero-old-count hunk is a pure insertion: `-a,0` inserts *after*
+        // old line a, so the 0-based index is `a`, not `a - 1`.
+        const zero = oldSide.length === 0
+        const cand = (zero ? hunk.oldStart : hunk.oldStart - 1) + drift + dir
+        if (cand < 0 || cand + oldSide.length > out.length + (zero ? 1 : 0)) continue
         if (oldSide.every((t, k) => out[cand + k] === t)) { at = cand; break }
       }
     }
@@ -744,6 +749,11 @@ function applyOneFileOp(files: WorkspaceFile[], op: WorkspaceFileOp): { files: W
     if (!files.some((f) => f.path === p)) throw Error(`File not found for delete: ${p}`)
     return { files: files.filter((f) => f.path !== p), note: `${p} deleted` }
   }
+  // A create/update without a content string used to blank the file (a
+  // truncated stream or a forgotten argument silently wiped it).
+  if ((op.action === 'create' || op.action === 'update') && typeof op.content !== 'string') {
+    throw Error(`Missing content for the "${op.action}" action on ${p}. Send the file body as a string.`)
+  }
   if (op.action === 'continue') {
     const existing = files.find((f) => f.path === p)
     if (!existing) throw Error(`File not found for continue: ${p}`)
@@ -777,9 +787,17 @@ export function applyWorkspaceCall(
   if (!WORKSPACE_ACTIONS.includes(String(input.action))) throw Error('action must be create, update, delete, continue, or patch')
   const batch = Array.isArray(input.files) ? input.files : []
   if (batch.length > WORKSPACE_MAX_FILES) throw Error(`files holds at most ${WORKSPACE_MAX_FILES} entries per call`)
+  // Distinct source paths can sanitize to the same file (spaces/control chars);
+  // applying both silently merged them, so reject the batch instead.
+  const batchPaths = new Set<string>()
   for (const e of batch) {
     if (!e || typeof e !== 'object' || typeof e.path !== 'string') throw Error('Each files entry needs a path string.')
     if (!WORKSPACE_ACTIONS.includes(e.action ?? 'update')) throw Error(`Unsupported files entry action: ${e.action ?? 'update'}`)
+    if ((e.action ?? 'update') !== 'delete') {
+      const sp = sanitizePath(e.path)
+      if (batchPaths.has(sp)) throw Error(`files has two entries that resolve to the same path (${sp}). Use distinct paths.`)
+      batchPaths.add(sp)
+    }
   }
 
   let next = { ...workspaces }

@@ -6,10 +6,12 @@
  * - On boot, if durable holds chats/workspaces, they win when localStorage
  *   was quota-pruned (smaller/fewer messages). Attachment bytes are restored
  *   from blob storage. Settings are never overwritten by durable. */
-import { durableGetChats, durableGetWorkspaces, durablePutChats, durablePutWorkspaces, durableSetMeta, durableGetMeta, blobPut, blobGet, splitPersistedForDurable, compactChatsForDurable } from './durable'
+import { durableGetChats, durableGetWorkspaces, durablePutChats, durablePutWorkspaces, durableSetMeta, durableGetMeta, blobDel, blobPut, blobGet, splitPersistedForDurable, compactChatsForDurable } from './durable'
+import { STORE_VERSION } from '../persistence'
 
 const CHATS_DEBOUNCE_MS = 1200
 let timer: ReturnType<typeof setTimeout> | null = null
+let pendingMirror: { chats: unknown; workspaces: unknown } | null = null
 
 export function blobIdFor(msgId: string, index: number, name: string): string {
   return `${msgId}:${index}:${name}`.slice(0, 180)
@@ -21,6 +23,13 @@ export async function persistAttachmentBytes(msgId: string, att: Array<{ name: s
     if (!payload) return Promise.resolve()
     return blobPut(blobIdFor(msgId, i, a.name), payload).then(() => {}).catch(() => {})
   }))
+}
+
+/* Remove durable blobs for messages that no longer exist (a deleted message
+ * or a deleted chat): otherwise erased attachments linger in IndexedDB/OPFS
+ * with no reference left to find them. */
+export async function dropAttachmentBytes(msgs: Array<{ id: string; att?: Array<{ name: string; kind: string }> }>): Promise<void> {
+  await Promise.all(msgs.flatMap((m) => (m.att ?? []).map((a, i) => blobDel(blobIdFor(m.id, i, a.name)).catch(() => {}))))
 }
 
 export async function restoreAttachmentBytes(chats: Array<{ msgs: Array<{ id: string; att?: Array<{ name: string; kind: string; data?: string; text?: string }> }> }>): Promise<number> {
@@ -48,12 +57,13 @@ export async function restoreAttachmentBytes(chats: Array<{ msgs: Array<{ id: st
   return restored
 }
 
-function readLocalRaw(): Record<string, unknown> | null {
+function readLocal(): { state: Record<string, unknown>; version: number } | null {
   try {
     const raw = localStorage.getItem('byok.v1')
     if (!raw) return null
     const v = JSON.parse(raw)
-    return (v?.state ?? v) as Record<string, unknown>
+    const version = Number((v as { version?: unknown })?.version)
+    return { state: (v?.state ?? v) as Record<string, unknown>, version: Number.isFinite(version) && version > 0 ? version : STORE_VERSION }
   } catch { return null }
 }
 
@@ -64,16 +74,16 @@ export async function hydrateDurable(patch: (p: Record<string, unknown>) => void
   let migrated = false
   try {
     const meta = await durableGetMeta().catch(() => null)
-    const local = readLocalRaw()
-    if (local && (local.chats || local.workspaces) && !meta?.migratedAt) {
-      const { chats, workspaces } = splitPersistedForDurable(local)
+    const local = readLocal()
+    if (local && (local.state.chats || local.state.workspaces) && !meta?.migratedAt) {
+      const { chats, workspaces } = splitPersistedForDurable(local.state)
       await durablePutChats(chats).catch(() => {})
       await durablePutWorkspaces(workspaces).catch(() => {})
-      await durableSetMeta({ migratedAt: Date.now(), storeVersion: Number((local as { version?: number }).version ?? 18) }).catch(() => {})
+      await durableSetMeta({ migratedAt: Date.now(), storeVersion: local.version }).catch(() => {})
       migrated = true
     }
     const [dChats, dWs] = await Promise.all([durableGetChats<unknown[]>().catch(() => null), durableGetWorkspaces<Record<string, unknown>>().catch(() => null)])
-    const localMsgs = Array.isArray((local as { chats?: unknown[] })?.chats) ? (local as { chats: Array<{ msgs: unknown[] }> }).chats.reduce((a, c) => a + c.msgs.length, 0) : 0
+    const localMsgs = Array.isArray(local?.state.chats) ? (local!.state.chats as Array<{ msgs?: unknown[] }>).reduce((a, c) => a + (c.msgs?.length ?? 0), 0) : 0
     const durableMsgs = Array.isArray(dChats) ? (dChats as Array<{ msgs: unknown[] }>).reduce((a, c) => a + (c.msgs?.length ?? 0), 0) : 0
     let restoredBlobs = 0
     if (dChats && Array.isArray(dChats) && (migrated || durableMsgs >= localMsgs)) {
@@ -95,11 +105,35 @@ export async function hydrateDurable(patch: (p: Record<string, unknown>) => void
  * Coalesces bursts — a streamed reply updates the store many times per
  * second — into a single write per window, using the newest arguments. */
 export function mirrorToDurable(chats: unknown, workspaces: unknown): void {
+  if (eraseInProgress) return
+  pendingMirror = { chats, workspaces }
   if (timer) clearTimeout(timer)
-  timer = setTimeout(() => {
-    timer = null
-    void Promise.all([durablePutChats(chats).catch(() => {}), durablePutWorkspaces(workspaces).catch(() => {})])
-  }, CHATS_DEBOUNCE_MS)
+  timer = setTimeout(() => { timer = null; flushDurableMirror() }, CHATS_DEBOUNCE_MS)
+}
+
+function flushDurableMirror(): void {
+  const p = pendingMirror
+  pendingMirror = null
+  if (!p) return
+  void Promise.all([durablePutChats(p.chats).catch(() => {}), durablePutWorkspaces(p.workspaces).catch(() => {})])
+}
+
+/* The debounce window can swallow UI edits when the tab closes; flush the
+ * newest mirror payload at pagehide so durable is not staler than the
+ * session (a stale durable copy resurrects deleted messages on next boot). */
+if (typeof window !== 'undefined') {
+  const onHide = () => { if (timer) { clearTimeout(timer); timer = null } flushDurableMirror() }
+  window.addEventListener('pagehide', onHide)
+  if (typeof document !== 'undefined') document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') onHide() })
+}
+
+/* Set while "Erase everything" runs: a queued mirror write must not recreate
+ * the IndexedDB database that is about to be deleted. */
+let eraseInProgress = false
+export function beginDurableErase(): void {
+  eraseInProgress = true
+  if (timer) { clearTimeout(timer); timer = null }
+  pendingMirror = null
 }
 
 export async function compactDurable(chats: Parameters<typeof compactChatsForDurable>[0]): Promise<{ freedChars: number; droppedChats: number }> {

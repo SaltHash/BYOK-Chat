@@ -49,15 +49,35 @@ export function Checkbox({ checked, set, label, disabled = false, className = ''
 }
 
 let helpTipId = 0
+
+/* Escape must close only the top-most layer: a Confirm opened inside a modal
+ * (or a help tip inside either) would otherwise dismiss every open layer at
+ * once. Layers push themselves when they open and pop on unmount. */
+const escStack: Array<(e: KeyboardEvent) => void> = []
+export function useEscapeClose(close: () => void, active = true): void {
+  const ref = useRef(close)
+  ref.current = close
+  useEffect(() => {
+    if (!active) return
+    const h = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape' || escStack[escStack.length - 1] !== h) return
+      e.stopPropagation()
+      ref.current()
+    }
+    escStack.push(h)
+    addEventListener('keydown', h)
+    return () => {
+      removeEventListener('keydown', h)
+      const i = escStack.indexOf(h)
+      if (i >= 0) escStack.splice(i, 1)
+    }
+  }, [active])
+}
+
 export function HelpTip({ text, label = 'Help' }: { text: string; label?: string }) {
   const [open, setOpen] = useState(false)
   const idRef = useRef(`helptip-${++helpTipId}`)
-  useEffect(() => {
-    if (!open) return
-    const f = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false) }
-    addEventListener('keydown', f)
-    return () => removeEventListener('keydown', f)
-  }, [open ])
+  useEscapeClose(() => setOpen(false), open)
   return (
     <span className="group/help relative inline-flex">
       <button
@@ -177,12 +197,7 @@ export const Item = ({ icon: I, children, sub, on, off, ...p }: { icon?: Ic; sub
 )
 
 export function Modal({ children, close, blur = true, opacity = 55, keyboard = true }: { children: ReactNode; close: () => void; blur?: boolean; opacity?: number; keyboard?: boolean }) {
-  useEffect(() => {
-    if (!keyboard) return
-    const f = (e: KeyboardEvent) => e.key === 'Escape' && close()
-    addEventListener('keydown', f)
-    return () => removeEventListener('keydown', f)
-  }, [close, keyboard])
+  useEscapeClose(close, keyboard)
   return <div style={{ backgroundColor: `rgb(0 0 0 / ${Math.max(0, Math.min(100, opacity))}%)`, backdropFilter: blur ? 'blur(var(--modal-blur, 12px))' : undefined }} className="fixed inset-0 z-50 grid place-items-center p-4" onMouseDown={(e) => e.target === e.currentTarget && close()}>{children}</div>
 }
 

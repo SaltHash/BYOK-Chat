@@ -246,6 +246,32 @@ test('non-API requests fall back to the ASSETS binding', async () => {
   assert.match(await res.text(), /id="root"/)
 })
 
+test('cross-origin sync writes are refused, token or not', async () => {
+  const token = `byok1-${'a'.repeat(16)}-${'b'.repeat(43)}`
+  const crossOrigin = (path, body) => call(path, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', origin: 'https://evil.example' },
+    body: JSON.stringify(body),
+  })
+  const push = await crossOrigin('/api/sync/push', { token, payload: { v: 4 } })
+  assert.equal(push.status, 403)
+  assert.match((await push.json()).error, /Cross-origin/)
+  const pull = await crossOrigin('/api/sync/pull', { token })
+  assert.equal(pull.status, 403)
+})
+
+test('sync routes are rate limited per IP', async () => {
+  const headers = { 'content-type': 'application/json', 'cf-connecting-ip': 'sync-limit-squad' }
+  const body = JSON.stringify({ token: `byok1-${'c'.repeat(16)}-${'d'.repeat(43)}`, payload: { v: 4, storeVersion: 18, settings: {}, chats: [], workspaces: {}, selectedRevision: {} } })
+  for (let i = 0; i < 30; i++) {
+    const res = await worker.fetch(new Request('https://app.example.com/api/sync/push', { method: 'POST', headers, body }), {})
+    assert.equal(res.status, 200, `push ${i} status`)
+  }
+  const blocked = await worker.fetch(new Request('https://app.example.com/api/sync/push', { method: 'POST', headers, body }), {})
+  assert.equal(blocked.status, 429)
+  assert.equal(blocked.headers.get('retry-after'), '60')
+})
+
 test('per-IP rate limit eventually answers 429', async () => {
   const headers = { 'content-type': 'application/json', 'cf-connecting-ip': 'rate-limit-squad' }
   const env = { ...searchEnv('/search-ok'), TINYFISH_API_KEY: 'server-side-key' }

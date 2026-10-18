@@ -86,6 +86,16 @@ try {
     assert((await res.text()).includes('id="root"'), 'missing root element')
   })
 
+  await check('missing static assets fall back to the SPA shell on Cloudflare (documented platform behavior)', async () => {
+    // Cloudflare's `not_found_handling: single-page-application` answers the
+    // SPA shell for unknown paths, including asset-like ones. The Node server
+    // (server.mjs) 404s missing asset-like paths instead; this check pins the
+    // deployed Worker contract so the difference stays intentional.
+    const res = await get('/assets/definitely-missing.js')
+    assert(res.status === 200, `status ${res.status}`)
+    assert(await res.text(), 'expected the SPA shell body')
+  })
+
   await check('built JS/CSS assets are served with correct types', async () => {
     const html = readFileSync(join(root, 'dist', 'index.html'), 'utf8')
     const script = /src="(\/assets\/[^"]+\.js)"/.exec(html)?.[1]
@@ -179,12 +189,15 @@ try {
     const pushed = await postJson('/api/sync/push', { token, payload })
     assert(pushed.status === 200, `push status ${pushed.status}`)
     assertJson(pushed)
-    const pulled = await get(`/api/sync/pull?token=${encodeURIComponent(token)}`)
+    const pulled = await get('/api/sync/pull', { headers: { authorization: `Bearer ${token}` } })
     assert(pulled.status === 200, `pull status ${pulled.status}`)
     const data = await pulled.json()
     assert(data.payload?.settings?.themeMode === 'dark', 'payload did not round-trip')
-    const wrong = await get(`/api/sync/pull?token=${encodeURIComponent(`byok1-${id}-${'x'.repeat(43)}`)}`)
+    const wrong = await get('/api/sync/pull', { headers: { authorization: `Bearer byok1-${id}-${'x'.repeat(43)}` } })
     assert(wrong.status === 401, `wrong-secret status ${wrong.status}`)
+    // Tokens in the URL are refused so they never reach access logs.
+    const inUrl = await get(`/api/sync/pull?token=${encodeURIComponent(token)}`)
+    assert(inUrl.status === 401, `url-token status ${inUrl.status}`)
   })
 
   await check('oversized search bodies return 413 JSON', async () => {

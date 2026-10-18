@@ -13,13 +13,51 @@ function safeEqual(a, b) {
 }
 
 const mem = new Map()
+// The in-memory backend exists for local dev and for hosts without a
+// database. Keep it bounded — by rows and by stored payload bytes — so
+// anonymous pushes cannot grow it without limit (and cannot exhaust a Worker
+// isolate with a few maximum-size payloads).
+const MEM_MAX_ROWS = 200
+const MEM_MAX_BYTES = 64_000_000
+let memBytes = 0
+
+function payloadBytes(payload) {
+  try { return JSON.stringify(payload ?? {}).length } catch { return 0 }
+}
+
+function forget(id) {
+  const entry = mem.get(id)
+  if (entry === undefined) return
+  mem.delete(id)
+  memBytes -= entry.bytes
+}
 
 function memStore() {
   return {
     kind: 'memory',
-    async get(id) { return mem.get(id) ?? null },
-    async put(row) { mem.set(row.id, row); return row },
+    async get(id) {
+      const entry = mem.get(id)
+      if (entry !== undefined) { mem.delete(id); mem.set(id, entry) } // refresh LRU order
+      return entry?.row ?? null
+    },
+    async put(row) {
+      forget(row.id)
+      const bytes = payloadBytes(row.payload)
+      mem.set(row.id, { row, bytes })
+      memBytes += bytes
+      while (mem.size > MEM_MAX_ROWS || (memBytes > MEM_MAX_BYTES && mem.size > 1)) forget(mem.keys().next().value)
+      return row
+    },
   }
+}
+
+/* Connection strings must never reach logs: Neon echoes the offending string
+ * when it cannot parse DATABASE_URL, which can include the password. Every
+ * URL-shaped token is collapsed to `scheme://***`. */
+export function redact(text, limit = 300) {
+  return String(text ?? '')
+    .replace(/\b[a-z][a-z0-9+.-]*:\/\/\S+/gi, (m) => `${m.slice(0, m.indexOf('://') + 3)}***`)
+    .slice(0, limit)
 }
 
 let neonClient = null
@@ -48,7 +86,18 @@ async function neonStore(env = process.env) {
 }
 
 export async function syncBackend(env = process.env) {
-  return (await neonStore(env).catch(() => null)) ?? memStore()
+  if (!String(env?.DATABASE_URL || '').trim()) return memStore()
+  try {
+    return await neonStore(env)
+  } catch (error) {
+    // DATABASE_URL is set: silently falling back to the in-memory store here
+    // would split sync data across devices, so surface the failure instead.
+    const e = Error(`Sync database is unavailable: ${redact(error?.message)}`)
+    e.code = 'sync_unavailable'
+    e.status = 503
+    console.error(`[sync] database unavailable: ${redact(error?.message)}`)
+    throw e
+  }
 }
 
 export { safeEqual, memStore }

@@ -1,4 +1,4 @@
-import { useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import { Plus, FileUp, FileText, Image as ImageIcon, ArrowUp, Square, ChevronRight, ListMusic, Cpu, ScrollText, Settings, Search, BookOpen, X, TriangleAlert, Wrench, Link as LinkIcon, ScanText } from 'lucide-react'
 import { useS, useLive, usable, modelsOf, modelNameOf, featOn, normDocs, effortClassifierOf, type Att, type Ep } from '../store'
@@ -81,6 +81,9 @@ export function Composer({ cfg }: { cfg: (t: string) => void }) {
   const fi = useRef<HTMLInputElement>(null)
   const v = s.draft
   const [hi, setHi] = useState(0)
+  const [menuOff, setMenuOff] = useState(false)
+  // Escape hides the slash/@ popup until the draft changes again.
+  useEffect(() => { setMenuOff(false) }, [v])
   const [ime, setIme] = useState(false)
   const [armed, setArmed] = useState<'search' | 'research' | null>(null)
   const [active, setActive] = useState<{ m: Mention; left: number; top: number } | null>(null)
@@ -133,6 +136,15 @@ export function Composer({ cfg }: { cfg: (t: string) => void }) {
       t.setSelectionRange(p, p)
     }
   }, [v])
+  // A file dropped outside the composer box must not navigate the tab away
+  // (the browser default replaces the SPA with the file). Drops on the box are
+  // handled by its own onDrop above.
+  useEffect(() => {
+    const stop = (e: DragEvent) => { if (e.dataTransfer?.types?.includes('Files')) e.preventDefault() }
+    window.addEventListener('dragover', stop)
+    window.addEventListener('drop', stop)
+    return () => { window.removeEventListener('dragover', stop); window.removeEventListener('drop', stop) }
+  }, [])
   const sel = s.sel ? (s.sel.k === 'pl' ? s.pls : s.eps).find((x) => x.id === s.sel!.id) : undefined
   const ep = s.sel?.k === 'ep' ? s.eps.find((e) => e.id === s.sel!.id) : undefined
   const pr = s.prompts.find((p) => p.id === s.pr)
@@ -163,20 +175,21 @@ export function Composer({ cfg }: { cfg: (t: string) => void }) {
     } catch (x: any) { s.patch({ notice: { t: `That page could not be attached (${String(x?.message ?? x)}). Check the link is reachable, or paste the text instead.` } }) }
     finally { setUrlBusy(false) }
   }
-  const [ocrBusy, setOcrBusy] = useState<number | null>(null)
-  const ocrOne = async (i: number) => {
-    const a = att[i]
+  const [ocrBusy, setOcrBusy] = useState<Att | null>(null)
+  const ocrOne = async (a: Att) => {
     if (!a || a.kind !== 'img' || !a.data || a.text || ocrBusy != null) return
     const dp = normDocs(s.docPrefs)
     const vex = s.eps.find((e) => e.id === dp.ocrEp && usable(e) && can(e, 'img'))
       ?? s.eps.find((e) => usable(e) && can(e, 'img'))
       ?? (ep && can(ep, 'img') ? ep : undefined)
     if (!vex) { s.patch({ notice: { t: 'Transcription needs a vision-capable endpoint, and none is set up yet. Add one in Settings → Endpoints, then try again.', tab: 'eps', label: 'Open endpoints' } }); return }
-    setOcrBusy(i)
+    setOcrBusy(a)
     try {
       const model = vex.id === dp.ocrEp && dp.ocrModel ? dp.ocrModel : vex.model
       const text = await ocrImage(vex, model, a)
-      setAtt((list) => list.map((x, j) => j === i ? { ...x, text: `[ocr: transcribed from ${x.name}]\n${text}`, source: 'ocr' } : x))
+      // Match by identity, not by index: the list may have changed while the
+      // request was in flight.
+      setAtt((list) => list.map((x) => x === a ? { ...x, text: `[ocr: transcribed from ${x.name}]\n${text}`, source: 'ocr' } : x))
     } catch (x: any) { s.patch({ notice: { t: `Transcription did not finish (${String(x?.message ?? x)}). Try again, or pick a different endpoint in Settings.` } }) }
     finally { setOcrBusy(null) }
   }
@@ -243,7 +256,7 @@ export function Composer({ cfg }: { cfg: (t: string) => void }) {
       <Notice cfg={cfg} />
       <div ref={box} className="relative rounded-2xl bg-surf p-3" onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); add(e.dataTransfer.files) }}>
         {banner && <MentionBanner kind={banner} onDismiss={dismissBanner} />}
-        {menu && (
+        {menu && !menuOff && (
           <div className="absolute inset-x-0 bottom-full mb-2 rounded-xl bg-hov p-1.5">
             {menu.length ? menu.map((o, i) => (
               <Item key={o.k} icon={o.icon} on={i === hl} sub={o.hint} onClick={() => { o.pick(); ta.current?.focus() }}>{o.label}</Item>
@@ -256,7 +269,7 @@ export function Composer({ cfg }: { cfg: (t: string) => void }) {
               <div key={i} className={cx('group/preview relative flex h-24 w-28 flex-col overflow-hidden rounded-lg bg-hov p-1.5 ring-1 ring-hov', bad(a) && 'ring-er')} title={a.text ? `${a.name} · transcribed text attached` : a.name}>
                 <img src={`data:${a.mime || 'image/*'};base64,${a.data}`} alt={a.name} className="min-h-0 flex-1 rounded object-contain p-1" />
                 <span className="truncate px-1 text-xs text-mu" title={a.name}>{a.text ? '✓ ' : ''}{a.name}</span>
-                {!a.text && <button aria-label={`Transcribe text from ${a.name}`} title="Transcribe image text with a vision model" onClick={() => ocrOne(i)} disabled={ocrBusy != null} className="absolute bottom-6 left-1 grid size-5 place-items-center rounded-full bg-black/70 text-white opacity-0 transition-opacity group-hover/preview:opacity-100 focus:opacity-100 disabled:opacity-40"><ScanText size={12} /></button>}
+                {!a.text && <button aria-label={`Transcribe text from ${a.name}`} title="Transcribe image text with a vision model" onClick={() => { void ocrOne(a) }} disabled={ocrBusy != null} className="absolute bottom-6 left-1 grid size-5 place-items-center rounded-full bg-black/70 text-white opacity-0 transition-opacity group-hover/preview:opacity-100 focus:opacity-100 disabled:opacity-40"><ScanText size={12} /></button>}
                 <button aria-label={`Remove ${a.name}`} onClick={() => setAtt(att.filter((_, j) => j !== i))} className="absolute right-1 top-1 grid size-5 place-items-center rounded-full bg-black/70 text-white opacity-0 transition-opacity group-hover/preview:opacity-100 focus:opacity-100"><X size={12} /></button>
                 {bad(a) && <span className="absolute left-1 right-1 top-7 rounded bg-er/90 px-1 py-0.5 text-center text-xs text-white"><TriangleAlert size={11} className="inline" /> Unsupported</span>}
               </div>
@@ -288,15 +301,18 @@ export function Composer({ cfg }: { cfg: (t: string) => void }) {
             onChange={(e) => { setActive(null); s.patch({ draft: e.target.value }); setHi(0) }}
             onScroll={(e) => { if (bd.current) bd.current.scrollTop = e.currentTarget.scrollTop }}
             onKeyDown={(e) => {
-              if (menu?.length && !e.shiftKey && ['ArrowDown', 'ArrowUp', 'Tab', 'Enter'].includes(e.key)) {
+              // Never handle Enter/arrows while an IME candidate window is open.
+              if (e.nativeEvent.isComposing || ime) return
+              if (menu && !menuOff && menu.length && !e.shiftKey && ['ArrowDown', 'ArrowUp', 'Tab', 'Enter'].includes(e.key)) {
                 e.preventDefault()
                 if (e.key === 'ArrowDown') setHi((hl + 1) % menu.length)
                 else if (e.key === 'ArrowUp') setHi((hl - 1 + menu.length) % menu.length)
                 else menu[hl].pick()
                 return
               }
+              if (menu && !menuOff && e.key === 'Escape') { e.preventDefault(); setMenuOff(true); return }
               if (pillKey(e)) return
-              if (e.key === 'Enter' && !e.shiftKey && s.prefs.enterSends) { e.preventDefault(); submit() }
+              if (e.key === 'Enter' && !e.shiftKey && s.prefs.enterSends && !s.busy) { e.preventDefault(); submit() }
             }}
             onSelect={syncActive}
             onClick={selectPill}
@@ -370,7 +386,7 @@ export function Composer({ cfg }: { cfg: (t: string) => void }) {
           </button>
         </div>
       </div>
-      <p className="pt-2 text-center text-xs text-mu">{`Enter to send · Shift+Enter for a new line · ${fmt(s.keys.palette ?? 'Mod+K')} for the palette`}</p>
+      <p className="pt-2 text-center text-xs text-mu">{`${s.prefs.enterSends ? 'Enter to send · Shift+Enter for a new line' : 'Enter adds a new line · send with the button'} · ${fmt(s.keys.palette ?? 'Mod+K')} for the palette`}</p>
     </div>
   )
 }

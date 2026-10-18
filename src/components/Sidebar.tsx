@@ -42,7 +42,7 @@ function RowBody({ c, mv, del, dnd, container, index }: RowProps) {
           <span className="truncate">{c.title}{c.temporary ? ' · temporary' : ''}</span>
         </button>
       )}
-      <span className="hidden group-hover:flex">
+      <span className="dnd-actions hidden group-hover:flex">
         <button title="Rename" onClick={() => setEd(true)} className={act}><Pencil size={14} /></button>
         <button title="Export this chat (.md + .json)" onClick={() => {
           const chat = useS.getState().chats.find((x) => x.id === c.id)
@@ -118,7 +118,10 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
   }, [L])
   const folderCounts = useMemo(() => {
     const m = new Map<string, number>()
-    for (const c of s.chats) if (c.folder) m.set(c.folder, (m.get(c.folder) ?? 0) + 1)
+    // Count only what the folder actually lists: pinned and temporary chats
+    // are rendered in their own sections, so counting them here made the
+    // badge disagree with the visible rows.
+    for (const c of s.chats) if (c.folder && !c.pin && !c.temporary) m.set(c.folder, (m.get(c.folder) ?? 0) + 1)
     return m
   }, [s.chats])
   // Ranked message search (BM25): one hit per chat with a text snippet.
@@ -325,6 +328,9 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
     'aria-pressed': dragState.current.dragId === chat.id,
     onPointerDown: (e: React.PointerEvent) => {
       if (e.pointerType === 'mouse' && e.button !== 0) return
+      // Action buttons share the row surface: a press on one must not arm the
+      // row drag (the title area is still a valid drag handle).
+      if (e.target instanceof Element && e.target.closest('.dnd-actions')) return
       const el = rowEls.current.get(chat.id)
       if (!el) return
       const r = el.getBoundingClientRect()
@@ -506,7 +512,7 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
       </div>
       <p className="flex items-center gap-1.5 px-1 text-xs text-mu"><Lock size={12} />Your keys never leave this browser. Pinky promise.</p>
       {menu && (
-        <div onMouseDown={(e) => e.stopPropagation()} style={{ left: menu.x, top: menu.y }} className="fixed z-40 w-52 rounded-xl bg-hov p-1.5">
+        <div onMouseDown={(e) => e.stopPropagation()} style={{ left: Math.min(menu.x, Math.max(8, (typeof window !== 'undefined' ? window.innerWidth : 0) - 216)), top: Math.min(menu.y, Math.max(8, (typeof window !== 'undefined' ? window.innerHeight : 0) - (60 + (s.folders.length + 1) * 36))) }} className="fixed z-40 w-52 rounded-xl bg-hov p-1.5">
           <button onClick={() => { s.moveChat(menu.id, ''); setMenu(null) }} className={item}><FolderMinus size={16} className="text-mu" />No folder</button>
           {s.folders.map((f) => <button key={f.id} onClick={() => { s.moveChat(menu.id, f.id); setMenu(null) }} className={item}><Folder size={16} className="text-mu" /><span className="truncate">{f.name}</span></button>)}
           {!s.folders.length && <p className="px-2.5 py-2 text-xs text-mu">Create a folder first with the folder button.</p>}

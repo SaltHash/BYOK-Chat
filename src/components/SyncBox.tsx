@@ -3,7 +3,7 @@ import { RefreshCw, Link2, Unlink, Copy, Check, ShieldCheck } from 'lucide-react
 import { useS } from '../store'
 import { generateSyncToken, parseSyncToken, buildSyncPayload, checkSyncCompat } from '../storage/sync'
 import { syncPush, syncPull, syncStatus } from '../storage/syncClient'
-import { durableGetChats, durableGetWorkspaces } from '../storage/durable'
+import { STORE_VERSION } from '../persistence'
 import { encryptBackup, decryptBackup, isEncryptedBackup } from '../storage/backupCrypto'
 import { Btn, Input } from './ui'
 
@@ -23,20 +23,21 @@ export function SyncBox() {
   useEffect(() => { void syncStatus().then((s) => setBackend(`${s.backend}${s.configured ? ' (Neon)' : ' (memory)'}`)).catch(() => setBackend('unreachable')) }, [])
   useEffect(() => { try { localStorage.setItem('byok.sync.auto', auto ? '1' : '0') } catch {} }, [auto])
 
-  const collect = async () => {
+  const collect = () => {
     const s = useS.getState()
-    const dChats = await durableGetChats().catch(() => null)
-    const dWs = await durableGetWorkspaces().catch(() => null)
-    const { chats: _c, workspaces: _w, selectedRevision: _sr, ...settings } = s as unknown as Record<string, unknown>
-    void _c; void _w; void _sr
-    return buildSyncPayload({ storeVersion: 18, settings, chats: dChats ?? s.chats, workspaces: dWs ?? s.workspaces, selectedRevision: (s as unknown as { selectedRevision: unknown }).selectedRevision })
+    // Live state, not the debounced durable mirror: a Push right after an
+    // edit must not send the pre-edit copy.
+    const { chats, workspaces, selectedRevision, ...settings } = s as unknown as Record<string, unknown>
+    // Live-only fields must not ride remote snapshots.
+    for (const k of ['busy', 'draft', 'notice', 'flashMsg']) delete settings[k]
+    return buildSyncPayload({ storeVersion: STORE_VERSION, settings, chats, workspaces, selectedRevision })
   }
 
   const push = async () => {
     if (!token) { setStatus('Generate or paste a token first.'); return }
     try {
       setStatus('Pushing…')
-      const payload = await collect()
+      const payload = collect()
       const r = await syncPush(token, payload)
       try { localStorage.setItem(LAST_KEY, String(r.updatedAt)) } catch {}
       setStatus(`Pushed ${new Date(r.updatedAt).toLocaleTimeString()} via ${r.backend}.`)
@@ -47,11 +48,22 @@ export function SyncBox() {
     try {
       setStatus('Pulling…')
       const r = await syncPull(token)
-      const { warning } = checkSyncCompat({ v: r.exportVersion ?? r.payload.v, storeVersion: r.storeVersion ?? r.payload.storeVersion }, 18)
+      const compat = checkSyncCompat({ v: r.exportVersion ?? r.payload.v, storeVersion: r.storeVersion ?? r.payload.storeVersion }, STORE_VERSION)
+      if (!compat.ok) { setStatus(`Pull failed: ${compat.warning}`); return }
       const p = r.payload
-      useS.setState({ ...(p.settings as object), chats: p.chats as unknown as never, workspaces: p.workspaces as unknown as never, selectedRevision: p.selectedRevision as unknown as never } as unknown as Parameters<typeof useS.setState>[0])
+      const chats = Array.isArray(p.chats) ? p.chats : null
+      if (!chats) { setStatus('Pull failed: that sync payload has no chat list.'); return }
+      const settings = { ...(p.settings as Record<string, unknown>) }
+      // Live-only fields must never be applied from a remote snapshot.
+      for (const k of ['busy', 'draft', 'notice', 'flashMsg']) delete settings[k]
+      useS.setState({
+        ...settings,
+        chats: chats as unknown as never,
+        workspaces: (p.workspaces && typeof p.workspaces === 'object' ? p.workspaces : {}) as unknown as never,
+        selectedRevision: (p.selectedRevision && typeof p.selectedRevision === 'object' ? p.selectedRevision : {}) as unknown as never,
+      } as unknown as Parameters<typeof useS.setState>[0])
       try { localStorage.setItem(LAST_KEY, String(r.updatedAt)) } catch {}
-      setStatus(warning ? `Pulled with warning: ${warning}` : `Pulled ${new Date(r.updatedAt).toLocaleTimeString()} via ${r.backend}.`)
+      setStatus(compat.warning ? `Pulled with warning: ${compat.warning}` : `Pulled ${new Date(r.updatedAt).toLocaleTimeString()} via ${r.backend}.`)
     } catch (e) { setStatus(`Pull failed: ${(e as Error).message}`) }
   }
   return (
@@ -69,7 +81,7 @@ export function SyncBox() {
       ) : (
         <div className="space-y-2">
           <div className="flex items-center gap-2 rounded-lg bg-bg p-2 font-mono text-xs"><span className="min-w-0 flex-1 truncate">{token}</span>
-            <Btn sm icon={copied ? Check : Copy} title="Copy token" onClick={() => { void navigator.clipboard?.writeText(token).catch(() => {}); setCopied(true); setTimeout(() => setCopied(false), 1200) }} />
+            <Btn sm icon={copied ? Check : Copy} title="Copy token" onClick={() => { const p = navigator.clipboard?.writeText(token); if (!p) return; void p.then(() => { setCopied(true); setTimeout(() => setCopied(false), 1200) }).catch(() => {}) }} />
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <Btn v="solid" icon={RefreshCw} onClick={push}>Push now</Btn>

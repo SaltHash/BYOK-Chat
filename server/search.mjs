@@ -1,4 +1,7 @@
 export function boundedInt(value, fallback, min, max) {
+  // Absent/blank/boolean tuning values keep the fallback; only real numbers
+  // (or numeric strings, as the settings UI may send) are clamped.
+  if (value === null || value === undefined || value === '' || typeof value === 'boolean') return fallback
   const n = Number(value)
   return Number.isInteger(n) ? Math.max(min, Math.min(max, n)) : fallback
 }
@@ -327,50 +330,61 @@ function isTransientStatus(status) {
   return status === 429 || status === 502 || status === 503 || status === 504
 }
 
-async function fetchWithRetry(url, options, { provider = '', timeoutMs = 8000, maxRetries = 2, baseMs = 300, fetchFn = fetch } = {}) {
+/* One attempt, including the body read when `read` is supplied. Failures are
+ * thrown already classified (see `classifyUpstream`); retryable ones carry
+ * `retryable`, and throttled responses may carry `retryAfterMs`. The caller's
+ * abort signal bounds the whole exchange, so a provider that sends headers and
+ * then stalls the body is reported as a timeout instead of hanging. */
+async function attemptFetch(fetchFn, url, options, signal, { provider = '', base = 300, read = null } = {}) {
+  let response
+  try {
+    response = await fetchFn(url, { ...options, signal })
+  } catch (error) {
+    const timedOut = error?.name === 'AbortError'
+    throw searchFailure(timedOut ? `${providerLabel(provider)} search timed out.` : `${providerLabel(provider)} could not be reached (${error?.message || 'network error'}).`,
+      { status: 0, code: timedOut ? 'timeout' : 'network', retryable: true, provider })
+  }
+  if (!response.ok) {
+    // Drain the error body so connections are reused cleanly.
+    const detail = await response.text().catch(() => '').then((t) => String(t || '').slice(0, 200))
+    const failure = classifyUpstream(provider, response.status, detail)
+    if (isTransientStatus(response.status)) failure.retryAfterMs = retryAfterMs(response, base, 0)
+    throw failure
+  }
+  if (!read) return response
+  try {
+    return await read(response)
+  } catch (error) {
+    if (error?.name === 'AbortError') throw searchFailure(`${providerLabel(provider)} search timed out.`, { status: 0, code: 'timeout', retryable: true, provider })
+    throw searchFailure(`${providerLabel(provider)} returned invalid JSON.`, { status: response.status ?? 200, code: 'bad_response', retryable: false, provider })
+  }
+}
+
+async function fetchWithRetry(url, options, { provider = '', timeoutMs = 8000, maxRetries = 2, baseMs = 300, fetchFn = fetch, read = null } = {}) {
   const retries = Math.max(0, Math.min(4, Number.isInteger(maxRetries) ? maxRetries : 2))
   const base = Math.max(50, Math.min(2000, Number.isFinite(Number(baseMs)) ? Number(baseMs) : 300))
   let attempt = 0
   for (;;) {
     const ac = new AbortController()
     const timer = setTimeout(() => ac.abort(), timeoutMs)
-    let response
     try {
-      response = await fetchFn(url, { ...options, signal: ac.signal })
+      return await attemptFetch(fetchFn, url, options, ac.signal, { provider, base, read })
     } catch (error) {
-      clearTimeout(timer)
-      const timedOut = error?.name === 'AbortError'
-      // Timeouts and connection errors are transient: retry with backoff, then report.
-      if (attempt < retries) {
-        await sleep(Math.min(4000, base * 2 ** attempt))
-        attempt++
-        continue
-      }
-      throw searchFailure(timedOut ? `${providerLabel(provider)} search timed out.` : `${providerLabel(provider)} could not be reached (${error?.message || 'network error'}).`,
-        { status: 0, code: timedOut ? 'timeout' : 'network', retryable: true, provider })
+      // Timeouts, connection errors and throttling/5xx statuses are transient:
+      // retry with backoff (honoring Retry-After), then report.
+      const status = error?.status ?? 0
+      const transient = error?.retryable === true && (status === 0 || isTransientStatus(status))
+      if (!transient || attempt >= retries) throw error
+      await sleep(Math.min(4000, error.retryAfterMs ?? base * 2 ** attempt))
+      attempt++
     } finally {
       clearTimeout(timer)
     }
-    if (response.ok) return response
-    if (isTransientStatus(response.status) && attempt < retries) {
-      await sleep(retryAfterMs(response, base, attempt))
-      // Drain the error body before retrying so connections are reused cleanly.
-      await response.text().catch(() => '')
-      attempt++
-      continue
-    }
-    const detail = await response.text().catch(() => '').then((t) => String(t || '').slice(0, 200))
-    throw classifyUpstream(provider, response.status, detail)
   }
 }
 
 async function fetchJson(url, options, { provider = '', timeoutMs = 8000, retry = {} } = {}, fetchFn = fetch) {
-  const response = await fetchWithRetry(url, options, { provider, timeoutMs, ...retry, fetchFn })
-  try {
-    return await response.json()
-  } catch {
-    throw searchFailure(`${providerLabel(provider)} returned invalid JSON.`, { status: response.status ?? 200, code: 'bad_response', retryable: false, provider })
-  }
+  return fetchWithRetry(url, options, { provider, timeoutMs, ...retry, fetchFn, read: (response) => response.json() })
 }
 
 export async function runApiSearch(provider, query, { apiKey, zone, baseUrl, timeoutMs, limits, retry = {}, fetchFn = fetch } = {}) {

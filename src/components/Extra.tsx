@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import { Info, X, Server, Play, MessageSquare, Keyboard, ArrowUp, ArrowDown, MessagesSquare, RotateCcw, Download, Upload, FileText, Trash2, CircleCheck, CircleX, Gauge } from 'lucide-react'
-import { useS, dl, BLANK, THEMES, themePatch, DEFAULT_FEATURES, modelsOf, modelNameOf, normSearch, normAdvanced, normFeatureOrder, normDocs, featOn, errText, storageUsage, QUOTA_FLAG, type Ep, type Kind, type FeatureId } from '../store'
+import { useS, dl, BLANK, THEMES, themePatch, DEFAULT_FEATURES, DEFAULT_PREFS, DEFAULT_PARAMS, DEFAULT_WIDGET_PREFS, modelsOf, modelNameOf, normSearch, normAdvanced, normFeatureOrder, normDocs, featOn, errText, storageUsage, QUOTA_FLAG, type Ep, type Kind, type FeatureId } from '../store'
 import { normSkills } from '../skills'
 import { combo, fmt, rec as R, testEp } from '../engine'
-import { KEYS, TOOLS } from '../meta'
+import { KEYS, TOOLS, DEFAULT_TOOLS } from '../meta'
 import { Btn, Toggle, Checkbox, Confirm, Modal, Surface, cx, type Ic } from './ui'
 import { Panel, Anchor } from './Settings'
 import { detectAvailableCategories, buildExportPayload } from '../configIO'
@@ -257,9 +257,12 @@ export function DataTab() {
       const j = (e as CustomEvent).detail
       if (!j || typeof j !== 'object') return
       try {
+        // Read live features: the listener is mounted once, so a render-time
+        // category list can be stale after a feature toggle.
+        const live = useS.getState().features
         const has = detectAvailableCategories(j, THEMES)
         setAvailable(has)
-        setImports(Object.fromEntries(categories.map(([id]) => [id, (has as Record<string, boolean>)[id]])) as Record<Category, boolean>)
+        setImports(Object.fromEntries((Object.keys(allOn) as Category[]).map((id) => [id, (!catFeature[id] || featOn({ features: live }, catFeature[id])) && (has as Record<string, boolean>)[id]]) ) as Record<Category, boolean>)
         setFileData(j)
         setMerge(true)
         setMsg('')
@@ -296,9 +299,23 @@ export function DataTab() {
       const cleanBools = (v: unknown): Record<string, boolean> => (v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).filter(([, val]) => typeof val === 'boolean')) as Record<string, boolean> : {})
       const cleanTools = (v: unknown): Record<string, boolean> => (v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).filter(([k, val]) => toolIds.has(k) && typeof val === 'boolean')) as Record<string, boolean> : {})
       const cleanStrings = (v: unknown): Record<string, string> => (v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).filter(([, val]) => typeof val === 'string')) as Record<string, string> : {})
-      const cleanFeatures = (v: unknown): Record<string, boolean> => (v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).filter(([k, val]) => k in DEFAULT_FEATURES && typeof val === 'boolean')) as Record<string, boolean> : {})
+      const cleanFeatures = (v: unknown): Record<string, boolean> => (v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).filter(([k, val]) => Object.hasOwn(DEFAULT_FEATURES, k) && typeof val === 'boolean')) as Record<string, boolean> : {})
+      // Widget settings are spread into state: accept only known keys with the
+      // right primitive types, and only shortcut ids that actually exist.
+      const cleanWidgetPrefs = (v: unknown): Record<string, any> => {
+        if (!v || typeof v !== 'object') return {}
+        const w = v as Record<string, unknown>
+        const out: Record<string, any> = {}
+        for (const k of ['usageGroup', 'usageMode', 'usageFormat', 'usagePeriod', 'timeUnit', 'usageFrom', 'usageTo']) if (typeof w[k] === 'string') out[k] = w[k]
+        for (const k of ['usageTotal', 'lastSpeed', 'showDisabledEndpoints', 'activePromptsOnly', 'hideDoneTodos']) if (typeof w[k] === 'boolean') out[k] = w[k]
+        for (const k of ['contextLimit', 'scratchRows', 'snippetLimit', 'costDecimals', 'charsPerToken']) if (Number.isFinite(Number(w[k]))) out[k] = Number(w[k])
+        for (const k of ['widgetOrder', 'shortcuts']) if (Array.isArray(w[k])) out[k] = (w[k] as unknown[]).filter((x): x is string => typeof x === 'string' && (k !== 'shortcuts' || KEYS.some(([id]) => id === x)))
+        return out
+      }
       useS.setState((st) => {
-        const importedChats = Array.isArray(j.chats) ? j.chats.filter((c: any) => c && typeof c.id === 'string' && typeof c.title === 'string' && Array.isArray(c.msgs)) : []
+        const importedChats = Array.isArray(j.chats) ? j.chats
+          .filter((c: any) => c && typeof c.id === 'string' && typeof c.title === 'string' && Array.isArray(c.msgs))
+          .map((c: any) => ({ ...c, msgs: c.msgs.filter((m: any) => m && typeof m.id === 'string' && typeof m.t === 'string') })) : []
         const importedFolders = Array.isArray(j.folders) ? j.folders.filter((f: any) => f && typeof f.id === 'string' && typeof f.name === 'string') : []
         const chats = !imports.chats ? st.chats : merge ? [...st.chats.filter((c) => !importedChats.some((x: any) => x.id === c.id)), ...importedChats] : importedChats
         const folders = !imports.chats ? st.folders : merge ? [...st.folders.filter((f) => !importedFolders.some((x: any) => x.id === f.id)), ...importedFolders] : importedFolders
@@ -307,23 +324,23 @@ export function DataTab() {
         const validMemories = Array.isArray(j.memories) ? j.memories.filter((x: any) => x && typeof x.id === 'string' && typeof x.text === 'string').map((x: any) => ({ id: x.id, text: String(x.text).slice(0, 500), category: typeof x.category === 'string' ? x.category.slice(0, 60) || 'General' : 'General', createdAt: typeof x.createdAt === 'number' ? x.createdAt : Date.now(), updatedAt: typeof x.updatedAt === 'number' ? x.updatedAt : Date.now() })) : []
         const validTodos = Array.isArray(j.todos) ? j.todos.filter((x: any) => x && typeof x.id === 'string' && typeof x.t === 'string').map((x: any) => ({ id: x.id, t: String(x.t).slice(0, 500), done: x.done === true })) : []
         return {
-        ...(imports.eps ? { eps: m('eps', st.eps).map((e: Ep) => ({ ...e, key: merge && !e.key ? st.eps.find((x) => x.id === e.id)?.key || '' : e.key })), ...(validSel ? { sel: validSel } : {}) } : {}),
+        ...(imports.eps ? { eps: m('eps', st.eps).map((e: Ep) => ({ ...e, models: Array.isArray(e.models) ? e.models.filter((x: unknown) => typeof x === 'string') : [], key: merge && !e.key ? st.eps.find((x) => x.id === e.id)?.key || '' : e.key })), ...(validSel ? { sel: validSel } : {}) } : {}),
         ...(imports.prompts ? { prompts: m('prompts', st.prompts), ...(typeof j.pr === 'string' ? { pr: j.pr } : {}), ...(j.globalPrompt && typeof j.globalPrompt === 'object' ? { globalPrompt: { on: j.globalPrompt.on === true, text: typeof j.globalPrompt.text === 'string' ? j.globalPrompt.text : '' } } : {}) } : {}),
         ...(imports.pls ? { pls: m('pls', st.pls) } : {}), ...(imports.cmds ? { cmds: m('cmds', st.cmds) } : {}),
         ...(imports.skills && Array.isArray(j.skills) ? { skills: normSkills(merge ? [...(st as any).skills ?? [], ...j.skills] : j.skills).skills } : {}),
         ...(imports.memory ? { ...(Array.isArray(j.memories) ? { memories: merge ? [...st.memories.filter((x) => !validMemories.some((y: any) => y.id === x.id)), ...validMemories] : validMemories } : {}), ...(j.memoryPrefs && typeof j.memoryPrefs === 'object' ? { memoryPrefs: { ...st.memoryPrefs, ...(merge ? {} : { enabled: false, intent: 'balanced', recall: 'contextual', method: 'local', classifierEp: '', classifierModel: '' }), ...Object.fromEntries(Object.entries(j.memoryPrefs).filter(([k]) => ['enabled', 'intent', 'recall', 'method', 'classifierEp', 'classifierModel'].includes(k))) } } : {}) } : {}),
-        ...(imports.keys ? { keys: merge ? { ...st.keys, ...cleanStrings(j.keys) } : cleanStrings(j.keys) } : {}),
-        ...(imports.appearance ? { ...(j.themeMode === 'dark' || j.themeMode === 'light' ? { themeMode: j.themeMode } : {}), ...(j.themeDark in THEMES ? { themeDark: j.themeDark } : {}), ...(j.themeLight in THEMES ? { themeLight: j.themeLight } : {}), ...(j.customDarkColors && typeof j.customDarkColors === 'object' ? { customDarkColors: merge ? { ...st.customDarkColors, ...j.customDarkColors } : j.customDarkColors } : {}), ...(j.customLightColors && typeof j.customLightColors === 'object' ? { customLightColors: merge ? { ...st.customLightColors, ...j.customLightColors } : j.customLightColors } : {}), ...(j.theme in THEMES ? themePatch(st, j.theme) : {}), ...(j.customColors && typeof j.customColors === 'object' ? { customDarkColors: merge ? { ...st.customDarkColors, ...j.customColors } : j.customColors } : {}), ...(j.prefs && typeof j.prefs === 'object' ? { prefs: merge ? { ...st.prefs, ...j.prefs } : { ...st.prefs, ...j.prefs } } : {}) } : {}),
+        ...(imports.keys ? { keys: merge ? { ...st.keys, ...cleanStrings(j.keys) } : Object.fromEntries(Object.entries(cleanStrings(j.keys)).filter(([k]) => KEYS.some(([id]) => id === k))) } : {}),
+        ...(imports.appearance ? { ...(j.themeMode === 'dark' || j.themeMode === 'light' ? { themeMode: j.themeMode } : {}), ...(Object.hasOwn(THEMES, j.themeDark) ? { themeDark: j.themeDark } : {}), ...(Object.hasOwn(THEMES, j.themeLight) ? { themeLight: j.themeLight } : {}), ...(j.customDarkColors && typeof j.customDarkColors === 'object' ? { customDarkColors: merge ? { ...st.customDarkColors, ...j.customDarkColors } : j.customDarkColors } : {}), ...(j.customLightColors && typeof j.customLightColors === 'object' ? { customLightColors: merge ? { ...st.customLightColors, ...j.customLightColors } : j.customLightColors } : {}), ...(Object.hasOwn(THEMES, j.theme) ? themePatch(st, j.theme) : {}), ...(j.customColors && typeof j.customColors === 'object' ? { customDarkColors: merge ? { ...st.customDarkColors, ...j.customColors } : j.customColors } : {}), ...(j.prefs && typeof j.prefs === 'object' ? { prefs: merge ? { ...st.prefs, ...j.prefs } : { ...DEFAULT_PREFS, ...j.prefs } } : {}) } : {}),
         ...(imports.features ? { ...(j.features && typeof j.features === 'object' ? { features: merge ? { ...st.features, ...cleanFeatures(j.features) } : { ...DEFAULT_FEATURES, ...cleanFeatures(j.features) } } : {}), ...(j.libraryShow && typeof j.libraryShow === 'object' ? { libraryShow: merge ? { ...st.libraryShow, ...j.libraryShow } : j.libraryShow } : {}), ...(Array.isArray(j.featureOrder) ? { featureOrder: normFeatureOrder(merge ? [...st.featureOrder ?? [], ...j.featureOrder] : j.featureOrder) } : {}), ...(j.advanced && typeof j.advanced === 'object' ? { advanced: normAdvanced(merge ? { ...st.advanced, ...j.advanced } : j.advanced) } : {}) } : {}),
-        ...(imports.tools ? { tools: merge ? { ...st.tools, ...cleanTools(j.tools) } : { ...st.tools, ...cleanTools(j.tools) }, ...(j.search && typeof j.search === 'object' ? (() => {
+        ...(imports.tools ? { tools: merge ? { ...st.tools, ...cleanTools(j.tools) } : { ...DEFAULT_TOOLS, ...cleanTools(j.tools) }, ...(j.search && typeof j.search === 'object' ? (() => {
           const current = normSearch((st as any).search)
           const incoming = normSearch(j.search)
           const keys: Record<string, string> = {}
           for (const p of Object.keys(current.keys)) keys[p] = merge ? ((incoming.keys as Record<string, string>)[p] || current.keys[p as keyof typeof current.keys] || '') : ((incoming.keys as Record<string, string>)[p] || '')
           return { search: { ...incoming, keys } }
         })() : {}) } : {}),
-        ...(imports.tuning ? { ...(j.params && typeof j.params === 'object' ? { params: { ...st.params, ...Object.fromEntries(Object.entries(j.params).filter(([k]) => ['def', 'temp', 'topp', 'max', 'maxToolRounds', 'highToolsUnlocked'].includes(k))) } } : {}), ...(j.effort && typeof j.effort === 'object' ? { effort: merge ? { ...st.effort, ...cleanStrings(j.effort) } : cleanStrings(j.effort) } : {}), ...(j.workspacePrefs && typeof j.workspacePrefs === 'object' ? { workspacePrefs: { ...st.workspacePrefs, ...Object.fromEntries(Object.entries(j.workspacePrefs).filter(([k]) => ['defaultView'].includes(k))) } } : {}), ...(j.docPrefs && typeof j.docPrefs === 'object' ? { docPrefs: normDocs(merge ? { ...st.docPrefs, ...j.docPrefs } : j.docPrefs) } : {}) } : {}),
-        ...(imports.widgets ? { widgets: merge ? { ...st.widgets, ...cleanBools(j.widgets) } : cleanBools(j.widgets), widgetPrefs: j.widgetPrefs ? (merge ? { ...st.widgetPrefs, ...j.widgetPrefs } : { ...st.widgetPrefs, ...j.widgetPrefs }) : st.widgetPrefs } : {}),
+        ...(imports.tuning ? { ...(j.params && typeof j.params === 'object' ? { params: { ...(merge ? st.params : DEFAULT_PARAMS), ...Object.fromEntries(Object.entries(j.params).filter(([k]) => ['def', 'temp', 'topp', 'max', 'maxToolRounds', 'highToolsUnlocked'].includes(k))) } } : {}), ...(j.effort && typeof j.effort === 'object' ? { effort: merge ? { ...st.effort, ...cleanStrings(j.effort) } : cleanStrings(j.effort) } : {}), ...(j.workspacePrefs && typeof j.workspacePrefs === 'object' ? (() => { const w = j.workspacePrefs as Record<string, unknown>; const clean: Record<string, any> = {}; if (typeof w.defaultView === 'string') clean.defaultView = w.defaultView; if (typeof w.autoOpen === 'boolean') clean.autoOpen = w.autoOpen; if (typeof w.autoFollow === 'boolean') clean.autoFollow = w.autoFollow; return { workspacePrefs: { ...(merge ? st.workspacePrefs : { defaultView: 'latest', autoOpen: true, autoFollow: true }), ...clean } } })() : {}), ...(j.docPrefs && typeof j.docPrefs === 'object' ? { docPrefs: normDocs(merge ? { ...st.docPrefs, ...j.docPrefs } : j.docPrefs) } : {}) } : {}),
+        ...(imports.widgets ? { widgets: merge ? { ...st.widgets, ...cleanBools(j.widgets) } : cleanBools(j.widgets), widgetPrefs: j.widgetPrefs ? { ...(merge ? st.widgetPrefs : { ...DEFAULT_WIDGET_PREFS, widgetOrder: [...DEFAULT_WIDGET_PREFS.widgetOrder], shortcuts: [...DEFAULT_WIDGET_PREFS.shortcuts] }), ...cleanWidgetPrefs(j.widgetPrefs) } : st.widgetPrefs } : {}),
         ...(imports.stats && j.stats && typeof j.stats === 'object' ? { stats: merge ? { ...st.stats, ...j.stats } : j.stats } : {}),
         ...(imports.stats && j.routeStats && typeof j.routeStats === 'object' && !Array.isArray(j.routeStats) ? { routeStats: merge ? { ...st.routeStats, ...j.routeStats } : j.routeStats } : {}),
         ...(imports.chats ? { chats, folders, chat: chats.some((c) => c.id === st.chat) ? st.chat : chats[0]?.id ?? '', ...(Array.isArray(j.todos) ? { todos: merge ? [...st.todos.filter((x) => !validTodos.some((y: any) => y.id === x.id)), ...validTodos] : validTodos } : {}), ...(Array.isArray(j.snips) ? { snips: merge ? [...st.snips, ...j.snips.filter((x: any) => typeof x === 'string')] : j.snips.filter((x: any) => typeof x === 'string') } : {}), ...(typeof j.pad === 'string' ? { pad: merge && st.pad ? st.pad : j.pad } : {}) } : {}),
@@ -361,7 +378,17 @@ export function DataTab() {
       </Box>
       </Anchor>
       {cf === 1 && <Confirm title="Delete all chats?" text="Every saved chat is removed. Stats and settings are kept." ok="Delete all" close={() => setCf(0)} run={() => patch({ chats: [], chat: '' })} />}
-      {cf === 2 && <Confirm title="Erase everything?" text="Endpoints, API keys, prompts, playlists, commands, skills, memories, chats, stats and all other settings are removed from this browser. This cannot be undone." ok="Erase" close={() => setCf(0)} run={() => { localStorage.removeItem('byok.v1'); void import('../storage/durable').then(({ durableEraseAll }) => durableEraseAll()).catch(() => {}).finally(() => location.reload()) }} />}
+      {cf === 2 && <Confirm title="Erase everything?" text="Endpoints, API keys, prompts, playlists, commands, skills, memories, chats, stats and all other settings are removed from this browser. This cannot be undone." ok="Erase" close={() => setCf(0)} run={() => { void (async () => {
+        // Cancel queued writes first: a pending persist flush or durable
+        // mirror would otherwise recreate what we are about to delete.
+        try { await useS.persist.clearStorage() } catch { try { localStorage.removeItem('byok.v1') } catch { /* ignore */ } }
+        for (const k of ['byok.sync.token', 'byok.sync.auto', 'byok.sync.last']) { try { localStorage.removeItem(k) } catch { /* ignore */ } }
+        const { beginDurableErase } = await import('../storage/boot')
+        beginDurableErase()
+        const { durableEraseAll } = await import('../storage/durable')
+        await durableEraseAll().catch(() => {})
+        location.reload()
+      })() }} />}
       {cf === 3 && <Modal close={() => setCf(0)}><section role="dialog" aria-modal="true" aria-labelledby="export-title" className="w-full max-w-xl space-y-5 rounded-2xl border border-hov bg-bg p-5 shadow-2xl">
         <div><h2 id="export-title" className="text-lg font-semibold">Export configuration</h2><p className="mt-1 text-sm text-mu">Choose the settings to include in this file.</p></div>
         <div className="grid grid-cols-2 gap-2 rounded-xl bg-surf p-3 sm:grid-cols-3">{categories.map(([id, label]) => <Checkbox key={id} checked={exports[id]} set={(checked) => setExports({ ...exports, [id]: checked })} label={label} />)}</div>

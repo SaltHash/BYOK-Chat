@@ -264,15 +264,19 @@ function ModelsEditor({ e, update }: { e: any; update: (p: object) => void }) {
     try {
       const { entries, error } = await fetchModelCatalog(e)
       if (error && !entries.length) { setCatalogState(`${error} You can still enter a model ID below.`); return }
+      // The request awaited: re-read the live endpoint so edits made meanwhile
+      // are not overwritten by the write below with a stale snapshot.
+      const cur = useS.getState().eps.find((x) => x.id === e.id) ?? e
+      const liveModels = Array.isArray(cur.models) ? cur.models : models
       let found = endpointId ? filterCatalogByEndpoint(entries, endpointId, endpointFilter) : entries
       if (isOpenRouter) found = prioritizeProviderRows(found, endpointId, endpointFilter)
       setCatalog(found)
-      const detectedEntries = found.filter(x => models.includes(storedId(x.id)) && x.source === 'auto' && !e.modelEffortSource?.[storedId(x.id)])
+      const detectedEntries = found.filter(x => liveModels.includes(storedId(x.id)) && x.source === 'auto' && !cur.modelEffortSource?.[storedId(x.id)])
       const detected = Object.fromEntries(detectedEntries.map(x => [storedId(x.id), x.efforts]))
       const detectedSources = Object.fromEntries(detectedEntries.map(x => [storedId(x.id), 'auto']))
-      const providedNames = Object.fromEntries(found.filter(x => models.includes(storedId(x.id)) && x.name && !e.modelNames?.[storedId(x.id)]).map(x => [storedId(x.id), x.name]))
-      const providedContext = Object.fromEntries(found.filter(x => models.includes(storedId(x.id)) && x.context && Number(x.context) > 0).map(x => [storedId(x.id), Number(x.context)]))
-      if (Object.keys(detected).length || Object.keys(providedNames).length || Object.keys(providedContext).length) update({ modelEfforts: { ...e.modelEfforts, ...detected }, modelEffortSource: { ...e.modelEffortSource, ...detectedSources }, modelNames: { ...e.modelNames, ...providedNames }, modelContext: { ...e.modelContext, ...providedContext } })
+      const providedNames = Object.fromEntries(found.filter(x => liveModels.includes(storedId(x.id)) && x.name && !cur.modelNames?.[storedId(x.id)]).map(x => [storedId(x.id), x.name]))
+      const providedContext = Object.fromEntries(found.filter(x => liveModels.includes(storedId(x.id)) && x.context && Number(x.context) > 0).map(x => [storedId(x.id), Number(x.context)]))
+      if (Object.keys(detected).length || Object.keys(providedNames).length || Object.keys(providedContext).length) update({ modelEfforts: { ...cur.modelEfforts, ...detected }, modelEffortSource: { ...cur.modelEffortSource, ...detectedSources }, modelNames: { ...cur.modelNames, ...providedNames }, modelContext: { ...cur.modelContext, ...providedContext } })
       setCatalogState(found.length ? `${found.length} models found. Catalog entries are suggestions; confirm any model ID.` : 'No catalog entries were returned. Enter a model ID below.')
     } catch (err: any) { setCatalogState(`${err?.message || 'Catalog lookup failed.'} You can still enter a model ID below.`) }
   }
@@ -534,7 +538,10 @@ function Eps() {
                     const item = body.data?.find((x: any) => x.id === model)
                     if (!item?.pricing?.prompt || !item?.pricing?.completion) throw Error('This model has no published token pricing in the catalog.')
                     const round2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100
-                    u({ prices: { ...e.prices, [model]: { input: round2(Number(item.pricing.prompt) * 1e6), output: round2(Number(item.pricing.completion) * 1e6), source: 'openrouter' } }, ...(Number(item.context_length) > 0 ? { modelContext: { ...e.modelContext, [model]: Number(item.context_length) } } : {}) })
+                    // Re-read after the fetch: prices edited while it was in
+                    // flight must not be overwritten by the stale snapshot.
+                    const cur = useS.getState().eps.find((x) => x.id === e.id) ?? e
+                    u({ prices: { ...cur.prices, [model]: { input: round2(Number(item.pricing.prompt) * 1e6), output: round2(Number(item.pricing.completion) * 1e6), source: 'openrouter' } }, ...(Number(item.context_length) > 0 ? { modelContext: { ...cur.modelContext, [model]: Number(item.context_length) } } : {}) })
                   } catch (x: any) { useS.getState().patch({ notice: { t: x?.message ?? 'Could not detect a price.' } }) }
                 }
                 const setPrice = (kind: 'input' | 'output', value: string) => u({ prices: { ...e.prices, [model]: { ...price, [kind]: Math.max(0, Math.round(((Number(value) || 0) + Number.EPSILON) * 100) / 100), source: 'manual' } } })
