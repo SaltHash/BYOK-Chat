@@ -614,6 +614,22 @@ function parseArgs(raw: string) { try { const v = JSON.parse(raw || '{}'); retur
 
 type O = { cap?: number; max?: number; temp?: number; topp?: number; effort?: string }
 
+/* A provider that stops sending bytes mid-reply (hung edge, dropped socket
+ * with no error) must not leave the UI "thinking" forever: every read is
+ * wrapped in an idle watchdog that fails the attempt after this long. */
+const STREAM_IDLE_MS = 90_000
+
+const idleRead = <T>(r: ReadableStreamDefaultReader<T>) => new Promise<ReadableStreamReadResult<T>>((resolve, reject) => {
+  const timer = setTimeout(() => {
+    void r.cancel().catch(() => {})
+    reject(withCode(`No data from the provider for ${Math.round(STREAM_IDLE_MS / 1000)} seconds — the stream stalled.`, 'stalled', { retryable: true }))
+  }, STREAM_IDLE_MS)
+  r.read().then(
+    (v) => { clearTimeout(timer); resolve(v) },
+    (x) => { clearTimeout(timer); reject(x) },
+  )
+})
+
 export async function stream(e: Ep, sys: string, ms: Wire[], on: (t: string) => void, ac: AbortController, o: O = {}, onSummary: (t: string) => void = () => {}, availableTools: any[] = [], onToolDelta: (calls: ToolCall[]) => void = () => {}) {
   const { url: u, headers: h, body, isAnthropic: an } = buildStreamRequest(e, sys, ms, availableTools, o)
   let res: Response
@@ -638,6 +654,10 @@ export async function stream(e: Ep, sys: string, ms: Wire[], on: (t: string) => 
     throw withCode(msg, 'bad_response', { status: res.status })
   }
   let all = '', tin = 0, tout = 0, cost = 0, cacheRead = 0, cacheWrite = 0
+  /* Provider stop reason of the last chunk: `length` (OpenAI-style) or
+     `max_tokens` (Anthropic) means the model was cut off by its output cap
+     rather than finishing the reply. */
+  let finish: string | null = null
   const calls = new Map<number, ToolCall>()
   // Provider `index` → the slot the call actually landed in. Needed for
   // providers that reuse an index for a second call, or omit it entirely.
@@ -692,6 +712,7 @@ export async function stream(e: Ep, sys: string, ms: Wire[], on: (t: string) => 
     if (an) {
       if (j.type === 'message_start') tin = j.message?.usage?.input_tokens ?? tin
       if (j.type === 'message_delta') tout = j.usage?.output_tokens ?? tout
+      if (j.type === 'message_delta' && j.delta?.stop_reason) finish = String(j.delta.stop_reason)
       if (j.type === 'content_block_start' && j.content_block?.type === 'tool_use') { calls.set(j.index, { id: j.content_block.id, name: j.content_block.name, arguments: JSON.stringify(j.content_block.input ?? {}) }); snap() }
       if (j.type === 'content_block_delta') {
         if (j.delta?.type === 'text_delta') add(j.delta.text)
@@ -704,6 +725,7 @@ export async function stream(e: Ep, sys: string, ms: Wire[], on: (t: string) => 
     } else {
       if (j.usage) { tin = j.usage.prompt_tokens ?? tin; tout = j.usage.completion_tokens ?? tout }
       const choice = j.choices?.[0]
+      if (choice?.finish_reason) finish = String(choice.finish_reason)
       const got = choice?.delta?.tool_calls ?? choice?.message?.tool_calls
       if (Array.isArray(got)) for (const t of got) {
         // Some OpenAI-compatible providers omit `index` on continuation
@@ -783,8 +805,10 @@ export async function stream(e: Ep, sys: string, ms: Wire[], on: (t: string) => 
         }
       }
       for (;;) {
-        const { done, value } = await r.read().catch((x: any) => {
+        const { done, value } = await idleRead(r).catch((x: any) => {
           if (x?.name === 'AbortError') throw withCode('Stopped', 'stopped')
+          // Coded failures (e.g. the idle watchdog) pass through unchanged.
+          if (x?.code) throw x
           throw withCode('Connection lost mid-reply', 'network', { retryable: true })
         })
         if (done) break
@@ -804,12 +828,15 @@ export async function stream(e: Ep, sys: string, ms: Wire[], on: (t: string) => 
   if (!all && !calls.size) throw withCode('Empty response', 'empty_response')
   // Estimated output counts include tokens written as tool calls, not just streamed text.
   const callText = [...calls.values()].map((c) => `${c.name}${c.arguments}`).join('')
-  return { text: all, toolCalls: [...calls.values()], tin: tin || est(JSON.stringify(ms) + sys), tout: tout || est(all + callText), cost, cacheRead, cacheWrite }
+  return { text: all, toolCalls: [...calls.values()], tin: tin || est(JSON.stringify(ms) + sys), tout: tout || est(all + callText), cost, cacheRead, cacheWrite, finish }
 }
 
 export async function runToolLoop(e: Ep, sys: string, messages: (rounds: { text: string; calls: ToolResult[] }[]) => Wire[], enabled: Record<string, boolean>, on: (text: string) => void, ac: AbortController, o: O = {}, onSummary: (text: string) => void = () => {}, onRound: (rounds: { text: string; calls: ToolResult[] }[]) => void = () => {}, maxRounds = 8, handlers: Record<string, (args: any) => unknown | Promise<unknown>> = {}, onToolDelta: (calls: ToolCall[]) => void = () => {}, execTools: { serialize?: string[]; maxParallel?: number } = {}) {
   const rounds: { text: string; calls: ToolResult[] }[] = []
   let text = '', finalText = '', tin = 0, tout = 0, cost = 0, cacheRead = 0, cacheWrite = 0, roundCount = 0
+  /* Stop reason of the final (non-tool) round, surfaced to the store so a
+     reply cut off by the output cap can offer to continue. */
+  let finish: string | null = null
   // Text written in one round and text written after a tool call are separate
   // blocks, but they arrive as one stream. Track whether the next round still
   // needs a blank line before its first characters so the two do not run
@@ -847,7 +874,7 @@ export async function runToolLoop(e: Ep, sys: string, messages: (rounds: { text:
     if (typeof (x as { cost?: unknown }).cost === 'number' && Number.isFinite((x as { cost?: number }).cost!) && (x as { cost?: number }).cost! > 0) cost += (x as { cost?: number }).cost!
     if (typeof (x as { cacheRead?: unknown }).cacheRead === 'number' && Number.isFinite((x as { cacheRead?: number }).cacheRead!)) cacheRead += (x as { cacheRead?: number }).cacheRead!
     if (typeof (x as { cacheWrite?: unknown }).cacheWrite === 'number' && Number.isFinite((x as { cacheWrite?: number }).cacheWrite!)) cacheWrite += (x as { cacheWrite?: number }).cacheWrite!
-    if (!x.toolCalls.length) { finalText = x.text; break }
+    if (!x.toolCalls.length) { finalText = x.text; finish = (x as { finish?: string | null }).finish ?? null; break }
     const limited = Number.isFinite(maxRounds) && maxRounds > 0
     if (limited && roundCount >= maxRounds) throw withCode(`Tool execution limit reached (${maxRounds} rounds).`, 'tool_limit')
     roundCount++
@@ -856,7 +883,7 @@ export async function runToolLoop(e: Ep, sys: string, messages: (rounds: { text:
     onRound(rounds)
     pendingSep = true
   }
-  return { text, finalText, rounds, tin, tout, streamMs, cost, cacheRead, cacheWrite }
+  return { text, finalText, rounds, tin, tout, streamMs, cost, cacheRead, cacheWrite, finish }
 }
 
 export async function testEp(e: Ep) {

@@ -5,10 +5,11 @@ import { useS, dl, BLANK, THEMES, themePatch, DEFAULT_FEATURES, DEFAULT_PREFS, D
 import { normSkills } from '../skills'
 import { combo, fmt, rec as R, testEp } from '../engine'
 import { KEYS, TOOLS, DEFAULT_TOOLS } from '../meta'
-import { Btn, Toggle, Checkbox, Confirm, Modal, Surface, cx, type Ic } from './ui'
+import { Btn, Toggle, Checkbox, Confirm, Modal, Surface, Input, cx, type Ic } from './ui'
 import { Panel, Anchor } from './Settings'
 import { detectAvailableCategories, buildExportPayload } from '../configIO'
-import { SyncBox, EncryptedBackupBox } from './SyncBox'
+import { encryptBackup, decryptBackup, isEncryptedBackup } from '../storage/backupCrypto'
+import { SyncBox } from './SyncBox'
 
 export function Notice({ cfg }: { cfg: (t: string) => void }) {
   const n = useS((s) => s.notice), patch = useS((s) => s.patch)
@@ -252,6 +253,14 @@ export function DataTab() {
   const [merge, setMerge] = useState(true)
   const [cf, setCf] = useState(0)
   const [msg, setMsg] = useState('')
+  // Export password: empty exports plain JSON, non-empty encrypts the file.
+  const [expPw, setExpPw] = useState('')
+  const [expMsg, setExpMsg] = useState('')
+  // A chosen file that is password-encrypted, awaiting its password before it
+  // can be parsed and offered for import.
+  const [pendingEnc, setPendingEnc] = useState<{ text: string } | null>(null)
+  const [impPw, setImpPw] = useState('')
+  const [impErr, setImpErr] = useState('')
   useEffect(() => {
     const f = (e: Event) => {
       const j = (e as CustomEvent).detail
@@ -266,27 +275,52 @@ export function DataTab() {
         setFileData(j)
         setMerge(true)
         setMsg('')
-      } catch { setMsg('Import failed: that file is not a valid configuration export.') }
+      } catch { setMsg('Import failed: that file is not a valid data export.') }
     }
     window.addEventListener('byok:import-backup', f)
     return () => window.removeEventListener('byok:import-backup', f)
   }, [])
-  const exp = () => {
+  const exp = async () => {
     const data = buildExportPayload(useS.getState() as unknown as Parameters<typeof buildExportPayload>[0], exports, withKeys, normSkills, normSearch)
-    dl('chat-config.json', JSON.stringify(data, null, 1), 'application/json')
+    const json = JSON.stringify(data, null, 1)
+    if (!expPw) { dl('chat-config.json', json, 'application/json'); return }
+    setExpMsg('Encrypting…')
+    try {
+      const enc = await encryptBackup(json, expPw)
+      dl('chat-config.encrypted.json', enc, 'application/json')
+      setExpMsg('Exported an encrypted data file. Import it with the same password.')
+    } catch (e) { setExpMsg(`Export failed: ${(e as Error).message}`) }
+  }
+  const loadParsed = (j: Record<string, any>) => {
+    const has = detectAvailableCategories(j, THEMES)
+    setAvailable(has)
+    setImports(Object.fromEntries(categories.map(([id]) => [id, has[id]])) as Record<Category, boolean>)
+    setFileData(j)
+    setMerge(true)
+    setMsg('')
   }
   const chooseFile = async (f?: File) => {
     if (!f) return
+    // A data export is a few hundred KB at most. Refuse giant files
+    // up front instead of freezing the tab on a multi-megabyte JSON.parse.
+    if (f.size > 5 * 1024 * 1024) { setMsg('Import failed: that file is over 5 MB and is not a data export.'); return }
     try {
-      const j = JSON.parse(await f.text())
+      const text = await f.text()
+      // An encrypted file cannot be parsed until its password is supplied.
+      if (isEncryptedBackup(text)) { setPendingEnc({ text }); setImpPw(''); setImpErr(''); return }
+      const j = JSON.parse(text)
       if (!j || typeof j !== 'object') throw 0
-      const has = detectAvailableCategories(j, THEMES)
-      setAvailable(has)
-      setImports(Object.fromEntries(categories.map(([id]) => [id, has[id]])) as Record<Category, boolean>)
-      setFileData(j)
-      setMerge(true)
-      setMsg('')
-    } catch { setMsg('Import failed: that file is not a valid configuration export.') }
+      loadParsed(j)
+    } catch { setMsg('Import failed: that file is not a valid data export.') }
+  }
+  const decryptAndLoad = async () => {
+    if (!pendingEnc) return
+    try {
+      const j = JSON.parse(await decryptBackup(pendingEnc.text, impPw))
+      if (!j || typeof j !== 'object') throw 0
+      setPendingEnc(null); setImpPw(''); setImpErr('')
+      loadParsed(j)
+    } catch (e) { setImpErr((e as Error).message) }
   }
   const imp = () => {
     if (!fileData) return
@@ -347,19 +381,19 @@ export function DataTab() {
       }})
       setFileData(null)
       setMsg(merge ? 'Imported the selected data and merged it with existing settings.' : 'Imported the selected data and replaced those settings.')
-    } catch { setMsg('Import failed: that file is not a valid configuration export.') }
+    } catch { setMsg('Import failed: that file is not a valid data export.') }
   }
   return (
     <Panel id="data">
       <Anchor id="device-sync"><SyncBox /></Anchor>
-      <Anchor id="encrypted-backup"><EncryptedBackupBox buildJson={() => JSON.stringify(buildExportPayload(useS.getState() as unknown as Parameters<typeof buildExportPayload>[0], exports, withKeys, normSkills, normSearch), null, 1)} /></Anchor>
       <Anchor id="export">
-      <Box icon={Download} t="Export configuration" d="Choose which settings and chat history to include in a JSON backup.">
-        <Btn v="soft" onClick={() => setCf(3)}>Export</Btn>
+      <Box icon={Download} t="Export data" d="Choose which data to include in a JSON file. Add a password to encrypt it.">
+        <Btn v="soft" onClick={() => { setExpMsg(''); setCf(3) }}>Export</Btn>
+        {expMsg && <span className="basis-full text-xs text-mu">{expMsg}</span>}
       </Box>
       </Anchor>
       <Anchor id="import">
-      <Box icon={Upload} t="Import configuration" d="Choose a JSON configuration file, then select what to import.">
+      <Box icon={Upload} t="Import data" d="Choose a JSON data file, then select what to import.">
         <label className="inline-flex h-9 cursor-pointer items-center rounded-lg bg-hov px-3 text-sm font-medium hover:opacity-80">
           <input type="file" accept=".json,application/json" hidden onChange={(e) => { chooseFile(e.target.files?.[0]); e.target.value = '' }} />Choose file
         </label>
@@ -367,7 +401,7 @@ export function DataTab() {
       </Box>
       </Anchor>
       <Anchor id="chat-history">
-      <Box icon={FileText} t="Chat history" d="Include conversations in configuration exports, or delete them all. Stats are kept.">
+      <Box icon={FileText} t="Chat history" d="Include conversations in data exports, or delete them all. Stats are kept.">
         <Btn v="danger" disabled={!chatCount} onClick={() => setCf(1)}>Delete all</Btn>
       </Box>
       </Anchor>
@@ -390,13 +424,23 @@ export function DataTab() {
         location.reload()
       })() }} />}
       {cf === 3 && <Modal close={() => setCf(0)}><section role="dialog" aria-modal="true" aria-labelledby="export-title" className="w-full max-w-xl space-y-5 rounded-2xl border border-hov bg-bg p-5 shadow-2xl">
-        <div><h2 id="export-title" className="text-lg font-semibold">Export configuration</h2><p className="mt-1 text-sm text-mu">Choose the settings to include in this file.</p></div>
+        <div><h2 id="export-title" className="text-lg font-semibold">Export data</h2><p className="mt-1 text-sm text-mu">Choose the data to include in this file.</p></div>
         <div className="grid grid-cols-2 gap-2 rounded-xl bg-surf p-3 sm:grid-cols-3">{categories.map(([id, label]) => <Checkbox key={id} checked={exports[id]} set={(checked) => setExports({ ...exports, [id]: checked })} label={label} />)}</div>
         {exports.eps && <div className="rounded-xl bg-surf p-3"><Checkbox checked={withKeys} set={setWithKeys} label="Include API keys" /></div>}
-        <div className="flex justify-end gap-2"><Btn v="soft" onClick={() => setCf(0)}>Cancel</Btn><Btn v="solid" icon={Download} onClick={() => { exp(); setCf(0) }}>Export</Btn></div>
+        <div className="space-y-1.5 rounded-xl bg-surf p-3">
+          <Input type="password" value={expPw} set={setExpPw} placeholder="Password (optional)" />
+          <p className="text-xs text-mu">Leave empty for a plain JSON file. With a password this export is encrypted (AES-GCM-256) and can only be imported with the same password.</p>
+        </div>
+        <div className="flex justify-end gap-2"><Btn v="soft" onClick={() => setCf(0)}>Cancel</Btn><Btn v="solid" icon={Download} onClick={() => { void exp(); setCf(0) }}>Export</Btn></div>
+      </section></Modal>}
+      {pendingEnc && <Modal close={() => setPendingEnc(null)}><section role="dialog" aria-modal="true" aria-labelledby="decrypt-title" className="w-full max-w-sm space-y-4 rounded-2xl border border-hov bg-bg p-5 shadow-2xl">
+        <div><h2 id="decrypt-title" className="text-lg font-semibold">Encrypted file</h2><p className="mt-1 text-sm text-mu">This data file is password-protected. Enter the password used when it was exported.</p></div>
+        <Input type="password" value={impPw} set={setImpPw} placeholder="File password" />
+        {impErr && <p className="text-sm text-er">{impErr}</p>}
+        <div className="flex justify-end gap-2"><Btn v="soft" onClick={() => setPendingEnc(null)}>Cancel</Btn><Btn v="solid" disabled={!impPw} onClick={() => void decryptAndLoad()}>Decrypt</Btn></div>
       </section></Modal>}
       {fileData && <Modal close={() => setFileData(null)}><section role="dialog" aria-modal="true" aria-labelledby="import-title" className="w-full max-w-xl space-y-5 rounded-2xl border border-hov bg-bg p-5 shadow-2xl">
-        <div><h2 id="import-title" className="text-lg font-semibold">Import configuration</h2><p className="mt-1 text-sm text-mu">Choose the parts of this file to import. Sections not included in the file are unavailable.</p></div>
+        <div><h2 id="import-title" className="text-lg font-semibold">Import data</h2><p className="mt-1 text-sm text-mu">Choose the parts of this file to import. Sections not included in the file are unavailable.</p></div>
         <div className="grid grid-cols-2 gap-2 rounded-xl bg-surf p-3 sm:grid-cols-3">{categories.map(([id, label]) => <Checkbox key={id} checked={imports[id]} disabled={!available[id]} set={(checked) => setImports({ ...imports, [id]: checked })} label={label} />)}</div>
         <div className="rounded-xl bg-surf p-3"><Checkbox checked={merge} set={setMerge} label="Merge with existing data" /></div>
         <div className="flex justify-end gap-2"><Btn v="soft" onClick={() => setFileData(null)}>Cancel</Btn><Btn v="solid" icon={Upload} onClick={imp} disabled={!Object.values(imports).some(Boolean)}>Import</Btn></div>

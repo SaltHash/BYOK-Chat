@@ -40,7 +40,7 @@ export function selectResults(items, { maxResults = 8, maxSnippetChars = 1800, e
     if (seen.has(x.url) || out.length >= maxResults || budget <= 0) continue
     seen.add(x.url)
     const allowance = Math.min(maxSnippetChars, budget - x.title.length - x.url.length - 80)
-    if (allowance <= 0) break
+    if (allowance <= 0) continue
     x.snippet = x.snippet.slice(0, allowance)
     budget -= x.title.length + x.url.length + x.snippet.length + 80
     out.push({ id: `S${out.length + 1}`, title: x.title, url: x.url, snippet: x.snippet, ...(x.engine ? { engine: x.engine } : {}) })

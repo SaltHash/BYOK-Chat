@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode, type TextareaHTMLAttributes } from 'react'
+import { useEffect, useRef, useState, type ButtonHTMLAttributes, type InputHTMLAttributes, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type TextareaHTMLAttributes } from 'react'
 import { Check, ChevronRight, CircleHelp, TriangleAlert, type LucideIcon } from 'lucide-react'
 
 export type Ic = LucideIcon
@@ -196,9 +196,34 @@ export const Item = ({ icon: I, children, sub, on, off, ...p }: { icon?: Ic; sub
   </button>
 )
 
+/* Focusable elements eligible for the modal tab cycle. */
+const FOCUSABLE = 'a[href],button:not([disabled]),textarea:not([disabled]),input:not([disabled]),select:not([disabled]),[tabindex]:not([tabindex="-1"])'
+
 export function Modal({ children, close, blur = true, opacity = 55, keyboard = true }: { children: ReactNode; close: () => void; blur?: boolean; opacity?: number; keyboard?: boolean }) {
   useEscapeClose(close, keyboard)
-  return <div style={{ backgroundColor: `rgb(0 0 0 / ${Math.max(0, Math.min(100, opacity))}%)`, backdropFilter: blur ? 'blur(var(--modal-blur, 12px))' : undefined }} className="fixed inset-0 z-50 grid place-items-center p-4" onMouseDown={(e) => e.target === e.currentTarget && close()}>{children}</div>
+  const root = useRef<HTMLDivElement>(null)
+  /* Keyboard users must land inside the dialog, Tab must cycle within it, and
+     closing it must hand focus back to whatever opened it. */
+  useEffect(() => {
+    const previous = document.activeElement as HTMLElement | null
+    const node = root.current
+    if (node && !node.contains(document.activeElement)) node.focus()
+    return () => { try { previous?.focus() } catch { /* the opener is gone */ } }
+  }, [])
+  const onKeyDown = (e: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (e.key !== 'Tab') return
+    // Nested dialogs each own their own cycle; the outer one must not
+    // re-wrap a Tab that the inner dialog already handled.
+    e.stopPropagation()
+    const node = root.current
+    if (!node) return
+    const items = node.querySelectorAll<HTMLElement>(FOCUSABLE)
+    if (!items.length) { e.preventDefault(); node.focus(); return }
+    const first = items[0], last = items[items.length - 1]
+    if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus() }
+    else if (e.shiftKey && (document.activeElement === first || document.activeElement === node)) { e.preventDefault(); last.focus() }
+  }
+  return <div ref={root} role="dialog" aria-modal="true" tabIndex={-1} onKeyDown={onKeyDown} style={{ backgroundColor: `rgb(0 0 0 / ${Math.max(0, Math.min(100, opacity))}%)`, backdropFilter: blur ? 'blur(var(--modal-blur, 12px))' : undefined }} className="fixed inset-0 z-50 grid place-items-center p-4 outline-none" onMouseDown={(e) => e.target === e.currentTarget && close()}>{children}</div>
 }
 
 export function Confirm({ title, text, ok, close, run }: { title: string; text: string; ok: string; close: () => void; run: () => void }) {

@@ -8,8 +8,9 @@ import rehypeRaw from 'rehype-raw'
 import rehypeSanitize, { defaultSchema } from 'rehype-sanitize'
 import rehypeHighlight from 'rehype-highlight'
 import { common } from 'lowlight'
-import { Check, Copy } from 'lucide-react'
+import { Check, Copy, ImageOff } from 'lucide-react'
 import { cx } from './ui'
+import { useS } from '../store'
 import type { CiteSource } from '../citations'
 
 export type CiteMap = { sources: CiteSource[]; onCite?: (citeId: string) => void }
@@ -64,7 +65,29 @@ const schema: any = {
 // are allocated once rather than on every streamed word.
 const BASE_PLUGINS: any = [[remarkGfm, { singleTilde: false }], remarkMath, remarkBreaks, remarkEmoji]
 
-const REHYPE_BASE: any = [rehypeRaw, [rehypeSanitize, schema]]
+/* mdast-util-to-hast prefixes footnote ids *and* their `#` links with
+ * `user-content-`, and rehype-sanitize then prefixes the ids a second time —
+ * so a footnote link pointed at `#user-content-fn-1` while the footnote id
+ * read `user-content-user-content-fn-1`: they did not match. Emit ids bare
+ * (`clobberPrefix: ''` on the remark-rehype step) and retarget
+ * intra-document links here, so every id is still prefixed exactly once (by
+ * the sanitizer) and each `#…` link keeps pointing at its element. */
+const rehypeFixAnchors = () => (tree: any) => {
+  const ids = new Set<string>()
+  const walk = (n: any, fn: (el: any) => void) => {
+    if (!n || typeof n !== 'object') return
+    if (n.type === 'element') fn(n)
+    if (Array.isArray(n.children)) for (const c of n.children) walk(c, fn)
+  }
+  walk(tree, (el) => { const id = el.properties?.id; if (typeof id === 'string' && id) ids.add(id) })
+  if (!ids.size) return
+  walk(tree, (el) => {
+    const href = el.properties?.href
+    if (typeof href === 'string' && href.startsWith('#') && ids.has(href.slice(1))) el.properties.href = `#user-content-${href.slice(1)}`
+  })
+}
+
+const REHYPE_BASE: any = [rehypeRaw, rehypeFixAnchors, [rehypeSanitize, schema]]
 /* `common` covers the everyday languages (js/ts, python, json, bash, yaml,
  * sql, html/css, …). The full `all` set is ~1.2 MB of grammars for languages
  * that essentially never show up, and unknown languages are skipped anyway
@@ -104,6 +127,27 @@ function Code({ lang, code, children, bare }: { lang: string; code: string; chil
       </div>
       <pre className="overflow-x-auto px-4 py-3 font-mono text-sm leading-6">{children}</pre>
     </div>
+  )
+}
+
+/* A model-authored reply must not silently beacon the reader's IP to an
+ * arbitrary host, so remote images are click-to-load by default (inline and
+ * app-relative sources still render immediately). The toggle lives in
+ * Settings → Chats ("Load remote images"). */
+function RemoteImage({ src, alt, title }: { src?: string; alt?: string; title?: string }) {
+  const allow = useS((s) => s.prefs.remoteImages === true)
+  const [loaded, setLoaded] = useState(false)
+  const remote = /^https?:\/\//i.test(src ?? '')
+  if (!remote || allow || loaded) return <img src={src} alt={alt} title={title} loading="lazy" referrerPolicy="no-referrer" className="my-3 max-h-96 max-w-full rounded-xl bg-surf" />
+  let host = src ?? ''
+  try { host = new URL(src ?? '').host || host } catch { /* keep the raw URL */ }
+  return (
+    <span className="my-3 flex flex-wrap items-center gap-2 rounded-xl border border-hov bg-surf px-3 py-2 text-xs text-mu">
+      <ImageOff size={14} className="shrink-0 text-ac" aria-hidden="true" />
+      <span className="min-w-0 flex-1 truncate">Remote image{alt ? ` — ${alt}` : ''} from {host}</span>
+      <button type="button" onClick={() => setLoaded(true)} className="rounded-lg bg-hov px-2.5 py-1 font-medium text-tx hover:opacity-80">Load image</button>
+      <button type="button" onClick={() => useS.setState({ prefs: { ...useS.getState().prefs, remoteImages: true } })} className="rounded-lg bg-ac px-2.5 py-1 font-medium text-acx hover:opacity-90">Always load</button>
+    </span>
   )
 }
 
@@ -156,7 +200,7 @@ const makeC = (bare: boolean, cites?: CiteMap): any => ({
     </a>
     : <a {...p} href={href} target="_blank" rel="noopener noreferrer nofollow" className={link}>{children}</a>)
   },
-  img: ({ node, src, alt, title }: any) => <img src={src} alt={alt} title={title} loading="lazy" referrerPolicy="no-referrer" className="my-3 max-h-96 max-w-full rounded-xl bg-surf" />,
+  img: ({ node, src, alt, title }: any) => <RemoteImage src={src} alt={alt} title={title} />,
   table: ({ children }: any) => <div className="my-4 overflow-x-auto rounded-xl bg-surf"><table className="w-full border-collapse text-sm">{children}</table></div>,
   thead: E('thead', 'bg-hov text-left'),
   tr: E('tr', 'even:bg-bg/40'),
@@ -200,6 +244,7 @@ export default memo(function Rich({ t, bare = false, cites, blocks = false }: { 
   const body = (
     <ReactMarkdown
       remarkPlugins={BASE_PLUGINS}
+      remarkRehypeOptions={{ clobberPrefix: '' }}
       rehypePlugins={rehypePlugins}
       components={components}
     >

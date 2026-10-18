@@ -19,6 +19,7 @@ export type ErrorCode =
   | 'empty_response'
   | 'stopped'
   | 'tool_limit'
+  | 'stalled'
   | 'unknown'
 
 export type CodedError = Error & { code?: ErrorCode; retryable?: boolean; status?: number }
@@ -76,6 +77,7 @@ const HINTS: Record<ErrorCode, string> = {
   empty_response: '\n\nThe model returned an empty response. Try again.',
   stopped: '',
   tool_limit: '\n\nThe model hit the tool execution limit. Raise it in Settings → Tools, then regenerate.',
+  stalled: '\n\nThe reply stream stalled: no data arrived for a while. Check your connection and try again.',
   unknown: '',
 }
 

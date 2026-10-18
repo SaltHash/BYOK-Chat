@@ -111,6 +111,10 @@ export function Composer({ cfg }: { cfg: (t: string) => void }) {
   // research run keeps its banner in the chat bubble (picker/progress card),
   // not in the composer.
   const banner: 'search' | 'research' | null = running ?? armed ?? typed?.kind ?? null
+  // A search banner must say so when the tool is disabled: otherwise the
+  // composed @search(…) message is sent with no search tool attached and the
+  // model answers from memory.
+  const searchEnabled = featOn(s, 'tools') && s.tools.search === true
   // A @search( / @research( call leaves the draft the instant it is typed,
   // pasted or inserted from the + menu, and shows as the box header instead.
   // Done before paint so the raw call never flashes in the textarea.
@@ -255,7 +259,7 @@ export function Composer({ cfg }: { cfg: (t: string) => void }) {
     <div className="mx-auto w-full self-center px-4 pb-4" style={{ maxWidth: composerWidth(s.prefs.chatWidth) }}>
       <Notice cfg={cfg} />
       <div ref={box} className="relative rounded-2xl bg-surf p-3" onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); add(e.dataTransfer.files) }}>
-        {banner && <MentionBanner kind={banner} onDismiss={dismissBanner} />}
+        {banner && <MentionBanner kind={banner} onDismiss={dismissBanner} warning={banner === 'search' && !searchEnabled ? 'Web search is off.' : undefined} onEnable={banner === 'search' && !searchEnabled ? () => { s.patch({ features: { ...s.features, tools: true }, tools: { ...s.tools, search: true } }) } : undefined} />}
         {menu && !menuOff && (
           <div className="absolute inset-x-0 bottom-full mb-2 rounded-xl bg-hov p-1.5">
             {menu.length ? menu.map((o, i) => (
@@ -320,7 +324,7 @@ export function Composer({ cfg }: { cfg: (t: string) => void }) {
             onCompositionEnd={() => setIme(false)}
             onBlur={() => setActive(null)}
             onPaste={(e) => { if (e.clipboardData.files.length) { e.preventDefault(); add(e.clipboardData.files) } }}
-            className={cx('mention-input relative max-h-52 w-full resize-none bg-transparent px-1 py-1 outline-none', ime ? 'text-tx' : 'text-transparent caret-ac')}
+            className={cx('mention-input relative max-h-52 w-full resize-none rounded-md bg-transparent px-1 py-1 outline-none focus-visible:ring-2 focus-visible:ring-ac/40', ime ? 'text-tx' : 'text-transparent caret-ac')}
           />
         </div>
         {active && !ime && (

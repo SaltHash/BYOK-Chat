@@ -176,6 +176,7 @@ export const SETTING_LINKS: SettingLink[] = [
   { tab: 'look', anchor: 'overlay', title: 'Overlay appearance', keywords: 'modal blur settings opacity backdrop dim' },
   { tab: 'chats', anchor: 'stream-fade', title: 'Reply fade-in', keywords: 'fade in streaming chunks duration ms' },
   { tab: 'chats', anchor: 'stream-md', title: 'Render markdown while streaming', keywords: 'markdown streaming live rich text format incremental' },
+  { tab: 'chats', anchor: 'remote-images', title: 'Load remote images', keywords: 'images remote click to load privacy third party beacon' },
   { tab: 'chats', anchor: 'temp-retention', title: 'Temporary chat retention', keywords: 'temporary retention hours immediate expires' },
   { tab: 'look', anchor: 'fonts', title: 'Fonts', keywords: 'body heading monospace font google' },
   { tab: 'look', anchor: 'title-model', title: 'Title generation model', keywords: 'title model chat names endpoint helper endpoints' },
@@ -192,9 +193,8 @@ export const SETTING_LINKS: SettingLink[] = [
 
   // Data
   { tab: 'data', anchor: 'device-sync', title: 'Device sync', keywords: 'sync token push pull devices neon auto' },
-  { tab: 'data', anchor: 'encrypted-backup', title: 'Encrypted backup', keywords: 'encrypted backup password aes export import' },
-  { tab: 'data', anchor: 'export', title: 'Export configuration', keywords: 'export json backup categories include keys' },
-  { tab: 'data', anchor: 'import', title: 'Import configuration', keywords: 'import json file merge replace categories' },
+  { tab: 'data', anchor: 'export', title: 'Export data', keywords: 'export json data backup categories include keys encrypted password aes' },
+  { tab: 'data', anchor: 'import', title: 'Import data', keywords: 'import json data file merge replace categories encrypted password' },
   { tab: 'data', anchor: 'chat-history', title: 'Chat history controls', keywords: 'delete all chats history stats kept' },
   { tab: 'data', anchor: 'browser-storage', title: 'Browser storage', keywords: 'storage refresh compact durable quota usage' },
   { tab: 'data', anchor: 'erase-everything', title: 'Erase everything', keywords: 'erase remove all endpoints keys chats reset' },

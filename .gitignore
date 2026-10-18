@@ -42,6 +42,7 @@ tmp/
 temp/
 *.tmp
 *.temp
+*.patch
 
 # OS-generated files
 .DS_Store

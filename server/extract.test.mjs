@@ -9,6 +9,15 @@ test('blocks private and non-http targets', () => {
   }
 })
 
+test('only the standard web ports are readable', () => {
+  for (const u of ['http://example.com:8443/', 'https://example.com:8443/', 'http://example.com:3000/', 'http://example.com:8080/']) {
+    assert.equal(isPublicHttp(u), false, u)
+  }
+  for (const u of ['http://example.com/', 'https://example.com/', 'http://example.com:80/', 'https://example.com:443/']) {
+    assert.equal(isPublicHttp(u), true, u)
+  }
+})
+
 test('blocks shorthand IPv4 and private, mapped or non-routable IPv6 literals', () => {
   for (const u of [
     'http://127.1/', 'http://2130706433/', 'http://0x7f.1/', 'http://0177.0.0.1/', 'http://0/',

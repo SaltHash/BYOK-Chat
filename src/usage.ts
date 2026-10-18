@@ -146,11 +146,17 @@ const billable = (t: Attempt) => !t.err && (t.tin != null || t.tout != null)
 
 const priceOf = (eps: Ep[], t: Attempt) => (t.m ? endpointByName(eps, t.n)?.prices?.[t.m] : undefined)
 
-/** Per-attempt spend: provider-reported first, endpoint price table second. */
+/** Per-attempt spend: provider-reported first, endpoint price table second.
+ *  Cached prompt tokens bill at their own discounted rate when the table has
+ *  one (cache reads are cheaper than input; cache writes usually dearer), and
+ *  fall back to the input rate when it does not. `tin` counts uncached input
+ *  only (see `usageFrom`), so nothing is charged twice. */
 const costOf = (eps: Ep[], t: Attempt) => {
   if (Number.isFinite(t.cost) && (t.cost ?? 0) > 0) return t.cost as number
   const price = priceOf(eps, t)
-  return price ? ((t.tin ?? 0) * price.input + (t.tout ?? 0) * price.output) / 1e6 : 0
+  if (!price) return 0
+  const read = t.cacheRead ?? 0, write = t.cacheWrite ?? 0
+  return ((t.tin ?? 0) * price.input + read * (price.cacheRead ?? price.input) + write * (price.cacheWrite ?? price.input) + (t.tout ?? 0) * price.output) / 1e6
 }
 
 /** Model-reported context window, or 0 when the endpoint has no entry. */

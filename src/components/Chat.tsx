@@ -1,6 +1,6 @@
 import { memo, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
-import { GitBranch, ChevronLeft, ChevronRight, Sparkles, Server, Cpu, Copy, Check, RefreshCw, Trash2, ListOrdered, CircleCheck, CircleX, TriangleAlert, Paperclip, CornerDownLeft } from 'lucide-react'
+import { GitBranch, ChevronLeft, ChevronRight, ChevronDown, Sparkles, Server, Cpu, Copy, Check, RefreshCw, Trash2, ListOrdered, CircleCheck, CircleX, TriangleAlert, Paperclip, CornerDownLeft } from 'lucide-react'
 import { useS, useLive, usable, featOn, previewSysFor, type Msg } from '../store'
 import { clampWorkspaceFrac, roundFrac, CHAT_WIDTH } from '../layout'
 import { startPointerDrag } from '../hooks'
@@ -178,11 +178,13 @@ function StreamedMd({ chunks, fade }: { chunks: string[]; fade: number }) {
     <div className="md leading-7">
       {head && <Md t={head} blocks />}
       {tail && (
-        /* Keyed by the settled length so the fade runs once per block instead of
-         * restarting on every chunk. The first/last child margins are flattened
-         * so the seam between the two halves matches a normal block gap. */
+        /* Deliberately not keyed by the settled length: remounting the tail at
+         * every block boundary threw away an in-progress text selection and
+         * re-ran the fade. The fade now plays once when the live tail first
+         * appears; finished blocks commit instantly above it. The first/last
+         * child margins are flattened so the seam between the two halves
+         * matches a normal block gap. */
         <div
-          key={head.length}
           className={cx('[&>*:first-child]:mt-0 [&>*:last-child]:mb-0', fade > 0 && 'animate-reply-in')}
           style={fade > 0 ? { '--reply-in-duration': `${fade}s` } as React.CSSProperties : undefined}
         >
@@ -393,6 +395,20 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
           )
         })()}
       </div>
+      {m.capped && !m.err && (
+        <div className="mt-2 flex flex-wrap items-center gap-2 rounded-xl border border-er/30 bg-er/10 px-3 py-2 text-xs text-mu">
+          <TriangleAlert size={13} className="shrink-0 text-er" />
+          Tool execution limit reached — the partial reply above was kept.
+          <button onClick={() => cfg('tools')} className="rounded-lg bg-ac px-2.5 py-1 text-xs font-medium text-acx transition-opacity hover:opacity-90">Raise tool limit</button>
+        </div>
+      )}
+      {m.trunc && !m.err && !busy && m.t.trim() && (
+        <div className="mt-2 flex flex-wrap items-center gap-2 rounded-xl border border-ac/30 bg-ac/10 px-3 py-2 text-xs text-mu">
+          <TriangleAlert size={13} className="shrink-0 text-ac" />
+          The reply hit the model's output limit and was cut off.
+          <button onClick={() => { void useS.getState().send('Continue from where you left off.', []) }} className="rounded-lg bg-ac px-2.5 py-1 text-xs font-medium text-acx transition-opacity hover:opacity-90">Continue</button>
+        </div>
+      )}
       {/* Workspace tiles for this message — shown above message controls but below content */}
       {m.research && <ResearchTierPicker msg={m} />}
       {m.research && <ResearchPlanCard msg={m} />}
@@ -473,6 +489,16 @@ export function Chat({ side, toggle, cfg, pal }: { side: boolean; toggle: () => 
   const c = s.chats.find((x) => x.id === s.chat)
   const tiles = featOn(s, 'commands') ? s.cmds.filter((k) => k.on).slice(0, 4) : []
   const box = useRef<HTMLDivElement>(null), stick = useRef(true)
+  // Mirrors `stick` into state so a jump-to-latest pill can appear while the
+  // user reads back through the transcript (scroll events only; no renders
+  // from streamed chunks).
+  const [atEnd, setAtEnd] = useState(true)
+  const onScrollBox = (e: React.UIEvent<HTMLDivElement>) => {
+    const b = e.currentTarget
+    const near = b.scrollHeight - b.scrollTop - b.clientHeight < 80
+    stick.current = near
+    setAtEnd((was) => (was === near ? was : near))
+  }
   const liveTools = useLive((l) => l.tools)
   const busy = useS((st) => st.busy)
   const workspacePrefs = useS((st) => st.workspacePrefs ?? { defaultView: 'latest', autoOpen: true, autoFollow: true })
@@ -565,8 +591,8 @@ export function Chat({ side, toggle, cfg, pal }: { side: boolean; toggle: () => 
     <section className="flex min-h-0 min-w-0 flex-1 flex-col bg-bg">
       <Header side={side} toggle={toggle} cfg={cfg} pal={pal} title={c?.title ?? 'New chat'} />
       <div ref={rowRef} className="flex min-h-0 flex-1 flex-col sm:flex-row">
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-          <div ref={box} onScroll={(e) => { const b = e.currentTarget; stick.current = b.scrollHeight - b.scrollTop - b.clientHeight < 80 }} className="min-h-0 flex-1 overflow-y-auto" style={{ WebkitMaskImage: 'linear-gradient(to bottom, black calc(100% - 32px), rgba(0,0,0,0.1) 100%)', maskImage: 'linear-gradient(to bottom, black calc(100% - 32px), rgba(0,0,0,0.1) 100%)' }}>
+        <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
+          <div ref={box} onScroll={onScrollBox} className="min-h-0 flex-1 overflow-y-auto" style={{ WebkitMaskImage: 'linear-gradient(to bottom, black calc(100% - 32px), rgba(0,0,0,0.1) 100%)', maskImage: 'linear-gradient(to bottom, black calc(100% - 32px), rgba(0,0,0,0.1) 100%)' }}>
             {c && c.msgs.length ? (
               <div className="mx-auto space-y-8 px-4 py-6" style={{ maxWidth: CHAT_WIDTH[s.prefs.chatWidth] }}>
                 {c.msgs.map((m, i) => <M key={m.id} m={m} cfg={cfg} last={i === c.msgs.length - 1} onOpenWorkspace={openWorkspace} onOpenResearch={openResearch} selectedWorkspaceId={workspacePanel?.mid === m.id ? selectedRevId : null} />)}
@@ -591,6 +617,11 @@ export function Chat({ side, toggle, cfg, pal }: { side: boolean; toggle: () => 
               </div>
             )}
           </div>
+          {!atEnd && c && c.msgs.length > 0 && (
+            <button type="button" onClick={() => { stick.current = true; setAtEnd(true); followBottom.call() }} className="absolute bottom-28 left-1/2 z-10 inline-flex min-h-8 -translate-x-1/2 items-center gap-1.5 rounded-full border border-hov bg-surf px-3 py-1 text-xs text-tx shadow-md transition-colors hover:bg-hov focus-visible:ring-2 focus-visible:ring-ac">
+              <ChevronDown size={13} className="text-ac" />Jump to latest
+            </button>
+          )}
           <Composer cfg={cfg} />
         </div>
         {workspaceMsg && workspace && workspacePanel && (

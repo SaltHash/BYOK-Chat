@@ -117,10 +117,10 @@ try {
     assert(data.ok === true && data.apiProviders?.tinyfish, 'unexpected health body')
   })
 
-  await check('POST /api/health returns 405 JSON with Allow: GET', async () => {
+  await check('POST /api/health returns 405 JSON with Allow: GET, HEAD', async () => {
     const res = await postJson('/api/health', {})
     assert(res.status === 405, `status ${res.status}`)
-    assert(res.headers.get('allow') === 'GET', `allow ${res.headers.get('allow')}`)
+    assert(res.headers.get('allow') === 'GET, HEAD', `allow ${res.headers.get('allow')}`)
     assertJson(res)
   })
 
@@ -167,10 +167,10 @@ try {
     assertJson(bare)
   })
 
-  await check('POST /api/extract returns 405 JSON with Allow: GET', async () => {
+  await check('POST /api/extract returns 405 JSON with Allow: GET, HEAD', async () => {
     const res = await postJson('/api/extract', {})
     assert(res.status === 405, `status ${res.status}`)
-    assert(res.headers.get('allow') === 'GET', `allow ${res.headers.get('allow')}`)
+    assert(res.headers.get('allow') === 'GET, HEAD', `allow ${res.headers.get('allow')}`)
     assertJson(res)
   })
 

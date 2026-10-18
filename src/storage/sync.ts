@@ -5,6 +5,8 @@
  * is the only thing the user ever copies.
  * Payloads are versioned ({ v, storeVersion }) for backwards compatibility. */
 
+import { decryptBackup, encryptBackup } from './backupCrypto'
+
 export const SYNC_TOKEN_PREFIX = 'byok1'
 export const SYNC_EXPORT_VERSION = 4
 export const SYNC_MIN_COMPAT_STORE = 11
@@ -27,6 +29,20 @@ export function generateSyncToken(): string {
   const id = b64url(crypto.getRandomValues(new Uint8Array(12)))
   const secret = b64url(crypto.getRandomValues(new Uint8Array(32)))
   return `${SYNC_TOKEN_PREFIX}-${id}-${secret}`
+}
+
+/* Display form for a sync token: everything from three characters after the
+ * first hyphen up to three characters before the end becomes asterisks, so the
+ * header still reads `byok1-abc****************…xyz` without ever putting the
+ * full secret on screen. The real token is only kept in the copy button. */
+export function maskSyncToken(token: string): string {
+  const t = String(token || '')
+  const h = t.indexOf('-')
+  if (h < 0) return t
+  const start = h + 4
+  const end = t.length - 3
+  if (end <= start) return t
+  return t.slice(0, start) + '*'.repeat(end - start) + t.slice(end)
 }
 
 export function parseSyncToken(token: string): { id: string; secret: string } {
@@ -67,9 +83,33 @@ export function checkSyncCompat(payload: Pick<SyncPayload, 'v' | 'storeVersion'>
   return { ok: true, warning: '' }
 }
 
-/* Merge strategy for pull: remote wins for chats/workspaces by updatedAt,
- * settings merge shallowly (remote overwrites known keys). Pure. */
-export function mergeSyncState(local: { updatedAt: number; settings: Record<string, unknown> }, remote: SyncPayload): { settings: Record<string, unknown>; takeRemoteData: boolean } {
-  void local
-  return { settings: { ...local.settings, ...remote.settings }, takeRemoteData: true }
+/* ---- end-to-end payload encryption ----
+ *
+ * The payload is encrypted on the device with the sync token itself
+ * (AES-GCM-256 + PBKDF2-SHA256 via backupCrypto): the server stores an opaque
+ * envelope, so even a database leak reveals no settings, chats or API keys,
+ * while any device holding the token can read the slot. Plain objects pushed
+ * by older builds are still accepted on pull. */
+export type SyncEnvelope = { encrypted: string }
+
+/* Worker/Node hosts cap request bodies at 8 MB; base64 inflates by ~4/3, so
+ * keep the plaintext JSON under about 5.7 MB. */
+export const SYNC_PLAINTEXT_MAX_BYTES = 5_700_000
+
+export async function encryptSyncPayload(payload: SyncPayload, token: string): Promise<SyncEnvelope> {
+  const json = JSON.stringify(payload)
+  const bytes = new TextEncoder().encode(json).length
+  if (bytes > SYNC_PLAINTEXT_MAX_BYTES) {
+    throw Error(`This sync data is too large to encrypt (${(bytes / 1e6).toFixed(1)} MB; the limit is about 5.7 MB). Trim chats, or export a file backup instead.`)
+  }
+  return { encrypted: await encryptBackup(json, token) }
+}
+
+export async function decryptSyncPayload(body: unknown, token: string): Promise<SyncPayload> {
+  if (body && typeof body === 'object' && typeof (body as SyncEnvelope).encrypted === 'string') {
+    return JSON.parse(await decryptBackup((body as SyncEnvelope).encrypted, token)) as SyncPayload
+  }
+  // Legacy plaintext payload from a device running an older build.
+  if (body && typeof body === 'object') return body as SyncPayload
+  throw Error('That sync slot does not contain a usable payload.')
 }

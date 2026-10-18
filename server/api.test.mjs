@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { apiRoute, searchFailureBody, searchFailureStatus, syncFailureResult } from './api.mjs'
+import { apiRoute, overRateLimit, bumpRateLimit, searchFailureBody, searchFailureStatus, syncFailureResult } from './api.mjs'
 
 test('apiRoute hands non-API paths back to the host and answers API 404s as JSON', async () => {
   const req = (url, method = 'GET') => ({ method, url, headers: {} })
@@ -11,6 +11,34 @@ test('apiRoute hands non-API paths back to the host and answers API 404s as JSON
   assert.equal(unknown.body.error, 'Not found')
   const bare = await apiRoute(req('/api'))
   assert.equal(bare.status, 404)
+})
+
+test('HEAD mirrors the GET route without a body', async () => {
+  const req = (method) => ({ method, url: '/api/health', headers: {} })
+  const head = await apiRoute(req('HEAD'), {})
+  assert.equal(head.status, 200)
+  assert.equal(head.body, null)
+  const get = await apiRoute(req('GET'), {})
+  assert.equal(get.status, 200)
+  assert.ok(get.body && typeof get.body === 'object')
+})
+
+test('rate limiting slides instead of resetting on a fixed window', () => {
+  const bucket = new Map()
+  const start = 1_000_000
+  for (let i = 0; i < 30; i++) bumpRateLimit(bucket, 'a', start + i)
+  assert.equal(overRateLimit(bucket, 'a', start + 30), true)
+  assert.equal(overRateLimit(bucket, 'b', start + 30), false)
+  // The earliest hits fall out of the window hit by hit.
+  assert.equal(overRateLimit(bucket, 'a', start + 60_001), false)
+})
+
+test('an unreadable page answers 422 instead of 502', async () => {
+  const fetchFn = async () => { const e = Error('The page had no readable text.'); e.code = 'empty'; throw e }
+  const result = await apiRoute({ method: 'GET', url: '/api/extract?url=https%3A%2F%2Fexample.com%2Fx', headers: {} }, {}, { fetchFn })
+  assert.equal(result.status, 422)
+  assert.equal(result.body.code, 'empty')
+  assert.equal(result.body.retryable, false)
 })
 
 test('search failures map to stable codes and statuses', () => {

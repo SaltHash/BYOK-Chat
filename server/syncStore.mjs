@@ -48,6 +48,9 @@ function memStore() {
       while (mem.size > MEM_MAX_ROWS || (memBytes > MEM_MAX_BYTES && mem.size > 1)) forget(mem.keys().next().value)
       return row
     },
+    async del(id) {
+      forget(id)
+    },
   }
 }
 
@@ -80,6 +83,9 @@ async function neonStore(env = process.env) {
         on conflict (id) do update set secret_hash = excluded.secret_hash, payload = excluded.payload,
           store_version = excluded.store_version, export_version = excluded.export_version, updated_at = excluded.updated_at`
       return row
+    },
+    async del(id) {
+      await sql`delete from sync_states where id = ${id}`
     },
   }
   return neonClient

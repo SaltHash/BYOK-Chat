@@ -6,6 +6,9 @@ import { bearerToken, readBodyText } from './http.mjs'
 
 const TOKEN_RE = /^byok1-([A-Za-z0-9_-]{16})-([A-Za-z0-9_-]{40,50})$/
 export const SYNC_MAX_BYTES = 8_000_000
+/** A token that has not been used (push or pull) for this long is pruned on
+ *  read: Neon is serverless, so there is no background job to do it. */
+export const SYNC_ROW_TTL_MS = 30 * 24 * 60 * 60 * 1000
 
 export function parseToken(raw) {
   const m = TOKEN_RE.exec(String(raw || '').trim())
@@ -56,6 +59,19 @@ export async function handleSyncPull(req, backend) {
     token = body.token || token
   }
   if (!token) { const e = Error('Missing sync token.'); e.code = 'bad_token'; e.status = 401; throw e }
-  const { row } = await authRow(backend, token)
+  const { row, id } = await authRow(backend, token)
+  const age = Number.isFinite(row.updatedAt) ? Date.now() - row.updatedAt : 0
+  // Lazy expiry: prune a row that has been idle past its TTL instead of
+  // keeping an abandoned payload (and its plaintext settings) forever.
+  if (age > SYNC_ROW_TTL_MS) {
+    try { await backend.del(id) } catch { /* best-effort prune */ }
+    const e = Error('This sync token expired after 30 days of inactivity. Push from one of your devices to start fresh.')
+    e.code = 'expired'; e.status = 410; throw e
+  }
+  // Touch rows that are halfway to expiry, so a device that only ever pulls
+  // keeps the token alive while a genuinely abandoned one still expires.
+  if (age > SYNC_ROW_TTL_MS / 2) {
+    try { await backend.put({ ...row, updatedAt: Date.now() }) } catch { /* the next push will refresh */ }
+  }
   return { ok: true, payload: row.payload, storeVersion: row.storeVersion, exportVersion: row.exportVersion, updatedAt: row.updatedAt, backend: backend.kind }
 }

@@ -2,7 +2,7 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { useShallow } from 'zustand/react/shallow'
 import { DEFAULT_TOOLS, KEYS, WIDGETS } from './meta'
-import { est, redact, stream, wire, trimHistory, estimateHistoryTokens, runToolLoop, type ToolCall, type ToolResult, searchWeb, formatSearch, fetchPage, formatPage, can, ocrImage } from './engine'
+import { est, redact, stream, wire, trimHistory, estimateHistoryTokens, runToolLoop, type ToolCall, type ToolResult, searchWeb, formatSearch, fetchPage, formatPage, can, ocrImage, clearSessionCache } from './engine'
 import { DEFAULT_SKILL_STATE, normSkills, enabledSkills, getSkillInstructions, composeSystemPrompt, SKILL_TOOL_NAME, type SkillState, type ResolvedSkill } from './skills'
 import { BLANK_RESEARCH, PLAN_SCOPE_MAX, PLAN_SCOPE_SYSTEM, RESEARCH_ABSTRACT_ASK, RESEARCH_MIN_SEARCHES, RESEARCH_REASONING_CHARS, RESEARCH_REPORT_ASK, RESEARCH_TIERS, citationRepairAsk, citationUncitedAsk, compactResearchRounds, estimateResearchUsage, fallbackPlan, looksLikeReport, normResearch, parseResearchPlan, parseResearchRequest, planUserAsk, reportSample, researchAbstract, researchMinAsk, researchSystemNote, sanitizeCitations, setStep, tierOf, withStepLead, type ResearchPlan, type ResearchState, type ResearchTierId } from './research'
 export { BLANK_RESEARCH, normResearch, tierOf, RESEARCH_TIERS }
@@ -30,7 +30,7 @@ export { QUOTA_FLAG, prunePersisted, storageUsage }
 export { usable, modelsOf, modelNameOf }
 
 export type Kind = 'eps' | 'prompts' | 'pls' | 'cmds'
-export type ModelPrice = { input: number; output: number; source?: 'manual' | 'openrouter' }
+export type ModelPrice = { input: number; output: number; source?: 'manual' | 'openrouter'; cacheRead?: number; cacheWrite?: number }
 /* Per-model inference provider pin (OpenRouter only): `tag` is the routing
  * slug sent as `provider.order` (e.g. `amazon-bedrock`), `name` is its label. */
 export type ModelProvider = { tag: string; name: string }
@@ -45,7 +45,7 @@ export type Attempt = { n: string; m: string; detail?: string; ms?: number; err?
 export type Try = Attempt
 export type Attachment = { name: string; kind: 'img' | 'pdf' | 'txt' | 'media'; size: string; mime?: string; data?: string; text?: string; source?: string; pages?: number }
 export type Att = Attachment
-export type Message = { id: string; r: 'user' | 'assistant'; t: string; at?: number; by?: string; tps?: number; log?: Attempt[]; att?: Attachment[]; err?: boolean; full?: string; ctx?: string[]; fx?: string; cmd?: string; alts?: Snap[]; ai?: number; historyTokens?: number; explicitTokens?: number; reasoning?: string; toolRounds?: { text: string; calls: ToolResult[] }[]; toolFinal?: string; sys?: string; workspaceIds?: string[]; research?: ResearchState }
+export type Message = { id: string; r: 'user' | 'assistant'; t: string; at?: number; by?: string; tps?: number; log?: Attempt[]; att?: Attachment[]; err?: boolean; trunc?: boolean; capped?: boolean; full?: string; ctx?: string[]; fx?: string; cmd?: string; alts?: Snap[]; ai?: number; historyTokens?: number; explicitTokens?: number; reasoning?: string; toolRounds?: { text: string; calls: ToolResult[] }[]; toolFinal?: string; sys?: string; workspaceIds?: string[]; research?: ResearchState }
 export type Msg = Message
 export type Snap = { t: string; by?: string; tps?: number; log?: Try[]; err?: boolean; toolRounds?: { text: string; calls: ToolResult[] }[]; toolFinal?: string }
 export type Chat = { id: string; title: string; pin?: boolean; started?: boolean; folder?: string; msgs: Msg[]; temporary?: boolean; expiresAt?: number; titleAuto?: boolean }
@@ -231,7 +231,7 @@ export const BLANK_SEARCH: SearchPrefs = { provider: 'tinyfish', keys: { tinyfis
 /* Default shapes for the settings objects a Data-tab import can replace
  * wholesale: keep the initial state and import "replace" mode on the same
  * literal so a sparse file can never leave undefined fields behind. */
-export const DEFAULT_PREFS: S['prefs'] = { showBy: true, showLog: true, showTps: false, enterSends: true, autoTitle: true, temporaryByDefault: false, seasonal: true, cues: false, showModelPricing: false, showContextMeter: true, titleEp: '', titleModel: '', effortEp: '', effortModel: '', recallEp: '', recallModel: '', tempHours: 3, fontBody: 'system', fontMono: 'system', fontHeader: 'system', modelPrimary: 'name', modelSecondary: 'none', paletteMax: 320, chatWidth: 'standard', settingsWidth: 1024, settingsHeight: 780, modelPickerHeight: 480, sidebarWidth: 288, widgetWidth: 320, workspaceWidth: 0.4, workspaceSplit: 0.2, modalBlur: 12, settingsOpacity: 55, streamFade: 0.3, streamMd: true }
+export const DEFAULT_PREFS: S['prefs'] = { showBy: true, showLog: true, showTps: false, enterSends: true, autoTitle: true, temporaryByDefault: false, seasonal: true, cues: false, showModelPricing: false, showContextMeter: true, titleEp: '', titleModel: '', effortEp: '', effortModel: '', recallEp: '', recallModel: '', tempHours: 3, fontBody: 'system', fontMono: 'system', fontHeader: 'system', modelPrimary: 'name', modelSecondary: 'none', paletteMax: 320, chatWidth: 'standard', settingsWidth: 1024, settingsHeight: 780, modelPickerHeight: 480, sidebarWidth: 288, widgetWidth: 320, workspaceWidth: 0.4, workspaceSplit: 0.2, modalBlur: 12, settingsOpacity: 55, streamFade: 0.3, streamMd: true, remoteImages: false }
 export const DEFAULT_PARAMS: S['params'] = { def: true, temp: 0.7, topp: 1, max: 4096, maxToolRounds: 8, highToolsUnlocked: false }
 export const DEFAULT_WIDGET_PREFS: S['widgetPrefs'] = { usageGroup: 'endpoint', usageMode: 'success', usageFormat: '{in}/{out}', usageTotal: false, usagePeriod: 'all', lastSpeed: true, timeUnit: 'auto', widgetOrder: WIDGETS.map(([k]) => k), shortcuts: KEYS.map(([k]) => k), contextLimit: 128000, showDisabledEndpoints: true, scratchRows: 6, snippetLimit: 20, costDecimals: 4, activePromptsOnly: false, charsPerToken: 4, hideDoneTodos: false }
 const SEARCH_VALID_PROVIDERS: SearchProvider[] = ['tinyfish', 'you', 'exa', 'firecrawl', 'brightdata']
@@ -294,7 +294,7 @@ type S = {
   customDarkColors: ThemeColors
   customLightColors: ThemeColors
   setupDone: boolean
-  prefs: { showBy: boolean; showLog: boolean; showTps: boolean; enterSends: boolean; autoTitle: boolean; temporaryByDefault: boolean; seasonal?: boolean; cues?: boolean; showModelPricing: boolean; showContextMeter: boolean; titleEp: string; titleModel?: string; effortEp: string; effortModel?: string; recallEp: string; recallModel?: string; tempHours: number; fontBody: string; fontMono: string; fontHeader: string; modelPrimary: 'id' | 'name'; modelSecondary: 'none' | 'provider' | 'id' | 'name'; modelDisplay?: 'none' | 'name' | 'provider' | 'both'; paletteMax: number; chatWidth: 'narrow' | 'standard' | 'wide'; settingsWidth: number; settingsHeight: number; modelPickerHeight: number; sidebarWidth?: number; widgetWidth?: number; workspaceWidth?: number; workspaceSplit?: number; modalBlur: number; settingsOpacity: number; routingMode?: RoutingMode; streamFade: number; streamMd: boolean }
+  prefs: { showBy: boolean; showLog: boolean; showTps: boolean; enterSends: boolean; autoTitle: boolean; temporaryByDefault: boolean; seasonal?: boolean; cues?: boolean; showModelPricing: boolean; showContextMeter: boolean; titleEp: string; titleModel?: string; effortEp: string; effortModel?: string; recallEp: string; recallModel?: string; tempHours: number; fontBody: string; fontMono: string; fontHeader: string; modelPrimary: 'id' | 'name'; modelSecondary: 'none' | 'provider' | 'id' | 'name'; modelDisplay?: 'none' | 'name' | 'provider' | 'both'; paletteMax: number; chatWidth: 'narrow' | 'standard' | 'wide'; settingsWidth: number; settingsHeight: number; modelPickerHeight: number; sidebarWidth?: number; widgetWidth?: number; workspaceWidth?: number; workspaceSplit?: number; modalBlur: number; settingsOpacity: number; routingMode?: RoutingMode; streamFade: number; streamMd: boolean; remoteImages?: boolean }
   widgets: Record<string, boolean>; widgetPrefs: { usageGroup: 'endpoint' | 'model'; usageMode: 'success' | 'tokens'; usageFormat: string; usageTotal: boolean; usagePeriod: 'session' | 'day' | 'week' | 'custom' | 'all'; usageFrom?: string; usageTo?: string; lastSpeed: boolean; timeUnit: 'ms' | 's' | 'auto'; widgetOrder: string[]; shortcuts: string[]; contextLimit: number; showDisabledEndpoints: boolean; scratchRows: number; snippetLimit: number; costDecimals: number; activePromptsOnly: boolean; charsPerToken: number; hideDoneTodos: boolean }; rail: boolean; pad: string; snips: string[]
   params: { def: boolean; temp: number; topp: number; max: number; maxToolRounds: number; highToolsUnlocked: boolean }; effort: Record<string, string>
   workspacePrefs: WorkspacePrefs
@@ -306,7 +306,7 @@ type S = {
   folders: Folder[]; price: { in: number; out: number }; todos: { id: string; t: string; done: boolean }[]
   routeStats: Record<string, RouteStat>
   flashMsg: string | null
-  draft: string; busy: boolean; notice: Notice
+  draft: string; drafts: Record<string, string>; busy: boolean; notice: Notice
   /* Workspace (first-class entity) */
   workspaces: Record<string, Workspace>
   selectedRevision: Record<string, string>
@@ -349,6 +349,12 @@ export const full = composeFullInput
  * legacy string messages so stored logs still get a useful hint. */
 const hint = (l: Try[]) => hintForLog(l)
 const errCodeOf = (x: unknown): ErrorCode => classifyModelError((x as { message?: unknown })?.message ?? x)
+/* One automatic retry is worth it for transient failures (dropped
+ * connections, provider hiccups, throttling, a stalled stream); permanent
+ * ones (bad key, bad request, billing) move straight to the next endpoint. */
+const RETRYABLE_CODES: ErrorCode[] = ['network', 'cors', 'timeout', 'rate_limited', 'upstream_unavailable', 'empty_response', 'stalled']
+const isRetryableFailure = (x: unknown, code: ErrorCode) => (x as { retryable?: unknown })?.retryable === true || RETRYABLE_CODES.includes(code)
+const RETRY_DELAY_MS = 600
 /* Error text for the process log and failure messages. By default messages
    are redacted (API keys and key-like tokens masked). With Advanced →
    verbose errors, the exact message is shown — the endpoint's own key is
@@ -464,9 +470,30 @@ const mapPersistChats = createPersistMapper()
 
 export const useS = create<S>()(
   persist(
-    (set, get) => {
+    (baseSet, get) => {
+      /* Every state write funnels through here so per-chat drafts stay
+         coherent: `draft` always mirrors the active chat, and switching
+         `chat` stages the outgoing draft and restores the incoming chat's own
+         draft, so a half-typed message never leaks between chats. */
+      const set = ((p: any, replace?: boolean) => (baseSet as any)((s: S) => {
+        const n = typeof p === 'function' ? p(s) : p
+        if (!n || typeof n !== 'object') return n
+        const hasChat = 'chat' in n, hasDraft = 'draft' in n
+        if (!hasChat && !hasDraft) return n
+        const drafts: Record<string, string> = { ...(n.drafts ?? s.drafts) }
+        const target = ((hasChat ? n.chat : s.chat) ?? '') as string
+        if (hasDraft && target && target === s.chat) drafts[target] = (n.draft as string) ?? ''
+        if (hasChat && n.chat !== s.chat) {
+          // Stash the outgoing draft only while its chat still exists: a
+          // deleted chat must not keep its draft alive in the stash.
+          const next = (n.chats ?? s.chats) as Chat[]
+          if (s.chat && next.some((c) => c.id === s.chat)) drafts[s.chat] = ((hasDraft ? n.draft : s.draft) as string) ?? ''
+          return { ...n, draft: drafts[(n.chat as string) ?? ''] ?? '', drafts }
+        }
+        return { ...n, drafts }
+      }, replace)) as typeof baseSet
       const bump = (tin: number, tout: number, historyIn = tin, explicitIn = 0) => { if (!featOn(get(), 'stats')) return; set((s) => ({ stats: { ...s.stats, tin: s.stats.tin + tin, tout: s.stats.tout + tout, historyIn: s.stats.historyIn + historyIn, explicitIn: s.stats.explicitIn + explicitIn } })) }
-      const addCost = (e: Ep, model: string, tin: number, tout: number, reportedCost = 0) => {
+      const addCost = (e: Ep, model: string, tin: number, tout: number, reportedCost = 0, usage?: { cacheRead?: number; cacheWrite?: number }) => {
         if (!featOn(get(), 'stats')) return
         // Prefer the provider-reported spend (OpenRouter `usage.cost`) when
         // present: it already accounts for cached/discounted pricing. Fall
@@ -476,7 +503,13 @@ export const useS = create<S>()(
           return
         }
         const price = e.prices?.[model]
-        if (price) set((s) => ({ stats: { ...s.stats, cost: s.stats.cost + (tin * price.input + tout * price.output) / 1e6 } }))
+        if (!price) return
+        // `tin` counts uncached prompt tokens only, so cache traffic is billed
+        // separately: at the table's cache rate when one is set, else at the
+        // plain input rate.
+        const read = usage?.cacheRead ?? 0, write = usage?.cacheWrite ?? 0
+        const cost = (tin * price.input + read * (price.cacheRead ?? price.input) + write * (price.cacheWrite ?? price.input) + tout * price.output) / 1e6
+        set((s) => ({ stats: { ...s.stats, cost: s.stats.cost + cost } }))
       }
       const edit = (id: string, mid: string, f: (m: Msg) => Msg) => set((s) => ({ chats: s.chats.map((c) => (c.id === id ? { ...c, msgs: c.msgs.map((m) => (m.id === mid ? f(m) : m)) } : c)) }))
       const warn = (n: Notice) => { set({ notice: n }); return false }
@@ -532,7 +565,7 @@ export const useS = create<S>()(
           r.ctl = new AbortController()
           const x = await stream(c, `Choose the best model for the user's request. ${pl.rule || ''}\nAllowed model ids: ${JSON.stringify(ids)}\nReply with only JSON: {"model":"<one allowed id>"}`, [{ role: 'user', content: q.slice(0, 4000) }], () => {}, r.ctl, { cap: 200, effort: lowestEffortOf(c) })
           bump(x.tin, x.tout)
-          addCost(c, c.model, x.tin, x.tout, (x as any).cost ?? 0)
+          addCost(c, c.model, x.tin, x.tout, (x as any).cost ?? 0, x)
           const j = JSON.parse(x.text.match(/\{[\s\S]*\}/)?.[0] ?? '')
           if (!j || typeof j !== 'object' || Object.keys(j).join() !== 'model' || !ids.includes(j.model)) throw Error('output rejected (wrong shape, or an id outside this playlist): ' + x.text.slice(0, 80))
           routeCache.set(pl.id, q, j.model)
@@ -665,7 +698,7 @@ export const useS = create<S>()(
               if (r.stopped || (getErrorCode(err) ?? errCodeOf(err)) !== 'tool_limit') throw err
               x = await runToolLoop(e, sys, () => wirePlan(scopeRounds), {}, () => {}, r.ctl, o, () => {}, () => {}, 1)
             }
-            bump(x.tin, x.tout); addCost(e, e.model, x.tin, x.tout, (x as any).cost ?? 0)
+            bump(x.tin, x.tout); addCost(e, e.model, x.tin, x.tout, (x as any).cost ?? 0, x)
             log.push({ n: e.name, m: e.model, detail: `Research plan for “${query.slice(0, 80)}” (${scopeUsed} context ${scopeUsed === 1 ? 'search' : 'searches'})`, ms: Date.now() - t0, tin: x.tin, tout: x.tout, cacheRead: (x as any).cacheRead ?? 0, cacheWrite: (x as any).cacheWrite ?? 0, cost: (x as any).cost ?? 0, at: Date.now() })
             text = x.finalText || x.text
             used = e
@@ -797,7 +830,7 @@ export const useS = create<S>()(
             let researchEffort = get().effort[e.model] ?? ''
             if (researchEffort === 'auto') {
               const picked = await classifyEffort(query, e.modelEfforts?.[e.model] ?? [])
-              if (picked.level) { researchEffort = picked.level; bump(picked.tin, picked.tout); const ce = effortClassifierOf(get()); if (ce) addCost(ce, ce.model, picked.tin, picked.tout, (picked as any).cost ?? 0); log.push({ n: `${picked.by} (effort)`, m: picked.level, detail: `Auto effort for ${e.model}: chose ${picked.level}.`, ms: 0, tin: picked.tin, tout: picked.tout, cacheRead: (picked as any).cacheRead ?? 0, cacheWrite: (picked as any).cacheWrite ?? 0, cost: (picked as any).cost ?? 0, at: Date.now() }) }
+              if (picked.level) { researchEffort = picked.level; bump(picked.tin, picked.tout); const ce = effortClassifierOf(get()); if (ce) addCost(ce, ce.model, picked.tin, picked.tout, (picked as any).cost ?? 0, picked); log.push({ n: `${picked.by} (effort)`, m: picked.level, detail: `Auto effort for ${e.model}: chose ${picked.level}.`, ms: 0, tin: picked.tin, tout: picked.tout, cacheRead: (picked as any).cacheRead ?? 0, cacheWrite: (picked as any).cacheWrite ?? 0, cost: (picked as any).cost ?? 0, at: Date.now() }) }
               else researchEffort = ''
             }
             const o = { ...(get().params.def ? {} : { max: get().params.max, temp: get().params.temp, topp: get().params.topp }), effort: researchEffort }
@@ -915,7 +948,7 @@ export const useS = create<S>()(
             // the report card's sample text; the report itself is written next
             // and streams into the side panel.
             const closing = researchAbstract(x)
-            bump(loopTok.tin, loopTok.tout); addCost(e, e.model, loopTok.tin, loopTok.tout, loopTok.cost)
+            bump(loopTok.tin, loopTok.tout); addCost(e, e.model, loopTok.tin, loopTok.tout, loopTok.cost, loopTok)
             tin = loopTok.tin; tout = loopTok.tout; cacheRead = loopTok.cacheRead; cacheWrite = loopTok.cacheWrite; usageCost = loopTok.cost
             const ready = looksLikeReport(closing)
             patchRs(chatId, mid, (rs) => ({ ...rs, note: '', status: 'writing', summary: ready ? reportSample(closing) : closing }))
@@ -937,7 +970,7 @@ export const useS = create<S>()(
                 edit(chatId, mid, (m) => ({ ...m, t: '', toolFinal: '' }))
                 try {
                   const y = await streamReport(cand, assistantText, ask)
-                  bump(y.tin, y.tout); addCost(cand, cand.model, y.tin, y.tout, (y as any).cost ?? 0)
+                  bump(y.tin, y.tout); addCost(cand, cand.model, y.tin, y.tout, (y as any).cost ?? 0, y)
                   tin += y.tin; tout += y.tout; cacheRead += (y as any).cacheRead ?? 0; cacheWrite += (y as any).cacheWrite ?? 0; usageCost += (y as any).cost ?? 0
                   if (report.trim()) return
                   lastErr = Error('The model returned no report text.')
@@ -1096,11 +1129,22 @@ export const useS = create<S>()(
               log.push({ n: 'Routing', m: '', detail: `Ordered ${order.length} candidates by ${routingMode === 'fastest' ? 'observed latency' : 'input price'}: ${order.map((e) => e.model).join(' → ')}.`, at: Date.now() })
             }
           }
-          for (const e of order) {
+          /* Endpoint queue, not a plain iteration: a transient failure puts
+             the same endpoint back at the head once (automatic retry) before
+             the next candidate is tried. */
+          const queue: Ep[] = [...order]
+          const attempts = new Map<string, number>()
+          const effortCache = new Map<string, string>()
+          while (queue.length) {
+            const e = queue.shift()!
             if (r.stopped) break
+            const attemptNo = (attempts.get(e.id) ?? 0) + 1
+            attempts.set(e.id, attemptNo)
             let txt = ''
             const t0 = Date.now(), q = get().params
-            let effort = get().effort[e.model] ?? ''
+            // Effort is classified once per model: a retry must not re-bill
+            // the helper classification call.
+            let effort = effortCache.get(e.model) ?? get().effort[e.model] ?? ''
             if (effort === 'auto') {
               const levels = e.modelEfforts?.[e.model] ?? []
               const picked = await classifyEffort(um.full ?? um.t, levels)
@@ -1108,13 +1152,14 @@ export const useS = create<S>()(
                 effort = picked.level
                 bump(picked.tin, picked.tout)
                 const ce = effortClassifierOf(get())
-                if (ce) addCost(ce, ce.model, picked.tin, picked.tout, (picked as any).cost ?? 0)
+                if (ce) addCost(ce, ce.model, picked.tin, picked.tout, (picked as any).cost ?? 0, picked)
                 log.push({ n: `${picked.by} (effort)`, m: picked.level, detail: `Auto effort for ${e.model}: chose ${picked.level} from ${levels.length} available levels (${levels.join(', ')}).`, ms: 0, tin: picked.tin, tout: picked.tout, cacheRead: (picked as any).cacheRead ?? 0, cacheWrite: (picked as any).cacheWrite ?? 0, cost: (picked as any).cost ?? 0, at: Date.now() })
               } else {
                 effort = ''
                 log.push({ n: 'Effort (auto)', m: '', err: `Auto effort failed validation or no helper model is usable for ${e.model}; using the default level.`, at: Date.now() })
               }
             }
+            effortCache.set(e.model, effort)
             edit(id, mid, (m) => ({ ...m, by: `${e.name} · ${e.model}`, t: '' }))
             // A failed attempt leaves its streamed chunks behind; clear them so
             // the live preview cannot show text the committed reply does not.
@@ -1228,7 +1273,7 @@ export const useS = create<S>()(
               const sum = (um.historyTokens ?? 0) + (um.explicitTokens ?? 0), explicit = sum ? Math.round(x.tin * (um.explicitTokens ?? 0) / sum) : 0
               bump(responseTokensIn, responseTokensOut, responseTokensIn - explicit, explicit); ok = true
               track(e, Date.now() - t0, false)
-              addCost(e, e.model, responseTokensIn, responseTokensOut, (x as any).cost ?? 0)
+              addCost(e, e.model, responseTokensIn, responseTokensOut, (x as any).cost ?? 0, x)
               // Tokens/sec over generated output tokens (including tokens written
               // across tool rounds), measured over total LLM streaming time
               // across all rounds. Local tool execution runs outside stream()
@@ -1243,15 +1288,34 @@ export const useS = create<S>()(
                 try { const res = JSON.parse(c.result || '{}'); if (res.workspaceId) return res.workspaceId } catch {}
                 return null
               }).filter(Boolean))]
-              edit(id, mid, (m) => ({ ...m, tps: Math.round(responseTokensOut / Math.max(genMs / 1000, 0.001) * 10) / 10, toolRounds, ...(toolRounds.length ? { toolFinal: x.text } : {}), workspaceIds }))
+              edit(id, mid, (m) => ({ ...m, tps: Math.round(responseTokensOut / Math.max(genMs / 1000, 0.001) * 10) / 10, toolRounds, ...(toolRounds.length ? { toolFinal: x.text } : {}), ...(x.finish === 'length' || x.finish === 'max_tokens' ? { trunc: true } : {}), workspaceIds }))
               usedEp = e
               break
             } catch (x: any) {
               if (r.stopped) break
               const elapsed = Date.now() - t0
               track(e, elapsed, true)
+              const code = getErrorCode(x) ?? errCodeOf(x)
               const toolElapsed = toolRounds.reduce((total, round) => total + Math.max(0, ...round.calls.map((call) => call.ms ?? 0)), 0)
-              log.push({ n: e.name, m: e.model, ms: Math.max(0, elapsed - toolElapsed), err: errText(e, x.message), errCode: getErrorCode(x) ?? errCodeOf(x), at: Date.now() })
+              log.push({ n: e.name, m: e.model, ms: Math.max(0, elapsed - toolElapsed), err: errText(e, x.message), errCode: code, at: Date.now() })
+              // The tool-round cap is not a model failure: keep whatever the
+              // model already wrote and flag the message, instead of replacing
+              // the partial reply with an error card.
+              if (code === 'tool_limit' && txt.trim()) {
+                const capped = txt.trimEnd()
+                edit(id, mid, (m) => ({ ...m, t: capped, capped: true }))
+                ok = true
+                break
+              }
+              // One automatic retry for transient failures before the next
+              // candidate endpoint is tried.
+              if (attemptNo === 1 && isRetryableFailure(x, code)) {
+                log.push({ n: `${e.name} (retry)`, m: e.model, detail: `Transient failure — ${errText(e, x.message)} Retrying this endpoint once.`, at: Date.now() })
+                await new Promise((run) => setTimeout(run, RETRY_DELAY_MS))
+                if (r.stopped) break
+                queue.unshift(e)
+                continue
+              }
               if (p.ex) break
             }
           }
@@ -1274,23 +1338,7 @@ export const useS = create<S>()(
         workspaceWritesPending = false
         if (ok && !r.stopped && workspaceTouched) celebrate(get().prefs.cues === true)
         if (cur === r) { cur = null; set({ busy: false }) }
-        // Auto-push sync slot when enabled (fire-and-forget, never blocks UI).
-        try {
-          if (typeof localStorage !== 'undefined' && localStorage.getItem('byok.sync.auto') === '1') {
-            const token = localStorage.getItem('byok.sync.token') || ''
-            if (token) {
-              void import('./storage/sync').then(({ buildSyncPayload }) => Promise.all([
-                import('./storage/durable').then((d) => Promise.all([d.durableGetChats().catch(() => null), d.durableGetWorkspaces().catch(() => null)])),
-                import('./storage/syncClient').then((c) => c.syncPush),
-              ]).then(([[dChats, dWs], push]) => {
-                const st = get()
-                const { chats: _c, workspaces: _w, selectedRevision: _sr, ...settings } = st as unknown as Record<string, unknown>
-                void _c; void _w; void _sr
-                return push(token, buildSyncPayload({ storeVersion: 18, settings, chats: dChats ?? st.chats, workspaces: dWs ?? st.workspaces, selectedRevision: (st as unknown as { selectedRevision: unknown }).selectedRevision }))
-              }).catch(() => {})).catch(() => {})
-            }
-          }
-        } catch { /* sync is best-effort */ }
+        // Sync push is handled by the background runtime (storage/syncRuntime).
       }
 
       return {
@@ -1309,11 +1357,11 @@ export const useS = create<S>()(
           { id: 'k6', name: 'translate', desc: 'Translate text', in: 'text', sys: 'Translate the provided text into the language requested. If no target language is specified, ask which language.', tpl: '{{input}}', pl: '', on: true },
           { id: 'k7', name: 'brainstorm', desc: 'Generate useful ideas', in: 'text', sys: 'Generate varied, practical ideas. Keep each idea distinct and briefly explain why it may work.', tpl: '{{input}}', pl: '', on: true },
         ],
-        chats: [], chat: '', memories: [], memoryPrefs: { enabled: false, intent: 'balanced', recall: 'contextual', method: 'local', classifierEp: '', classifierModel: '' }, docPrefs: { ...BLANK_DOCS }, research: { ...BLANK_RESEARCH }, tools: { ...DEFAULT_TOOLS }, search: { ...BLANK_SEARCH, keys: { ...BLANK_SEARCH.keys } }, skills: DEFAULT_SKILL_STATE.map((s) => ({ ...s })), widgets: {}, widgetPrefs: { ...DEFAULT_WIDGET_PREFS, widgetOrder: [...DEFAULT_WIDGET_PREFS.widgetOrder], shortcuts: [...DEFAULT_WIDGET_PREFS.shortcuts] }, rail: false, pad: '', snips: [],
+        chats: [], chat: '', drafts: {}, memories: [], memoryPrefs: { enabled: false, intent: 'balanced', recall: 'contextual', method: 'local', classifierEp: '', classifierModel: '' }, docPrefs: { ...BLANK_DOCS }, research: { ...BLANK_RESEARCH }, tools: { ...DEFAULT_TOOLS }, search: { ...BLANK_SEARCH, keys: { ...BLANK_SEARCH.keys } }, skills: DEFAULT_SKILL_STATE.map((s) => ({ ...s })), widgets: {}, widgetPrefs: { ...DEFAULT_WIDGET_PREFS, widgetOrder: [...DEFAULT_WIDGET_PREFS.widgetOrder], shortcuts: [...DEFAULT_WIDGET_PREFS.shortcuts] }, rail: false, pad: '', snips: [],
         params: { ...DEFAULT_PARAMS }, effort: {},
         workspacePrefs: { defaultView: 'latest', autoOpen: true, autoFollow: true },
         advanced: { ...DEFAULT_ADVANCED },
-        sel: null, pr: 'general', globalPrompt: { on: false, text: '' }, features: { ...DEFAULT_FEATURES }, featureOrder: FEATURES.map(([id]) => id), libraryShow: { ...DEFAULT_LIBRARY_SHOW }, themeMode: 'dark', themeDark: 'claude', themeLight: 'paper', customDarkColors: { ...DEFAULT_CUSTOM_COLORS }, customLightColors: { ...DEFAULT_CUSTOM_LIGHT_COLORS }, setupDone: false, prefs: { ...DEFAULT_PREFS },
+        sel: null, pr: 'general', globalPrompt: { on: false, text: '' }, features: { ...DEFAULT_FEATURES }, featureOrder: FEATURES.map(([id]) => id), libraryShow: { ...DEFAULT_LIBRARY_SHOW }, themeMode: 'dark', themeDark: 'plum', themeLight: 'paper', customDarkColors: { ...DEFAULT_CUSTOM_COLORS }, customLightColors: { ...DEFAULT_CUSTOM_LIGHT_COLORS }, setupDone: false, prefs: { ...DEFAULT_PREFS },
         stats: ZERO(), keys: Object.fromEntries(KEYS.map(([k, , d]) => [k, d])),
         folders: [], price: { in: 0, out: 0 }, todos: [],
         routeStats: {}, flashMsg: null,
@@ -1321,7 +1369,13 @@ export const useS = create<S>()(
         /* Workspace (first-class entity) */
         workspaces: {}, selectedRevision: {},            researchPanel: null,
 
-        patch: (p) => set(p),
+        patch: (p) => {
+          // Search responses are cached per provider + zone + limits: tuning
+          // changes must drop the cache so the next search re-fetches instead
+          // of replaying results fetched under the old settings.
+          if (p && typeof p === 'object' && 'search' in p) clearSessionCache()
+          set(p)
+        },
         add: (k) => set((s) => ({ [k]: [...(s[k] as any[]), BLANK[k]()] }) as Partial<S>),
         upd: (k, id, p) => set((s) => ({ [k]: (s[k] as any[]).map((x) => (x.id === id ? { ...x, ...p } : x)) }) as Partial<S>),
         del: (k, id) => set((s) => {
@@ -1358,7 +1412,10 @@ export const useS = create<S>()(
           }
           set((s) => {
             const chats = op === 'del' ? s.chats.filter((c) => c.id !== id) : s.chats.map((c) => (c.id === id ? { ...c, pin: !c.pin } : c))
-            return { chats, chat: s.chat === id && op === 'del' ? chats[0]?.id ?? '' : s.chat }
+            // Drop the deleted chat's stashed draft along with the chat.
+            const drafts = { ...s.drafts }
+            if (op === 'del') delete drafts[id]
+            return { chats, chat: s.chat === id && op === 'del' ? chats[0]?.id ?? '' : s.chat, drafts }
           })
         },
 
@@ -1616,7 +1673,7 @@ export const useS = create<S>()(
           if (typeof p.themeMode !== 'string') p.themeMode = 'dark'
           const normDark = normThemeKeyOf(p.themeDark, true)
           const normLight = normThemeKeyOf(p.themeLight, false)
-          p.themeDark = (normDark ?? 'claude') as any
+          p.themeDark = (normDark ?? 'plum') as any
           p.themeLight = (normLight ?? 'paper') as any
           const oldKey = normThemeKeyOf(old, (p.themeMode ?? 'dark') !== 'light')
           if (oldKey && oldKey !== 'custom') { p.themeMode = 'dark' as any; p.themeDark = oldKey as any }
@@ -1756,7 +1813,7 @@ export const useS = create<S>()(
         return p as S
       },
       partialize: (s) => ({
-        ...s, busy: false, draft: '', notice: null, flashMsg: null,
+        ...s, busy: false, draft: '', drafts: {}, notice: null, flashMsg: null,
         // Per-chat memoized: only the chat that changed is re-mapped.
         chats: mapPersistChats(withoutExpiredTemps(s.chats)),
       }),
@@ -1770,7 +1827,7 @@ export const useS = create<S>()(
  * chunk, so they are off the streaming render path entirely. Components that
  * need any of these fields must use their own selector. */
 export const useSConfig = () => useS(useShallow((s) => {
-  const { chats, busy, draft, notice, flashMsg, ...config } = s
-  void chats; void busy; void draft; void notice; void flashMsg
+  const { chats, drafts, busy, draft, notice, flashMsg, ...config } = s
+  void chats; void drafts; void busy; void draft; void notice; void flashMsg
   return config
 }))

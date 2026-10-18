@@ -64,23 +64,33 @@ function isPublicHttp(url) {
   let u
   try { u = new URL(url) } catch { return false }
   if (!['http:', 'https:'].includes(u.protocol)) return false
+  // Only the standard web ports: a public host on an unusual port is almost
+  // always an internal service and only widens the SSRF surface.
+  const port = u.port || (u.protocol === 'https:' ? '443' : '80')
+  if (port !== '80' && port !== '443') return false
   // URL keeps IPv6 literals bracketed; strip them so the checks below see the address.
   const host = u.hostname.toLowerCase().replace(/^\[|\]$/g, '')
   if (!host || host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local') || host.endsWith('.internal')) return false
   // Literal private/loopback/link-local/reserved IPs (v4 + v6). The URL parser
   // already normalizes shorthand IPv4 (127.1, 0x7f.1, 2130706433, …) and
   // mapped IPv6 forms to their canonical dotted/compressed spelling.
+  if (/^\d+\.\d+\.\d+\.\d+$/.test(host) || host.includes(':')) return isPublicIpAddress(host)
+  return true
+}
+
+/* True when `ip` is a routable public address (v4 dotted or v6 literal).
+ * Used by both the URL checks and the Node host's connect-time DNS pinning. */
+export function isPublicIpAddress(ip) {
+  const host = String(ip ?? '').replace(/^\[|\]$/g, '')
   if (/^\d+\.\d+\.\d+\.\d+$/.test(host)) {
     const p = host.split('.').map(Number)
-    if (p.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return false
-    return !isPrivateIpv4(p)
+    return !p.some((n) => !Number.isInteger(n) || n < 0 || n > 255) && !isPrivateIpv4(p)
   }
   if (host.includes(':')) {
     const groups = ipv6Groups(host)
-    if (!groups) return false // unparseable or IPv4-embedded literal: refuse
-    return !isPrivateIpv6(groups)
+    return !!groups && !isPrivateIpv6(groups)
   }
-  return true
+  return false
 }
 
 function decodeEntities(s) {

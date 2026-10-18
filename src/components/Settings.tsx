@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { X, Plus, Trash2, ArrowUp, ArrowDown, ChevronRight, Eye, EyeOff, Play, ShieldCheck, Shield, Download, Upload, Check, CircleCheck, Cpu, Route, GripVertical, Server, ListMusic, ScrollText, Terminal, Wrench, Palette, FolderOpen, FileText, PanelRight, TrendingUp, Keyboard, Search, Brain, Pencil, Sparkles, RotateCcw, SlidersHorizontal, FlaskConical, Library, Database, Lock, LockOpen, LayoutTemplate, Share2 } from 'lucide-react'
-import { useS, useSConfig, PRE, THEMES, DARK_THEMES, LIGHT_THEMES, THEME_COLOR_KEYS, THEME_COLOR_LABELS, SEARCH_PROVIDERS, FEATURES, LIBRARY_ITEMS, FEATURE_TABS, FEATURE_WIDGETS, DEFAULT_LIBRARY_SHOW, DEFAULT_ADVANCED, featOn, normSearch, normResearch, normAdvanced, normDocs, usable, modelsOf, modelNameOf, helperRef, splitHelperRef, effortClassifierOf, TOOL_ROUNDS_DEFAULT, TOOL_ROUNDS_MIN, TOOL_ROUNDS_BASE_MAX, TOOL_ROUNDS_MAX, toolRoundLimitOf, isToolRoundsUnlimited, type Kind, type FeatureId, type DocPrefs } from '../store'
+import { useS, useSConfig, PRE, THEMES, DARK_THEMES, LIGHT_THEMES, THEME_COLOR_KEYS, THEME_COLOR_LABELS, SEARCH_PROVIDERS, FEATURES, LIBRARY_ITEMS, FEATURE_TABS, FEATURE_WIDGETS, DEFAULT_LIBRARY_SHOW, DEFAULT_ADVANCED, featOn, normSearch, normResearch, normAdvanced, normDocs, usable, modelsOf, modelNameOf, helperRef, splitHelperRef, effortClassifierOf, TOOL_ROUNDS_DEFAULT, TOOL_ROUNDS_MIN, TOOL_ROUNDS_BASE_MAX, TOOL_ROUNDS_MAX, toolRoundLimitOf, isToolRoundsUnlimited, type Kind, type FeatureId, type DocPrefs, type ModelPrice } from '../store'
 import { RESEARCH_TIERS, type ResearchTierId } from '../research'
 import { normSkills, resolveSkill, validateCustomSkill, enabledSkills, BUILTIN_SKILLS, SKILL_TOOL_NAME, type SkillState } from '../skills'
 import { findDuplicatePairs, mergeMemory } from '../recall'
@@ -103,8 +103,31 @@ export function Panel({ id, k, n, add, children }: { id: string; k?: Kind; n?: n
   )
 }
 
+/* Anchors inside a collapsed card are not in the DOM, so a deep link
+ * (palette → Settings) could not reach them. `Card` collects the `Anchor` ids
+ * in its children and opens itself when one of them is requested. */
+const collectAnchors = (node: ReactNode, out: string[] = []): string[] => {
+  if (Array.isArray(node)) { for (const n of node) collectAnchors(n, out); return out }
+  if (!node || typeof node !== 'object' || !('props' in (node as object))) return out
+  const el = node as { type?: unknown; props?: { id?: unknown; children?: ReactNode } }
+  if (el.type === Anchor && typeof el.props?.id === 'string') out.push(el.props.id)
+  if (el.props?.children !== undefined) collectAnchors(el.props.children, out)
+  return out
+}
+
 export function Card({ icon: I, title, sub, right, open0, handle, children, muted }: { icon: Ic; title: ReactNode; sub?: string; right?: ReactNode; open0?: boolean; handle?: SortHandleProps | null; children: ReactNode; muted?: boolean }) {
   const [o, setO] = useState(!!open0)
+  const anchorKey = useMemo(() => collectAnchors(children).join('|'), [children])
+  useEffect(() => {
+    if (!anchorKey) return
+    const ids = anchorKey.split('|')
+    const onRequest = (e: Event) => {
+      const a = (e as CustomEvent<string>).detail
+      if (typeof a === 'string' && ids.includes(a)) setO(true)
+    }
+    window.addEventListener('byok:anchor', onRequest)
+    return () => window.removeEventListener('byok:anchor', onRequest)
+  }, [anchorKey])
   return (
     <Surface padded={false}>
       <div className="flex items-center gap-3 p-3">
@@ -541,16 +564,32 @@ function Eps() {
                     // Re-read after the fetch: prices edited while it was in
                     // flight must not be overwritten by the stale snapshot.
                     const cur = useS.getState().eps.find((x) => x.id === e.id) ?? e
-                    u({ prices: { ...cur.prices, [model]: { input: round2(Number(item.pricing.prompt) * 1e6), output: round2(Number(item.pricing.completion) * 1e6), source: 'openrouter' } }, ...(Number(item.context_length) > 0 ? { modelContext: { ...cur.modelContext, [model]: Number(item.context_length) } } : {}) })
+                    // OpenRouter publishes the cache rates alongside the base
+                    // ones; keep them so cached prompt tokens can be billed at
+                    // their real (discounted / surcharged) price.
+                    const read = Number(item.pricing.input_cache_read ?? 0) * 1e6
+                    const write = Number(item.pricing.input_cache_write ?? 0) * 1e6
+                    u({ prices: { ...cur.prices, [model]: { input: round2(Number(item.pricing.prompt) * 1e6), output: round2(Number(item.pricing.completion) * 1e6), source: 'openrouter', ...(read > 0 ? { cacheRead: round2(read) } : {}), ...(write > 0 ? { cacheWrite: round2(write) } : {}) } }, ...(Number(item.context_length) > 0 ? { modelContext: { ...cur.modelContext, [model]: Number(item.context_length) } } : {}) })
                   } catch (x: any) { useS.getState().patch({ notice: { t: x?.message ?? 'Could not detect a price.' } }) }
                 }
                 const setPrice = (kind: 'input' | 'output', value: string) => u({ prices: { ...e.prices, [model]: { ...price, [kind]: Math.max(0, Math.round(((Number(value) || 0) + Number.EPSILON) * 100) / 100), source: 'manual' } } })
+                // Cache rates are optional: clearing a field deletes the key so
+                // prices fall back to the plain input rate again.
+                const setCache = (kind: 'cacheRead' | 'cacheWrite', value: string) => {
+                  const next: ModelPrice = { ...price }
+                  if (value.trim() === '') delete next[kind]
+                  else next[kind] = Math.max(0, Math.round(((Number(value) || 0) + Number.EPSILON) * 100) / 100)
+                  u({ prices: { ...e.prices, [model]: next } })
+                }
                 return <div key={model} className="rounded-lg bg-surf p-3">
                   <div className="mb-2 truncate text-sm font-medium">{model}</div>
                   <div className="grid gap-2 sm:grid-cols-2">
                     <label className="text-xs text-mu">Input $/1M<input type="number" min="0" step="0.01" value={price.input} onChange={(ev) => setPrice('input', ev.target.value)} className="mt-1 w-full rounded-lg bg-bg px-2.5 py-2 text-sm text-tx" /></label>
                     <label className="text-xs text-mu">Output $/1M<input type="number" min="0" step="0.01" value={price.output} onChange={(ev) => setPrice('output', ev.target.value)} className="mt-1 w-full rounded-lg bg-bg px-2.5 py-2 text-sm text-tx" /></label>
+                    <label className="text-xs text-mu">Cache read $/1M<input type="number" min="0" step="0.01" value={price.cacheRead ?? ''} placeholder={String(price.input)} onChange={(ev) => setCache('cacheRead', ev.target.value)} className="mt-1 w-full rounded-lg bg-bg px-2.5 py-2 text-sm text-tx" /></label>
+                    <label className="text-xs text-mu">Cache write $/1M<input type="number" min="0" step="0.01" value={price.cacheWrite ?? ''} placeholder={String(price.input)} onChange={(ev) => setCache('cacheWrite', ev.target.value)} className="mt-1 w-full rounded-lg bg-bg px-2.5 py-2 text-sm text-tx" /></label>
                   </div>
+                  <div className="mt-2 text-xs text-mu">Cache rates are optional. Empty falls back to the input rate; Auto-detect fills them from OpenRouter when published.</div>
                   <div className="mt-2 flex items-center justify-between gap-2"><span className="text-xs text-mu">{price.source === 'openrouter' ? 'Detected price' : e.prices?.[model] ? 'Entered manually' : 'No price set'}</span>{/openrouter\.ai/i.test(e.url) && <Btn sm icon={Search} onClick={detect}>Auto-detect</Btn>}</div>
                 </div>
               })}
@@ -1127,7 +1166,7 @@ function WidgetsTab() {
   )
 }
 
-const PAL: Record<string, string[]> = { plum: ['#120c16', '#17101c', '#dc8ad8'], claude: ['#1c1c1a', '#262624', '#d97757'], obsidian: ['#090c10', '#0f141c', '#2dd4bf'], bronze: ['#120e0c', '#1b1512', '#f59e0b'], paper: ['#f1f1ec', '#fbfbf9', '#3b5bdb'], sage: ['#e6ece8', '#f4f7f5', '#0d9488'], frost: ['#eef2f6', '#f8fafc', '#2563eb'], sunset: ['#efe6dd', '#faf5f0', '#ea580c'] }
+const PAL: Record<string, string[]> = { plum: ['#120c16', '#17101c', '#dc8ad8'], claude: ['#1f1f1d', '#232322', '#d97757'], obsidian: ['#090c10', '#0f141c', '#2dd4bf'], bronze: ['#120e0c', '#1b1512', '#f59e0b'], paper: ['#f1f1ec', '#fbfbf9', '#3b5bdb'], sage: ['#e6ece8', '#f4f7f5', '#0d9488'], frost: ['#eef2f6', '#f8fafc', '#2563eb'], sunset: ['#efe6dd', '#faf5f0', '#ea580c'] }
 
 function FontPicker({ value, set, options }: { value: string; set: (v: string) => void; options: [string, string][] }) {
   const [query, setQuery] = useState(value === 'system' ? '' : value)
@@ -1147,7 +1186,7 @@ function FontPicker({ value, set, options }: { value: string; set: (v: string) =
   </div>
 }
 
-type PrefToggle = 'showBy' | 'showLog' | 'showTps' | 'enterSends' | 'autoTitle' | 'temporaryByDefault' | 'streamMd' | 'seasonal' | 'cues'
+type PrefToggle = 'showBy' | 'showLog' | 'showTps' | 'enterSends' | 'autoTitle' | 'temporaryByDefault' | 'streamMd' | 'seasonal' | 'cues' | 'remoteImages'
 
 /** One boolean preference rendered as a labelled toggle row. */
 function prefRow(s: ReturnType<typeof useSConfig>, anchor: string, k: PrefToggle, t: string, d: string) {
@@ -1376,6 +1415,7 @@ function Chats() {
       </div>
       </Anchor>
       {row('stream-md', 'streamMd', 'Render markdown while streaming', 'Format each completed line as markdown as it arrives instead of plain text. Off shows plain text until the reply finishes.')}
+      {row('remote-images', 'remoteImages', 'Load remote images', 'Render images that replies link to over the network. Off keeps them behind a click-to-load button, so reading a reply never contacts third-party hosts.')}
       <HelperPointer anchor="title-model" title="Title generation model" desc="Set in Endpoints → Helper models. Names new chats automatically; when empty, the model that answered is used." current={helperLabel(s, helperRef(s.prefs.titleEp, s.prefs.titleModel), 'Default (model that answered)')} />
     </Panel>
   )
@@ -1394,6 +1434,10 @@ export function Settings({ tab, setTab }: { tab: string; setTab: (t: string) => 
   const settingsHeight = useS((s) => s.prefs.settingsHeight ?? 780)
   useEffect(() => {
     if (!anchor) return
+    // Cards listen for this and open themselves when the anchor lives inside
+    // one: the element does not exist in the DOM until they do, so dispatching
+    // before the scroll is what makes deep links into collapsed cards work.
+    try { window.dispatchEvent(new CustomEvent('byok:anchor', { detail: anchor })) } catch { /* scroll still runs */ }
     const t = setTimeout(() => flashAnchor(anchor), 60)
     return () => clearTimeout(t)
   }, [active, anchor])

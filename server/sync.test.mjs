@@ -37,6 +37,31 @@ test('payload size limit enforced', async () => {
   await assert.rejects(() => handleSyncPush(req({ token: `byok1-${'a'.repeat(16)}-${'b'.repeat(43)}`, payload: { big } }), backend), /too large/)
 })
 
+test('idle sync rows are pruned lazily on pull and can be revived by a push', async () => {
+  const backend = memStore()
+  const id = 'e'.repeat(16)
+  const secret = 's'.repeat(43)
+  const token = `byok1-${id}-${secret}`
+  await backend.put({ id, secretHash: sha256Hex(secret), payload: { v: 4 }, storeVersion: 18, exportVersion: 4, updatedAt: Date.now() - 40 * 24 * 60 * 60 * 1000 })
+  await assert.rejects(() => handleSyncPull(getReq(token), backend), /expired/)
+  assert.equal(await backend.get(id), null, 'the expired row must be pruned on read')
+  await handleSyncPush(req({ token, payload: { v: 4, storeVersion: 18 } }), backend)
+  const pulled = await handleSyncPull(getReq(token), backend)
+  assert.equal(pulled.ok, true)
+})
+
+test('rows approaching the TTL are touched so pull-only devices do not expire', async () => {
+  const backend = memStore()
+  const id = 'f'.repeat(16)
+  const secret = 's'.repeat(43)
+  const token = `byok1-${id}-${secret}`
+  const old = Date.now() - 20 * 24 * 60 * 60 * 1000
+  await backend.put({ id, secretHash: sha256Hex(secret), payload: { v: 4 }, storeVersion: 18, exportVersion: 4, updatedAt: old })
+  const pulled = await handleSyncPull(getReq(token), backend)
+  assert.equal(pulled.ok, true)
+  assert.ok((await backend.get(id)).updatedAt > old, 'a long-idle row is refreshed on pull')
+})
+
 test('the in-memory backend stays bounded under anonymous pushes', async () => {
   const backend = memStore()
   const idFor = (i) => `id${String(i).padStart(14, '0')}`

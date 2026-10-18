@@ -1,6 +1,12 @@
 import { spawn } from 'node:child_process'
 import { createServer } from 'vite'
 
+// Local development reads the gitignored `.env` so API keys can live in a
+// file; production hosts keep using real environment variables only. Node's
+// built-in loader avoids a dotenv dependency (and never overrides variables
+// already present in the environment).
+try { process.loadEnvFile() } catch { /* no .env file: use the environment as-is */ }
+
 const api = spawn(process.execPath, ['server.mjs'], { stdio: 'inherit', env: process.env })
 let vite = null
 let stopping = false

@@ -79,6 +79,7 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
   const [fe, setFe] = useState('')
   const [menu, setMenu] = useState<{ id: string; x: number; y: number } | null>(null)
   const [deleteId, setDeleteId] = useState('')
+  const [folderId, setFolderId] = useState('')
   // Pointer-based cross-container drag state (replaces HTML5 DnD): the dragged
   // chat follows the pointer in an overlay while a wireframe placeholder marks
   // the live insertion point inside the hovered folder (or Recent).
@@ -481,7 +482,7 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
                 )}
                 <span className="hidden group-hover:flex">
                   <button title="Rename folder" onClick={() => setFe(f.id)} className={act}><Pencil size={14} /></button>
-                  <button title="Delete folder (its chats are kept)" onClick={() => s.delFolder(f.id)} className={cx(act, 'hover:text-er')}><Trash2 size={14} /></button>
+                  <button title="Delete folder (its chats are kept)" onClick={() => setFolderId(f.id)} className={cx(act, 'hover:text-er')}><Trash2 size={14} /></button>
                 </span>
               </div>
               {o && <div className="ml-3">{rows(l, f.id)}{!l.length && !dragId && <p className="px-2.5 py-1 text-xs text-mu">Drop chats here.</p>}</div>}
@@ -519,6 +520,7 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
         </div>
       )}
       {deleteId && <Confirm title="Delete this chat?" text="This chat and its messages will be permanently removed." ok="Delete" close={() => setDeleteId('')} run={() => useS.getState().chatOp(deleteId, 'del')} />}
+      {folderId && <Confirm title="Delete this folder?" text="The folder is removed; its chats are kept and move back to Recent." ok="Delete folder" close={() => setFolderId('')} run={() => s.delFolder(folderId)} />}
       <DndLiveRegion message={dndMsg} />
     </aside>
   )

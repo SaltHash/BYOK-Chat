@@ -1,14 +1,14 @@
 /* Sync HTTP client (same-origin /api/sync). Token sent as Bearer + body. */
-import type { SyncPayload } from './sync'
+import type { SyncEnvelope, SyncPayload } from './sync'
 
-export async function syncPush(token: string, payload: SyncPayload): Promise<{ updatedAt: number; backend: string }> {
-  const r = await fetch('/api/sync/push', { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` }, body: JSON.stringify({ token, payload, storeVersion: payload.storeVersion, exportVersion: payload.v }) })
+export async function syncPush(token: string, payload: SyncPayload | SyncEnvelope, meta?: { storeVersion?: number; exportVersion?: number }): Promise<{ updatedAt: number; backend: string }> {
+  const r = await fetch('/api/sync/push', { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` }, body: JSON.stringify({ token, payload, ...(meta ?? {}) }) })
   const data = await r.json().catch(() => ({}))
   if (!r.ok) throw Error(data?.error || `Sync push failed (HTTP ${r.status})`)
   return data
 }
 
-export async function syncPull(token: string): Promise<{ payload: SyncPayload; storeVersion: number; exportVersion: number; updatedAt: number; backend: string }> {
+export async function syncPull(token: string): Promise<{ payload: SyncPayload | SyncEnvelope; storeVersion: number; exportVersion: number; updatedAt: number; backend: string }> {
   const r = await fetch('/api/sync/pull', { headers: { authorization: `Bearer ${token}` } })
   const data = await r.json().catch(() => ({}))
   if (!r.ok) throw Error(data?.error || `Sync pull failed (HTTP ${r.status})`)

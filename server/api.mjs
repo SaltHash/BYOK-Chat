@@ -19,22 +19,34 @@ const EXTRACT_TIMEOUT_MS = 8000
 const RATE_LIMIT = 30
 const RATE_WINDOW_MS = 60_000
 
+/* Rate limits and caches live in module scope. On Cloudflare Workers each
+ * isolate keeps its own copy, so limits are approximate — a burst can exceed
+ * RATE_LIMIT per window by the number of live isolates — and caches are
+ * per-isolate and short-lived. On the Node host there is a single process, so
+ * both are exact. */
 const searchLimit = new Map()
 const extractLimit = new Map()
 const syncLimit = new Map()
 const searchCache = new Map()
 
-function overRateLimit(bucket, ip, now) {
-  const entry = bucket.get(ip)
-  return Boolean(entry && now - entry.start < RATE_WINDOW_MS && entry.count >= RATE_LIMIT)
+/* Sliding window: a fixed window lets a client send RATE_LIMIT requests at
+ * the end of one window and RATE_LIMIT more at the start of the next. */
+function hitsInWindow(bucket, ip, now) {
+  const times = bucket.get(ip)
+  if (!times) return []
+  while (times.length && now - times[0] >= RATE_WINDOW_MS) times.shift()
+  return times
 }
 
-function bumpRateLimit(bucket, ip, now) {
-  const entry = bucket.get(ip)
-  if (!entry || now - entry.start >= RATE_WINDOW_MS) {
-    bucket.set(ip, { start: now, count: 1 })
-    if (bucket.size > 1000) bucket.delete(bucket.keys().next().value)
-  } else entry.count++
+export function overRateLimit(bucket, ip, now) {
+  return hitsInWindow(bucket, ip, now).length >= RATE_LIMIT
+}
+
+export function bumpRateLimit(bucket, ip, now) {
+  const times = hitsInWindow(bucket, ip, now)
+  times.push(now)
+  bucket.set(ip, times)
+  if (bucket.size > 1000) bucket.delete(bucket.keys().next().value)
 }
 
 export function searchStatus(env = {}) {
@@ -49,7 +61,7 @@ export function searchStatus(env = {}) {
 }
 
 export function apiHealth(req, env = process.env) {
-  if (req.method !== 'GET') return jsonResult(405, { error: 'Method not allowed' }, { allow: 'GET' })
+  if (req.method !== 'GET' && req.method !== 'HEAD') return jsonResult(405, { error: 'Method not allowed' }, { allow: 'GET, HEAD' })
   return jsonResult(200, searchStatus(env))
 }
 
@@ -114,7 +126,9 @@ export async function apiSearch(req, env = process.env) {
   const timeoutMs = boundedInt(parsed?.timeoutMs, 8000, 1000, 30000)
   const maxRetries = boundedInt(parsed?.maxRetries, 2, 0, 4)
   const retryBaseMs = boundedInt(parsed?.retryBaseMs, 300, 50, 2000)
-  const cacheKey = `${provider}:${requested}:${maxSnippetChars}:${evidenceBudget}:${query.toLowerCase()}`
+  // The zone scopes Bright Data searches (and is part of the query result),
+  // so two zones must never share a cache entry.
+  const cacheKey = `${provider}:${clientZone}:${requested}:${maxSnippetChars}:${evidenceBudget}:${query.toLowerCase()}`
   const limits = { maxResults: requested, maxSnippetChars, evidenceBudget }
   const retry = { maxRetries, baseMs: retryBaseMs }
   const apiKey = resolveApiKey(provider, clientKey, env)
@@ -142,8 +156,8 @@ export async function apiSearch(req, env = process.env) {
   }
 }
 
-export async function apiExtract(req, env = process.env) {
-  if (req.method !== 'GET') return jsonResult(405, { error: 'Method not allowed' }, { allow: 'GET' })
+export async function apiExtract(req, env = process.env, opts = {}) {
+  if (req.method !== 'GET' && req.method !== 'HEAD') return jsonResult(405, { error: 'Method not allowed' }, { allow: 'GET, HEAD' })
   if (!sameOrigin(headerValue(req, 'origin'), requestHost(req))) return jsonResult(403, { error: 'Cross-origin request refused' })
   const ip = clientIp(req, env)
   const now = Date.now()
@@ -153,11 +167,16 @@ export async function apiExtract(req, env = process.env) {
   const target = (url.searchParams.get('url') || '').trim().slice(0, 2000)
   if (!target) return jsonResult(400, { error: 'Missing url parameter' })
   try {
-    const data = await fetchPageText(target, { timeoutMs: EXTRACT_TIMEOUT_MS })
+    // The Node host passes a fetch that pins the resolved address at connect
+    // time (DNS-rebinding guard); the Worker uses its default fetch.
+    const data = await fetchPageText(target, { timeoutMs: EXTRACT_TIMEOUT_MS, fetchFn: opts.fetchFn })
     return jsonResult(200, { ...data, fetchedAt: new Date().toISOString() }, { 'cache-control': 'private, max-age=300' })
   } catch (e) {
     const code = e.code || 'upstream_unavailable'
-    const status = code === 'bad_url' || code === 'bad_type' ? 400 : code === 'timeout' || code === 'network' ? 503 : e.status === 404 ? 404 : 502
+    const status = code === 'bad_url' || code === 'bad_type' ? 400
+      : code === 'timeout' || code === 'network' ? 503
+      : code === 'empty' ? 422
+      : e.status === 404 ? 404 : 502
     console.error(`[extract] code=${code} upstream=${e.status ?? 0} urlChars=${target.length}`)
     return jsonResult(status, { error: e.message || 'Could not read the page.', code, retryable: e.retryable === true })
   }
@@ -189,7 +208,7 @@ export async function apiSync(req, env = process.env) {
     return jsonResult(403, { error: 'Cross-origin request refused' })
   }
   try {
-    if (url.pathname === '/api/sync/status' && req.method === 'GET') {
+    if (url.pathname === '/api/sync/status' && (req.method === 'GET' || req.method === 'HEAD')) {
       try {
         const backend = await syncBackend(env)
         return jsonResult(200, { ok: true, backend: backend.kind, configured: Boolean(env.DATABASE_URL) })
@@ -201,7 +220,7 @@ export async function apiSync(req, env = process.env) {
     }
     const backend = await syncBackend(env)
     if (url.pathname === '/api/sync/push' && req.method === 'POST') return jsonResult(200, await handleSyncPush(req, backend))
-    if (url.pathname === '/api/sync/pull' && (req.method === 'GET' || req.method === 'POST')) return jsonResult(200, await handleSyncPull(req, backend))
+    if (url.pathname === '/api/sync/pull' && (req.method === 'GET' || req.method === 'POST' || req.method === 'HEAD')) return jsonResult(200, await handleSyncPull(req, backend))
     return jsonResult(404, { error: 'Unknown sync route.' })
   } catch (e) {
     if ((typeof e?.status !== 'number' ? 503 : e.status) >= 500) {
@@ -214,12 +233,16 @@ export async function apiSync(req, env = process.env) {
 /* Route if pathname is /api or /api/…; returns null for everything else so
  * each host can fall through to its static asset handling. Unknown API paths
  * always answer with JSON instead of the frontend's index.html. */
-export async function apiRoute(req, env = process.env) {
+export async function apiRoute(req, env = process.env, opts = {}) {
   const url = new URL(req.url || '/', 'http://localhost')
-  if (url.pathname === '/api/health') return apiHealth(req, env)
-  if (url.pathname === '/api/search') return apiSearch(req, env)
-  if (url.pathname === '/api/extract') return apiExtract(req, env)
-  if (url.pathname.startsWith('/api/sync/')) return apiSync(req, env)
-  if (url.pathname === '/api' || url.pathname.startsWith('/api/')) return jsonResult(404, { error: 'Not found' })
-  return null
+  let result = null
+  if (url.pathname === '/api/health') result = apiHealth(req, env)
+  else if (url.pathname === '/api/search') result = await apiSearch(req, env)
+  else if (url.pathname === '/api/extract') result = await apiExtract(req, env, opts)
+  else if (url.pathname.startsWith('/api/sync/')) result = await apiSync(req, env)
+  else if (url.pathname === '/api' || url.pathname.startsWith('/api/')) result = jsonResult(404, { error: 'Not found' })
+  if (!result) return null
+  // HEAD mirrors the GET route it targets: same status and headers, no body.
+  if (req.method === 'HEAD') return { status: result.status, headers: result.headers, body: null }
+  return result
 }

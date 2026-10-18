@@ -15,7 +15,8 @@ import { apiRoute } from '../server/api.mjs'
 import { jsonResult } from '../server/http.mjs'
 
 function toResponse(result) {
-  return new Response(JSON.stringify(result.body), { status: result.status, headers: result.headers })
+  // HEAD (and any route that answers without content) must send no body at all.
+  return new Response(result.body === null ? null : JSON.stringify(result.body), { status: result.status, headers: result.headers })
 }
 
 export default {

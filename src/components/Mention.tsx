@@ -1,5 +1,5 @@
 import type { CSSProperties } from 'react'
-import { BookOpen, Search, Wrench, X, type LucideIcon } from 'lucide-react'
+import { BookOpen, Search, TriangleAlert, Wrench, X, type LucideIcon } from 'lucide-react'
 import { CI, TOOLS } from '../meta'
 import type { Mention } from '../mentions'
 import type { Cmd } from '../store'
@@ -62,14 +62,20 @@ export function MentionInfo({ m, cmds, className, style }: { m: Mention; cmds: C
 
 /** State strip fused to the top of the prompt box. The × clears the armed
  * mention while typing, or stops the run while it is working. */
-export function MentionBanner({ kind, onDismiss }: { kind: 'search' | 'research'; onDismiss: () => void }) {
+export function MentionBanner({ kind, onDismiss, warning, onEnable }: { kind: 'search' | 'research'; onDismiss: () => void; warning?: string; onEnable?: () => void }) {
   const I = kind === 'research' ? BookOpen : Search
   const label = kind === 'research' ? 'Deep research' : 'Search'
   const action = `Cancel ${label.toLowerCase()}`
   return (
-    <div role="status" aria-live="polite" className="mention-banner -mx-3 -mt-3 mb-3 flex items-center gap-2 rounded-t-2xl border-b border-ac/25 bg-ac/10 px-3.5 py-2">
+    <div role="status" aria-live="polite" className="mention-banner -mx-3 -mt-3 mb-3 flex flex-wrap items-center gap-2 rounded-t-2xl border-b border-ac/25 bg-ac/10 px-3.5 py-2">
       <I size={14} className="shrink-0 text-ac" aria-hidden="true" />
       <span className="truncate text-xs font-semibold tracking-wide text-ac">{label}</span>
+      {warning && (
+        <>
+          <span className="flex items-center gap-1.5 text-xs text-er"><TriangleAlert size={12} className="shrink-0" aria-hidden="true" />{warning}</span>
+          {onEnable && <button type="button" onClick={onEnable} className="rounded-md bg-ac px-2 py-0.5 text-xs font-medium text-acx transition-opacity hover:opacity-90">Enable search</button>}
+        </>
+      )}
       <button type="button" onClick={onDismiss} aria-label={action} title={action} className="ml-auto grid size-5 shrink-0 place-items-center rounded-full text-ac/70 transition-colors hover:bg-ac/15 hover:text-ac">
         <X size={12} />
       </button>

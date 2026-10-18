@@ -471,7 +471,14 @@ const failDocWorker = () => {
   docWorker = null
   const jobs = [...docJobs.values()]
   docJobs.clear()
-  for (const j of jobs) Promise.resolve().then(() => j.resolve(runExtraction(j.kind, j.bytes, j.arg))).catch(j.reject)
+  for (const j of jobs) {
+    // A transferred buffer is detached on this side, so those jobs cannot be
+    // re-run here — but the transfer only happens after `postMessage` accepts
+    // it, so a worker that died before that still has its bytes and is re-run
+    // in-process as before.
+    if (j.bytes.byteLength === 0 && j.bytes.buffer.byteLength === 0) j.reject(Error('The document worker failed while reading this file. Attach it again and retry.'))
+    else Promise.resolve().then(() => j.resolve(runExtraction(j.kind, j.bytes, j.arg))).catch(j.reject)
+  }
 }
 
 /** Run one extraction job away from the main thread when possible. */
@@ -498,7 +505,10 @@ export function extractOffThread<K extends DocJobKind>(kind: K, bytes: Uint8Arra
       reject(Error('Document extraction timed out.'))
     }, DOC_JOB_TIMEOUT_MS)
     const req: DocWorkerRequest = { id, kind, bytes, arg }
-    w.postMessage(req)
+    // Hand the buffer over instead of structured-cloning it: attachments can
+    // be tens of megabytes and the copy would land on the main thread. The
+    // fallback keeps unusual views (shared buffers) working.
+    try { w.postMessage(req, [bytes.buffer]) } catch { w.postMessage(req) }
   })
 }
 

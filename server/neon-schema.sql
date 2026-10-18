@@ -1,6 +1,8 @@
-/* Neon schema for token-based sync. Unencrypted payloads by design (v1);
- * row access is gated by the API (service role only) + RLS deny-by-default
- * so anon/postgrest roles can never read or write sync rows directly.
+/* Neon schema for token-based sync. Payloads are end-to-end encrypted by the
+ * client (see src/storage/backupCrypto.ts); row access is gated by the API
+ * (service role only) + RLS deny-by-default, so anon/postgrest roles can never
+ * read or write sync rows directly. Rows idle past the TTL in server/sync.mjs
+ * are pruned lazily on read (Neon has no scheduler).
  *
  * Apply with: psql "$DATABASE_URL" -f server/neon-schema.sql
  */

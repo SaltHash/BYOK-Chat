@@ -56,7 +56,7 @@ test('health returns provider status from worker bindings', async () => {
 test('health rejects non-GET methods with 405 and Allow', async () => {
   const res = await post('/api/health', {})
   assert.equal(res.status, 405)
-  assert.equal(res.headers.get('allow'), 'GET')
+  assert.equal(res.headers.get('allow'), 'GET, HEAD')
   isJson(res)
 })
 
@@ -174,7 +174,7 @@ test('search cache serves a repeated query without touching the provider', async
 test('extract rejects unsupported methods, missing urls and private targets', async () => {
   const wrongMethod = await post('/api/extract', {})
   assert.equal(wrongMethod.status, 405)
-  assert.equal(wrongMethod.headers.get('allow'), 'GET')
+  assert.equal(wrongMethod.headers.get('allow'), 'GET, HEAD')
   const missing = await call('/api/extract')
   assert.equal(missing.status, 400)
   assert.equal((await missing.json()).error, 'Missing url parameter')
