@@ -8,6 +8,15 @@ import { withoutExpiredTemps } from './persistence'
 
 createRoot(document.getElementById('root')!).render(<App />)
 
+// PWA shell service worker: production builds only, so hot reload in dev is
+// never served from a stale cache. Model calls still need the network; this
+// only keeps the app itself openable offline.
+if (import.meta.env.PROD && 'serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').catch(() => {})
+  })
+}
+
 // Device sync background loops: pull + smart-merge on open, on focus and on a
 // slow interval; push local changes automatically. A no-op without a token.
 startSyncRuntime()

@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="BYOK Chat">
+  <rect width="512" height="512" rx="112" fill="#17101c"/>
+  <path d="M136 140h240a36 36 0 0 1 36 36v136a36 36 0 0 1-36 36H248l-84 76v-76h-28a36 36 0 0 1-36-36V176a36 36 0 0 1 36-36z" fill="#dc8ad8"/>
+  <circle cx="198" cy="244" r="19" fill="#17101c"/>
+  <circle cx="256" cy="244" r="19" fill="#17101c"/>
+  <circle cx="314" cy="244" r="19" fill="#17101c"/>
+</svg>

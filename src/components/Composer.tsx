@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
-import { Plus, FileUp, FileText, Image as ImageIcon, ArrowUp, Square, ChevronRight, ListMusic, Cpu, ScrollText, Settings, Search, BookOpen, X, TriangleAlert, Wrench, Link as LinkIcon, ScanText } from 'lucide-react'
+import { Plus, FileUp, FileText, Image as ImageIcon, ArrowUp, Square, ChevronRight, ListMusic, Cpu, ScrollText, Settings, Search, BookOpen, X, TriangleAlert, Wrench, Link as LinkIcon, ScanText, Mic } from 'lucide-react'
 import { useS, useLive, usable, modelsOf, modelNameOf, featOn, normDocs, effortClassifierOf, type Att, type Ep } from '../store'
 import { CI, TOOLS } from '../meta'
 import { composerWidth } from '../layout'
@@ -10,6 +10,7 @@ import { bannerOf, armMention, isPill, mentionsOf, pillEdit, stripMention, token
 import { Btn, Item, Pop, Seg, RangeSlider, Toggle, cx, type Ic } from './ui'
 import { MentionBanner, MentionInfo } from './Mention'
 import { Notice } from './Extra'
+import { dictationAvailable, startDictation, stopSpeaking, normVoice, type Dictation } from '../voice'
 
 const chip = 'flex h-9 items-center gap-2 rounded-lg px-2.5 text-sm text-mu hover:bg-hov hover:text-tx'
 
@@ -179,6 +180,28 @@ export function Composer({ cfg }: { cfg: (t: string) => void }) {
     } catch (x: any) { s.patch({ notice: { t: `That page could not be attached (${String(x?.message ?? x)}). Check the link is reachable, or paste the text instead.` } }) }
     finally { setUrlBusy(false) }
   }
+  // Dictation: one-shot recognition that mirrors the live transcript into the
+  // draft. `base` is captured when recording starts so interim results replace
+  // the spoken tail instead of appending over and over.
+  const [listening, setListening] = useState(false)
+  const dict = useRef<Dictation | null>(null)
+  const stopDict = () => { dict.current?.stop(); dict.current = null; setListening(false) }
+  useEffect(() => () => { dict.current?.stop() }, [])
+  const toggleDict = () => {
+    if (listening) { stopDict(); return }
+    const base = v
+    try {
+      dict.current = startDictation({
+        lang: normVoice(s.voicePrefs).dictLang,
+        onText: (text) => s.patch({ draft: base && !/\s$/.test(base) ? `${base} ${text}` : `${base}${text}` }),
+        onEnd: () => { dict.current = null; setListening(false) },
+        onError: (message) => s.patch({ notice: { t: message } }),
+      })
+      setListening(true)
+    } catch (x: any) {
+      s.patch({ notice: { t: String(x?.message ?? x) } })
+    }
+  }
   const [ocrBusy, setOcrBusy] = useState<Att | null>(null)
   const ocrOne = async (a: Att) => {
     if (!a || a.kind !== 'img' || !a.data || a.text || ocrBusy != null) return
@@ -207,6 +230,8 @@ export function Composer({ cfg }: { cfg: (t: string) => void }) {
       return
     }
     if (!ready) return
+    stopDict()
+    stopSpeaking()
     // An armed banner sends as the real call so the tool loop and the deep
     // research planner still receive exactly what they expect.
     const raw = armed ? `@${armed}(${v.trim()})` : v, files = att
@@ -386,6 +411,17 @@ export function Composer({ cfg }: { cfg: (t: string) => void }) {
             }}
           </Pop>}
           <span className="flex-1" />
+          {featOn(s, 'voice') && dictationAvailable() && (
+            <button
+              type="button"
+              onClick={toggleDict}
+              aria-pressed={listening}
+              title={listening ? 'Stop dictation' : 'Dictate a message'}
+              className={cx('grid size-9 place-items-center rounded-full transition-colors', listening ? 'bg-er text-white' : 'text-mu hover:bg-hov hover:text-tx')}
+            >
+              <Mic size={18} />
+            </button>
+          )}
           <button onClick={s.busy ? s.stop : submit} title={s.busy ? 'Stop' : 'Send'} className={cx('grid size-9 place-items-center rounded-full transition-colors', s.busy || ready ? 'bg-ac text-acx' : 'bg-hov text-mu')}>
             {s.busy ? <Square size={14} fill="currentColor" /> : <ArrowUp size={18} />}
           </button>

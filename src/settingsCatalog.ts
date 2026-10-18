@@ -1,7 +1,7 @@
 import {
   SlidersHorizontal, Server, ScrollText, Sparkles, ListMusic, Terminal,
   FolderOpen, Wrench, Brain, PanelRight, Palette as PaletteIcon, Keyboard,
-  TrendingUp, Database, FlaskConical, MessagesSquare,
+  TrendingUp, Database, FlaskConical, MessagesSquare, Plug, Volume2,
 } from 'lucide-react'
 import type { Ic } from './components/ui'
 
@@ -13,8 +13,8 @@ import type { Ic } from './components/ui'
  */
 export type SettingsTabId =
   | 'features' | 'eps' | 'prompts' | 'skills' | 'pls' | 'cmds'
-  | 'workspace' | 'tools' | 'memory' | 'widgets' | 'look' | 'chats'
-  | 'keys' | 'stats' | 'data' | 'adv'
+  | 'workspace' | 'tools' | 'mcp' | 'memory' | 'widgets' | 'look' | 'chats'
+  | 'voice' | 'keys' | 'stats' | 'data' | 'adv'
 
 export const SETTINGS_TABS: [SettingsTabId, string, Ic][] = [
   ['features', 'Features', SlidersHorizontal],
@@ -25,10 +25,12 @@ export const SETTINGS_TABS: [SettingsTabId, string, Ic][] = [
   ['cmds', 'Commands', Terminal],
   ['workspace', 'Workspace', FolderOpen],
   ['tools', 'Tools', Wrench],
+  ['mcp', 'MCP servers', Plug],
   ['memory', 'Memory', Brain],
   ['widgets', 'Widgets', PanelRight],
   ['look', 'Appearance', PaletteIcon],
   ['chats', 'Chats', MessagesSquare],
+  ['voice', 'Voice', Volume2],
   ['keys', 'Shortcuts', Keyboard],
   ['stats', 'Stats', TrendingUp],
   ['data', 'Data controls', Database],
@@ -44,10 +46,12 @@ export const TAB_KEYWORDS: Record<SettingsTabId, string> = {
   cmds: 'commands slash input template run on playlist',
   workspace: 'workspace files panel templates gist share default view auto open follow',
   tools: 'tools helpers search fetch calculator date time clipboard location workspace memory navigate prompt poll count json base64 uuid random hash execution limit documents ocr pdf office archives citations reader',
+  mcp: 'mcp model context protocol servers tools external remote connect url headers bearer token',
   memory: 'memory tool mode recall method classifier add stored duplicates categories',
   widgets: 'widgets panels context meter endpoint status usage scratchpad snippets cost last reply prompts shortcuts draft counter checklist',
   look: 'appearance fonts theme display layout max height width message settings model picker palette blur opacity',
   chats: 'chats conversation replies temporary retention hours immediate expires enter send title auto streaming markdown fade speed model answered log',
+  voice: 'voice dictation microphone speech recognition read aloud speech synthesis language rate auto read',
   keys: 'shortcuts keybinds keyboard reset bindings',
   stats: 'stats usage tokens cost messages chats reset totals',
   data: 'data import backup privacy export erase sync encrypted history storage compact',
@@ -114,8 +118,12 @@ export const SETTING_LINKS: SettingLink[] = [
   { tab: 'workspace', anchor: 'templates', title: 'Project templates', keywords: 'templates static site python markdown scaffold createNew' },
   { tab: 'workspace', anchor: 'gist-sharing', title: 'GitHub Gist sharing', keywords: 'gist token share github' },
 
+  // MCP
+  { tab: 'mcp', anchor: 'add-mcp-server', title: 'Add an MCP server', keywords: 'mcp model context protocol add server remote url' },
+
   // Tools
   { tab: 'tools', anchor: 'tool-limit', title: 'Tool execution limit', keywords: 'tool rounds limit unlock unlimited sequential loop stop' },
+  { tab: 'tools', anchor: 'image-generation', title: 'Image generation', keywords: 'image generation dalle gpt-image flux imagen stable diffusion endpoint model size' },
   { tab: 'tools', anchor: 'documents', title: 'Document extraction (PDF / Office / archives)', keywords: 'pdf text office docx unpack zip transcripts' },
   { tab: 'tools', anchor: 'ocr', title: 'Image text extraction (OCR)', keywords: 'ocr vision endpoint auto always image transcription' },
   { tab: 'tools', anchor: 'per-file-chars', title: 'Text per document', keywords: 'per file characters budget document' },
@@ -180,6 +188,10 @@ export const SETTING_LINKS: SettingLink[] = [
   { tab: 'chats', anchor: 'temp-retention', title: 'Temporary chat retention', keywords: 'temporary retention hours immediate expires' },
   { tab: 'look', anchor: 'fonts', title: 'Fonts', keywords: 'body heading monospace font google' },
   { tab: 'look', anchor: 'title-model', title: 'Title generation model', keywords: 'title model chat names endpoint helper endpoints' },
+
+  // Voice
+  { tab: 'voice', anchor: 'voice-dictation', title: 'Dictation', keywords: 'dictation microphone speech to text language' },
+  { tab: 'voice', anchor: 'voice-read-aloud', title: 'Read aloud', keywords: 'read aloud speech synthesis voice language rate auto' },
 
   // Shortcuts (per-shortcut rows are dynamic)
   { tab: 'keys', anchor: 'reset-all-keys', title: 'Reset all shortcuts', keywords: 'reset all shortcuts defaults bindings' },

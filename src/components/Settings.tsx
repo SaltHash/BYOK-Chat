@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { X, Plus, Trash2, ArrowUp, ArrowDown, ChevronRight, Eye, EyeOff, Play, ShieldCheck, Shield, Download, Upload, Check, CircleCheck, Cpu, Route, GripVertical, Server, ListMusic, ScrollText, Terminal, Wrench, Palette, FolderOpen, FileText, PanelRight, TrendingUp, Keyboard, Search, Brain, Pencil, Sparkles, RotateCcw, SlidersHorizontal, FlaskConical, Library, Database, Lock, LockOpen, LayoutTemplate, Share2 } from 'lucide-react'
+import { X, Plus, Trash2, ArrowUp, ArrowDown, ChevronRight, Eye, EyeOff, Play, ShieldCheck, Shield, Download, Upload, Check, CircleCheck, CircleX, Cpu, Route, GripVertical, Server, ListMusic, ScrollText, Terminal, Wrench, Palette, FolderOpen, FileText, PanelRight, TrendingUp, Keyboard, Search, Brain, Pencil, Sparkles, RotateCcw, SlidersHorizontal, FlaskConical, Library, Database, Lock, LockOpen, LayoutTemplate, Share2, Plug, Image as ImageIcon, Volume2, AudioLines } from 'lucide-react'
 import { useS, useSConfig, PRE, THEMES, DARK_THEMES, LIGHT_THEMES, THEME_COLOR_KEYS, THEME_COLOR_LABELS, SEARCH_PROVIDERS, FEATURES, LIBRARY_ITEMS, FEATURE_TABS, FEATURE_WIDGETS, DEFAULT_LIBRARY_SHOW, DEFAULT_ADVANCED, featOn, normSearch, normResearch, normAdvanced, normDocs, usable, modelsOf, modelNameOf, helperRef, splitHelperRef, effortClassifierOf, TOOL_ROUNDS_DEFAULT, TOOL_ROUNDS_MIN, TOOL_ROUNDS_BASE_MAX, TOOL_ROUNDS_MAX, toolRoundLimitOf, isToolRoundsUnlimited, type Kind, type FeatureId, type DocPrefs, type ModelPrice } from '../store'
 import { RESEARCH_TIERS, type ResearchTierId } from '../research'
 import { normSkills, resolveSkill, validateCustomSkill, enabledSkills, BUILTIN_SKILLS, SKILL_TOOL_NAME, type SkillState } from '../skills'
@@ -13,6 +13,9 @@ import { Btn, Field, Input, Area, Sel, Toggle, Seg, RangeSlider, Checkbox, HelpT
 import { SortableList, type SortHandleProps, type SortItemApi } from './dnd'
 import { fetchModelCatalog, fetchModelProviders, filterCatalogByEndpoint, prioritizeProviderRows, type CatalogEntry, type CatalogProvider } from '../catalog'
 import { WORKSPACE_TEMPLATES } from '../workspace'
+import { probeMcpServer, mcpToolName, type McpServer } from '../mcp'
+import { BLANK_IMAGE_GEN, IMAGE_SIZES, normImageGen } from '../imagegen'
+import { normVoice, VOICE_LANGS, speak, stopSpeaking, speechAvailable, dictationAvailable } from '../voice'
 
 const TABS = SETTINGS_TABS
 /** Tabs hidden while their owning feature is disabled. */
@@ -73,6 +76,8 @@ const INFO: Record<string, string> = {
   pls: 'Ordered lists of models from your endpoints. A request tries each model from top to bottom and stops at the first that succeeds. An optional classifier model picks one entry first.',
   cmds: 'Slash commands apply a system prompt and template to a typed input and run on the first endpoint that accepts that input type.',
   tools: 'Model tools such as date, calculator, and web search. Only enabled tools are sent to the provider.',
+  mcp: 'External tool servers speaking the Model Context Protocol. Connect a server, load its tools, and every enabled server\u2019s tools join the normal tool loop. URLs and headers stay in this browser.',
+  voice: 'Dictate messages with the microphone and have replies read aloud. Both use the browser\u2019s own speech features, with the language and speed you choose.',
   memory: 'Optional local memory. When enabled, the memory tool summarizes durable details and adds selected memories to future requests.',
   widgets: 'Optional panels beside the chat. Widgets are off by default; enable them here and drag the grip in the panel to rearrange them.',
   stats: 'All-time totals of tokens sent and generated, messages sent and chats started.',
@@ -843,6 +848,38 @@ function DocumentsCard() {
   )
 }
 
+function ImageGenCard() {
+  const s = useSConfig()
+  const g = normImageGen(s.imageGen)
+  const set = (p: Partial<typeof g>) => s.patch({ imageGen: { ...g, ...p } })
+  const eps = s.eps.filter((e) => usable(e) && e.type === 'openai')
+  const ep = s.eps.find((e) => e.id === g.ep && usable(e)) ?? eps[0]
+  return (
+    <Anchor id="image-generation">
+      <Card icon={ImageIcon} title="Image generation" sub={g.on ? (ep ? `On · ${ep.name}${g.model ? ` · ${g.model}` : ''}` : 'On · no OpenAI-compatible endpoint') : 'Off by default'} muted={!g.on} open0={g.on && !eps.length} right={<Toggle on={g.on} set={(on) => set({ on })} label="Allow image generation" />}>
+        <p className="text-sm">Lets the model generate pictures with an OpenAI-compatible <code>/images/generations</code> endpoint. Images appear beside the reply and are stored in this browser so they survive a reload; nothing binary is added to the chat or the context window.</p>
+        <p className="text-sm text-mu">Anthropic endpoints cannot generate images. Requests use the endpoint below with your key, like any other model call.</p>
+        {!eps.length && <p role="status" className="rounded-lg bg-er/10 px-3 py-2 text-xs text-er">No enabled OpenAI-compatible endpoint is available. Add one in Endpoints first.</p>}
+        <Field label="Image endpoint" hint="Which endpoint receives the image request. Empty uses the first usable OpenAI-compatible endpoint.">
+          <Sel value={g.ep && s.eps.some((e) => e.id === g.ep) ? g.ep : ''} set={(id) => set({ ep: id })} opts={[['', eps[0] ? `First usable · ${eps[0].name}` : 'First usable OpenAI-compatible'], ...s.eps.filter((e) => e.type === 'openai').map((e) => [e.id, `${e.name}${e.on ? '' : ' (disabled)'}`] as [string, string])]} />
+        </Field>
+        <Field label="Image model" hint="Model id for the image endpoint, for example gpt-image-1, dall-e-3, or a Flux model served by a compatible API. Empty uses the endpoint's default model.">
+          <Input value={g.model} set={(model) => set({ model })} placeholder={ep?.model ? `Default: ${ep.model}` : 'e.g. gpt-image-1'} />
+        </Field>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Field label="Size" hint="Sizes the endpoint accepts. Unsupported sizes fail with the provider's own message.">
+            <Sel value={g.size} set={(size) => set({ size })} opts={IMAGE_SIZES} />
+          </Field>
+          <Field label="Images per call" hint="How many images one request generates. 1-4.">
+            <Sel value={String(g.count)} set={(v) => set({ count: Number(v) })} opts={[['1', '1'], ['2', '2'], ['3', '3'], ['4', '4']]} />
+          </Field>
+        </div>
+        <div className="flex justify-end"><Btn v="soft" icon={RotateCcw} onClick={() => s.patch({ imageGen: { ...BLANK_IMAGE_GEN, on: g.on } })}>Reset sizes and endpoint</Btn></div>
+      </Card>
+    </Anchor>
+  )
+}
+
 function Tools() {
   const s = useSConfig()
   const [ask, setAsk] = useState<string | null>(null)
@@ -858,6 +895,7 @@ function Tools() {
   return (
     <Panel id="tools">
       <ToolLimitCard />
+      <ImageGenCard />
       <DocumentsCard />
       <Anchor id="deep-research">
       <Card icon={Brain} title="Deep research" sub="@research(query)">
@@ -1042,6 +1080,127 @@ function SkillsTab() {
         <div><Btn v="solid" icon={Plus} onClick={add}>Add skill</Btn></div>
       </Card>
       </Anchor>
+    </Panel>
+  )
+}
+
+function VoiceTab() {
+  const s = useSConfig()
+  const v = normVoice(s.voicePrefs)
+  const set = (p: Partial<typeof v>) => s.patch({ voicePrefs: { ...v, ...p } })
+  const canDictate = dictationAvailable()
+  const canSpeak = speechAvailable()
+  return (
+    <Panel id="voice">
+      <Anchor id="voice-dictation">
+      <Card icon={AudioLines} title="Dictation" sub={canDictate ? 'Microphone button in the composer' : 'Not supported in this browser'} muted={!canDictate}>
+        <p className="text-sm">Press the microphone beside Send and speak; the words land in the message box. Recognition stops on its own after a pause, and the transcript stays editable before you send.</p>
+        <p className="text-sm text-mu">The browser does the conversion and may use its own cloud service (Chrome and Edge do; the audio is not sent anywhere by this app). Firefox has no speech recognition API, so the button is hidden there.</p>
+        {!canDictate && <p role="status" className="rounded-lg bg-er/10 px-3 py-2 text-xs text-er">This browser does not offer SpeechRecognition. Try Chrome, Edge, or Safari for dictation.</p>}
+        <Field label="Dictation language" hint="Language the microphone should expect. Browser default follows your system language.">
+          <Sel value={v.dictLang} set={(dictLang) => set({ dictLang })} opts={VOICE_LANGS} />
+        </Field>
+      </Card>
+      </Anchor>
+      <Anchor id="voice-read-aloud">
+      <Card icon={Volume2} title="Read aloud" sub={canSpeak ? (v.autoRead ? 'On · reads every new reply' : 'Button on each reply') : 'Not supported in this browser'} muted={!canSpeak}>
+        <p className="text-sm">A speaker button on every reply reads it aloud with the browser\u2019s speech synthesis. Code blocks and links are skipped; only the prose is spoken.</p>
+        {!canSpeak && <p role="status" className="rounded-lg bg-er/10 px-3 py-2 text-xs text-er">This browser does not offer speechSynthesis, so read-aloud is unavailable.</p>}
+        <Field label="Speaking language" hint="Voice used for read-aloud. Browser default picks the system voice.">
+          <Sel value={v.speakLang} set={(speakLang) => set({ speakLang })} opts={VOICE_LANGS} />
+        </Field>
+        <div className="space-y-2">
+          <div className="text-sm font-medium">Speaking rate</div>
+          <div className="flex items-center gap-3">
+            <RangeSlider label="Speaking rate" min={0.5} max={2} step={0.05} value={v.rate} valueText={`${v.rate.toFixed(2)}x`} set={(rate) => set({ rate: Math.round(rate * 100) / 100 })} className="flex-1" />
+            <span className="w-16 text-right text-sm">{v.rate.toFixed(2)}×</span>
+          </div>
+        </div>
+        <label className="flex items-center justify-between gap-3 text-sm">Read every new reply automatically<Toggle on={v.autoRead} set={(autoRead) => set({ autoRead })} label="Read replies automatically" /></label>
+        <div className="flex gap-2">
+          <Btn v="soft" icon={Play} disabled={!canSpeak} onClick={() => speak('This is how replies will sound. You can change the language and the speed here at any time.', v)}>Test voice</Btn>
+          <Btn v="soft" icon={X} disabled={!canSpeak} onClick={() => stopSpeaking()}>Stop</Btn>
+        </div>
+      </Card>
+      </Anchor>
+    </Panel>
+  )
+}
+
+function McpTab() {
+  const s = useSConfig()
+  const { mcps, add, upd, del } = s
+  const [busy, setBusy] = useState('')
+  const toolsOn = featOn(s, 'tools')
+  const test = async (m: McpServer) => {
+    if (!m.url.trim()) { upd('mcps', m.id, { error: 'Enter the server URL first.' }); return }
+    setBusy(m.id)
+    upd('mcps', m.id, { error: undefined })
+    try {
+      const { tools, serverInfo } = await probeMcpServer(m.url, m.headers)
+      upd('mcps', m.id, {
+        tools,
+        toolsAt: Date.now(),
+        error: undefined,
+        ...(m.name === 'New MCP server' && serverInfo?.name ? { name: serverInfo.name } : {}),
+      })
+      s.patch({ notice: { t: `Connected to ${serverInfo?.name || m.name}: ${tools.length} tool${tools.length === 1 ? '' : 's'} loaded.` } })
+    } catch (x: any) {
+      upd('mcps', m.id, { error: String(x?.message ?? x) })
+    } finally {
+      setBusy('')
+    }
+  }
+  return (
+    <Panel id="mcp" k="mcps" n={mcps.length} add="Add server">
+      <div className="space-y-2 rounded-xl bg-surf p-4 text-sm">
+        <p>Servers speak MCP over Streamable HTTP. Press Test connection to run the handshake and load the tools; from then on every enabled server&rsquo;s tools are sent to the model with the rest of the tool list.</p>
+        <p className="text-xs text-mu">Requests go straight from this browser to the server, so the server must allow browser origins (CORS). URLs, headers, and tokens stay here and are never stored by this app&rsquo;s backend. Custom headers use one <code>Name: value</code> pair per line, for example <code>Authorization: Bearer …</code>.</p>
+        {!toolsOn && <p role="status" className="rounded-lg bg-er/10 px-3 py-2 text-xs text-er">The Tools feature is off, so no MCP tool can be called. Turn on Tools in Settings &rarr; Features.</p>}
+      </div>
+      {mcps.map((m) => {
+        const tools = m.tools ?? []
+        return (
+          <Anchor key={m.id} id={`mcp-${m.id}`}>
+            <Card
+              icon={Plug}
+              title={m.name || 'MCP server'}
+              sub={tools.length ? `${tools.length} tool${tools.length === 1 ? '' : 's'} loaded` : m.url ? 'No tools loaded yet' : 'No URL yet'}
+              muted={!m.on}
+              open0={!m.url}
+              right={<Toggle on={m.on} set={(on) => upd('mcps', m.id, { on })} label={`Enable ${m.name}`} />}
+            >
+              <div className="grid gap-3 sm:grid-cols-2">
+                <Field label="Name"><Input value={m.name} set={(name) => upd('mcps', m.id, { name })} placeholder="e.g. Filesystem" /></Field>
+                <Field label="Server URL" hint="The MCP endpoint, usually ending in /mcp or /sse. Must be reachable from this page."><Input value={m.url} set={(url) => upd('mcps', m.id, { url, error: undefined })} placeholder="https://example.com/mcp" /></Field>
+              </div>
+              <Field label="Headers" hint="Optional. One Name: value pair per line. Stored unencrypted in this browser, so prefer a scoped token.">
+                <Area rows={3} value={m.headers} set={(headers) => upd('mcps', m.id, { headers })} placeholder={'Authorization: Bearer …'} />
+              </Field>
+              <div className="flex flex-wrap items-center gap-3">
+                <Btn v="soft" icon={Play} disabled={busy === m.id || !m.url.trim()} onClick={() => void test(m)}>{busy === m.id ? 'Connecting…' : tools.length ? 'Reconnect and refresh tools' : 'Test connection & load tools'}</Btn>
+                {tools.length > 0 && m.toolsAt && <span className="text-xs text-mu">Loaded {new Date(m.toolsAt).toLocaleString()}</span>}
+                <span className="flex-1" />
+                <Btn v="danger" icon={Trash2} onClick={() => del('mcps', m.id)}>Remove</Btn>
+              </div>
+              {m.error && <p role="alert" className="flex items-start gap-2 rounded-lg bg-er/10 px-3 py-2 text-xs text-er"><CircleX size={14} className="mt-0.5 shrink-0" />{m.error}</p>}
+              {tools.length > 0 && (
+                <div className="space-y-1.5">
+                  <div className="text-sm font-medium">Tools offered to the model</div>
+                  {tools.map((t) => (
+                    <div key={t.name} className="rounded-lg bg-surf p-2.5 text-sm">
+                      <div className="font-mono text-xs text-ac">{mcpToolName(m, t.name)}</div>
+                      <div className="mt-0.5">{t.title || t.name}</div>
+                      {t.description && <p className="mt-0.5 text-xs text-mu">{t.description}</p>}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </Card>
+          </Anchor>
+        )
+      })}
+      <Anchor id="add-mcp-server"><span className="block text-xs text-mu">Use Add server above. A server with no loaded tools contributes nothing until you test it.</span></Anchor>
     </Panel>
   )
 }
@@ -1435,7 +1594,7 @@ function Chats() {
   )
 }
 
-const VIEWS: Record<string, () => ReactNode> = { features: FeaturesTab, eps: Eps, prompts: Prompts, skills: SkillsTab, pls: Pls, cmds: Cmds, workspace: WorkspaceTab, tools: Tools, memory: MemoryTab, widgets: WidgetsTab, look: Look, chats: Chats, stats: StatsTab, keys: KeysTab, data: DataTab, adv: AdvancedTab }
+const VIEWS: Record<string, () => ReactNode> = { features: FeaturesTab, eps: Eps, prompts: Prompts, skills: SkillsTab, pls: Pls, cmds: Cmds, workspace: WorkspaceTab, tools: Tools, mcp: McpTab, memory: MemoryTab, widgets: WidgetsTab, look: Look, chats: Chats, voice: VoiceTab, stats: StatsTab, keys: KeysTab, data: DataTab, adv: AdvancedTab }
 
 export function Settings({ tab, setTab }: { tab: string; setTab: (t: string) => void }) {
   const features = useS((s) => s.features)

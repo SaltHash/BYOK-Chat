@@ -124,6 +124,28 @@ test('sync pull without token is 401, not 500', async () => {
   assert.equal(data.code, 'bad_token')
 })
 
+test('share create then get round-trips over HTTP; cross-origin writes refused', async () => {
+  const created = await post('/api/share', { chat: { title: 'Shared over HTTP', msgs: [{ r: 'user', t: 'hello' }, { r: 'assistant', t: 'hi', by: 'model' }] } })
+  assert.equal(created.status, 200)
+  const { id, url } = await created.json()
+  assert.match(id, /^[A-Za-z0-9_-]{12}$/)
+  assert.equal(url, `/api/share/${id}`)
+  const got = await fetch(`${base}${url}`)
+  assert.equal(got.status, 200)
+  const snap = await got.json()
+  assert.equal(snap.title, 'Shared over HTTP')
+  assert.deepEqual(snap.msgs.map((m) => m.r), ['user', 'assistant'])
+  const evil = await fetch(`${base}/api/share`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', origin: 'https://evil.example' },
+    body: JSON.stringify({ chat: { msgs: [{ r: 'user', t: 'x' }] } }),
+  })
+  assert.equal(evil.status, 403)
+  const missing = await fetch(`${base}/api/share/aaaaaaaaaaaa`)
+  assert.equal(missing.status, 404)
+  assert.equal((await missing.json()).code, 'not_found')
+})
+
 test('extract blocks private targets at the HTTP layer', async () => {
   const res = await fetch(`${base}/api/extract?url=${encodeURIComponent('http://127.0.0.1:9/private')}`)
   assert.equal(res.status, 400)

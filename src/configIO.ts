@@ -21,8 +21,8 @@ export function detectAvailableCategories(j: Record<string, unknown>, themes: Re
       || o(j.customDarkColors) || o(j.customLightColors)
       || (typeof j.theme === 'string' && (j.theme as string) in themes) || o(j.customColors) || o(j.prefs),
     features: o(j.features) || Array.isArray(j.featureOrder) || o(j.libraryShow) || o(j.advanced),
-    tools: o(j.tools) || o(j.search),
-    tuning: o(j.params) || o(j.effort) || o(j.workspacePrefs) || o(j.docPrefs),
+    tools: o(j.tools) || o(j.search) || Array.isArray(j.mcps) || o(j.imageGen),
+    tuning: o(j.params) || o(j.effort) || o(j.workspacePrefs) || o(j.docPrefs) || o(j.voicePrefs),
     widgets: o(j.widgets) || o(j.widgetPrefs),
     stats: o(j.stats) || o(j.routeStats),
     chats: Array.isArray(j.chats) || Array.isArray(j.todos) || Array.isArray(j.snips) || typeof j.pad === 'string',
@@ -37,8 +37,8 @@ type ExportState = {
   pls: unknown; cmds: unknown; skills: unknown
   memories: unknown; memoryPrefs: unknown
   features: unknown; featureOrder: unknown; libraryShow: unknown; advanced: unknown
-  tools: unknown; search: { keys: Record<string, string> }
-  params: unknown; effort: unknown; workspacePrefs: unknown; docPrefs: unknown
+  tools: unknown; search: { keys: Record<string, string> }; mcps: unknown; imageGen: unknown
+  params: unknown; effort: unknown; workspacePrefs: unknown; docPrefs: unknown; voicePrefs: unknown
   widgets: unknown; widgetPrefs: unknown; stats: unknown; routeStats: unknown
   chats: unknown; folders: unknown; chat: unknown; todos: unknown; snips: unknown; pad: unknown
 }
@@ -61,8 +61,17 @@ export function buildExportPayload(
   if (exports.skills) data.skills = normSkills(s.skills).skills
   if (exports.memory) { data.memories = s.memories; data.memoryPrefs = s.memoryPrefs }
   if (exports.features) { data.features = s.features; data.featureOrder = s.featureOrder; data.libraryShow = s.libraryShow; data.advanced = s.advanced }
-  if (exports.tools) { data.tools = s.tools; const sp = normSearch(s.search); data.search = withKeys ? sp : { ...sp, keys: { tinyfish: '', you: '', exa: '', firecrawl: '', brightdata: '' } } }
-  if (exports.tuning) { data.params = s.params; data.effort = s.effort; data.workspacePrefs = s.workspacePrefs; data.docPrefs = s.docPrefs }
+  if (exports.tools) {
+    data.tools = s.tools
+    const sp = normSearch(s.search)
+    data.search = withKeys ? sp : { ...sp, keys: { tinyfish: '', you: '', exa: '', firecrawl: '', brightdata: '' } }
+    // MCP headers usually carry a bearer token: strip them unless the export
+    // explicitly includes keys, exactly like endpoint API keys.
+    const mcps = Array.isArray(s.mcps) ? s.mcps : []
+    data.mcps = withKeys ? mcps : mcps.map((m) => ({ ...(m as Record<string, unknown>), headers: '' }))
+    data.imageGen = s.imageGen
+  }
+  if (exports.tuning) { data.params = s.params; data.effort = s.effort; data.workspacePrefs = s.workspacePrefs; data.docPrefs = s.docPrefs; data.voicePrefs = s.voicePrefs }
   if (exports.widgets) { data.widgets = s.widgets; data.widgetPrefs = s.widgetPrefs }
   if (exports.stats) data.stats = s.stats
   if (exports.stats) data.routeStats = s.routeStats

@@ -121,7 +121,7 @@ export const fmt = (c: string) => c.replace('Mod', /Mac|iPhone|iPad/.test(naviga
 /* Every exposed tool has one schema and one explicitly registered handler. */
 export type ToolCall = { id: string; name: string; arguments: string; extra_content?: unknown }
 export type ToolResult = ToolCall & { result: string; error?: boolean; ms?: number }
-type ToolSpec = { description: string; parameters: Record<string, unknown>; run: (args: any) => unknown | Promise<unknown> }
+export type ToolSpec = { description: string; parameters: Record<string, unknown>; run: (args: any) => unknown | Promise<unknown> }
 const textArg = (description: string) => ({ type: 'string', description })
 
 /* Safe arithmetic evaluator: tokenizes + parses without eval/Function.
@@ -249,6 +249,7 @@ export const TOOL_REGISTRY: Record<string, ToolSpec> = {
   } },
   prompt_chip: { description: 'Offer an optional follow-up button when it would help continue the answer. Omit it for simple acknowledgements or urgent requests. Use a short label and a clear follow-up request. When the reply would benefit from multi-source investigation, offer deep research with a label variant such as "Deep research …" or "Perform deep research on …" and a prompt like "Deep research on <topic>".', parameters: { type: 'object', properties: { label: textArg('Button label.'), prompt: textArg('Follow-up request to send when selected.') }, required: ['label', 'prompt'], additionalProperties: false }, run: ({ label }) => `Follow-up ready: ${label}` },
   inline_poll: { description: 'Ask a focused multiple-choice question in a custom card below your answer. Use 2–6 concise options as either plain strings or objects with label and prompt. For strings, use the same text as the follow-up prompt. Use mode single or multiple.', parameters: { type: 'object', properties: { question: textArg('The question shown above the choices.'), mode: { type: 'string', enum: ['single', 'multiple'], description: 'Whether the user may choose one option or several.' }, options: { type: 'array', minItems: 2, maxItems: 6, items: { anyOf: [{ type: 'string' }, { type: 'object', properties: { label: textArg('Visible choice label.'), prompt: textArg('Follow-up prompt sent for this choice.') }, required: ['label', 'prompt'], additionalProperties: false }] } } }, required: ['question', 'options'], additionalProperties: false }, run: ({ question }) => `Choice card ready: ${question}` },
+  generate_image: { description: 'Generate one or more images from a text prompt and show them beside the reply. Only use when the user asks for a picture, illustration, logo concept, photo, or other visual; do not use it for diagrams that text or code can describe. Write a specific, visual prompt (subject, style, lighting, composition) in the language the user is using.', parameters: { type: 'object', properties: { prompt: textArg('Detailed visual description of the image to generate.'), size: textArg('Output size such as 1024x1024, 1024x1536, 1536x1024, 1024x1792, 1792x1024, 512x512, or 256x256. Optional; the user setting is used when omitted.'), count: { type: 'integer', minimum: 1, maximum: 4, description: 'How many images to generate (1-4). Optional; the user setting is used when omitted.' } }, required: ['prompt'], additionalProperties: false }, run: () => { throw Error('Image generation is not available in this context.') } },
   workspace_upsert: { description: 'Create, update, or delete file artifacts in a Workspace (preview shown beside the reply, with versioning and a dedicated download button). Do not give download links in your text — use the panel button instead. Provide workspaceId to append to an existing workspace, or createNew with workspaceName to start a new one. Always supply a human-readable revisionName (e.g. "Add auth form"). When naming a workspace, prefer readability-first names (for example, "Habit Tracker" instead of "habit-tracker"). Action: create, update, delete, continue (append, for truncated files), or patch (apply a unified diff from content to the existing file). Prefer patch with a small unified diff over resending whole files. Send files: [{path, language?, content?, action?}] to change several files in one call (one revision). A create call (action create, or any files entry with action create) may add only one file in total; create multiple files with separate calls. Send template: "static-site" | "python-script" | "markdown-notes" with createNew to scaffold a starter project, then edit from there.', parameters: { type: 'object', properties: { workspaceId: textArg('Existing workspace ID to append to.'), createNew: { type: 'boolean', description: 'Create a new workspace (requires workspaceName).' }, workspaceName: textArg('Name for the new workspace (required if createNew).'), revisionName: textArg('Human-readable name for this revision, e.g. "Add auth form". Required.'), action: { type: 'string', enum: ['create', 'update', 'delete', 'continue', 'patch'], description: 'File action. patch applies content as a unified diff.' }, path: textArg('Relative path inside the download bundle, e.g. src/app.py.'), language: textArg('Programming language for syntax highlighting, e.g. python.'), content: textArg('Full file content, or a unified diff for patch. Omitted for delete.'), files: { type: 'array', description: 'Batch several file changes in one call (one revision).', items: { type: 'object', properties: { path: textArg('Relative path.'), language: textArg('Programming language.'), content: textArg('Full content, or unified diff when action is patch.'), action: { type: 'string', enum: ['create', 'update', 'delete', 'continue', 'patch'] } }, required: ['path'], additionalProperties: false } }, template: textArg('Starter template id: static-site, python-script, or markdown-notes (use with createNew).') }, required: ['revisionName', 'action', 'path'], additionalProperties: false }, run: ({ action, path, content, workspaceId, createNew, workspaceName, revisionName, files, template }) => {
     if (action !== 'create' && action !== 'update' && action !== 'delete' && action !== 'continue' && action !== 'patch') throw Error('action must be create, update, delete, continue, or patch')
     if (!workspaceId && !createNew) throw Error('Must provide workspaceId or createNew:true')
@@ -278,18 +279,33 @@ export const TOOL_REGISTRY: Record<string, ToolSpec> = {
   } },
 }
 
+/* ---- Runtime-registered tools ----
+ * MCP servers (and any future user-installed capability) live outside the
+ * fixed registry: their specs are rebuilt from current settings before each
+ * reply, so adding or removing a server takes effect on the next message
+ * without persisting per-tool toggles. */
+export const DYNAMIC_TOOLS: Record<string, ToolSpec> = {}
+
+/** Replace every dynamic tool in one go (never merge: a removed server's tool
+ *  must not stay callable). */
+export function setDynamicTools(specs: Record<string, ToolSpec>): void {
+  for (const name of Object.keys(DYNAMIC_TOOLS)) delete DYNAMIC_TOOLS[name]
+  Object.assign(DYNAMIC_TOOLS, specs)
+}
+
 export function toolsFor(enabled: Record<string, boolean>, provider: Ep['type']) {
-  // NOTE: tools are resolved from the registry (not just the user-facing TOOLS
-  // list) so model-decided capabilities like use_skill stay callable without
-  // appearing in Settings → Tools.
-  const names = Object.keys(TOOL_REGISTRY).filter((name) => enabled[name] === true)
+  // NOTE: tools are resolved from the registries (not just the user-facing
+  // TOOLS list) so model-decided capabilities like use_skill stay callable
+  // without appearing in Settings → Tools.
+  const names = [...Object.keys(TOOL_REGISTRY), ...Object.keys(DYNAMIC_TOOLS)].filter((name) => enabled[name] === true)
   // Keep the user-facing order first, then hidden capabilities.
   names.sort((a, b) => {
     const ia = TOOLS.findIndex(([name]) => name === a), ib = TOOLS.findIndex(([name]) => name === b)
     return (ia < 0 ? 1e6 : ia) - (ib < 0 ? 1e6 : ib)
   })
   return names.map((name) => {
-    const spec = TOOL_REGISTRY[name]
+    // Dynamic (MCP) tools live outside TOOL_REGISTRY, so look in both.
+    const spec = TOOL_REGISTRY[name] ?? DYNAMIC_TOOLS[name]
     return provider === 'anthropic'
       ? { name, description: spec.description, input_schema: spec.parameters }
       : { type: 'function', function: { name, description: spec.description, parameters: spec.parameters } }
@@ -299,7 +315,7 @@ export function toolsFor(enabled: Record<string, boolean>, provider: Ep['type'])
 export async function executeTool(call: ToolCall, enabled: Record<string, boolean>, handlers: Record<string, (args: any) => unknown | Promise<unknown>> = {}): Promise<ToolResult> {
   const started = performance.now()
   try {
-    const spec = TOOL_REGISTRY[call.name]
+    const spec = TOOL_REGISTRY[call.name] ?? DYNAMIC_TOOLS[call.name]
     if (!spec) throw Error(`Unknown tool: ${call.name}`)
     if (enabled[call.name] !== true) throw Error(`Tool ${call.name} is disabled`)
     let args: unknown
@@ -307,8 +323,15 @@ export async function executeTool(call: ToolCall, enabled: Record<string, boolea
     if (!args || typeof args !== 'object' || Array.isArray(args)) throw Error('Tool arguments must be a JSON object')
     const properties = (spec.parameters.properties ?? {}) as Record<string, { type?: string }>
     const required = (spec.parameters.required ?? []) as string[]
+    const strict = spec.parameters.additionalProperties === false
     for (const key of required) if (!(key in args)) throw Error(`Missing required argument: ${key}`)
-    for (const [key, value] of Object.entries(args)) if (!properties[key] || (properties[key].type === 'string' && typeof value !== 'string') || (properties[key].type === 'number' && typeof value !== 'number') || (properties[key].type === 'integer' && !Number.isInteger(value))) throw Error(`Invalid argument: ${key}`)
+    for (const [key, value] of Object.entries(args)) {
+      const prop = properties[key]
+      // External schemas (MCP) are often permissive: only reject unknown keys
+      // when the schema explicitly forbids them.
+      if (!prop) { if (strict) throw Error(`Invalid argument: ${key}`); continue }
+      if ((prop.type === 'string' && typeof value !== 'string') || (prop.type === 'number' && typeof value !== 'number') || (prop.type === 'integer' && !Number.isInteger(value))) throw Error(`Invalid argument: ${key}`)
+    }
     const result = String(await (handlers[call.name] ? handlers[call.name](args) : spec.run(args)))
     return { ...call, result, ms: Math.round(performance.now() - started) }
   } catch (error: any) { return { ...call, result: error?.message || 'Tool execution failed', error: true, ms: Math.round(performance.now() - started) } }

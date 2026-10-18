@@ -7,6 +7,8 @@ import { boundedInt, normalizeProvider, providerLabel, providerNeedsKey, apiKeyF
 import { fetchPageText } from './extract.mjs'
 import { handleSyncPush, handleSyncPull } from './sync.mjs'
 import { syncBackend, redact } from './syncStore.mjs'
+import { shareBackend } from './shareStore.mjs'
+import { handleShareCreate, handleShareGet, shareIdOf } from './share.mjs'
 import { clientIp, headerValue, jsonResult, readBodyText, requestHost, sameOrigin } from './http.mjs'
 
 // Hard server-side caps. Per-request tuning arrives from the user's search
@@ -27,6 +29,7 @@ const RATE_WINDOW_MS = 60_000
 const searchLimit = new Map()
 const extractLimit = new Map()
 const syncLimit = new Map()
+const shareLimit = new Map()
 const searchCache = new Map()
 
 /* Sliding window: a fixed window lets a client send RATE_LIMIT requests at
@@ -233,12 +236,48 @@ export async function apiSync(req, env = process.env) {
 /* Route if pathname is /api or /api/…; returns null for everything else so
  * each host can fall through to its static asset handling. Unknown API paths
  * always answer with JSON instead of the frontend's index.html. */
+/* Public chat snapshots: POST /api/share creates one, GET /api/share/<id>
+ * reads it. Reads are unauthenticated on purpose (the link is the capability),
+ * so both methods count against the per-IP limit and the create path is
+ * same-origin only. */
+export async function apiShare(req, env = process.env) {
+  const url = new URL(req.url || '/', 'http://localhost')
+  const isCreate = url.pathname === '/api/share'
+  const id = url.pathname.startsWith('/api/share/') ? shareIdOf(url.pathname.slice('/api/share/'.length)) : ''
+  if (!isCreate && !id) return jsonResult(404, { error: 'Unknown share route.' })
+  const ip = clientIp(req, env)
+  const now = Date.now()
+  if (overRateLimit(shareLimit, ip, now)) return jsonResult(429, { error: 'Share limit reached. Try again in a minute.' }, { 'retry-after': '60' })
+  bumpRateLimit(shareLimit, ip, now)
+  if (isCreate && req.method !== 'POST') return jsonResult(405, { error: 'Method not allowed' }, { allow: 'POST' })
+  if (isCreate && !sameOrigin(headerValue(req, 'origin'), requestHost(req))) return jsonResult(403, { error: 'Cross-origin request refused' })
+  if (!isCreate && req.method !== 'GET' && req.method !== 'HEAD') return jsonResult(405, { error: 'Method not allowed' }, { allow: 'GET, HEAD' })
+  try {
+    const backend = await shareBackend(env)
+    if (isCreate) return jsonResult(200, await handleShareCreate(req, backend, shareId))
+    return jsonResult(200, await handleShareGet(id, backend), { 'cache-control': 'public, max-age=300' })
+  } catch (e) {
+    const status = typeof e?.status === 'number' ? e.status : 503
+    const code = e?.code || 'share_unavailable'
+    if (status >= 500) console.error(`[share] ${code}: ${redact(e?.message)}`)
+    return jsonResult(status, { error: status >= 500 ? 'Share storage is unavailable. Try again in a moment.' : (e?.message || 'Sharing failed.'), code })
+  }
+}
+
+/* URL-safe random id for share links (12 chars from 9 random bytes). */
+function shareId() {
+  const bytes = new Uint8Array(9)
+  crypto.getRandomValues(bytes)
+  return btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+}
+
 export async function apiRoute(req, env = process.env, opts = {}) {
   const url = new URL(req.url || '/', 'http://localhost')
   let result = null
   if (url.pathname === '/api/health') result = apiHealth(req, env)
   else if (url.pathname === '/api/search') result = await apiSearch(req, env)
   else if (url.pathname === '/api/extract') result = await apiExtract(req, env, opts)
+  else if (url.pathname === '/api/share' || url.pathname.startsWith('/api/share/')) result = await apiShare(req, env)
   else if (url.pathname.startsWith('/api/sync/')) result = await apiSync(req, env)
   else if (url.pathname === '/api' || url.pathname.startsWith('/api/')) result = jsonResult(404, { error: 'Not found' })
   if (!result) return null

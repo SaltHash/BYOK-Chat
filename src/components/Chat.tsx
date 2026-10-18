@@ -1,6 +1,6 @@
 import { memo, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
-import { GitBranch, ChevronLeft, ChevronRight, ChevronDown, Sparkles, Server, Cpu, Copy, Check, RefreshCw, Trash2, ListOrdered, CircleCheck, CircleX, TriangleAlert, Paperclip, CornerDownLeft } from 'lucide-react'
+import { GitBranch, ChevronLeft, ChevronRight, ChevronDown, Sparkles, Server, Cpu, Copy, Check, RefreshCw, Trash2, ListOrdered, CircleCheck, CircleX, TriangleAlert, Paperclip, CornerDownLeft, Download, ExternalLink, Volume2 } from 'lucide-react'
 import { useS, useLive, usable, featOn, previewSysFor, type Msg } from '../store'
 import { clampWorkspaceFrac, roundFrac, CHAT_WIDTH } from '../layout'
 import { startPointerDrag } from '../hooks'
@@ -18,6 +18,9 @@ import { ResearchTierPicker, ResearchPlanCard, ResearchProgressCard, ResearchTil
 import { SourcesPanel, scrollToSource } from './Sources'
 import { collectMessageSources, linkifyCitations, parseSearchEvidence, stripCitations } from '../citations'
 import { findWritingPath, extractWorkspaceIds, type WorkspaceCallLike } from '../workspace'
+import { imageRefsFromRounds, imageSrc, type GeneratedImage } from '../imagegen'
+import { blobGet } from '../storage/durable'
+import { normVoice, speak, speechAvailable, voiceOn } from '../voice'
 
 function toolStep(name: string, rawArgs: string, result?: string) {
   let args: Record<string, unknown> = {}
@@ -28,6 +31,11 @@ function toolStep(name: string, rawArgs: string, result?: string) {
   if (name === 'prompt_chip') return `Follow-up · ${typeof args.label === 'string' ? args.label : 'Continue'}`
   if (name === 'inline_poll') return `Choice · ${typeof args.question === 'string' ? args.question : 'Choose an option'}`
   const clip = (s: string, n = 90) => s.length > n ? `${s.slice(0, n)}…` : s
+  if (name.startsWith('mcp_')) {
+    const label = name.slice(4).replace(/_/g, ' ')
+    const inputs = Object.entries(args).slice(0, 3).map(([k, v]) => `${k}=${typeof v === 'string' ? clip(v, 60) : JSON.stringify(v)}`).join(', ')
+    return `MCP · ${label}${inputs ? ` (${inputs})` : ''}`
+  }
   if (name === 'workspace_upsert') {
     const action = typeof args.action === 'string' ? args.action : 'file'
     const path = typeof args.path === 'string' ? args.path : 'file'
@@ -90,6 +98,51 @@ function toolStep(name: string, rawArgs: string, result?: string) {
   }
   return `Tool ${name} · inputs: ${Object.keys(args).length ? Object.entries(args).map(([k, v]) => `${k}=${typeof v === 'string' ? clip(v, 60) : String(v)}`).join(', ') : 'none'}`
 }
+/* Generated images live in durable local storage and are referenced by id in
+ * the tool result, so the chat never carries base64. Each strip loads lazily. */
+function ImageGroup({ id }: { id: string }) {
+  const [images, setImages] = useState<GeneratedImage[] | null>(null)
+  const [missing, setMissing] = useState(false)
+  useEffect(() => {
+    let live = true
+    void blobGet(id).then((raw) => {
+      if (!live) return
+      if (!raw) { setMissing(true); return }
+      try {
+        const v = JSON.parse(raw)
+        if (Array.isArray(v) && v.length) setImages(v)
+        else setMissing(true)
+      } catch { setMissing(true) }
+    }).catch(() => { if (live) setMissing(true) })
+    return () => { live = false }
+  }, [id])
+  if (missing) return <p className="text-xs text-mu">This generated image is no longer in local storage.</p>
+  if (!images) return <div aria-label="Loading generated image" className="h-48 w-48 animate-pulse rounded-xl bg-surf" />
+  return (
+    <div className="flex flex-wrap gap-3">
+      {images.map((img, i) => {
+        const src = imageSrc(img)
+        if (!src) return null
+        return (
+          <figure key={i} className="max-w-[min(100%,20rem)] space-y-1.5">
+            <img src={src} alt={img.revised || `Generated image ${i + 1}`} loading="lazy" className="max-h-80 rounded-xl border border-bor object-contain" />
+            <figcaption className="flex items-center gap-3 text-xs text-mu">
+              <a href={src} download={`generated-${i + 1}.png`} className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 hover:bg-surf hover:text-tx"><Download size={13} />Download</a>
+              <a href={src} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 hover:bg-surf hover:text-tx"><ExternalLink size={13} />Open</a>
+            </figcaption>
+          </figure>
+        )
+      })}
+    </div>
+  )
+}
+
+function GeneratedImages({ rounds }: { rounds?: Msg['toolRounds'] }) {
+  const ids = useMemo(() => imageRefsFromRounds(rounds), [rounds])
+  if (!ids.length) return null
+  return <div className="space-y-3">{ids.map((id) => <ImageGroup key={id} id={id} />)}</div>
+}
+
 const duration = (ms?: number) => ms == null ? '' : ` ${fmtDuration(ms, useS.getState().widgetPrefs.timeUnit ?? 'auto')}`
 const prettyArgs = (raw: string) => {
   try {
@@ -395,6 +448,7 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
           )
         })()}
       </div>
+      {!m.err && <GeneratedImages rounds={m.toolRounds} />}
       {m.capped && !m.err && (
         <div className="mt-2 flex flex-wrap items-center gap-2 rounded-xl border border-er/30 bg-er/10 px-3 py-2 text-xs text-mu">
           <TriangleAlert size={13} className="shrink-0 text-er" />
@@ -463,6 +517,9 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
           </>
         )}
         <Btn icon={ok ? Check : Copy} title="Copy" onClick={() => { const p = navigator.clipboard?.writeText(m.t); if (!p) return; void p.then(() => { setOk(true); setTimeout(() => setOk(false), 1200) }).catch(() => {}) }} />
+        {voiceOn({ features }) && speechAvailable() && !hideBody && !m.err && !!displayText.trim() && (
+          <Btn icon={Volume2} title="Read aloud" onClick={() => speak(displayText, normVoice(useS.getState().voicePrefs))} />
+        )}
         {last && <Btn icon={RefreshCw} title="Regenerate" onClick={() => useS.getState().regen()} />}
         <Btn icon={GitBranch} title="Branch from here (copy this thread into a new chat)" onClick={() => useS.getState().branch(m.id)} />
         <Btn icon={Trash2} title="Delete" onClick={() => useS.getState().delMsg(m.id)} />
@@ -501,6 +558,17 @@ export function Chat({ side, toggle, cfg, pal }: { side: boolean; toggle: () => 
   }
   const liveTools = useLive((l) => l.tools)
   const busy = useS((st) => st.busy)
+  const voicePrefs = useS((st) => st.voicePrefs)
+  // Auto read-aloud: speak each reply once, after it finishes streaming.
+  const spoken = useRef('')
+  useEffect(() => {
+    if (busy) return
+    const last = c?.msgs[c.msgs.length - 1]
+    if (!last || last.r !== 'assistant' || last.err || !last.t.trim()) return
+    if (spoken.current === last.id) return
+    spoken.current = last.id
+    if (featOn(s, 'voice') && normVoice(voicePrefs).autoRead) speak(last.toolFinal ?? last.t, normVoice(voicePrefs))
+  }, [busy, c?.msgs, s.features, voicePrefs])
   const workspacePrefs = useS((st) => st.workspacePrefs ?? { defaultView: 'latest', autoOpen: true, autoFollow: true })
   const [workspacePanel, setWorkspacePanel] = useState<{ mid: string; workspaceId: string; initialFilePath?: string } | null>(null)
   const prevBusy = useRef(busy)

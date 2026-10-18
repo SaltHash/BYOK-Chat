@@ -2,7 +2,11 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { useShallow } from 'zustand/react/shallow'
 import { DEFAULT_TOOLS, KEYS, WIDGETS } from './meta'
-import { est, redact, stream, wire, trimHistory, estimateHistoryTokens, runToolLoop, type ToolCall, type ToolResult, searchWeb, formatSearch, fetchPage, formatPage, can, ocrImage, clearSessionCache } from './engine'
+import { est, redact, stream, wire, trimHistory, estimateHistoryTokens, runToolLoop, type ToolCall, type ToolResult, searchWeb, formatSearch, fetchPage, formatPage, can, ocrImage, clearSessionCache, setDynamicTools, DYNAMIC_TOOLS, type ToolSpec } from './engine'
+import { normMcpServers, mcpBindings, callMcpTool, toolParameters, type McpServer, type McpTool } from './mcp'
+import { generateImages, normImageGen, BLANK_IMAGE_GEN, imageSummary, type ImageGenPrefs } from './imagegen'
+import { blobPut } from './storage/durable'
+import { normVoice, BLANK_VOICE, type VoicePrefs } from './voice'
 import { DEFAULT_SKILL_STATE, normSkills, enabledSkills, getSkillInstructions, composeSystemPrompt, SKILL_TOOL_NAME, type SkillState, type ResolvedSkill } from './skills'
 import { BLANK_RESEARCH, PLAN_SCOPE_MAX, PLAN_SCOPE_SYSTEM, RESEARCH_ABSTRACT_ASK, RESEARCH_MIN_SEARCHES, RESEARCH_REASONING_CHARS, RESEARCH_REPORT_ASK, RESEARCH_TIERS, citationRepairAsk, citationUncitedAsk, compactResearchRounds, estimateResearchUsage, fallbackPlan, looksLikeReport, normResearch, parseResearchPlan, parseResearchRequest, planUserAsk, reportSample, researchAbstract, researchMinAsk, researchSystemNote, sanitizeCitations, setStep, tierOf, withStepLead, type ResearchPlan, type ResearchState, type ResearchTierId } from './research'
 export { BLANK_RESEARCH, normResearch, tierOf, RESEARCH_TIERS }
@@ -29,7 +33,7 @@ export { QUOTA_FLAG, prunePersisted, storageUsage }
 
 export { usable, modelsOf, modelNameOf }
 
-export type Kind = 'eps' | 'prompts' | 'pls' | 'cmds'
+export type Kind = 'eps' | 'prompts' | 'pls' | 'cmds' | 'mcps'
 export type ModelPrice = { input: number; output: number; source?: 'manual' | 'openrouter'; cacheRead?: number; cacheWrite?: number }
 /* Per-model inference provider pin (OpenRouter only): `tag` is the routing
  * slug sent as `provider.order` (e.g. `amazon-bedrock`), `name` is its label. */
@@ -50,7 +54,7 @@ export type Msg = Message
 export type Snap = { t: string; by?: string; tps?: number; log?: Try[]; err?: boolean; toolRounds?: { text: string; calls: ToolResult[] }[]; toolFinal?: string }
 export type Chat = { id: string; title: string; pin?: boolean; started?: boolean; folder?: string; msgs: Msg[]; temporary?: boolean; expiresAt?: number; titleAuto?: boolean }
 export type Folder = { id: string; name: string; open: boolean }
-export type Notice = { t: string; tab?: string; label?: string } | null
+export type Notice = { t: string; tab?: string; label?: string; href?: string } | null
 export type Stats = { tin: number; tout: number; historyIn: number; explicitIn: number; sent: number; chats: number; since: number; cost: number }
 export type Memory = { id: string; text: string; category: string; createdAt: number; updatedAt: number }
 /* Per-chat system prompt preset ({ id, name, text }; see BLANK.prompts). */
@@ -78,11 +82,13 @@ export const normFeatureOrder = (v: any): FeatureId[] => {
 
 /* Feature kill-switches. A disabled feature must not be used by the AI or the
    program in any capacity until turned back on. `library` is off by default. */
-export type FeatureId = 'prompts' | 'skills' | 'tools' | 'playlists' | 'commands' | 'stats' | 'memory' | 'widgets' | 'shortcuts' | 'library' | 'advanced' | 'workspace' | 'routing'
+export type FeatureId = 'prompts' | 'skills' | 'tools' | 'playlists' | 'commands' | 'stats' | 'memory' | 'widgets' | 'shortcuts' | 'library' | 'advanced' | 'workspace' | 'routing' | 'mcp' | 'voice'
 export const FEATURES: [FeatureId, string, string][] = [
   ['prompts', 'Prompts', 'Per-chat system prompts and the global system prompt. Off hides the prompt picker everywhere.'],
   ['skills', 'Skills', 'Extra instructions the AI can use for specific tasks.'],
   ['tools', 'Tools', 'Every model tool: @-mentions, web search, workspace files. The AI cannot call any tool while off.'],
+  ['mcp', 'MCP servers', 'External tool servers over the Model Context Protocol. Each server has its own switch; turning this off disconnects all of them.'],
+  ['voice', 'Voice', 'Microphone dictation in the composer and read-aloud replies. Turning this off hides both controls.'],
   ['playlists', 'Playlists', 'Ordered model lists and classifier routing. Off leaves endpoint-only model selection.'],
   ['commands', 'Commands', 'Slash commands, their templates, and the home-screen command shortcuts.'],
   ['stats', 'Stats', 'Token, message, and cost totals. Turning off asks whether to delete existing totals.'],
@@ -94,13 +100,13 @@ export const FEATURES: [FeatureId, string, string][] = [
   ['routing', 'Routing', 'Playlist classifier routing and routing rules.'],
   ['advanced', 'Advanced', 'Debugging aids: verbose errors, hidden tools, system prompt, payloads and token counts.'],
 ]
-export const DEFAULT_FEATURES: Record<FeatureId, boolean> = { prompts: true, skills: true, tools: true, playlists: true, commands: true, stats: true, memory: true, widgets: true, shortcuts: true, library: false, advanced: false, workspace: true, routing: true }
+export const DEFAULT_FEATURES: Record<FeatureId, boolean> = { prompts: true, skills: true, tools: true, playlists: true, commands: true, stats: true, memory: true, widgets: true, shortcuts: true, library: false, advanced: false, workspace: true, routing: true, mcp: true, voice: true }
 export const LIBRARY_ITEMS: [string, string][] = [['eps', 'Endpoints'], ['pls', 'Playlists'], ['prompts', 'Prompts'], ['cmds', 'Commands'], ['tools', 'Tools'], ['memory', 'Memory'], ['widgets', 'Widgets']]
 export const DEFAULT_LIBRARY_SHOW: Record<string, boolean> = { eps: true, pls: true, prompts: true, cmds: true, tools: true, memory: true, widgets: true }
 /** Widgets that belong to a feature and must go dark with it. */
 export const FEATURE_WIDGETS: Partial<Record<FeatureId, string[]>> = { prompts: ['prompts'], shortcuts: ['keys'], stats: ['usage', 'cost', 'last'] }
 /** Settings tabs hidden while their feature is off. */
-export const FEATURE_TABS: Partial<Record<FeatureId, string[]>> = { prompts: ['prompts'], skills: ['skills'], tools: ['tools'], playlists: ['pls'], commands: ['cmds'], stats: ['stats'], memory: ['memory'], widgets: ['widgets'], shortcuts: ['keys'], advanced: ['adv'], workspace: ['workspace'], routing: ['routing'] }
+export const FEATURE_TABS: Partial<Record<FeatureId, string[]>> = { prompts: ['prompts'], skills: ['skills'], tools: ['tools'], playlists: ['pls'], commands: ['cmds'], stats: ['stats'], memory: ['memory'], widgets: ['widgets'], shortcuts: ['keys'], advanced: ['adv'], workspace: ['workspace'], routing: ['routing'], mcp: ['mcp'], voice: ['voice'] }
 export const featOn = (s: { features?: Record<FeatureId, boolean> } | null | undefined, f: FeatureId): boolean => s?.features?.[f] ?? DEFAULT_FEATURES[f]
 /** Whether a widget may render: widgets feature on, its owning feature on, and itself enabled. */
 export const widgetOn = (s: { features?: Record<FeatureId, boolean>; widgets: Record<string, boolean> }, id: string): boolean => {
@@ -212,6 +218,7 @@ export const BLANK: Record<Kind, () => any> = {
   prompts: () => ({ id: uid(), name: 'New prompt', text: '' }),
   pls: () => ({ id: uid(), name: 'New playlist', sys: '', e: [], cls: '', rule: '' }),
   cmds: () => ({ id: uid(), name: 'command', desc: '', in: 'text', sys: '', tpl: '{{input}}', pl: '', on: true }),
+  mcps: () => ({ id: uid(), name: 'New MCP server', url: '', headers: '', on: true }),
 }
 const ZERO = (): Stats => ({ tin: 0, tout: 0, historyIn: 0, explicitIn: 0, sent: 0, chats: 0, since: Date.now(), cost: 0 })
 export const dl = (n: string, t: string, m: string) => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([t], { type: m })); a.download = n; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 999) }
@@ -279,8 +286,10 @@ export const searchOptsOf = (prefs: SearchPrefs, requested?: unknown) => ({
 })
 
 type S = {
-  eps: Ep[]; prompts: Prompt[]; pls: Pl[]; cmds: Cmd[]; chats: Chat[]; chat: string
+  eps: Ep[]; prompts: Prompt[]; pls: Pl[]; cmds: Cmd[]; mcps: McpServer[]; chats: Chat[]; chat: string
   tools: Record<string, boolean>
+  imageGen: ImageGenPrefs
+  voicePrefs: VoicePrefs
   search: SearchPrefs
   skills: SkillState[]
   sel: { k: 'ep' | 'pl'; id: string; model?: string } | null; pr: string
@@ -603,6 +612,23 @@ export const useS = create<S>()(
         const base: Record<string, boolean> = { search: true, fetch_page: prefs.reader !== false }
         if (featOn(g, 'skills') && (p.skills ?? []).length) base[SKILL_TOOL_NAME] = true
         return base
+      }
+
+      /** Rebuild the runtime tool registry from the user's MCP servers. Called
+       * before each reply so adding, removing, or turning off a server takes
+       * effect immediately, without a reload or a per-tool toggle. */
+      const syncMcpTools = () => {
+        const s = get()
+        if (!featOn(s, 'mcp') || !featOn(s, 'tools')) { setDynamicTools({}); return }
+        const specs: Record<string, ToolSpec> = {}
+        for (const b of mcpBindings(s.mcps ?? [])) {
+          specs[b.name] = {
+            description: `${b.tool.description || b.tool.name} (External capability from the MCP server “${b.server.name}”; use it only when the task needs what that server provides.)`,
+            parameters: toolParameters(b.tool),
+            run: (args: Record<string, unknown>) => callMcpTool(b.server, b.tool, args),
+          }
+        }
+        setDynamicTools(specs)
       }
 
       /** The hidden skill loader, shared by chat and research so a skill enabled
@@ -1038,6 +1064,7 @@ export const useS = create<S>()(
       }
 
       async function answer(um: Msg, prev?: Snap[]) {
+        syncMcpTools()
         const s = get(), id = s.chat, p = plan(s, um)
         if (p.err) { set({ notice: p.err }); return }
         const r: Run = { stopped: false, ctl: null }
@@ -1178,6 +1205,11 @@ export const useS = create<S>()(
               }, (() => {
                 const g = get(), GF = g.features ?? DEFAULT_FEATURES
                 const base: Record<string, boolean> = GF.tools ? { ...g.tools, memory: memOn } : {}
+                // MCP tools are registered at reply time with their own names;
+                // the per-server switch already decided whether they exist.
+                if (GF.tools && featOn(g, 'mcp')) for (const name of Object.keys(DYNAMIC_TOOLS)) base[name] = true
+                // Image generation has its own on switch and endpoint picker.
+                if (GF.tools && normImageGen(g.imageGen).on) base.generate_image = true
                 // use_skill is a hidden model capability (not listed in Settings → Tools).
                 if (featOn(get(), 'skills') && (p.skills ?? []).length) base[SKILL_TOOL_NAME] = true
                 return base
@@ -1238,6 +1270,24 @@ export const useS = create<S>()(
                   return `Updated memory ${id}: ${updated.text} [${updated.category}]`
                 }
                 throw Error('Choose list, add, update, or delete')
+              },
+              generate_image: async ({ prompt, size, count }: { prompt?: string; size?: string; count?: number }) => {
+                const st = get()
+                const prefs = normImageGen(st.imageGen)
+                if (!prefs.on) throw Error('Image generation is off. Turn it on in Settings → Tools → Image generation.')
+                if (typeof prompt !== 'string' || !prompt.trim()) throw Error('Provide a prompt for the image.')
+                const ep = st.eps.find((e) => e.id === prefs.ep && usable(e) && e.type === 'openai')
+                  ?? st.eps.find((e) => usable(e) && e.type === 'openai')
+                if (!ep) throw Error('No usable OpenAI-compatible endpoint is available for image generation. Configure one in Settings → Tools → Image generation.')
+                const model = prefs.model.trim() || ep.model
+                const chosenSize = typeof size === 'string' && /^\d{2,5}x\d{2,5}$/i.test(size) ? size : prefs.size
+                const n = Number.isInteger(count) ? Math.max(1, Math.min(4, count as number)) : prefs.count
+                const images = await generateImages(ep, model, prompt, { size: chosenSize, count: n })
+                // Binary stays out of the chat: store it locally and reference it
+                // by id, so context and localStorage never carry megabytes.
+                const id = `img-${uid()}`
+                await blobPut(id, JSON.stringify(images)).catch(() => {})
+                return `${imageSummary(images, chosenSize)} [image:${id}]`
               },
               workspace_upsert: async ({ workspaceId, createNew, workspaceName, revisionName, action, path, language, content, files, template }: {
                 workspaceId?: string; createNew?: boolean; workspaceName?: string; revisionName: string;
@@ -1342,7 +1392,7 @@ export const useS = create<S>()(
       }
 
       return {
-        eps: [], pls: [],
+        eps: [], pls: [], mcps: [],
         prompts: [
           { id: 'general', name: 'General', text: GENERAL_PROMPT_TEXT },
           { id: 'creativity', name: 'Creativity', text: CREATIVITY_PROMPT_TEXT },
@@ -1357,7 +1407,7 @@ export const useS = create<S>()(
           { id: 'k6', name: 'translate', desc: 'Translate text', in: 'text', sys: 'Translate the provided text into the language requested. If no target language is specified, ask which language.', tpl: '{{input}}', pl: '', on: true },
           { id: 'k7', name: 'brainstorm', desc: 'Generate useful ideas', in: 'text', sys: 'Generate varied, practical ideas. Keep each idea distinct and briefly explain why it may work.', tpl: '{{input}}', pl: '', on: true },
         ],
-        chats: [], chat: '', drafts: {}, memories: [], memoryPrefs: { enabled: false, intent: 'balanced', recall: 'contextual', method: 'local', classifierEp: '', classifierModel: '' }, docPrefs: { ...BLANK_DOCS }, research: { ...BLANK_RESEARCH }, tools: { ...DEFAULT_TOOLS }, search: { ...BLANK_SEARCH, keys: { ...BLANK_SEARCH.keys } }, skills: DEFAULT_SKILL_STATE.map((s) => ({ ...s })), widgets: {}, widgetPrefs: { ...DEFAULT_WIDGET_PREFS, widgetOrder: [...DEFAULT_WIDGET_PREFS.widgetOrder], shortcuts: [...DEFAULT_WIDGET_PREFS.shortcuts] }, rail: false, pad: '', snips: [],
+        chats: [], chat: '', drafts: {}, memories: [], imageGen: { ...BLANK_IMAGE_GEN }, voicePrefs: { ...BLANK_VOICE }, memoryPrefs: { enabled: false, intent: 'balanced', recall: 'contextual', method: 'local', classifierEp: '', classifierModel: '' }, docPrefs: { ...BLANK_DOCS }, research: { ...BLANK_RESEARCH }, tools: { ...DEFAULT_TOOLS }, search: { ...BLANK_SEARCH, keys: { ...BLANK_SEARCH.keys } }, skills: DEFAULT_SKILL_STATE.map((s) => ({ ...s })), widgets: {}, widgetPrefs: { ...DEFAULT_WIDGET_PREFS, widgetOrder: [...DEFAULT_WIDGET_PREFS.widgetOrder], shortcuts: [...DEFAULT_WIDGET_PREFS.shortcuts] }, rail: false, pad: '', snips: [],
         params: { ...DEFAULT_PARAMS }, effort: {},
         workspacePrefs: { defaultView: 'latest', autoOpen: true, autoFollow: true },
         advanced: { ...DEFAULT_ADVANCED },
@@ -1710,6 +1760,9 @@ export const useS = create<S>()(
         if (p.prefs && p.prefs.showTps === undefined) p.prefs.showTps = false
         p.prefs = { ...p.prefs, tempHours: p.prefs?.tempHours ?? 3, fontBody: p.prefs?.fontBody ?? 'system', fontMono: p.prefs?.fontMono ?? 'system', fontHeader: p.prefs?.fontHeader ?? 'system', modelPrimary: p.prefs?.modelPrimary ?? ({ none: 'id', name: 'name', provider: 'id', both: 'name' } as const)[(p.prefs?.modelDisplay as string) ?? 'both'] ?? 'name', modelSecondary: p.prefs?.modelSecondary ?? ({ none: 'none', name: 'none', provider: 'provider', both: 'provider' } as const)[(p.prefs?.modelDisplay as string) ?? 'both'] ?? 'none', paletteMax: p.prefs?.paletteMax ?? 320, chatWidth: p.prefs?.chatWidth ?? 'standard', settingsWidth: p.prefs?.settingsWidth ?? 1024, settingsHeight: p.prefs?.settingsHeight ?? 780, modelPickerHeight: p.prefs?.modelPickerHeight ?? 480, showModelPricing: p.prefs?.showModelPricing ?? false, showContextMeter: p.prefs?.showContextMeter ?? true, titleEp: p.prefs?.titleEp ?? '', titleModel: p.prefs?.titleModel ?? '', effortEp: p.prefs?.effortEp ?? '', effortModel: p.prefs?.effortModel ?? '', recallEp: p.prefs?.recallEp ?? '', recallModel: p.prefs?.recallModel ?? '', routingMode: ['ordered', 'fastest', 'cheapest'].includes(p.prefs?.routingMode) ? p.prefs.routingMode : 'ordered', sidebarWidth: p.prefs?.sidebarWidth ?? 288, widgetWidth: p.prefs?.widgetWidth ?? 320, workspaceWidth: typeof p.prefs?.workspaceWidth === 'number' && p.prefs.workspaceWidth <= 1 ? p.prefs.workspaceWidth : 0.4, workspaceSplit: typeof p.prefs?.workspaceSplit === 'number' ? p.prefs.workspaceSplit : 0.2, modalBlur: p.prefs?.modalBlur ?? 12, settingsOpacity: p.prefs?.settingsOpacity ?? 55, temporaryByDefault: p.prefs?.temporaryByDefault ?? false, streamFade: typeof p.prefs?.streamFade === 'number' && p.prefs.streamFade >= 0 && p.prefs.streamFade <= 1 ? p.prefs.streamFade : 0.3, streamMd: p.prefs?.streamMd ?? true, glassComposer: p.prefs?.glassComposer ?? true }
         p.tools = { ...DEFAULT_TOOLS, ...(p.tools ?? {}) }
+        p.mcps = normMcpServers(p.mcps)
+        p.imageGen = normImageGen(p.imageGen)
+        p.voicePrefs = normVoice(p.voicePrefs)
         p.search = normSearch(p.search)
         p.research = normResearch(p.research)
         p.researchPanel = null

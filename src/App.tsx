@@ -12,6 +12,8 @@ import { Settings } from './components/Settings'
 import { Palette } from './components/Palette'
 import { Widgets } from './components/Widgets'
 import { Welcome } from './components/Welcome'
+import { ShareView } from './components/ShareView'
+import { shareIdFromHash } from './share'
 
 export default function App() {
   const { themeMode, themeDark, themeLight, customDarkColors, customLightColors, rail, widgets, prefs, setupDone, features } = useS(useShallow((s) => ({
@@ -22,9 +24,14 @@ export default function App() {
   const [side, setSide] = useState(() => (typeof window !== 'undefined' ? window.innerWidth : 1024) >= 768)
   const [cfg, setCfg] = useState('')
   const [pal, setPal] = useState(false)
+  const [shareId, setShareId] = useState(() => (canUseDOM() ? shareIdFromHash(window.location.hash) : ''))
   useEffect(() => {
     if (!canUseDOM()) return
     const openRoute = () => {
+      // A share link replaces the whole shell with the read-only view.
+      const share = shareIdFromHash(window.location.hash)
+      setShareId(share)
+      if (share) return
       const route = window.location.hash.replace(/^#\/?/, '')
       if (route === 'chat') { setCfg(''); return }
       const match = route.match(/^settings(?:\/([^#]+))?(?:#(.+))?$/)
@@ -35,10 +42,10 @@ export default function App() {
     return () => window.removeEventListener('hashchange', openRoute)
   }, [])
   useEffect(() => {
-    if (!canUseDOM()) return
+    if (!canUseDOM() || shareId) return
     const hash = cfg ? `#settings/${cfg}` : '#chat'
     if (window.location.hash !== hash) window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}${hash}`)
-  }, [cfg])
+  }, [cfg, shareId])
   const resize = usePanelResize()
   useThemeCss({ themeMode, themeDark, themeLight, customDarkColors, customLightColors, modalBlur: prefs.modalBlur ?? 12 })
   useFontCss(prefs.fontBody, prefs.fontHeader, prefs.fontMono)
@@ -103,6 +110,7 @@ export default function App() {
     window.addEventListener('keydown', f)
     return () => window.removeEventListener('keydown', f)
   }, [])
+  if (shareId) return <ShareView id={shareId} />
   return (
     <div className="flex h-dvh overflow-hidden">
       {side && <div className="fixed inset-0 z-10 bg-black/50 md:hidden" onClick={() => setSide(false)} />}
