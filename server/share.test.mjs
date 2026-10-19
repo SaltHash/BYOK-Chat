@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { sanitizeSharedChat, shareIdOf, handleShareCreate, handleShareGet } from './share.mjs'
+import { sanitizeSharedChat, shareIdOf, handleShareCreate, handleShareGet, handleShareUpdate } from './share.mjs'
 import { memStore } from './shareStore.mjs'
 
 const req = (body) => ({
@@ -51,11 +51,50 @@ test('create then get round-trips through the in-memory backend', async () => {
   assert.equal(created.ok, true)
   assert.equal(created.messages, 2)
   assert.equal(created.url, '/api/share/abcDEF123_-x')
+  assert.equal(typeof created.token, 'string')
+  assert.ok(created.token.length >= 20)
   const got = await handleShareGet(created.id, backend)
   assert.equal(got.title, 'Round trip')
   assert.equal(got.msgs[1].t, 'a')
   await assert.rejects(() => handleShareGet('missing12345', backend), /was not found/)
   await assert.rejects(() => handleShareGet('bad', backend), /not a valid share link/)
+})
+
+test('a private share refuses reads without the owner token', async () => {
+  const backend = memStore()
+  const created = await handleShareCreate(req({ chat: { msgs: [{ r: 'user', t: 'secret' }] }, private: true }), backend, () => 'abcDEF123_-x')
+  assert.equal(created.private, true)
+  await assert.rejects(() => handleShareGet(created.id, backend), (e) => e.code === 'private' && e.status === 403)
+  await assert.rejects(() => handleShareGet(created.id, backend, 'wrong-token'), (e) => e.code === 'private')
+  const got = await handleShareGet(created.id, backend, created.token)
+  assert.equal(got.msgs[0].t, 'secret')
+  assert.equal(got.private, true)
+  // The owner token hash itself is never echoed back to a reader.
+  assert.equal('token' in got, false)
+  assert.equal('tokenHash' in got, false)
+})
+
+test('updates require the owner token and can flip privacy and content', async () => {
+  const backend = memStore()
+  const created = await handleShareCreate(req({ chat: { title: 'v1', msgs: [{ r: 'user', t: 'one' }] } }), backend, () => 'abcDEF123_-x')
+  // No token: refused.
+  await assert.rejects(
+    () => handleShareUpdate(created.id, req({ chat: { msgs: [{ r: 'user', t: 'two' }] } }), backend),
+    (e) => e.code === 'forbidden' && e.status === 403,
+  )
+  // Correct token: content and privacy are both replaced.
+  const updated = await handleShareUpdate(created.id, req({ token: created.token, chat: { title: 'v2', msgs: [{ r: 'user', t: 'two' }] }, private: true }), backend)
+  assert.equal(updated.private, true)
+  assert.equal(updated.messages, 1)
+  await assert.rejects(() => handleShareGet(created.id, backend), (e) => e.code === 'private')
+  const got = await handleShareGet(created.id, backend, created.token)
+  assert.equal(got.title, 'v2')
+  assert.equal(got.msgs[0].t, 'two')
+  // An update that omits chat keeps the current snapshot.
+  await handleShareUpdate(created.id, req({ token: created.token, private: false }), backend)
+  const publicAgain = await handleShareGet(created.id, backend)
+  assert.equal(publicAgain.title, 'v2')
+  assert.equal(publicAgain.private, false)
 })
 
 test('empty chats and oversized bodies are rejected with stable codes', async () => {

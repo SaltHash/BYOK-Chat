@@ -72,7 +72,7 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
     chats: st.chats, chat: st.chat, folders: st.folders, prefs: st.prefs,
     themeMode: st.themeMode, themeLight: st.themeLight, themeDark: st.themeDark, libraryShow: st.libraryShow,
     eps: st.eps, pls: st.pls, prompts: st.prompts, cmds: st.cmds, tools: st.tools, memories: st.memories, widgets: st.widgets, features: st.features,
-    patch: st.patch, newChat: st.newChat, renameFolder: st.renameFolder, toggleFolder: st.toggleFolder, delFolder: st.delFolder, addFolder: st.addFolder, moveChat: st.moveChat,
+    patch: st.patch, newChat: st.newChat, renameFolder: st.renameFolder, toggleFolder: st.toggleFolder, delFolder: st.delFolder, addFolder: st.addFolder, moveChat: st.moveChat, promoteChat: st.promoteChat,
   })))
   const [clock, setClock] = useState(Date.now())
   const [q, setQ] = useState('')
@@ -80,7 +80,7 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
   const [menu, setMenu] = useState<{ id: string; x: number; y: number } | null>(null)
   const [deleteId, setDeleteId] = useState('')
   const [folderId, setFolderId] = useState('')
-  // The temporary section is collapsed to its two newest chats by default and
+  // The temporary section shows only `prefs.tempShow` chats by default and is
   // capped at a fraction of the sidebar's height, past which it scrolls.
   const [tempOpen, setTempOpen] = useState(false)
   const [sideH, setSideH] = useState(0)
@@ -131,6 +131,12 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
       else if (c.pin) out.pinned.push(c)
       else if (!c.folder) out.free.push(c)
     }
+    // Order temporary chats by how much time they have left, not by when they
+    // were created: the ones expiring soonest sink to the bottom. Chats with no
+    // expiry ("until you leave") have no defined window, so they sort last.
+    // The relative order of fixed timestamps is stable, so this need not track
+    // the clock; equal keys keep their previous order.
+    out.temporary.sort((a, b) => (b.expiresAt ?? 0) - (a.expiresAt ?? 0))
     return out
   }, [L])
   const folderCounts = useMemo(() => {
@@ -432,7 +438,13 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
   // Cap the temporary section at 40% of the sidebar so it can never crowd out
   // folders and Recent; beyond the cap the chat list scrolls within the frame.
   const tempMaxH = sideH ? Math.floor(sideH * 0.4) : undefined
-  const tempVisible = tempOpen ? temporary : temporary.slice(0, 2)
+  // How many temporary chats show before the section needs expanding. 0 means
+  // "only the one I am reading" (none when a temporary chat is not open), 6
+  // means everything.
+  const tempPref = s.prefs.tempShow ?? 2
+  const tempBase = tempPref >= 6 ? temporary : tempPref === 0 ? temporary.filter((c) => c.id === s.chat) : temporary.slice(0, tempPref)
+  const tempVisible = tempOpen ? temporary : tempBase
+  const tempMore = temporary.length - tempBase.length
   const item = 'flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm hover:bg-surf'
   const safeWidth = clampSidebarWidth(width)
   return (
@@ -477,13 +489,14 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
                 <Clock size={15} className="shrink-0 text-mu" /><span className="truncate">{c.title}</span>
               </button>
               <span title={c.expiresAt ? `Deletes in ${timeLeft(c)}` : 'Deletes when you leave'} className="shrink-0 text-xs text-mu">{timeLeft(c)}</span>
+              <button title="Save as a permanent chat" aria-label={`Save ${c.title} as a permanent chat`} onClick={() => s.promoteChat(c.id)} className={cx(act, 'hidden shrink-0 max-md:grid md:group-hover:grid')}><Bookmark size={14} /></button>
               <button title="Delete chat (hold Shift to skip confirmation)" onClick={(e) => del(c.id, e.shiftKey)} className={cx(act, 'ml-1 hidden shrink-0 hover:text-er max-md:grid md:group-hover:grid')}><Trash2 size={14} /></button>
             </div>)}
             {!temporary.length && <p className="px-2.5 py-1 text-sm text-mu">No temporary chats. Nothing to clean up, nice.</p>}
           </div>
-          {temporary.length > 2 && (
+          {(tempMore > 0 || tempOpen) && (
             <button onClick={() => setTempOpen((v) => !v)} aria-expanded={tempOpen} className="mt-0.5 shrink-0 rounded-lg px-2.5 py-1.5 text-left text-xs font-medium text-mu hover:bg-surf hover:text-tx">
-              {tempOpen ? 'Show less' : `Show more (${temporary.length - 2})`}
+              {tempOpen ? 'Show less' : `Show more (${tempMore})`}
             </button>
           )}
         </div>

@@ -41,13 +41,20 @@ create policy "deny all authenticated"
 create index if not exists sync_states_updated_at_idx on public.sync_states (updated_at desc);
 
 /* Public read-only chat shares (the Share button). The API creates this table
- * on first use too, so applying this file is optional; keeping it here
- * documents the shape and the same deny-by-default posture. */
+ * on first use too (including the private columns), so applying this file is
+ * optional; keeping it here documents the shape and the same deny-by-default
+ * posture. */
 create table if not exists public.shared_chats (
   id text primary key,
   payload jsonb not null,
-  created_at timestamptz not null default now()
+  created_at timestamptz not null default now(),
+  is_private boolean not null default false,
+  token_hash text
 );
+
+-- Upgrade a table created before private shares existed.
+alter table public.shared_chats add column if not exists is_private boolean not null default false;
+alter table public.shared_chats add column if not exists token_hash text;
 
 alter table public.shared_chats enable row level security;
 

@@ -29,6 +29,7 @@ export { BLANK_DOCS, normDocs, type DocPrefs }
 import { rankMemories, mergeMemory, RouteCache, orderEndpoints, recordRoute, type RouteStat, type RoutingMode } from './recall'
 export type { RouteStat, RoutingMode }
 import { QUOTA_FLAG, prunePersisted, storageUsage, persistStorage, createPersistMapper, STORE_VERSION, withoutExpiredTemps } from './persistence'
+import type { ShareRecord } from './share'
 
 export { QUOTA_FLAG, prunePersisted, storageUsage }
 
@@ -236,10 +237,16 @@ export const SEARCH_PROVIDERS: [SearchProvider, string][] = [['tinyfish', 'TinyF
 export type SearchPrefs = { provider: SearchProvider; keys: Record<SearchProvider, string>; zone: string; maxResults: number; timeoutMs: number; maxSnippetChars: number; evidenceBudget: number; maxRetries: number; retryBaseMs: number; citeStyle: CiteStyle; sourcesOpen: boolean; reader: boolean; strictCitations: boolean }
 export const BLANK_SEARCH: SearchPrefs = { provider: 'tinyfish', keys: { tinyfish: '', you: '', exa: '', firecrawl: '', brightdata: '' }, zone: '', maxResults: 8, timeoutMs: 8000, maxSnippetChars: 1800, evidenceBudget: 12000, maxRetries: 2, retryBaseMs: 300, citeStyle: 'pills', sourcesOpen: false, reader: true, strictCitations: false }
 
+/* What the app opens to on load. 'recent' is the newest chat, 'permanent'
+ * the newest non-temporary one. */
+export type StartupMode = 'new' | 'temporary' | 'recent' | 'permanent'
+export const STARTUP_MODES: [StartupMode, string][] = [['recent', 'Most recent chat'], ['permanent', 'Most recent permanent chat'], ['new', 'New chat'], ['temporary', 'New temporary chat']]
+export const normStartup = (v: unknown): StartupMode => (v === 'new' || v === 'temporary' || v === 'permanent' ? v : 'recent')
+
 /* Default shapes for the settings objects a Data-tab import can replace
  * wholesale: keep the initial state and import "replace" mode on the same
  * literal so a sparse file can never leave undefined fields behind. */
-export const DEFAULT_PREFS: S['prefs'] = { showBy: true, showLog: true, showTps: false, enterSends: true, autoTitle: true, temporaryByDefault: false, seasonal: true, cues: false, showModelPricing: false, showContextMeter: true, titleEp: '', titleModel: '', effortEp: '', effortModel: '', recallEp: '', recallModel: '', tempHours: 3, fontBody: 'system', fontMono: 'system', fontHeader: 'system', modelPrimary: 'name', modelSecondary: 'none', paletteMax: 320, chatWidth: 'standard', settingsWidth: 1024, settingsHeight: 780, modelPickerHeight: 480, sidebarWidth: 288, widgetWidth: 320, workspaceWidth: 0.4, workspaceSplit: 0.2, modalBlur: 12, settingsOpacity: 55, streamFade: 0.3, streamMd: true, remoteImages: false, glassComposer: true }
+export const DEFAULT_PREFS: S['prefs'] = { showBy: true, showLog: true, showTps: false, enterSends: true, autoTitle: true, temporaryByDefault: false, seasonal: true, cues: false, showModelPricing: false, showContextMeter: true, titleEp: '', titleModel: '', effortEp: '', effortModel: '', recallEp: '', recallModel: '', tempHours: 3, startup: 'recent', tempShow: 2, fontBody: 'system', fontMono: 'system', fontHeader: 'system', modelPrimary: 'name', modelSecondary: 'none', paletteMax: 320, chatWidth: 'standard', settingsWidth: 1024, settingsHeight: 780, modelPickerHeight: 480, sidebarWidth: 288, widgetWidth: 320, workspaceWidth: 0.4, workspaceSplit: 0.2, modalBlur: 12, settingsOpacity: 55, streamFade: 0.3, streamMd: true, remoteImages: false, glassComposer: true }
 export const DEFAULT_PARAMS: S['params'] = { def: true, temp: 0.7, topp: 1, max: 4096, maxToolRounds: 8, highToolsUnlocked: false }
 export const DEFAULT_WIDGET_PREFS: S['widgetPrefs'] = { usageGroup: 'endpoint', usageMode: 'success', usageFormat: '{in}/{out}', usageTotal: false, usagePeriod: 'all', lastSpeed: true, timeUnit: 'auto', widgetOrder: WIDGETS.map(([k]) => k), shortcuts: KEYS.map(([k]) => k), contextLimit: 128000, showDisabledEndpoints: true, scratchRows: 6, snippetLimit: 20, costDecimals: 4, activePromptsOnly: false, charsPerToken: 4, hideDoneTodos: false }
 const SEARCH_VALID_PROVIDERS: SearchProvider[] = ['tinyfish', 'you', 'exa', 'firecrawl', 'brightdata']
@@ -305,7 +312,7 @@ type S = {
   customDarkColors: ThemeColors
   customLightColors: ThemeColors
   setupDone: boolean
-  prefs: { showBy: boolean; showLog: boolean; showTps: boolean; enterSends: boolean; autoTitle: boolean; temporaryByDefault: boolean; seasonal?: boolean; cues?: boolean; showModelPricing: boolean; showContextMeter: boolean; titleEp: string; titleModel?: string; effortEp: string; effortModel?: string; recallEp: string; recallModel?: string; tempHours: number; fontBody: string; fontMono: string; fontHeader: string; modelPrimary: 'id' | 'name'; modelSecondary: 'none' | 'provider' | 'id' | 'name'; modelDisplay?: 'none' | 'name' | 'provider' | 'both'; paletteMax: number; chatWidth: 'narrow' | 'standard' | 'wide'; settingsWidth: number; settingsHeight: number; modelPickerHeight: number; sidebarWidth?: number; widgetWidth?: number; workspaceWidth?: number; workspaceSplit?: number; modalBlur: number; settingsOpacity: number; routingMode?: RoutingMode; streamFade: number; streamMd: boolean; remoteImages?: boolean; glassComposer?: boolean }
+  prefs: { showBy: boolean; showLog: boolean; showTps: boolean; enterSends: boolean; autoTitle: boolean; temporaryByDefault: boolean; seasonal?: boolean; cues?: boolean; showModelPricing: boolean; showContextMeter: boolean; titleEp: string; titleModel?: string; effortEp: string; effortModel?: string; recallEp: string; recallModel?: string; tempHours: number; startup?: StartupMode; tempShow?: number; fontBody: string; fontMono: string; fontHeader: string; modelPrimary: 'id' | 'name'; modelSecondary: 'none' | 'provider' | 'id' | 'name'; modelDisplay?: 'none' | 'name' | 'provider' | 'both'; paletteMax: number; chatWidth: 'narrow' | 'standard' | 'wide'; settingsWidth: number; settingsHeight: number; modelPickerHeight: number; sidebarWidth?: number; widgetWidth?: number; workspaceWidth?: number; workspaceSplit?: number; modalBlur: number; settingsOpacity: number; routingMode?: RoutingMode; streamFade: number; streamMd: boolean; remoteImages?: boolean; glassComposer?: boolean }
   widgets: Record<string, boolean>; widgetPrefs: { usageGroup: 'endpoint' | 'model'; usageMode: 'success' | 'tokens'; usageFormat: string; usageTotal: boolean; usagePeriod: 'session' | 'day' | 'week' | 'custom' | 'all'; usageFrom?: string; usageTo?: string; lastSpeed: boolean; timeUnit: 'ms' | 's' | 'auto'; widgetOrder: string[]; shortcuts: string[]; contextLimit: number; showDisabledEndpoints: boolean; scratchRows: number; snippetLimit: number; costDecimals: number; activePromptsOnly: boolean; charsPerToken: number; hideDoneTodos: boolean }; rail: boolean; pad: string; snips: string[]
   params: { def: boolean; temp: number; topp: number; max: number; maxToolRounds: number; highToolsUnlocked: boolean }; effort: Record<string, string>
   workspacePrefs: WorkspacePrefs
@@ -316,6 +323,7 @@ type S = {
   research: { defaultTier: ResearchTierId }
   folders: Folder[]; price: { in: number; out: number }; todos: { id: string; t: string; done: boolean }[]
   routeStats: Record<string, RouteStat>
+  shares: ShareRecord[]
   flashMsg: string | null
   draft: string; drafts: Record<string, string>; busy: boolean; notice: Notice
   /* Workspace (first-class entity) */
@@ -348,6 +356,8 @@ type S = {
   toggleFolder: (id: string) => void
   delFolder: (id: string) => void
   moveChat: (id: string, folder: string) => void
+  /** Turn a temporary chat permanent (keeps its messages, drops the expiry). */
+  promoteChat: (id: string) => void
   branch: (mid: string) => void
   variant: (mid: string, idx: number) => void
 }
@@ -1446,7 +1456,7 @@ export const useS = create<S>()(
         sel: null, pr: 'general', globalPrompt: { on: true, text: GENERAL_PROMPT_TEXT, qualities: [] }, features: { ...DEFAULT_FEATURES }, featureOrder: FEATURES.map(([id]) => id), libraryShow: { ...DEFAULT_LIBRARY_SHOW }, themeMode: 'dark', themeDark: 'plum', themeLight: 'paper', customDarkColors: { ...DEFAULT_CUSTOM_COLORS }, customLightColors: { ...DEFAULT_CUSTOM_LIGHT_COLORS }, setupDone: false, prefs: { ...DEFAULT_PREFS },
         stats: ZERO(), keys: Object.fromEntries(KEYS.map(([k, , d]) => [k, d])),
         folders: [], price: { in: 0, out: 0 }, todos: [],
-        routeStats: {}, flashMsg: null,
+        routeStats: {}, shares: [], flashMsg: null,
         draft: '', busy: false, notice: null,
         /* Workspace (first-class entity) */
         workspaces: {}, selectedRevision: {},            researchPanel: null,
@@ -1745,6 +1755,7 @@ export const useS = create<S>()(
         toggleFolder: (id) => set((s) => ({ folders: s.folders.map((f) => (f.id === id ? { ...f, open: !f.open } : f)) })),
         delFolder: (id) => set((s) => ({ folders: s.folders.filter((f) => f.id !== id), chats: s.chats.map((c) => (c.folder === id ? { ...c, folder: undefined } : c)) })),
         moveChat: (id, folder) => set((s) => ({ chats: s.chats.map((c) => (c.id === id ? { ...c, folder: folder || undefined } : c)) })),
+        promoteChat: (id) => set((s) => ({ chats: s.chats.map((c) => (c.id === id ? { ...c, temporary: false, expiresAt: undefined } : c)) })),
         branch: (mid) => set((s) => {
           const c = s.chats.find((x) => x.msgs.some((m) => m.id === mid))
           if (!c) return s
@@ -1804,7 +1815,7 @@ export const useS = create<S>()(
           p.prefs.titleEp = ''
         }
         if (p.prefs && p.prefs.showTps === undefined) p.prefs.showTps = false
-        p.prefs = { ...p.prefs, tempHours: p.prefs?.tempHours ?? 3, fontBody: p.prefs?.fontBody ?? 'system', fontMono: p.prefs?.fontMono ?? 'system', fontHeader: p.prefs?.fontHeader ?? 'system', modelPrimary: p.prefs?.modelPrimary ?? ({ none: 'id', name: 'name', provider: 'id', both: 'name' } as const)[(p.prefs?.modelDisplay as string) ?? 'both'] ?? 'name', modelSecondary: p.prefs?.modelSecondary ?? ({ none: 'none', name: 'none', provider: 'provider', both: 'provider' } as const)[(p.prefs?.modelDisplay as string) ?? 'both'] ?? 'none', paletteMax: p.prefs?.paletteMax ?? 320, chatWidth: p.prefs?.chatWidth ?? 'standard', settingsWidth: p.prefs?.settingsWidth ?? 1024, settingsHeight: p.prefs?.settingsHeight ?? 780, modelPickerHeight: p.prefs?.modelPickerHeight ?? 480, showModelPricing: p.prefs?.showModelPricing ?? false, showContextMeter: p.prefs?.showContextMeter ?? true, titleEp: p.prefs?.titleEp ?? '', titleModel: p.prefs?.titleModel ?? '', effortEp: p.prefs?.effortEp ?? '', effortModel: p.prefs?.effortModel ?? '', recallEp: p.prefs?.recallEp ?? '', recallModel: p.prefs?.recallModel ?? '', routingMode: ['ordered', 'fastest', 'cheapest'].includes(p.prefs?.routingMode) ? p.prefs.routingMode : 'ordered', sidebarWidth: p.prefs?.sidebarWidth ?? 288, widgetWidth: p.prefs?.widgetWidth ?? 320, workspaceWidth: typeof p.prefs?.workspaceWidth === 'number' && p.prefs.workspaceWidth <= 1 ? p.prefs.workspaceWidth : 0.4, workspaceSplit: typeof p.prefs?.workspaceSplit === 'number' ? p.prefs.workspaceSplit : 0.2, modalBlur: p.prefs?.modalBlur ?? 12, settingsOpacity: p.prefs?.settingsOpacity ?? 55, temporaryByDefault: p.prefs?.temporaryByDefault ?? false, streamFade: typeof p.prefs?.streamFade === 'number' && p.prefs.streamFade >= 0 && p.prefs.streamFade <= 1 ? p.prefs.streamFade : 0.3, streamMd: p.prefs?.streamMd ?? true, glassComposer: p.prefs?.glassComposer ?? true }
+        p.prefs = { ...p.prefs, tempHours: p.prefs?.tempHours ?? 3, startup: normStartup(p.prefs?.startup), tempShow: Number.isInteger(p.prefs?.tempShow) ? Math.max(0, Math.min(6, p.prefs.tempShow)) : 2, fontBody: p.prefs?.fontBody ?? 'system', fontMono: p.prefs?.fontMono ?? 'system', fontHeader: p.prefs?.fontHeader ?? 'system', modelPrimary: p.prefs?.modelPrimary ?? ({ none: 'id', name: 'name', provider: 'id', both: 'name' } as const)[(p.prefs?.modelDisplay as string) ?? 'both'] ?? 'name', modelSecondary: p.prefs?.modelSecondary ?? ({ none: 'none', name: 'none', provider: 'provider', both: 'provider' } as const)[(p.prefs?.modelDisplay as string) ?? 'both'] ?? 'none', paletteMax: p.prefs?.paletteMax ?? 320, chatWidth: p.prefs?.chatWidth ?? 'standard', settingsWidth: p.prefs?.settingsWidth ?? 1024, settingsHeight: p.prefs?.settingsHeight ?? 780, modelPickerHeight: p.prefs?.modelPickerHeight ?? 480, showModelPricing: p.prefs?.showModelPricing ?? false, showContextMeter: p.prefs?.showContextMeter ?? true, titleEp: p.prefs?.titleEp ?? '', titleModel: p.prefs?.titleModel ?? '', effortEp: p.prefs?.effortEp ?? '', effortModel: p.prefs?.effortModel ?? '', recallEp: p.prefs?.recallEp ?? '', recallModel: p.prefs?.recallModel ?? '', routingMode: ['ordered', 'fastest', 'cheapest'].includes(p.prefs?.routingMode) ? p.prefs.routingMode : 'ordered', sidebarWidth: p.prefs?.sidebarWidth ?? 288, widgetWidth: p.prefs?.widgetWidth ?? 320, workspaceWidth: typeof p.prefs?.workspaceWidth === 'number' && p.prefs.workspaceWidth <= 1 ? p.prefs.workspaceWidth : 0.4, workspaceSplit: typeof p.prefs?.workspaceSplit === 'number' ? p.prefs.workspaceSplit : 0.2, modalBlur: p.prefs?.modalBlur ?? 12, settingsOpacity: p.prefs?.settingsOpacity ?? 55, temporaryByDefault: p.prefs?.temporaryByDefault ?? false, streamFade: typeof p.prefs?.streamFade === 'number' && p.prefs.streamFade >= 0 && p.prefs.streamFade <= 1 ? p.prefs.streamFade : 0.3, streamMd: p.prefs?.streamMd ?? true, glassComposer: p.prefs?.glassComposer ?? true }
         p.tools = { ...DEFAULT_TOOLS, ...(p.tools ?? {}) }
         p.mcps = normMcpServers(p.mcps)
         p.imageGen = normImageGen(p.imageGen)
@@ -1852,6 +1863,16 @@ export const useS = create<S>()(
           p.selectedRevision = p.selectedRevision ?? {}
         }
         p.advanced = normAdvanced(p.advanced)
+        p.shares = Array.isArray(p.shares) ? p.shares.filter((r: any) => r && typeof r.id === 'string' && typeof r.chatId === 'string').map((r: any) => ({
+          id: String(r.id),
+          chatId: String(r.chatId),
+          url: typeof r.url === 'string' ? r.url : '',
+          token: typeof r.token === 'string' ? r.token : '',
+          hash: typeof r.hash === 'string' ? r.hash : '',
+          at: Number(r.at) || 0,
+          auto: r.auto === true,
+          private: r.private === true,
+        })) : []
         p.memoryPrefs = { enabled: false, intent: 'balanced', recall: 'contextual', method: 'local', classifierEp: '', classifierModel: '', ...(p.memoryPrefs ?? {}) }
         if (p.memoryPrefs.method !== 'local' && p.memoryPrefs.method !== 'classifier') p.memoryPrefs.method = 'local'
         if (!p.routeStats || typeof p.routeStats !== 'object') p.routeStats = {}

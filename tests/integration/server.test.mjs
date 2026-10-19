@@ -127,14 +127,16 @@ test('sync pull without token is 401, not 500', async () => {
 test('share create then get round-trips over HTTP; cross-origin writes refused', async () => {
   const created = await post('/api/share', { chat: { title: 'Shared over HTTP', msgs: [{ r: 'user', t: 'hello' }, { r: 'assistant', t: 'hi', by: 'model' }] } })
   assert.equal(created.status, 200)
-  const { id, url } = await created.json()
+  const { id, url, token } = await created.json()
   assert.match(id, /^[A-Za-z0-9_-]{12}$/)
   assert.equal(url, `/api/share/${id}`)
+  assert.equal(typeof token, 'string')
   const got = await fetch(`${base}${url}`)
   assert.equal(got.status, 200)
   const snap = await got.json()
   assert.equal(snap.title, 'Shared over HTTP')
   assert.deepEqual(snap.msgs.map((m) => m.r), ['user', 'assistant'])
+  assert.equal(snap.private, false)
   const evil = await fetch(`${base}/api/share`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', origin: 'https://evil.example' },
@@ -144,6 +146,37 @@ test('share create then get round-trips over HTTP; cross-origin writes refused',
   const missing = await fetch(`${base}/api/share/aaaaaaaaaaaa`)
   assert.equal(missing.status, 404)
   assert.equal((await missing.json()).code, 'not_found')
+})
+
+test('private shares need the owner token; owners can update their link', async () => {
+  const created = await post('/api/share', { chat: { title: 'Private', msgs: [{ r: 'user', t: 'one' }] }, private: true })
+  assert.equal(created.status, 200)
+  const { id, token } = await created.json()
+  const denied = await fetch(`${base}/api/share/${id}`)
+  assert.equal(denied.status, 403)
+  assert.equal((await denied.json()).code, 'private')
+  const allowed = await fetch(`${base}/api/share/${id}`, { headers: { 'x-share-token': token } })
+  assert.equal(allowed.status, 200)
+  assert.equal((await allowed.json()).title, 'Private')
+  // A stranger cannot update the snapshot without the token.
+  const stranger = await fetch(`${base}/api/share/${id}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ chat: { msgs: [{ r: 'user', t: 'hijack' }] } }),
+  })
+  assert.equal(stranger.status, 403)
+  // The owner can update and make it public again.
+  const updated = await fetch(`${base}/api/share/${id}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-share-token': token },
+    body: JSON.stringify({ chat: { title: 'Updated', msgs: [{ r: 'user', t: 'two' }] }, private: false }),
+  })
+  assert.equal(updated.status, 200)
+  const after = await fetch(`${base}/api/share/${id}`)
+  assert.equal(after.status, 200)
+  const snap = await after.json()
+  assert.equal(snap.title, 'Updated')
+  assert.equal(snap.private, false)
 })
 
 test('extract blocks private targets at the HTTP layer', async () => {

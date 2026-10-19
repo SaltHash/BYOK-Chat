@@ -174,7 +174,7 @@ function unionById(local: unknown[], remote: unknown[], pick?: (a: Obj, b: Obj) 
 }
 
 /** Collections that carry a stable id and should union rather than be replaced. */
-const ID_COLLECTIONS = ['eps', 'pls', 'prompts', 'cmds', 'skills', 'todos', 'memories', 'mcps'] as const
+const ID_COLLECTIONS = ['eps', 'pls', 'prompts', 'cmds', 'skills', 'todos', 'memories', 'mcps', 'shares'] as const
 /** Flat record maps whose keys should union so neither device loses an entry. */
 const MAP_FIELDS = ['keys', 'widgets', 'features', 'libraryShow', 'effort', 'routeStats'] as const
 

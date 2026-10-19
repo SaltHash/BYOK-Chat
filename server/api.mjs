@@ -8,7 +8,7 @@ import { fetchPageText } from './extract.mjs'
 import { handleSyncPush, handleSyncPull } from './sync.mjs'
 import { syncBackend, redact } from './syncStore.mjs'
 import { shareBackend } from './shareStore.mjs'
-import { handleShareCreate, handleShareGet, shareIdOf } from './share.mjs'
+import { handleShareCreate, handleShareGet, handleShareUpdate, shareIdOf } from './share.mjs'
 import { clientIp, headerValue, jsonResult, readBodyText, requestHost, sameOrigin } from './http.mjs'
 
 // Hard server-side caps. Per-request tuning arrives from the user's search
@@ -236,9 +236,11 @@ export async function apiSync(req, env = process.env) {
 /* Route if pathname is /api or /api/…; returns null for everything else so
  * each host can fall through to its static asset handling. Unknown API paths
  * always answer with JSON instead of the frontend's index.html. */
-/* Public chat snapshots: POST /api/share creates one, GET /api/share/<id>
- * reads it. Reads are unauthenticated on purpose (the link is the capability),
- * so both methods count against the per-IP limit and the create path is
+/* Public chat snapshots: POST /api/share creates one, POST /api/share/<id>
+ * updates the owner's existing snapshot/privacy, GET /api/share/<id> reads it.
+ * Reads are unauthenticated for public shares (the link is the capability);
+ * private shares require the owner token as an `x-share-token` header. Both
+ * methods count against the per-IP limit and the writing paths are
  * same-origin only. */
 export async function apiShare(req, env = process.env) {
   const url = new URL(req.url || '/', 'http://localhost')
@@ -249,13 +251,18 @@ export async function apiShare(req, env = process.env) {
   const now = Date.now()
   if (overRateLimit(shareLimit, ip, now)) return jsonResult(429, { error: 'Share limit reached. Try again in a minute.' }, { 'retry-after': '60' })
   bumpRateLimit(shareLimit, ip, now)
+  const isUpdate = !isCreate && req.method === 'POST'
   if (isCreate && req.method !== 'POST') return jsonResult(405, { error: 'Method not allowed' }, { allow: 'POST' })
-  if (isCreate && !sameOrigin(headerValue(req, 'origin'), requestHost(req))) return jsonResult(403, { error: 'Cross-origin request refused' })
-  if (!isCreate && req.method !== 'GET' && req.method !== 'HEAD') return jsonResult(405, { error: 'Method not allowed' }, { allow: 'GET, HEAD' })
+  if (!isCreate && !isUpdate && req.method !== 'GET' && req.method !== 'HEAD') return jsonResult(405, { error: 'Method not allowed' }, { allow: 'GET, HEAD, POST' })
+  if ((isCreate || isUpdate) && !sameOrigin(headerValue(req, 'origin'), requestHost(req))) return jsonResult(403, { error: 'Cross-origin request refused' })
   try {
     const backend = await shareBackend(env)
     if (isCreate) return jsonResult(200, await handleShareCreate(req, backend, shareId))
-    return jsonResult(200, await handleShareGet(id, backend), { 'cache-control': 'public, max-age=300' })
+    if (isUpdate) return jsonResult(200, await handleShareUpdate(id, req, backend))
+    const result = await handleShareGet(id, backend, headerValue(req, 'x-share-token') || '')
+    // A private snapshot must never be cached by an intermediary; public ones
+    // stay briefly cacheable.
+    return jsonResult(200, result, { 'cache-control': result.private === true ? 'private, no-store' : 'public, max-age=300' })
   } catch (e) {
     const status = typeof e?.status === 'number' ? e.status : 503
     const code = e?.code || 'share_unavailable'

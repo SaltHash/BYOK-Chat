@@ -23,7 +23,9 @@ startSyncRuntime()
 
 // Durable overflow: settings stay in localStorage; chats/workspaces mirror to
 // IndexedDB/OPFS. Hydrate once (automatic in-place migration), then mirror.
-void hydrateDurable((p) => useS.setState(p as Parameters<typeof useS.setState>[0])).catch(() => {})
+void hydrateDurable((p) => useS.setState(p as Parameters<typeof useS.setState>[0]))
+  .catch(() => {})
+  .finally(() => { if (typeof window !== 'undefined') window.dispatchEvent(new Event('byok:ready')) })
 let prevChats: unknown = null, prevWs: unknown = null
 useS.subscribe((s) => {
   if (s.chats !== prevChats || s.workspaces !== prevWs) {

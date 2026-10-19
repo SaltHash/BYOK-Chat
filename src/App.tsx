@@ -13,7 +13,7 @@ import { Palette } from './components/Palette'
 import { Widgets } from './components/Widgets'
 import { Welcome } from './components/Welcome'
 import { ShareView } from './components/ShareView'
-import { shareIdFromHash } from './share'
+import { shareIdFromHash, shareHash, updateShare } from './share'
 
 export default function App() {
   const { themeMode, themeDark, themeLight, customDarkColors, customLightColors, rail, widgets, prefs, setupDone, features } = useS(useShallow((s) => ({
@@ -70,6 +70,52 @@ export default function App() {
     }
     window.addEventListener('pagehide', leave)
     return () => { clearInterval(timer); window.removeEventListener('pagehide', leave) }
+  }, [])
+  // Where to open on load. Applied on mount and again once durable storage has
+  // hydrated (which can replace the chat list moments later); both passes are
+  // idempotent, so a wiped empty chat is simply recreated.
+  useEffect(() => {
+    if (!canUseDOM()) return
+    const apply = () => {
+      const st = useS.getState()
+      const mode = st.prefs.startup ?? 'recent'
+      if (mode === 'new' || mode === 'temporary') { st.newChat(mode === 'temporary'); return }
+      const pick = mode === 'permanent' ? st.chats.find((c) => !c.temporary) : st.chats[0]
+      if (pick && st.chat !== pick.id) st.patch({ chat: pick.id })
+    }
+    apply()
+    window.addEventListener('byok:ready', apply)
+    return () => window.removeEventListener('byok:ready', apply)
+  }, [])
+  // Auto-updating shares: when a chat with `auto` set changes, refresh its
+  // snapshot (debounced). Best-effort; a failure keeps the old hash so the next
+  // change retries.
+  useEffect(() => {
+    if (!canUseDOM()) return
+    let timer: ReturnType<typeof setTimeout> | null = null
+    let running = false
+    const run = async () => {
+      if (running) return
+      running = true
+      try {
+        for (const rec of useS.getState().shares.filter((s) => s.auto)) {
+          const chat = useS.getState().chats.find((c) => c.id === rec.chatId)
+          if (!chat) continue
+          const hash = shareHash(chat)
+          if (!hash || hash === rec.hash) continue
+          try {
+            await updateShare(rec.id, rec.token, chat, { private: rec.private })
+            useS.getState().patch({ shares: useS.getState().shares.map((x) => (x.id === rec.id ? { ...x, hash } : x)) })
+          } catch { /* keep the old hash so a later change retries */ }
+        }
+      } finally { running = false }
+    }
+    const unsub = useS.subscribe((s, prev) => {
+      if (s.chats === prev.chats || !s.shares.some((x) => x.auto)) return
+      if (timer) clearTimeout(timer)
+      timer = setTimeout(() => { timer = null; void run() }, 1500)
+    })
+    return () => { unsub(); if (timer) clearTimeout(timer) }
   }, [])
   useEffect(() => {
     if (!canUseDOM()) return

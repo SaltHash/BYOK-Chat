@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { X, Plus, Trash2, ArrowUp, ArrowDown, CornerDownRight, ChevronRight, Eye, EyeOff, Play, ShieldCheck, Shield, Download, Upload, Check, CircleCheck, CircleX, Cpu, Route, GripVertical, Server, ListMusic, ScrollText, Terminal, Wrench, Palette, FolderOpen, FileText, PanelRight, TrendingUp, Keyboard, Search, Brain, Pencil, Sparkles, RotateCcw, SlidersHorizontal, FlaskConical, Library, Database, Lock, LockOpen, LayoutTemplate, Share2, Plug, Image as ImageIcon, Volume2, AudioLines, Code2 } from 'lucide-react'
-import { useS, useSConfig, PRE, THEMES, DARK_THEMES, LIGHT_THEMES, THEME_COLOR_KEYS, THEME_COLOR_LABELS, SEARCH_PROVIDERS, FEATURES, LIBRARY_ITEMS, FEATURE_TABS, FEATURE_WIDGETS, DEFAULT_LIBRARY_SHOW, DEFAULT_ADVANCED, featOn, normSearch, normResearch, normAdvanced, normDocs, usable, modelsOf, modelNameOf, helperRef, splitHelperRef, effortClassifierOf, TOOL_ROUNDS_DEFAULT, TOOL_ROUNDS_MIN, TOOL_ROUNDS_BASE_MAX, TOOL_ROUNDS_MAX, toolRoundLimitOf, isToolRoundsUnlimited, GENERAL_PROMPT_TEXT, type Kind, type FeatureId, type DocPrefs, type ModelPrice } from '../store'
+import { useS, useSConfig, PRE, THEMES, DARK_THEMES, LIGHT_THEMES, THEME_COLOR_KEYS, THEME_COLOR_LABELS, SEARCH_PROVIDERS, FEATURES, LIBRARY_ITEMS, FEATURE_TABS, FEATURE_WIDGETS, DEFAULT_LIBRARY_SHOW, DEFAULT_ADVANCED, featOn, normSearch, normResearch, normAdvanced, normDocs, usable, modelsOf, modelNameOf, helperRef, splitHelperRef, effortClassifierOf, TOOL_ROUNDS_DEFAULT, TOOL_ROUNDS_MIN, TOOL_ROUNDS_BASE_MAX, TOOL_ROUNDS_MAX, toolRoundLimitOf, isToolRoundsUnlimited, GENERAL_PROMPT_TEXT, STARTUP_MODES, normStartup, type Kind, type FeatureId, type DocPrefs, type ModelPrice } from '../store'
 import { RESEARCH_TIERS, type ResearchTierId } from '../research'
 import { normSkills, resolveSkill, validateCustomSkill, enabledSkills, BUILTIN_SKILLS, SKILL_TOOL_NAME, type SkillState } from '../skills'
 import { findDuplicatePairs, mergeMemory } from '../recall'
@@ -1626,6 +1626,23 @@ function Chats() {
         <div className="text-sm font-medium">Temporary chat retention</div>
         <div className="text-xs text-mu">Temporary chats are removed automatically after this time. Immediate also removes them when you start another chat or leave this page.</div>
         <div className="flex items-center gap-3"><RangeSlider label="Temporary chat retention" min={0} max={48} step={1} value={s.prefs.tempHours} set={(tempHours) => s.patch({ prefs: { ...s.prefs, tempHours } })} className="flex-1" /><span className="w-24 text-right text-sm">{s.prefs.tempHours === 0 ? 'Immediate' : `${s.prefs.tempHours} hours`}</span></div>
+      </div>
+      </Anchor>
+      <Anchor id="startup">
+      <div className="rounded-xl bg-surf p-3 space-y-2">
+        <div className="text-sm font-medium">Open on load</div>
+        <div className="text-xs text-mu">Which conversation the app shows when you open it. Most recent permanent chats never pick a temporary one.</div>
+        <Sel value={normStartup(s.prefs.startup)} set={(startup) => s.patch({ prefs: { ...s.prefs, startup: normStartup(startup) } })} opts={STARTUP_MODES as [string, string][]} />
+      </div>
+      </Anchor>
+      <Anchor id="temp-visible">
+      <div className="rounded-xl bg-surf p-3 space-y-2">
+        <div className="text-sm font-medium">Temporary chats shown</div>
+        <div className="text-xs text-mu">How many temporary chats the sidebar lists before you need to expand it. The first tick shows only the one you are reading; the last shows them all.</div>
+        <div className="flex items-center gap-3">
+          <RangeSlider label="Temporary chats shown" min={0} max={6} step={1} value={s.prefs.tempShow ?? 2} set={(tempShow) => s.patch({ prefs: { ...s.prefs, tempShow } })} className="flex-1" />
+          <span className="w-28 text-right text-sm">{(s.prefs.tempShow ?? 2) === 0 ? 'Current only' : (s.prefs.tempShow ?? 2) >= 6 ? 'All' : `${s.prefs.tempShow ?? 2} chat${(s.prefs.tempShow ?? 2) === 1 ? '' : 's'}`}</span>
+        </div>
       </div>
       </Anchor>
       <Anchor id="stream-fade">
