@@ -102,7 +102,7 @@ export function Palette({ close, cfg, toggleSide }: { close: () => void; cfg: (t
   useEffect(() => { refs.current[i]?.scrollIntoView({ block: 'nearest' }) }, [i, L.length])
   return (
     <Modal close={close}>
-      <div className="mt-[10vh] w-full max-w-lg self-start overflow-hidden rounded-2xl bg-surf">
+      <div className="modal-panel mt-[10vh] w-full max-w-lg self-start overflow-hidden rounded-2xl bg-surf">
         <div className="flex items-center gap-3 px-4 py-3">
           <Search size={18} className="text-mu" />
           <input

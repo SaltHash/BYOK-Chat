@@ -229,7 +229,7 @@ export function Modal({ children, close, blur = true, opacity = 55, keyboard = t
 export function Confirm({ title, text, ok, close, run }: { title: string; text: string; ok: string; close: () => void; run: () => void }) {
   return (
     <Modal close={close}>
-      <div className="w-full max-w-sm space-y-4 rounded-2xl bg-bg p-5">
+      <div className="modal-panel w-full max-w-sm space-y-4 rounded-2xl bg-bg p-5">
         <div className="flex items-center gap-2 font-semibold"><TriangleAlert size={18} className="text-er" />{title}</div>
         <p className="text-sm text-mu">{text}</p>
         <div className="flex justify-end gap-2">

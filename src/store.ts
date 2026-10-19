@@ -5,10 +5,11 @@ import { DEFAULT_TOOLS, KEYS, WIDGETS } from './meta'
 import { est, redact, stream, wire, trimHistory, estimateHistoryTokens, runToolLoop, type ToolCall, type ToolResult, searchWeb, formatSearch, fetchPage, formatPage, can, ocrImage, clearSessionCache, setDynamicTools, DYNAMIC_TOOLS, type ToolSpec } from './engine'
 import { normMcpServers, mcpBindings, callMcpTool, toolParameters, type McpServer, type McpTool } from './mcp'
 import { generateImages, normImageGen, BLANK_IMAGE_GEN, imageSummary, type ImageGenPrefs } from './imagegen'
+import { runCode, formatCodeResult, normCodeRun, BLANK_CODE_RUN, type CodeRunPrefs, type CodeLang } from './codesandbox'
 import { blobPut } from './storage/durable'
 import { normVoice, BLANK_VOICE, type VoicePrefs } from './voice'
 import { DEFAULT_SKILL_STATE, normSkills, enabledSkills, getSkillInstructions, composeSystemPrompt, SKILL_TOOL_NAME, type SkillState, type ResolvedSkill } from './skills'
-import { BLANK_RESEARCH, PLAN_SCOPE_MAX, PLAN_SCOPE_SYSTEM, RESEARCH_ABSTRACT_ASK, RESEARCH_MIN_SEARCHES, RESEARCH_REASONING_CHARS, RESEARCH_REPORT_ASK, RESEARCH_TIERS, citationRepairAsk, citationUncitedAsk, compactResearchRounds, estimateResearchUsage, fallbackPlan, looksLikeReport, normResearch, parseResearchPlan, parseResearchRequest, planUserAsk, reportSample, researchAbstract, researchMinAsk, researchSystemNote, sanitizeCitations, setStep, tierOf, withStepLead, type ResearchPlan, type ResearchState, type ResearchTierId } from './research'
+import { BLANK_RESEARCH, PLAN_SCOPE_MAX, PLAN_SCOPE_SYSTEM, RESEARCH_ABSTRACT_ASK, RESEARCH_MIN_SEARCHES, RESEARCH_REASONING_CHARS, RESEARCH_REPORT_ASK, RESEARCH_TIERS, citationRepairAsk, citationUncitedAsk, compactResearchRounds, estimateResearchUsage, fallbackPlan, looksLikeReport, normResearch, parseResearchPlan, parseResearchRequest, planNote, planUserAsk, reportSample, researchAbstract, researchMinAsk, researchSystemNote, sanitizeCitations, setStep, tierOf, withStepLead, type ResearchPlan, type ResearchState, type ResearchTierId } from './research'
 export { BLANK_RESEARCH, normResearch, tierOf, RESEARCH_TIERS }
 export type { ResearchState, ResearchTierId, ResearchPlan, ResearchPlanStep } from './research'
 import { collectMessageSources, citationCoverage } from './citations'
@@ -289,6 +290,7 @@ type S = {
   eps: Ep[]; prompts: Prompt[]; pls: Pl[]; cmds: Cmd[]; mcps: McpServer[]; chats: Chat[]; chat: string
   tools: Record<string, boolean>
   imageGen: ImageGenPrefs
+  codeRun: CodeRunPrefs
   voicePrefs: VoicePrefs
   search: SearchPrefs
   skills: SkillState[]
@@ -598,6 +600,21 @@ export const useS = create<S>()(
 
       const researchMsg = (chatId: string, mid: string) =>
         get().chats.find((c) => c.id === chatId)?.msgs.find((m) => m.id === mid)
+      /** The assistant message currently showing a deep-research plan (status
+       * 'plan') in this chat, if any. Used to route a user reply as plan
+       * feedback instead of a normal chat message. */
+      const activePlanMsg = (): { c: Chat; m: Msg; i: number } | null => {
+        const c = get().chats.find((x) => x.id === get().chat)
+        if (!c) return null
+        const i = c.msgs.findIndex((m) => m.r === 'assistant' && m.research && m.research.status === 'plan')
+        if (i < 0) return null
+        const m = c.msgs[i]
+        // Only treat a reply as plan feedback if the plan is still the latest
+        // assistant turn (nothing has run since it was shown).
+        const later = c.msgs.slice(i + 1)
+        if (later.some((x) => x.r === 'assistant' && x.research)) return null
+        return { c, m, i }
+      }
       const patchRs = (chatId: string, mid: string, f: (rs: ResearchState) => ResearchState) =>
         edit(chatId, mid, (m) => (m.research ? { ...m, research: f(m.research) } : m))
 
@@ -657,7 +674,7 @@ export const useS = create<S>()(
        * for the user to start (or edit) it. Shares `cur` with the run, so the
        * same Stop button cancels it. Falls back to a deterministic plan when
        * the planning reply cannot be parsed, so the flow never dead-ends. */
-      async function planResearch(mid: string, um: Msg, query: string, tierId: ResearchTierId) {
+      async function planResearch(mid: string, um: Msg, query: string, tierId: ResearchTierId, followUp?: string) {
         const chatId = get().chat
         const p = plan(get(), um)
         if (p.err) {
@@ -689,9 +706,11 @@ export const useS = create<S>()(
             const effRaw = get().effort[e.model] ?? ''
             const o = { ...(get().params.def ? {} : { max: get().params.max, temp: get().params.temp, topp: get().params.topp }), effort: effRaw === 'auto' ? '' : effRaw }
             const sys = `${p.sys}${p.sys ? '\n\n' : ''}${PLAN_SCOPE_SYSTEM}`
-            const ask = planUserAsk(query, tier)
+            const ask = planUserAsk(query, tier, new Date(), followUp)
+            const existingPlan = researchMsg(chatId, mid)?.research?.plan
             const wirePlan = (rounds: { text: string; calls: ToolResult[] }[]) => wire(e, [
               { id: mid, r: 'user' as const, t: ask },
+              ...(existingPlan && followUp ? [{ id: mid, r: 'assistant' as const, t: planNote(existingPlan) }] : []),
               ...(rounds.length ? [{ id: mid, r: 'assistant' as const, t: '', toolRounds: rounds }] : []),
             ])
             const t0 = Date.now()
@@ -739,6 +758,7 @@ export const useS = create<S>()(
         const parsed = text ? parseResearchPlan(text) : null
         const finalPlan = parsed ?? fallbackPlan(query)
         const planWarn = parsed ? undefined : 'The model did not return a usable plan, so this default one is shown. Edit it or start the research.'
+        const shouldStart = parsed && parsed.startNow === true
         patchRs(chatId, mid, (rs) => ({ ...rs, status: 'plan', plan: finalPlan, error: planWarn }))
         // A chat whose first message is a deep-research request is named after
         // the report's plan title (a short topic title) instead of the raw user
@@ -754,6 +774,9 @@ export const useS = create<S>()(
         }))
         edit(chatId, mid, (m) => ({ ...m, by: used ? `${used.name} · ${used.model} · Research plan` : (m.by || 'Research plan'), log }))
         if (cur === r) { cur = null; set({ busy: false }) }
+        // If the model decided the user explicitly asked to begin, start the run
+        // now (the AI decides, not a regex on the user's message).
+        if (shouldStart && !r.stopped) void runResearch(mid, um, query, tier.id)
       }
 
       async function runResearch(mid: string, um: Msg, query: string, tierId: ResearchTierId, resume = false) {
@@ -1101,7 +1124,7 @@ export const useS = create<S>()(
         const memOn = featOn(memoryState, 'memory') && mp.enabled
         // Capture the memory context decision for the visible process log without exposing memory text.
         let memoryTrace: string | undefined
-        if (memOn) system += `${system ? '\n\n' : ''}Memory tool policy: memories are user-controlled local data. Use action list to find exact IDs before updating or deleting; never guess an ID. Use add only for short, summarized durable details. ${mp.intent === 'intentional' ? 'Add only when the user explicitly asks you to remember something.' : mp.intent === 'balanced' ? 'Add details the user explicitly asks you to remember and important durable information they disclose.' : 'Add explicit requests, important disclosures, and smaller useful preferences or details.'} Update or delete only when the user asks to change or forget a memory. Never store secrets or sensitive personal information.`
+        if (memOn) system += `${system ? '\n\n' : ''}Memory tool policy: memories are user-controlled local data. Use action list to find exact IDs before updating or deleting; never guess an ID. Use add only for short, summarized durable details. ${mp.intent === 'intentional' ? 'Add only when the user explicitly asks you to remember something.' : mp.intent === 'balanced' ? 'Add details the user explicitly asks you to remember, plus important durable information they disclose such as allergies, dietary restrictions, major interests, preferences, and other facts worth remembering for future conversations.' : 'Add explicit requests, important disclosures, and smaller useful preferences or details.'} When saving multiple memories in a single turn, make a separate memory tool call for each one rather than combining them. Give each memory a short, descriptive category (like "Dietary restrictions", "Programming interests", or "Travel preferences") rather than a vague label like "About the user". Update or delete only when the user asks to change or forget a memory. Never store secrets or sensitive personal information.`
         if (!memOn) memoryTrace = 'Memory was disabled; no stored context was read.'
         else if (!memoryState.memories.length) memoryTrace = 'Memory was enabled, but there were no saved entries to recall.'
         if (memOn && memoryState.memories.length) {
@@ -1210,6 +1233,8 @@ export const useS = create<S>()(
                 if (GF.tools && featOn(g, 'mcp')) for (const name of Object.keys(DYNAMIC_TOOLS)) base[name] = true
                 // Image generation has its own on switch and endpoint picker.
                 if (GF.tools && normImageGen(g.imageGen).on) base.generate_image = true
+                // Code execution is likewise its own opt-in switch.
+                if (GF.tools && normCodeRun(g.codeRun).on) base.run_code = true
                 // use_skill is a hidden model capability (not listed in Settings → Tools).
                 if (featOn(get(), 'skills') && (p.skills ?? []).length) base[SKILL_TOOL_NAME] = true
                 return base
@@ -1288,6 +1313,13 @@ export const useS = create<S>()(
                 const id = `img-${uid()}`
                 await blobPut(id, JSON.stringify(images)).catch(() => {})
                 return `${imageSummary(images, chosenSize)} [image:${id}]`
+              },
+              run_code: async ({ language, code }: { language?: CodeLang; code?: string }) => {
+                const prefs = normCodeRun(get().codeRun)
+                if (!prefs.on) throw Error('Code execution is off. Turn it on in Settings → Tools → Code execution.')
+                if (language !== 'javascript' && language !== 'python') throw Error('language must be javascript or python')
+                if (typeof code !== 'string' || !code.trim()) throw Error('Provide code to run')
+                return formatCodeResult(language, await runCode(language, code, prefs))
               },
               workspace_upsert: async ({ workspaceId, createNew, workspaceName, revisionName, action, path, language, content, files, template }: {
                 workspaceId?: string; createNew?: boolean; workspaceName?: string; revisionName: string;
@@ -1407,11 +1439,11 @@ export const useS = create<S>()(
           { id: 'k6', name: 'translate', desc: 'Translate text', in: 'text', sys: 'Translate the provided text into the language requested. If no target language is specified, ask which language.', tpl: '{{input}}', pl: '', on: true },
           { id: 'k7', name: 'brainstorm', desc: 'Generate useful ideas', in: 'text', sys: 'Generate varied, practical ideas. Keep each idea distinct and briefly explain why it may work.', tpl: '{{input}}', pl: '', on: true },
         ],
-        chats: [], chat: '', drafts: {}, memories: [], imageGen: { ...BLANK_IMAGE_GEN }, voicePrefs: { ...BLANK_VOICE }, memoryPrefs: { enabled: false, intent: 'balanced', recall: 'contextual', method: 'local', classifierEp: '', classifierModel: '' }, docPrefs: { ...BLANK_DOCS }, research: { ...BLANK_RESEARCH }, tools: { ...DEFAULT_TOOLS }, search: { ...BLANK_SEARCH, keys: { ...BLANK_SEARCH.keys } }, skills: DEFAULT_SKILL_STATE.map((s) => ({ ...s })), widgets: {}, widgetPrefs: { ...DEFAULT_WIDGET_PREFS, widgetOrder: [...DEFAULT_WIDGET_PREFS.widgetOrder], shortcuts: [...DEFAULT_WIDGET_PREFS.shortcuts] }, rail: false, pad: '', snips: [],
+        chats: [], chat: '', drafts: {}, memories: [], imageGen: { ...BLANK_IMAGE_GEN }, codeRun: { ...BLANK_CODE_RUN }, voicePrefs: { ...BLANK_VOICE }, memoryPrefs: { enabled: false, intent: 'balanced', recall: 'contextual', method: 'local', classifierEp: '', classifierModel: '' }, docPrefs: { ...BLANK_DOCS }, research: { ...BLANK_RESEARCH }, tools: { ...DEFAULT_TOOLS }, search: { ...BLANK_SEARCH, keys: { ...BLANK_SEARCH.keys } }, skills: DEFAULT_SKILL_STATE.map((s) => ({ ...s })), widgets: {}, widgetPrefs: { ...DEFAULT_WIDGET_PREFS, widgetOrder: [...DEFAULT_WIDGET_PREFS.widgetOrder], shortcuts: [...DEFAULT_WIDGET_PREFS.shortcuts] }, rail: false, pad: '', snips: [],
         params: { ...DEFAULT_PARAMS }, effort: {},
         workspacePrefs: { defaultView: 'latest', autoOpen: true, autoFollow: true },
         advanced: { ...DEFAULT_ADVANCED },
-        sel: null, pr: 'general', globalPrompt: { on: false, text: '', qualities: [] }, features: { ...DEFAULT_FEATURES }, featureOrder: FEATURES.map(([id]) => id), libraryShow: { ...DEFAULT_LIBRARY_SHOW }, themeMode: 'dark', themeDark: 'plum', themeLight: 'paper', customDarkColors: { ...DEFAULT_CUSTOM_COLORS }, customLightColors: { ...DEFAULT_CUSTOM_LIGHT_COLORS }, setupDone: false, prefs: { ...DEFAULT_PREFS },
+        sel: null, pr: 'general', globalPrompt: { on: true, text: GENERAL_PROMPT_TEXT, qualities: [] }, features: { ...DEFAULT_FEATURES }, featureOrder: FEATURES.map(([id]) => id), libraryShow: { ...DEFAULT_LIBRARY_SHOW }, themeMode: 'dark', themeDark: 'plum', themeLight: 'paper', customDarkColors: { ...DEFAULT_CUSTOM_COLORS }, customLightColors: { ...DEFAULT_CUSTOM_LIGHT_COLORS }, setupDone: false, prefs: { ...DEFAULT_PREFS },
         stats: ZERO(), keys: Object.fromEntries(KEYS.map(([k, , d]) => [k, d])),
         folders: [], price: { in: 0, out: 0 }, todos: [],
         routeStats: {}, flashMsg: null,
@@ -1491,6 +1523,20 @@ export const useS = create<S>()(
               return { chat: base.id, chats: old ? st.chats.map((c) => (c.id === base.id ? next : c)) : [next, ...st.chats], notice: null }
             })
             return true
+          }
+          // A reply while a research plan is waiting (status 'plan') is treated
+          // as feedback to revise the plan, not as a new chat message. The
+          // model re-drafts the plan (and may decide to start it via startNow).
+          {
+            const pm = activePlanMsg()
+            if (pm && !att.length) {
+              const um: Msg = { id: uid(), r: 'user', t: raw, at: Date.now(), att, full: raw }
+              um.historyTokens = 0
+              um.explicitTokens = est(raw)
+              set((st) => ({ chats: st.chats.map((c) => (c.id === pm.c.id ? { ...c, msgs: [...c.msgs, um] } : c)), notice: null }))
+              void planResearch(pm.m.id, um, pm.m.research!.query, pm.m.research!.tier ?? s.research.defaultTier, raw)
+              return true
+            }
           }
           let text = raw, cmd: Cmd | undefined
           const m = v.match(/^\/(\S+)(?:\s+([\s\S]*))?$/)
@@ -1762,6 +1808,7 @@ export const useS = create<S>()(
         p.tools = { ...DEFAULT_TOOLS, ...(p.tools ?? {}) }
         p.mcps = normMcpServers(p.mcps)
         p.imageGen = normImageGen(p.imageGen)
+        p.codeRun = normCodeRun(p.codeRun)
         p.voicePrefs = normVoice(p.voicePrefs)
         p.search = normSearch(p.search)
         p.research = normResearch(p.research)
@@ -1782,6 +1829,12 @@ export const useS = create<S>()(
         }
         p.memories = Array.isArray(p.memories) ? p.memories : []
         p.globalPrompt = normGlobalPrompt(p.globalPrompt)
+        // Turn the global prompt on by default (the general-purpose base). Existing
+        // installs that never configured it migrate over too, so the new default
+        // takes effect without wiping a user's own edits.
+        if (!p.globalPrompt.on && !p.globalPrompt.text && !p.globalPrompt.qualities.length) {
+          p.globalPrompt = { on: true, text: GENERAL_PROMPT_TEXT, qualities: [] }
+        }
         p.features = { ...DEFAULT_FEATURES, ...(typeof p.features === 'object' && p.features ? p.features : {}) }
         for (const k of Object.keys(DEFAULT_FEATURES) as FeatureId[]) if (typeof (p.features as Record<string, unknown>)[k] !== 'boolean') (p.features as Record<string, unknown>)[k] = DEFAULT_FEATURES[k]
         // Persisted feature order: drop unknown ids, append any missing features in default order.

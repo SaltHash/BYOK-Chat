@@ -21,7 +21,7 @@ export function detectAvailableCategories(j: Record<string, unknown>, themes: Re
       || o(j.customDarkColors) || o(j.customLightColors)
       || (typeof j.theme === 'string' && (j.theme as string) in themes) || o(j.customColors) || o(j.prefs),
     features: o(j.features) || Array.isArray(j.featureOrder) || o(j.libraryShow) || o(j.advanced),
-    tools: o(j.tools) || o(j.search) || Array.isArray(j.mcps) || o(j.imageGen),
+    tools: o(j.tools) || o(j.search) || Array.isArray(j.mcps) || o(j.imageGen) || o(j.codeRun),
     tuning: o(j.params) || o(j.effort) || o(j.workspacePrefs) || o(j.docPrefs) || o(j.voicePrefs),
     widgets: o(j.widgets) || o(j.widgetPrefs),
     stats: o(j.stats) || o(j.routeStats),
@@ -37,7 +37,7 @@ type ExportState = {
   pls: unknown; cmds: unknown; skills: unknown
   memories: unknown; memoryPrefs: unknown
   features: unknown; featureOrder: unknown; libraryShow: unknown; advanced: unknown
-  tools: unknown; search: { keys: Record<string, string> }; mcps: unknown; imageGen: unknown
+  tools: unknown; search: { keys: Record<string, string> }; mcps: unknown; imageGen: unknown; codeRun: unknown
   params: unknown; effort: unknown; workspacePrefs: unknown; docPrefs: unknown; voicePrefs: unknown
   widgets: unknown; widgetPrefs: unknown; stats: unknown; routeStats: unknown
   chats: unknown; folders: unknown; chat: unknown; todos: unknown; snips: unknown; pad: unknown
@@ -70,6 +70,7 @@ export function buildExportPayload(
     const mcps = Array.isArray(s.mcps) ? s.mcps : []
     data.mcps = withKeys ? mcps : mcps.map((m) => ({ ...(m as Record<string, unknown>), headers: '' }))
     data.imageGen = s.imageGen
+    data.codeRun = s.codeRun
   }
   if (exports.tuning) { data.params = s.params; data.effort = s.effort; data.workspacePrefs = s.workspacePrefs; data.docPrefs = s.docPrefs; data.voicePrefs = s.voicePrefs }
   if (exports.widgets) { data.widgets = s.widgets; data.widgetPrefs = s.widgetPrefs }

@@ -1,6 +1,6 @@
 import { memo, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
-import { GitBranch, ChevronLeft, ChevronRight, ChevronDown, Sparkles, Server, Cpu, Copy, Check, RefreshCw, Trash2, ListOrdered, CircleCheck, CircleX, TriangleAlert, Paperclip, CornerDownLeft, Download, ExternalLink, Volume2 } from 'lucide-react'
+import { GitBranch, ChevronLeft, ChevronRight, ChevronDown, Sparkles, Server, Cpu, Copy, Check, RefreshCw, Trash2, ListOrdered, CircleCheck, CircleX, TriangleAlert, Paperclip, CornerDownLeft, CornerDownRight, Download, ExternalLink, Volume2 } from 'lucide-react'
 import { useS, useLive, usable, featOn, previewSysFor, type Msg } from '../store'
 import { clampWorkspaceFrac, roundFrac, CHAT_WIDTH } from '../layout'
 import { startPointerDrag } from '../hooks'
@@ -96,6 +96,12 @@ function toolStep(name: string, rawArgs: string, result?: string) {
     try { const a = JSON.parse(rawArgs || '{}'); if (a && typeof a.id === 'string') id = a.id } catch { /* Keep the generic label. */ }
     return `Skill · loaded instructions for “${clip(id || 'unknown skill', 60)}”`
   }
+  if (name === 'run_code') {
+    const language = args.language === 'python' ? 'Python' : 'JavaScript'
+    const code = typeof args.code === 'string' ? args.code : ''
+    const lines = code ? code.split('\n').length : 0
+    return `Code · ${language}${lines ? ` · ${lines} line${lines === 1 ? '' : 's'}` : ''}`
+  }
   return `Tool ${name} · inputs: ${Object.keys(args).length ? Object.entries(args).map(([k, v]) => `${k}=${typeof v === 'string' ? clip(v, 60) : String(v)}`).join(', ') : 'none'}`
 }
 /* Generated images live in durable local storage and are referenced by id in
@@ -176,7 +182,7 @@ function MessageActions({ calls }: { calls: { id: string; name: string; argument
   return <div className="space-y-2 pt-1">
     {actions.map((call) => {
       const args = parse(call.arguments)
-      if (call.name === 'prompt_chip') return <button key={call.id} disabled={busy || used[call.id]} onClick={() => { void run(call.id, String(args.prompt ?? '')) }} className="inline-flex min-h-9 items-center gap-2 rounded-full border border-bor bg-surf px-3 py-1.5 text-sm text-tx transition-colors hover:bg-hov focus-visible:ring-2 focus-visible:ring-ac disabled:opacity-50"><CornerDownLeft size={14} className="text-ac" />{String(args.label || 'Continue')}</button>
+      if (call.name === 'prompt_chip') return <button key={call.id} disabled={busy || used[call.id]} onClick={() => { void run(call.id, String(args.prompt ?? '')) }} className="inline-flex min-h-9 items-center gap-2 rounded-full border border-bor bg-surf px-3 py-1.5 text-sm text-tx transition-colors hover:bg-hov focus-visible:ring-2 focus-visible:ring-ac disabled:opacity-50"><CornerDownRight size={14} className="text-ac" />{String(args.label || 'Continue')}</button>
       const options = Array.isArray(args.options) ? args.options.map((o: any) => typeof o === 'string' ? { label: o, prompt: o } : o).filter((o: any) => o && typeof o.label === 'string').slice(0, 6) : []
       const selected = chosen[call.id] ?? []
       const multi = args.mode === 'multiple'

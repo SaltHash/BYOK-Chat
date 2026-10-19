@@ -48,10 +48,15 @@ export function ResearchPlanCard({ msg }: { msg: Msg }) {
   const busy = useS((s) => s.busy)
   const rs = msg.research
   const [draft, setDraft] = useState<ResearchPlan | null>(rs?.plan ?? null)
-  const [editing, setEditing] = useState(false)
-  // The plan arrives after the generation round returns; adopt it (and leave
-  // edit mode) whenever the stored plan or the status changes.
-  useEffect(() => { setDraft(rs?.plan ?? null); setEditing(false) }, [rs?.plan, rs?.status])
+  // `mode` is the edit button's two-state behaviour:
+  //  - 'view': show the plan as a list. "Edit plan" focuses the composer.
+  //  - 'focus': just focused the composer; button now says "Edit plan manually"
+  //    and a click enters actual editing.
+  //  - 'edit': the manual in-place editing controls are shown.
+  const [mode, setMode] = useState<'view' | 'focus' | 'edit'>('view')
+  // The plan arrives after the generation round returns; adopt it (and reset
+  // the edit state) whenever the stored plan or the status changes.
+  useEffect(() => { setDraft(rs?.plan ?? null); setMode('view') }, [rs?.plan, rs?.status])
   if (!rs || (rs.status !== 'planning' && rs.status !== 'plan')) return null
   const planning = rs.status === 'planning'
   const plan = draft ?? rs.plan
@@ -62,6 +67,41 @@ export function ResearchPlanCard({ msg }: { msg: Msg }) {
   const startNow = () => { if (plan) { const p = trimPlan(plan); save(msg.id, p); start(msg.id) } }
   const updateStep = (id: string, patch: Partial<ResearchPlanStep>) =>
     setDraft((d) => (d ? { ...d, steps: d.steps.map((s) => (s.id === id ? { ...s, ...patch } : s)) } : d))
+  // Single click on "Edit plan" jumps back into the composer with a quick
+  // outline fade animation, then the button relabels so a second click opens
+  // the manual editor.
+  const composerRef = useRef<HTMLTextAreaElement | null>(null)
+  useEffect(() => {
+    const ta = document.getElementById('composer') as HTMLTextAreaElement | null
+    if (ta) composerRef.current = ta
+  }, [])
+  const onEditText = () => {
+    setMode('focus')
+    const ta = composerRef.current ?? (document.getElementById('composer') as HTMLTextAreaElement | null)
+    if (ta) {
+      ta.focus()
+      // Quick outline that fades in then out of the accent color, anchored
+      // to the composer box, to confirm focus moved there.
+      const host = ta.parentElement
+      if (host) {
+        const el = document.createElement('div')
+        el.className = 'composer-focus-outline'
+        el.style.cssText = 'position:absolute;pointer-events:none;border-radius:1.25rem;border:2px solid var(--ac);opacity:0;animation:composerOutlineFade 0.45s ease-out forwards;'
+        const r = ta.getBoundingClientRect()
+        const h = host.getBoundingClientRect()
+        el.style.left = `${r.left - h.left}px`
+        el.style.top = `${r.top - h.top}px`
+        el.style.width = `${r.width}px`
+        el.style.height = `${r.height}px`
+        host.style.position = host.style.position === 'static' || !host.style.position ? 'relative' : host.style.position
+        host.appendChild(el)
+        setTimeout(() => { if (host.contains(el)) host.removeChild(el) }, 460)
+      }
+    }
+  }
+  const onEditManual = () => { setMode('edit') }
+  const commitEdit = () => { if (draft) { save(msg.id, trimPlan(draft)); setMode('view') } }
+  const cancelEdit = () => { setDraft(rs?.plan ?? null); setMode('view') }
   return (
     <div className="max-w-xl space-y-3">
       <p className="text-sm">{PLAN_INTRO}</p>
@@ -73,7 +113,7 @@ export function ResearchPlanCard({ msg }: { msg: Msg }) {
             <span className="ml-2">{rs.scope ? `Getting context · ${rs.scope} ${rs.scope === 1 ? 'search' : 'searches'}…` : 'Generating research plan…'}</span>
           </p>
         ) : plan ? (
-          editing ? (
+          mode === 'edit' ? (
             <div className="space-y-4">
               {plan.steps.map((s) => (
                 <div key={s.id} className="space-y-1.5">
@@ -92,6 +132,10 @@ export function ResearchPlanCard({ msg }: { msg: Msg }) {
                   />
                 </div>
               ))}
+              <div className="flex gap-2 justify-end">
+                <Btn v="soft" icon={X} onClick={cancelEdit}>Cancel</Btn>
+                <Btn v="solid" icon={Check} onClick={commitEdit}>Save plan</Btn>
+              </div>
             </div>
           ) : (
             <ol className="space-y-3">
@@ -104,10 +148,12 @@ export function ResearchPlanCard({ msg }: { msg: Msg }) {
         <div className="flex items-center justify-end gap-2">
           {!planning && plan && (
             <button
-              onClick={() => { if (editing && draft) { save(msg.id, trimPlan(draft)) } setEditing(!editing) }}
+              onClick={mode === 'view' ? onEditText : mode === 'focus' ? onEditManual : undefined}
               className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm text-mu hover:bg-hov hover:text-tx"
             >
-              {editing ? 'Done editing' : <><Pencil size={14} />Edit plan</>}
+              {mode === 'view' && <><Pencil size={14} />Edit plan</>}
+              {mode === 'focus' && <>Edit plan manually</>}
+              {mode === 'edit' && <><Pencil size={14} />Editing…</>}
             </button>
           )}
           {!planning && plan && (

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { X, Plus, Trash2, ArrowUp, ArrowDown, ChevronRight, Eye, EyeOff, Play, ShieldCheck, Shield, Download, Upload, Check, CircleCheck, CircleX, Cpu, Route, GripVertical, Server, ListMusic, ScrollText, Terminal, Wrench, Palette, FolderOpen, FileText, PanelRight, TrendingUp, Keyboard, Search, Brain, Pencil, Sparkles, RotateCcw, SlidersHorizontal, FlaskConical, Library, Database, Lock, LockOpen, LayoutTemplate, Share2, Plug, Image as ImageIcon, Volume2, AudioLines } from 'lucide-react'
-import { useS, useSConfig, PRE, THEMES, DARK_THEMES, LIGHT_THEMES, THEME_COLOR_KEYS, THEME_COLOR_LABELS, SEARCH_PROVIDERS, FEATURES, LIBRARY_ITEMS, FEATURE_TABS, FEATURE_WIDGETS, DEFAULT_LIBRARY_SHOW, DEFAULT_ADVANCED, featOn, normSearch, normResearch, normAdvanced, normDocs, usable, modelsOf, modelNameOf, helperRef, splitHelperRef, effortClassifierOf, TOOL_ROUNDS_DEFAULT, TOOL_ROUNDS_MIN, TOOL_ROUNDS_BASE_MAX, TOOL_ROUNDS_MAX, toolRoundLimitOf, isToolRoundsUnlimited, type Kind, type FeatureId, type DocPrefs, type ModelPrice } from '../store'
+import { X, Plus, Trash2, ArrowUp, ArrowDown, CornerDownRight, ChevronRight, Eye, EyeOff, Play, ShieldCheck, Shield, Download, Upload, Check, CircleCheck, CircleX, Cpu, Route, GripVertical, Server, ListMusic, ScrollText, Terminal, Wrench, Palette, FolderOpen, FileText, PanelRight, TrendingUp, Keyboard, Search, Brain, Pencil, Sparkles, RotateCcw, SlidersHorizontal, FlaskConical, Library, Database, Lock, LockOpen, LayoutTemplate, Share2, Plug, Image as ImageIcon, Volume2, AudioLines, Code2 } from 'lucide-react'
+import { useS, useSConfig, PRE, THEMES, DARK_THEMES, LIGHT_THEMES, THEME_COLOR_KEYS, THEME_COLOR_LABELS, SEARCH_PROVIDERS, FEATURES, LIBRARY_ITEMS, FEATURE_TABS, FEATURE_WIDGETS, DEFAULT_LIBRARY_SHOW, DEFAULT_ADVANCED, featOn, normSearch, normResearch, normAdvanced, normDocs, usable, modelsOf, modelNameOf, helperRef, splitHelperRef, effortClassifierOf, TOOL_ROUNDS_DEFAULT, TOOL_ROUNDS_MIN, TOOL_ROUNDS_BASE_MAX, TOOL_ROUNDS_MAX, toolRoundLimitOf, isToolRoundsUnlimited, GENERAL_PROMPT_TEXT, type Kind, type FeatureId, type DocPrefs, type ModelPrice } from '../store'
 import { RESEARCH_TIERS, type ResearchTierId } from '../research'
 import { normSkills, resolveSkill, validateCustomSkill, enabledSkills, BUILTIN_SKILLS, SKILL_TOOL_NAME, type SkillState } from '../skills'
 import { findDuplicatePairs, mergeMemory } from '../recall'
@@ -15,6 +15,7 @@ import { fetchModelCatalog, fetchModelProviders, filterCatalogByEndpoint, priori
 import { WORKSPACE_TEMPLATES } from '../workspace'
 import { probeMcpServer, mcpToolName, type McpServer } from '../mcp'
 import { BLANK_IMAGE_GEN, IMAGE_SIZES, normImageGen } from '../imagegen'
+import { BLANK_CODE_RUN, CODE_OUTPUT_MAX, CODE_TIMEOUT_MAX, CODE_TIMEOUT_MIN, normCodeRun, PYODIDE_DEFAULT_URL } from '../codesandbox'
 import { normVoice, VOICE_LANGS, speak, stopSpeaking, speechAvailable, dictationAvailable } from '../voice'
 
 const TABS = SETTINGS_TABS
@@ -220,7 +221,7 @@ function ProviderPicker({ e, model, openRouter, update }: { e: any; model: strin
       <Server size={12} />Provider: <span className={current ? 'font-medium text-tx' : ''}>{current?.name ?? 'Automatic'}</span>
     </button>
     {open && <Modal close={() => setOpen(false)}>
-      <div className="flex max-h-[80dvh] w-full max-w-lg flex-col gap-3 rounded-2xl bg-bg p-5 shadow-2xl">
+      <div className="modal-panel flex max-h-[80dvh] w-full max-w-lg flex-col gap-3 rounded-2xl bg-bg p-5 shadow-2xl">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <h3 className="font-semibold">Inference provider</h3>
@@ -345,7 +346,7 @@ function ModelsEditor({ e, update }: { e: any; update: (p: object) => void }) {
       }}
     />
     <button onClick={() => { setPicker(true); setSelectedModels([]); void loadCatalog() }} className="flex w-full items-center justify-center gap-2 rounded-lg border border-dashed border-bor py-2 text-sm text-mu hover:text-tx"><Plus size={14} />Add model</button>
-    {picker && <Modal close={() => setPicker(false)} keyboard={false}><div className="flex max-h-[80dvh] w-full max-w-xl flex-col gap-3 rounded-2xl bg-bg p-5 shadow-2xl">
+    {picker && <Modal close={() => setPicker(false)} keyboard={false}><div className="modal-panel flex max-h-[80dvh] w-full max-w-xl flex-col gap-3 rounded-2xl bg-bg p-5 shadow-2xl">
       <div className="flex items-center justify-between"><div><h3 className="font-semibold">Choose a model</h3><p className="mt-0.5 text-xs text-mu">{e.name}{endpointId ? ` · ${endpointId}` : ''}</p></div><button onClick={() => setPicker(false)} className="grid size-8 place-items-center rounded-lg text-mu hover:bg-hov hover:text-tx" aria-label="Close model picker"><X size={16}/></button></div>
       <button onClick={loadCatalog} className="self-start rounded-lg bg-hov px-3 py-2 text-xs text-tx">{catalog.length ? 'Refresh model catalog' : 'Load available models'}</button>
       <p className="text-xs text-mu">{catalogState || 'Loads models from the provider API, then public catalogs when unavailable.'} Catalog entries may not be enabled on your endpoint.</p>
@@ -407,7 +408,7 @@ function FeaturesTab() {
       })}
       {confirm === 'stats' && (
         <Modal close={() => setConfirm(null)}>
-          <div className="w-full max-w-sm space-y-4 rounded-2xl bg-bg p-5">
+          <div className="modal-panel w-full max-w-sm space-y-4 rounded-2xl bg-bg p-5">
             <div className="flex items-center gap-2 font-semibold"><TrendingUp size={18} className="text-ac" />Turn off stats?</div>
             <p className="text-sm text-mu">Stats stop counting immediately. Delete the existing totals, or keep them stored but frozen until you turn stats back on.</p>
             <div className="flex flex-col gap-2">
@@ -420,7 +421,7 @@ function FeaturesTab() {
       )}
       {confirm === 'memory' && (
         <Modal close={() => setConfirm(null)}>
-          <div className="w-full max-w-sm space-y-4 rounded-2xl bg-bg p-5">
+          <div className="modal-panel w-full max-w-sm space-y-4 rounded-2xl bg-bg p-5">
             <div className="flex items-center gap-2 font-semibold"><Brain size={18} className="text-ac" />Turn off memory?</div>
             <p className="text-sm text-mu">The memory tool stops being offered and no stored context is read. Delete every stored memory, or keep them stored but unused until you turn memory back on.</p>
             <div className="flex flex-col gap-2">
@@ -618,7 +619,7 @@ function Prompts() {
   const setG = (v: Partial<GlobalPrompt>) => patch({ globalPrompt: { ...g, ...v } })
   return (
     <Panel id="prompts" k="prompts" n={prompts.length} add="Add prompt">
-      <Anchor id="global-prompt"><Card icon={ScrollText} title="Global system prompt" sub={g.on ? (g.text.trim() || qualities.length ? 'On · applies to every message in every chat' : 'On · no text yet') : 'Off by default'} muted={!g.on} open0>
+      <Anchor id="global-prompt"><Card icon={ScrollText} title="Global system prompt" sub={g.on ? (g.text.trim() || qualities.length ? 'On · applies to every message in every chat' : 'On · no text yet') : 'Off'} muted={!g.on} open0>
         <div className="flex items-center justify-between gap-3"><div><div className="text-sm font-medium">Apply to every message</div><div className="text-xs text-mu">Added before everything else in every chat, alongside the per-chat prompt.</div></div><Toggle on={g.on} set={(on) => setG({ on })} /></div>
         <Field label="Or pick an existing prompt" hint="Copies its text into the global box.">
           <Sel value="" set={(v) => { const p = prompts.find((x) => x.id === v); if (p) setG({ text: p.text }) }} opts={[['', 'Choose a prompt…'], ...prompts.map((p) => [p.id, p.name] as [string, string])]} />
@@ -636,6 +637,7 @@ function Prompts() {
           })}</div>
         </Field>
         <Field label="Global system prompt" hint="This is the base. Write one from scratch, or copy an existing prompt above."><Area rows={6} value={g.text} set={(v) => setG({ text: v })} /></Field>
+        <div className="flex justify-end"><Btn v="soft" icon={CornerDownRight} onClick={() => setG({ on: true, text: GENERAL_PROMPT_TEXT, qualities: [] })}>Revert to default</Btn></div>
       </Card></Anchor>
       <Anchor id="add-prompt"><span className="block text-xs text-mu">Use Add prompt above for per-chat prompts; each prompt below is individually addressable.</span></Anchor>
       <SortableCards k="prompts" ids={prompts.map((x) => x.id)} label="Prompt" renderCard={(pid, handle) => {
@@ -799,7 +801,7 @@ function ToolLimitCard() {
       </p>
       {warn && (
         <Modal close={() => setWarn(false)}>
-          <div className="w-full max-w-sm space-y-4 rounded-2xl bg-bg p-5">
+          <div className="modal-panel w-full max-w-sm space-y-4 rounded-2xl bg-bg p-5">
             <div className="flex items-center gap-2 font-semibold"><Lock size={18} className="text-ac" />Unlock higher tool limits?</div>
             <p className="text-sm text-mu">Above {TOOL_ROUNDS_BASE_MAX} rounds (up to {TOOL_ROUNDS_MAX}, plus unlimited) a looping model can run for a long time, burn through tokens, and grow the context until requests fail. Only raise this for long tool chains you trust. You can stop any reply with Stop.</p>
             <div className="flex justify-end gap-2">
@@ -880,6 +882,52 @@ function ImageGenCard() {
   )
 }
 
+/* Runs short snippets in a disposable Web Worker. Off by default; JavaScript
+ * works with no setup, Python downloads Pyodide on first use. */
+function CodeRunCard() {
+  const s = useSConfig()
+  const c = normCodeRun(s.codeRun)
+  const set = (p: Partial<typeof c>) => s.patch({ codeRun: { ...c, ...p } })
+  const secs = c.timeoutMs / 1000
+  return (
+    <Anchor id="code-execution">
+      <Card icon={Code2} title="Code execution" sub={c.on ? `On · JavaScript${c.python ? ' and Python' : ''} · ${secs}s limit` : 'Off by default'} muted={!c.on} right={<Toggle on={c.on} set={(on) => set({ on })} label="Allow code execution" />}>
+        <p className="text-sm">Lets the model run short snippets and read their stdout. Every run happens in a disposable Web Worker in this browser: no page DOM, no app storage, no files, and no network for JavaScript. The worker is stopped when the time limit runs out, so an infinite loop cannot freeze the app.</p>
+        <p className="text-sm text-mu">Each run starts fresh, so nothing carries between calls. Code and output are capped, and results are returned to the model as text.</p>
+        <Anchor id="code-timeout">
+          <Field label={`Time limit · ${secs}s`} hint="Wall-clock budget for the snippet once it starts running: the worker is terminated when it runs out. Python runtime startup and package downloads have their own 60 s guard so a slow download does not eat the execution budget.">
+            <RangeSlider label="Code time limit" min={CODE_TIMEOUT_MIN / 1000} max={CODE_TIMEOUT_MAX / 1000} step={1} value={secs} valueText={`${secs} second${secs === 1 ? '' : 's'}`} set={(n) => set({ timeoutMs: Math.round(n) * 1000 })} className="w-full" />
+          </Field>
+        </Anchor>
+        <Anchor id="code-output">
+          <Field label="Output limit" hint="Maximum characters of stdout and result kept from a run. Longer output is truncated with a notice.">
+            <Sel value={String(c.maxOutput)} set={(v) => set({ maxOutput: Number(v) })} opts={[['5000', '5k characters'], ['20000', '20k characters'], ['50000', '50k characters'], [String(CODE_OUTPUT_MAX), '100k characters (max)']]} />
+          </Field>
+        </Anchor>
+        <div className="flex items-center justify-between gap-3">
+          <div><div className="text-sm font-medium">Enable Python</div><div className="text-xs text-mu">Python runs through Pyodide (CPython compiled to WebAssembly). The first run downloads roughly 10 MB; later runs load it from the browser cache.</div></div>
+          <Toggle on={c.python} set={(python) => set({ python })} label="Allow Python code execution" />
+        </div>
+        {c.python && <>
+          <Anchor id="code-packages">
+            <div className="flex items-center justify-between gap-3">
+              <div><div className="text-sm font-medium">Load Python packages</div><div className="text-xs text-mu">Fetch prebuilt wheels (numpy, pandas, scipy, matplotlib and others) when a snippet imports them, then run offline. Each package downloads once and is cached by the browser; large ones can be tens of megabytes.</div></div>
+              <Toggle on={c.pyPackages} set={(pyPackages) => set({ pyPackages })} label="Load Python packages on demand" />
+            </div>
+          </Anchor>
+          <Anchor id="code-pyodide-url">
+            <Field label="Pyodide URL" hint="Directory containing pyodide.js, or a full pyodide.js link. Point this at a self-hosted copy to avoid the CDN. Invalid values fall back to the pinned CDN.">
+              <Input value={c.pyodideUrl} set={(pyodideUrl) => set({ pyodideUrl })} placeholder={PYODIDE_DEFAULT_URL} />
+            </Field>
+          </Anchor>
+          <p role="note" className="rounded-lg bg-bg px-3 py-2 text-xs text-mu">Python runs locally, but its runtime can reach the network through its JavaScript bridge. Only keep Python enabled if you trust code the model writes. Pyodide URL changes apply to the next run.</p>
+        </>}
+        <div className="flex justify-end"><Btn v="soft" icon={RotateCcw} onClick={() => s.patch({ codeRun: { ...BLANK_CODE_RUN, on: c.on } })}>Reset limits</Btn></div>
+      </Card>
+    </Anchor>
+  )
+}
+
 function Tools() {
   const s = useSConfig()
   const [ask, setAsk] = useState<string | null>(null)
@@ -895,6 +943,7 @@ function Tools() {
   return (
     <Panel id="tools">
       <ToolLimitCard />
+      <CodeRunCard />
       <ImageGenCard />
       <DocumentsCard />
       <Anchor id="deep-research">
@@ -1016,7 +1065,7 @@ function Tools() {
       )}
       {t && (
         <Modal close={() => setAsk(null)}>
-          <div className="w-full max-w-sm space-y-4 rounded-2xl bg-bg p-5">
+          <div className="modal-panel w-full max-w-sm space-y-4 rounded-2xl bg-bg p-5">
             <div className="flex items-center gap-2 font-semibold"><ShieldCheck size={18} className="text-ac" />Allow {t[1]}?</div>
             <p className="text-sm text-mu">{t[5]}</p>
             <div className="flex justify-end gap-2">
@@ -1624,7 +1673,7 @@ export function Settings({ tab, setTab }: { tab: string; setTab: (t: string) => 
   }, [setTab])
   return (
     <Modal close={() => setTab('')} blur={false} opacity={settingsOpacity}>
-      <div style={{ width: `min(${settingsWidth}px, 96vw)`, height: `min(${settingsHeight}px, 92dvh)` }} className="settings-root flex overflow-hidden rounded-2xl bg-bg">
+      <div style={{ width: `min(${settingsWidth}px, 96vw)`, height: `min(${settingsHeight}px, 92dvh)` }} className="settings-root modal-panel flex overflow-hidden rounded-2xl bg-bg">
         <nav className="hidden w-56 shrink-0 flex-col border-r border-bor bg-side p-3 sm:flex">
           <div className="min-h-0 flex-1 space-y-0.5 overflow-y-auto">
             {tabs.map(([k, l, I], i) => (

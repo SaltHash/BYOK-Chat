@@ -39,10 +39,14 @@ export type ResearchPlanStepKind = 'search' | 'analyze' | 'report' | 'other'
 /** `items` are the concrete research directions under a step, numbered the way
  * the plan card renders them ((1), (2), (a), …). */
 export type ResearchPlanStep = { id: string; kind: ResearchPlanStepKind; label: string; items: string[] }
-export type ResearchPlan = { title: string; intro: string; steps: ResearchPlanStep[] }
+export type ResearchPlan = { title: string; intro: string; steps: ResearchPlanStep[]; /** Set by the model when the user explicitly asked it to begin the run; the
+ * harness starts research on its own when this is true (the AI decides, not a
+ * regex on the user's message). */ startNow?: boolean }
 
-/** The sentence shown above the plan card before the plan itself. */
-export const PLAN_INTRO = 'Here’s my plan to tackle that topic. Let me know if you need to make changes.'
+/** The sentence shown above the plan card before the plan itself, followed by
+ * the plan. The intro invites the user to edit the plan (the plan is also
+ * shown as a numbered ordered list and can be edited manually). */
+export const PLAN_INTRO = 'Here’s my plan to tackle that topic. You can reply with changes, or click the list below to edit it manually.'
 
 /** The plan JSON shape + rules for the planning prompt. */
 const PLAN_SHAPE = '{"title":"<short topic title, 2-7 words>","intro":"<one short sentence naming the goal>","steps":[{"kind":"search","label":"<2-4 word label>","items":["(1) ...","(2) ..."]},{"kind":"analyze","label":"Analyze Results","items":["(4) ..."]},{"kind":"report","label":"Create Report","items":["(5) ..."]}]}'
@@ -53,6 +57,7 @@ const PLAN_RULES = [
   '- Items must be concrete directions (what to look up, which data to gather, which criteria to compare), never platitudes.',
   '- 3 to 8 items on the main search step; 1 to 3 items on the other steps.',
   '- Keep labels to four words or fewer. Do not use markdown, citations, or the word "step".',
+  '- If the user explicitly asked to start or begin the research now, set "startNow": true so the research begins right away. Otherwise omit this field.',
 ].join('\n')
 
 /** How many context searches the planning pass may run before drafting the plan. */
@@ -70,14 +75,20 @@ export const PLAN_SCOPE_SYSTEM = [
   PLAN_RULES,
 ].join('\n')
 
-/** User turn for the planning call: the topic, the depth, and today's date. */
-export function planUserAsk(query: string, tier: ResearchTier, now: Date = new Date()): string {
-  return [
+/** User turn for the planning call: the topic, the depth, today's date, and an
+ * optional follow-up review (the user's feedback on an earlier plan to revise). */
+export function planUserAsk(query: string, tier: ResearchTier, now: Date = new Date(), followUp?: string): string {
+  const parts = [
     `Topic: ${query}`,
     `Depth: ${tier.label} (up to ${tier.maxSearches} searches and ${tier.maxReads} page reads).`,
     `Today is ${todayStamp(now)}. Bias recent, authoritative sources for time-sensitive topics.`,
     `Search the web ${PLAN_SCOPE_MIN}–${PLAN_SCOPE_MAX} times for basic context, then draft the plan now as strict JSON only.`,
-  ].join('\n')
+  ]
+  if (followUp) {
+    parts.push('')
+    parts.push(`# Earlier plan feedback\nThe user reviewed the plan above and asked for this change: "${followUp.trim().slice(0, 400)}". Revise the plan to address it, then return the new strict JSON only.`)
+  }
+  return parts.join('\n')
 }
 
 const KIND_BY_LABEL = (label: string): ResearchPlanStepKind => {
@@ -110,7 +121,8 @@ export function normalizePlan(v: any): ResearchPlan | null {
   if (!steps.length) return null
   const title = String(v.title ?? '').trim().replace(/\s+/g, ' ').slice(0, 90)
   const intro = String(v.intro ?? '').trim().replace(/\s+/g, ' ').slice(0, 240)
-  return { title, intro, steps }
+  const startNow = typeof v.startNow === 'boolean' ? v.startNow : false
+  return { title, intro, steps, startNow }
 }
 
 /** Pull the first JSON object out of a model reply (it may be fenced or have

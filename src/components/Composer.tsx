@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
-import { Plus, FileUp, FileText, Image as ImageIcon, ArrowUp, Square, ChevronRight, ListMusic, Cpu, ScrollText, Settings, Search, BookOpen, X, TriangleAlert, Wrench, Link as LinkIcon, ScanText, Mic } from 'lucide-react'
-import { useS, useLive, usable, modelsOf, modelNameOf, featOn, normDocs, effortClassifierOf, type Att, type Ep } from '../store'
+import { Plus, FileUp, FileText, Image as ImageIcon, ArrowUp, Square, CornerDownRight, ChevronRight, ListMusic, Cpu, ScrollText, Settings, Search, BookOpen, X, TriangleAlert, Wrench, Link as LinkIcon, ScanText, Mic } from 'lucide-react'
+import { useS, usable, modelsOf, modelNameOf, featOn, normDocs, effortClassifierOf, type Att, type Ep } from '../store'
 import { CI, TOOLS } from '../meta'
 import { composerWidth } from '../layout'
 import { can, fmt, readAtts, ocrImage, fetchPage } from '../engine'
@@ -100,18 +100,12 @@ export function Composer({ cfg }: { cfg: (t: string) => void }) {
   const hl = Math.min(hi, Math.max((menu?.length ?? 1) - 1, 0))
   const segs = useMemo(() => tokenizeMentions(v, { cmds: s.cmds, tools: s.tools, commandsOn: featOn(s, 'commands'), toolsOn: featOn(s, 'tools') }), [v, s.cmds, s.tools, s.features])
   const pills = useMemo(() => mentionsOf(segs).filter(isPill), [segs])
-  const live = useLive((l) => l.tools)
-  const lastAiId = useS((st) => {
-    const c = st.chats.find((x) => x.id === st.chat)
-    return c ? [...c.msgs].reverse().find((m) => m.r === 'assistant')?.id : undefined
-  })
-  const searchOn = !!s.busy && !!lastAiId && (live[lastAiId] ?? []).some((t) => t.name === 'search')
-  const running: 'search' | null = searchOn ? 'search' : null
   const typed = useMemo(() => bannerOf(v, segs), [v, segs])
   // Banner reflects a pre-send state only (armed/typed mentions). A sent
   // research run keeps its banner in the chat bubble (picker/progress card),
-  // not in the composer.
-  const banner: 'search' | 'research' | null = running ?? armed ?? typed?.kind ?? null
+  // not in the composer. The AI using search internally never shows a banner —
+  // only an explicit @search( call by the user does.
+  const banner: 'search' | 'research' | null = armed ?? typed?.kind ?? null
   // A search banner must say so when the tool is disabled: otherwise the
   // composed @search(…) message is sent with no search tool attached and the
   // model answers from memory.
@@ -377,6 +371,12 @@ export function Composer({ cfg }: { cfg: (t: string) => void }) {
                   <button className={main} onClick={() => { s.patch({ draft: v ? `${v.trim()} @research(` : '@research(' }); close(); ta.current?.focus() }}><BookOpen size={16} className="shrink-0 text-mu" /><span className="min-w-0 flex-1 truncate">Deep research…</span></button>
                   <button aria-label="Deep research settings" title="Deep research settings" className={gear} onClick={() => { close(); cfg('tools') }}><Settings size={15} /></button>
                 </div>
+                {searchEnabled && (
+                  <div className={row}>
+                    <button className={main} onClick={() => { s.patch({ draft: v ? `${v.trim()} @search(` : '@search(' }); close(); ta.current?.focus() }}><Search size={16} className="shrink-0 text-mu" /><span className="min-w-0 flex-1 truncate">Search the web…</span></button>
+                    <button aria-label="Search settings" title="Search settings" className={gear} onClick={() => { close(); cfg('tools') }}><Settings size={15} /></button>
+                  </div>
+                )}
                 <Item icon={Wrench} onClick={() => { close(); cfg('tools') }}>Manage tools…</Item>
               </>
               )

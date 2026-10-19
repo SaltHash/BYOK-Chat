@@ -80,6 +80,11 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
   const [menu, setMenu] = useState<{ id: string; x: number; y: number } | null>(null)
   const [deleteId, setDeleteId] = useState('')
   const [folderId, setFolderId] = useState('')
+  // The temporary section is collapsed to its two newest chats by default and
+  // capped at a fraction of the sidebar's height, past which it scrolls.
+  const [tempOpen, setTempOpen] = useState(false)
+  const [sideH, setSideH] = useState(0)
+  const asideRef = useRef<HTMLElement>(null)
   // Pointer-based cross-container drag state (replaces HTML5 DnD): the dragged
   // chat follows the pointer in an overlay while a wireframe placeholder marks
   // the live insertion point inside the hovered folder (or Recent).
@@ -95,6 +100,17 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
   const dragState = useRef({ dragId: null as string | null, target: null as { folder: string; at: number } | null })
   dragState.current = { dragId, target }
   useEffect(() => { const timer = setInterval(() => setClock(Date.now()), 30000); return () => clearInterval(timer) }, [])
+  // Track the sidebar's height so the temporary section can be capped relative
+  // to it regardless of viewport size or the user's resized width.
+  useEffect(() => {
+    const el = asideRef.current
+    if (!el || typeof ResizeObserver === 'undefined') return
+    const measure = () => setSideH(el.getBoundingClientRect().height)
+    measure()
+    const ro = new ResizeObserver(measure)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [open])
   useEffect(() => {
     if (!menu) return
     const f = () => setMenu(null)
@@ -413,10 +429,14 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
     const mins = Math.max(0, Math.ceil((c.expiresAt - clock) / 60000))
     return mins >= 60 ? `${Math.floor(mins / 60)}h left` : `${mins}m left`
   }
+  // Cap the temporary section at 40% of the sidebar so it can never crowd out
+  // folders and Recent; beyond the cap the chat list scrolls within the frame.
+  const tempMaxH = sideH ? Math.floor(sideH * 0.4) : undefined
+  const tempVisible = tempOpen ? temporary : temporary.slice(0, 2)
   const item = 'flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm hover:bg-surf'
   const safeWidth = clampSidebarWidth(width)
   return (
-    <aside style={{ width: safeWidth, maxWidth: '90vw' }} className="z-20 flex min-w-0 shrink-0 flex-col gap-3 border-r border-bor bg-side p-3 max-md:fixed max-md:inset-y-0">
+    <aside ref={asideRef} style={{ width: safeWidth, maxWidth: '90vw' }} className="z-20 flex min-w-0 shrink-0 flex-col gap-3 border-r border-bor bg-side p-3 max-md:fixed max-md:inset-y-0">
       <div className="flex gap-2">
         <Btn v="solid" icon={s.prefs.temporaryByDefault ? Clock : Plus} title={s.prefs.temporaryByDefault ? 'New temporary chat' : 'New chat'} className="flex-1" onClick={() => s.newChat()}>{s.prefs.temporaryByDefault ? 'Temporary chat' : 'New chat'}</Btn>
         <Btn icon={s.prefs.temporaryByDefault ? Plus : Clock} title={s.prefs.temporaryByDefault ? 'New regular chat' : 'New temporary chat'} onClick={() => s.newChat(!s.prefs.temporaryByDefault)} />
@@ -449,16 +469,23 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
         ) : (
         <>
         {!!pinned.length && <div><div className="px-2.5 pb-1 text-xs font-medium text-mu">Pinned</div>{rows(pinned, 'pinned')}</div>}
-        <div className="rounded-lg">
-          <div className="px-2.5 pb-1 text-xs font-medium text-mu">Temporary chats</div>
-          {temporary.map((c) => <div key={c.id} className={cx('group flex items-center rounded-lg pr-2 text-sm', s.chat === c.id ? 'bg-hov' : 'hover:bg-surf')}>
-            <button onClick={() => s.patch({ chat: c.id })} className="flex min-w-0 flex-1 items-center gap-2.5 rounded-lg px-2.5 py-2 text-left">
-              <Clock size={15} className="shrink-0 text-mu" /><span className="truncate">{c.title}</span>
+        <div className="flex flex-col rounded-lg" style={{ maxHeight: tempMaxH }}>
+          <div className="shrink-0 px-2.5 pb-1 text-xs font-medium text-mu">Temporary chats</div>
+          <div className="min-h-0 overflow-y-auto">
+            {tempVisible.map((c) => <div key={c.id} className={cx('group flex items-center rounded-lg pr-2 text-sm', s.chat === c.id ? 'bg-hov' : 'hover:bg-surf')}>
+              <button onClick={() => s.patch({ chat: c.id })} className="flex min-w-0 flex-1 items-center gap-2.5 rounded-lg px-2.5 py-2 text-left">
+                <Clock size={15} className="shrink-0 text-mu" /><span className="truncate">{c.title}</span>
+              </button>
+              <span title={c.expiresAt ? `Deletes in ${timeLeft(c)}` : 'Deletes when you leave'} className="shrink-0 text-xs text-mu">{timeLeft(c)}</span>
+              <button title="Delete chat (hold Shift to skip confirmation)" onClick={(e) => del(c.id, e.shiftKey)} className={cx(act, 'ml-1 hidden group-hover:grid hover:text-er')}><Trash2 size={14} /></button>
+            </div>)}
+            {!temporary.length && <p className="px-2.5 py-1 text-sm text-mu">No temporary chats. Nothing to clean up, nice.</p>}
+          </div>
+          {temporary.length > 2 && (
+            <button onClick={() => setTempOpen((v) => !v)} aria-expanded={tempOpen} className="mt-0.5 shrink-0 rounded-lg px-2.5 py-1.5 text-left text-xs font-medium text-mu hover:bg-surf hover:text-tx">
+              {tempOpen ? 'Show less' : `Show more (${temporary.length - 2})`}
             </button>
-            <span title={c.expiresAt ? `Deletes in ${timeLeft(c)}` : 'Deletes when you leave'} className="shrink-0 text-xs text-mu">{timeLeft(c)}</span>
-            <button title="Delete chat (hold Shift to skip confirmation)" onClick={(e) => del(c.id, e.shiftKey)} className={cx(act, 'ml-1 hidden group-hover:grid hover:text-er')}><Trash2 size={14} /></button>
-          </div>)}
-          {!temporary.length && <p className="px-2.5 py-1 text-sm text-mu">No temporary chats. Nothing to clean up, nice.</p>}
+          )}
         </div>
         <div className="flex items-center justify-between px-2.5 text-xs font-medium text-mu">
           <span>Folders</span>

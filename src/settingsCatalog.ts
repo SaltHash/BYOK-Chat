@@ -123,6 +123,11 @@ export const SETTING_LINKS: SettingLink[] = [
 
   // Tools
   { tab: 'tools', anchor: 'tool-limit', title: 'Tool execution limit', keywords: 'tool rounds limit unlock unlimited sequential loop stop' },
+  { tab: 'tools', anchor: 'code-execution', title: 'Code execution', keywords: 'code execution run snippet javascript python sandbox pyodide timeout output limit stdout' },
+  { tab: 'tools', anchor: 'code-timeout', title: 'Code time limit', keywords: 'code timeout seconds limit runaway loop infinite sandbox' },
+  { tab: 'tools', anchor: 'code-output', title: 'Code output limit', keywords: 'code output characters limit truncate stdout sandbox' },
+  { tab: 'tools', anchor: 'code-packages', title: 'Load Python packages', keywords: 'python packages numpy pandas scipy matplotlib wheels pyodide import install' },
+  { tab: 'tools', anchor: 'code-pyodide-url', title: 'Pyodide URL', keywords: 'pyodide python runtime webassembly cdn self host url' },
   { tab: 'tools', anchor: 'image-generation', title: 'Image generation', keywords: 'image generation dalle gpt-image flux imagen stable diffusion endpoint model size' },
   { tab: 'tools', anchor: 'documents', title: 'Document extraction (PDF / Office / archives)', keywords: 'pdf text office docx unpack zip transcripts' },
   { tab: 'tools', anchor: 'ocr', title: 'Image text extraction (OCR)', keywords: 'ocr vision endpoint auto always image transcription' },
