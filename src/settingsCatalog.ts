@@ -38,7 +38,7 @@ export const SETTINGS_TABS: [SettingsTabId, string, Ic][] = [
 ]
 
 export const TAB_KEYWORDS: Record<SettingsTabId, string> = {
-  features: 'features toggles enable disable library routing advanced',
+  features: 'features toggles enable disable library advanced',
   eps: 'endpoints models providers api keys connections model aliases base url preset credentials pricing test helper classification title effort auto recall',
   prompts: 'prompts system instructions global',
   skills: 'skills instructions custom builtin extra tasks',
@@ -82,7 +82,6 @@ export const SETTING_LINKS: SettingLink[] = [
   { tab: 'features', anchor: 'feature-library', title: 'Feature: Library', keywords: 'feature library toggle sidebar' },
   { tab: 'features', anchor: 'library-entries', title: 'Library entries', keywords: 'library sidebar shortcuts entries show' },
   { tab: 'features', anchor: 'feature-workspace', title: 'Feature: Workspace', keywords: 'feature workspace toggle files' },
-  { tab: 'features', anchor: 'feature-routing', title: 'Feature: Routing', keywords: 'feature routing toggle classifier' },
   { tab: 'features', anchor: 'feature-advanced', title: 'Feature: Advanced', keywords: 'feature advanced toggle debugging' },
 
   // Endpoints
@@ -174,6 +173,8 @@ export const SETTING_LINKS: SettingLink[] = [
   { tab: 'look', anchor: 'context-limit', title: 'Context meter limit', keywords: 'context limit estimated meter tokens' },
   { tab: 'look', anchor: 'theme-picker', title: 'Theme picker', keywords: 'theme plum claude obsidian bronze paper sage frost sunset custom' },
   { tab: 'look', anchor: 'custom-colors', title: 'Custom theme colors', keywords: 'custom colors hex background accent text code syntax' },
+  { tab: 'look', anchor: 'seasonal', title: 'Seasonal touches', keywords: 'seasonal festive greeting holiday plain' },
+  { tab: 'look', anchor: 'completion-cues', title: 'Completion cues', keywords: 'completion cues chime confetti deep research workspace finished' },
   { tab: 'chats', anchor: 'show-by', title: 'Show which model answered', keywords: 'show model answered label byline' },
   { tab: 'chats', anchor: 'show-log', title: 'Show model-use details', keywords: 'process log details classifiers failures' },
   { tab: 'chats', anchor: 'show-tps', title: 'Show generation speed', keywords: 'tokens per second speed tps' },
@@ -181,6 +182,7 @@ export const SETTING_LINKS: SettingLink[] = [
   { tab: 'chats', anchor: 'auto-title', title: 'Auto-generate chat names', keywords: 'auto title chat names concise' },
   { tab: 'chats', anchor: 'temporary-default', title: 'New chats are temporary by default', keywords: 'temporary default retention expires' },
   { tab: 'look', anchor: 'model-picker-labels', title: 'Model picker labels', keywords: 'model picker primary secondary name id provider' },
+  { tab: 'look', anchor: 'model-picker-labels-secondary', title: 'Model picker secondary label', keywords: 'model picker secondary label provider name id none' },
   { tab: 'look', anchor: 'palette-height', title: 'Command palette height', keywords: 'palette height maximum result list scroll' },
   { tab: 'look', anchor: 'chat-width', title: 'Message width', keywords: 'narrow standard wide conversation column' },
   { tab: 'look', anchor: 'settings-size', title: 'Settings window size', keywords: 'settings width height window' },

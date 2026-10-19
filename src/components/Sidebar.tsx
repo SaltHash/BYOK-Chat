@@ -435,9 +435,9 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
     const mins = Math.max(0, Math.ceil((c.expiresAt - clock) / 60000))
     return mins >= 60 ? `${Math.floor(mins / 60)}h left` : `${mins}m left`
   }
-  // Cap the temporary section at 40% of the sidebar so it can never crowd out
+  // Cap the temporary section at 30% of the sidebar so it can never crowd out
   // folders and Recent; beyond the cap the chat list scrolls within the frame.
-  const tempMaxH = sideH ? Math.floor(sideH * 0.4) : undefined
+  const tempMaxH = sideH ? Math.floor(sideH * 0.3) : undefined
   // How many temporary chats show before the section needs expanding. 0 means
   // "only the one I am reading" (none when a temporary chat is not open), 6
   // means everything.

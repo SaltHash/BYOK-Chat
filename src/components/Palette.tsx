@@ -19,7 +19,7 @@ const TAB_FEATURE: Record<string, FeatureId> = {
 const FEATURE_ICON: Record<string, Ic> = {
   prompts: ScrollText, skills: Sparkles, tools: Wrench, playlists: ListMusic, commands: Terminal,
   stats: TrendingUp, memory: Brain, widgets: PanelRight, shortcuts: Keyboard, library: Library,
-  workspace: FolderOpen, routing: ListMusic, advanced: FlaskConical,
+  workspace: FolderOpen, advanced: FlaskConical,
 }
 
 export function Palette({ close, cfg, toggleSide }: { close: () => void; cfg: (t: string) => void; toggleSide: () => void }) {

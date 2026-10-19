@@ -84,7 +84,7 @@ export const normFeatureOrder = (v: any): FeatureId[] => {
 
 /* Feature kill-switches. A disabled feature must not be used by the AI or the
    program in any capacity until turned back on. `library` is off by default. */
-export type FeatureId = 'prompts' | 'skills' | 'tools' | 'playlists' | 'commands' | 'stats' | 'memory' | 'widgets' | 'shortcuts' | 'library' | 'advanced' | 'workspace' | 'routing' | 'mcp' | 'voice'
+export type FeatureId = 'prompts' | 'skills' | 'tools' | 'playlists' | 'commands' | 'stats' | 'memory' | 'widgets' | 'shortcuts' | 'library' | 'advanced' | 'workspace' | 'mcp' | 'voice'
 export const FEATURES: [FeatureId, string, string][] = [
   ['prompts', 'Prompts', 'Per-chat system prompts and the global system prompt. Off hides the prompt picker everywhere.'],
   ['skills', 'Skills', 'Extra instructions the AI can use for specific tasks.'],
@@ -99,16 +99,15 @@ export const FEATURES: [FeatureId, string, string][] = [
   ['shortcuts', 'Shortcuts', 'Every keyboard shortcut, plus the shortcut cheat-sheet widget.'],
   ['library', 'Library', 'The sidebar shortcut list below your chats.'],
   ['workspace', 'Workspace', 'Workspace file panel and workspace settings.'],
-  ['routing', 'Routing', 'Playlist classifier routing and routing rules.'],
   ['advanced', 'Advanced', 'Debugging aids: verbose errors, hidden tools, system prompt, payloads and token counts.'],
 ]
-export const DEFAULT_FEATURES: Record<FeatureId, boolean> = { prompts: true, skills: true, tools: true, playlists: true, commands: true, stats: true, memory: true, widgets: true, shortcuts: true, library: false, advanced: false, workspace: true, routing: true, mcp: true, voice: true }
+export const DEFAULT_FEATURES: Record<FeatureId, boolean> = { prompts: true, skills: true, tools: true, playlists: true, commands: true, stats: true, memory: true, widgets: true, shortcuts: true, library: false, advanced: false, workspace: true, mcp: true, voice: true }
 export const LIBRARY_ITEMS: [string, string][] = [['eps', 'Endpoints'], ['pls', 'Playlists'], ['prompts', 'Prompts'], ['cmds', 'Commands'], ['tools', 'Tools'], ['memory', 'Memory'], ['widgets', 'Widgets']]
 export const DEFAULT_LIBRARY_SHOW: Record<string, boolean> = { eps: true, pls: true, prompts: true, cmds: true, tools: true, memory: true, widgets: true }
 /** Widgets that belong to a feature and must go dark with it. */
 export const FEATURE_WIDGETS: Partial<Record<FeatureId, string[]>> = { prompts: ['prompts'], shortcuts: ['keys'], stats: ['usage', 'cost', 'last'] }
 /** Settings tabs hidden while their feature is off. */
-export const FEATURE_TABS: Partial<Record<FeatureId, string[]>> = { prompts: ['prompts'], skills: ['skills'], tools: ['tools'], playlists: ['pls'], commands: ['cmds'], stats: ['stats'], memory: ['memory'], widgets: ['widgets'], shortcuts: ['keys'], advanced: ['adv'], workspace: ['workspace'], routing: ['routing'], mcp: ['mcp'], voice: ['voice'] }
+export const FEATURE_TABS: Partial<Record<FeatureId, string[]>> = { prompts: ['prompts'], skills: ['skills'], tools: ['tools'], playlists: ['pls'], commands: ['cmds'], stats: ['stats'], memory: ['memory'], widgets: ['widgets'], shortcuts: ['keys'], advanced: ['adv'], workspace: ['workspace'], mcp: ['mcp'], voice: ['voice'] }
 export const featOn = (s: { features?: Record<FeatureId, boolean> } | null | undefined, f: FeatureId): boolean => s?.features?.[f] ?? DEFAULT_FEATURES[f]
 /** Whether a widget may render: widgets feature on, its owning feature on, and itself enabled. */
 export const widgetOn = (s: { features?: Record<FeatureId, boolean>; widgets: Record<string, boolean> }, id: string): boolean => {
