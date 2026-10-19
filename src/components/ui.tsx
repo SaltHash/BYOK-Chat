@@ -182,7 +182,7 @@ export function Pop({ trigger, children, up, right, w = 'w-72', scroll = true }:
   return (
     <div ref={r} className="relative">
       <div onClick={() => setO((v) => !v)}>{trigger(o)}</div>
-      {o && <div className={cx('absolute z-30', scroll && 'max-h-96 overflow-y-auto', !scroll && 'overflow-hidden', w, up ? 'bottom-full mb-2' : 'top-full mt-2', right ? 'right-0' : 'left-0')}><Menu>{children(() => setO(false))}</Menu></div>}
+      {o && <div className={cx('absolute z-30 max-w-[calc(100vw-1rem)]', scroll && 'max-h-96 overflow-y-auto', !scroll && 'overflow-hidden', w, up ? 'bottom-full mb-2' : 'top-full mt-2', right ? 'right-0' : 'left-0')}><Menu>{children(() => setO(false))}</Menu></div>}
     </div>
   )
 }
@@ -223,7 +223,7 @@ export function Modal({ children, close, blur = true, opacity = 55, keyboard = t
     if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus() }
     else if (e.shiftKey && (document.activeElement === first || document.activeElement === node)) { e.preventDefault(); last.focus() }
   }
-  return <div ref={root} role="dialog" aria-modal="true" tabIndex={-1} onKeyDown={onKeyDown} style={{ backgroundColor: `rgb(0 0 0 / ${Math.max(0, Math.min(100, opacity))}%)`, backdropFilter: blur ? 'blur(var(--modal-blur, 12px))' : undefined }} className="fixed inset-0 z-50 grid place-items-center p-4 outline-none" onMouseDown={(e) => e.target === e.currentTarget && close()}>{children}</div>
+  return <div ref={root} role="dialog" aria-modal="true" tabIndex={-1} onKeyDown={onKeyDown} style={{ backgroundColor: `rgb(0 0 0 / ${Math.max(0, Math.min(100, opacity))}%)`, backdropFilter: blur ? 'blur(var(--modal-blur, 12px))' : undefined }} className="fixed inset-0 z-50 grid place-items-center overflow-y-auto overscroll-contain p-4 outline-none" onMouseDown={(e) => e.target === e.currentTarget && close()}>{children}</div>
 }
 
 export function Confirm({ title, text, ok, close, run }: { title: string; text: string; ok: string; close: () => void; run: () => void }) {

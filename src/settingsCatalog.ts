@@ -55,7 +55,7 @@ export const TAB_KEYWORDS: Record<SettingsTabId, string> = {
   keys: 'shortcuts keybinds keyboard reset bindings',
   stats: 'stats usage tokens cost messages chats reset totals',
   data: 'data import backup privacy export erase sync encrypted history storage compact',
-  adv: 'advanced debugging verbose errors additional capabilities system prompt payloads token counts',
+  adv: 'advanced debugging verbose errors additional capabilities system prompt payloads token counts model parameters temperature top p max tokens',
 }
 
 export type SettingLink = {
@@ -222,6 +222,7 @@ export const SETTING_LINKS: SettingLink[] = [
   { tab: 'adv', anchor: 'show-system-prompt', title: 'Show full system prompt', keywords: 'system prompt process log global skills memory' },
   { tab: 'adv', anchor: 'show-tool-payloads', title: 'Show tool arguments and results', keywords: 'payloads json arguments results summaries' },
   { tab: 'adv', anchor: 'show-token-counts', title: 'Show per-step token counts', keywords: 'token counts input output per step reported' },
+  { tab: 'adv', anchor: 'show-model-params', title: 'Model parameters', keywords: 'model parameters temperature top p max tokens generation header advanced' },
 ]
 
 /** Split a `cfg()` target like `"tools#search-mode"` into tab + anchor. */

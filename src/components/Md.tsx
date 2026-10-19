@@ -58,7 +58,7 @@ export function UserText({ m }: { m: Msg }) {
               : m.t}
         </div>
       </div>
-      <span className="flex shrink-0 gap-0.5 opacity-0 transition-opacity group-hover/u:opacity-100 focus-within:opacity-100">
+      <span className="flex shrink-0 flex-wrap gap-0.5 opacity-100 transition-opacity md:opacity-0 md:group-hover/u:opacity-100 md:focus-within:opacity-100">
         <Btn sm icon={copied ? Check : Copy} title="Copy" onClick={() => { void navigator.clipboard?.writeText(m.t).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1200) }).catch(() => {}) }} />
         <Btn sm icon={GitBranch} title="Branch from here (copy this thread into a new chat)" onClick={() => branch(m.id)} />
         <Btn sm icon={Pencil} title="Edit message" onClick={() => setEd(true)} />

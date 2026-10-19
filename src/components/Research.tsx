@@ -399,7 +399,7 @@ export function ResearchPanel({ msg, onClose }: { msg: Msg; onClose: () => void 
       <div className="flex items-center gap-2 border-b border-bor px-3 py-2">
         <BookOpen size={15} className="shrink-0 text-ac" />
         <span className="min-w-0 flex-1 truncate text-sm font-medium">Research · {rs?.query.slice(0, 80)}</span>
-        <div role="tablist" aria-label="Research view" className="inline-flex items-center gap-1 rounded-lg bg-hov p-0.5">
+        <div role="tablist" aria-label="Research view" className="inline-flex shrink-0 items-center gap-1 rounded-lg bg-hov p-0.5">
           {(['report', 'sources', 'reasoning'] as const).map((v) => (
             <button key={v} role="tab" aria-selected={tab === v} onClick={() => setTab(v)} className={cx('rounded-md px-2 py-1 text-xs capitalize', tab === v ? 'bg-surf text-tx' : 'text-mu hover:text-tx')}>
               {v}

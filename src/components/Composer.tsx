@@ -12,7 +12,7 @@ import { MentionBanner, MentionInfo } from './Mention'
 import { Notice } from './Extra'
 import { dictationAvailable, startDictation, stopSpeaking, normVoice, type Dictation } from '../voice'
 
-const chip = 'flex h-9 items-center gap-2 rounded-lg px-2.5 text-sm text-mu hover:bg-hov hover:text-tx'
+const chip = 'flex h-9 min-w-0 items-center gap-2 rounded-lg px-2.5 text-sm text-mu hover:bg-hov hover:text-tx'
 
 function ModelMenu({ close, cfg }: { close: () => void; cfg: (t: string) => void }) {
   const s = useS(useShallow((st) => { const { chats, ...rest } = st; void chats; return rest }))
@@ -269,7 +269,6 @@ export function Composer({ cfg }: { cfg: (t: string) => void }) {
     syncActive()
   }
   const dismissBanner = () => {
-    if (running === 'search') { s.stop(); return }
     if (armed) { setArmed(null); ta.current?.focus(); return }
     if (typed?.kind === 'research') { s.patch({ draft: typed.query ?? '' }); ta.current?.focus(); return }
     if (typed?.kind === 'search' && typed.m) { s.patch({ draft: stripMention(v, typed.m) }); ta.current?.focus() }
@@ -293,8 +292,8 @@ export function Composer({ cfg }: { cfg: (t: string) => void }) {
               <div key={i} className={cx('group/preview relative flex h-24 w-28 flex-col overflow-hidden rounded-lg bg-hov p-1.5 ring-1 ring-hov', bad(a) && 'ring-er')} title={a.text ? `${a.name} · transcribed text attached` : a.name}>
                 <img src={`data:${a.mime || 'image/*'};base64,${a.data}`} alt={a.name} className="min-h-0 flex-1 rounded object-contain p-1" />
                 <span className="truncate px-1 text-xs text-mu" title={a.name}>{a.text ? '✓ ' : ''}{a.name}</span>
-                {!a.text && <button aria-label={`Transcribe text from ${a.name}`} title="Transcribe image text with a vision model" onClick={() => { void ocrOne(a) }} disabled={ocrBusy != null} className="absolute bottom-6 left-1 grid size-5 place-items-center rounded-full bg-black/70 text-white opacity-0 transition-opacity group-hover/preview:opacity-100 focus:opacity-100 disabled:opacity-40"><ScanText size={12} /></button>}
-                <button aria-label={`Remove ${a.name}`} onClick={() => setAtt(att.filter((_, j) => j !== i))} className="absolute right-1 top-1 grid size-5 place-items-center rounded-full bg-black/70 text-white opacity-0 transition-opacity group-hover/preview:opacity-100 focus:opacity-100"><X size={12} /></button>
+                {!a.text && <button aria-label={`Transcribe text from ${a.name}`} title="Transcribe image text with a vision model" onClick={() => { void ocrOne(a) }} disabled={ocrBusy != null} className="absolute bottom-6 left-1 grid size-5 place-items-center rounded-full bg-black/70 text-white opacity-100 transition-opacity md:opacity-0 md:group-hover/preview:opacity-100 md:focus:opacity-100 disabled:opacity-40"><ScanText size={12} /></button>}
+                <button aria-label={`Remove ${a.name}`} onClick={() => setAtt(att.filter((_, j) => j !== i))} className="absolute right-1 top-1 grid size-5 place-items-center rounded-full bg-black/70 text-white opacity-100 transition-opacity md:opacity-0 md:group-hover/preview:opacity-100 md:focus:opacity-100"><X size={12} /></button>
                 {bad(a) && <span className="absolute left-1 right-1 top-7 rounded bg-er/90 px-1 py-0.5 text-center text-xs text-white"><TriangleAlert size={11} className="inline" /> Unsupported</span>}
               </div>
             ) : (
@@ -385,11 +384,11 @@ export function Composer({ cfg }: { cfg: (t: string) => void }) {
           <Pop up w="w-80" scroll={false} trigger={(o) => (
             <button className={chip}>
               {s.sel?.k === 'pl' && featOn(s, 'playlists') ? <ListMusic size={16} /> : <Cpu size={16} />}
-              <span className="max-w-40 truncate">{sel ? (s.sel?.model && s.sel.k === 'ep' ? modelNameOf(sel as any, s.sel.model) : sel.name) : 'All endpoints'}</span><ChevronRight size={14} className={cx('transition-transform', o && 'rotate-90')} />
+              <span className="max-w-24 truncate sm:max-w-40">{sel ? (s.sel?.model && s.sel.k === 'ep' ? modelNameOf(sel as any, s.sel.model) : sel.name) : 'All endpoints'}</span><ChevronRight size={14} className={cx('transition-transform', o && 'rotate-90')} />
             </button>
           )}>{(close) => <ModelMenu close={close} cfg={cfg} />}</Pop>
           {featOn(s, 'prompts') && <Pop up trigger={(o) => (
-            <button className={chip}><ScrollText size={16} /><span className="max-w-32 truncate">{pr ? pr.name : 'No prompt'}</span>{s.globalPrompt?.on && <span className="size-1.5 shrink-0 rounded-full bg-ac" title="Global system prompt on" />}<ChevronRight size={14} className={cx('transition-transform', o && 'rotate-90')} /></button>
+            <button className={chip}><ScrollText size={16} /><span className="max-w-20 truncate sm:max-w-32">{pr ? pr.name : 'No prompt'}</span>{s.globalPrompt?.on && <span className="size-1.5 shrink-0 rounded-full bg-ac" title="Global system prompt on" />}<ChevronRight size={14} className={cx('transition-transform', o && 'rotate-90')} /></button>
           )}>
             {(close) => {
               const g = s.globalPrompt ?? { on: false, text: '', qualities: [] }

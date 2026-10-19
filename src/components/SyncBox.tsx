@@ -87,7 +87,7 @@ export function SyncBox() {
       {!token ? (
         <div className="flex flex-wrap gap-2">
           <Btn v="solid" icon={Link2} disabled={busy} onClick={generate}>Generate sync token</Btn>
-          <div className="flex min-w-64 flex-1 gap-2">
+          <div className="flex min-w-0 flex-1 basis-full gap-2 sm:basis-auto sm:min-w-64">
             <Input value={input} set={setInput} placeholder="Paste token from other device (byok1-…)" />
             <Btn v="soft" disabled={busy || !input.trim()} onClick={link}>Link</Btn>
           </div>

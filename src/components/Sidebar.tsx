@@ -42,7 +42,7 @@ function RowBody({ c, mv, del, dnd, container, index }: RowProps) {
           <span className="truncate">{c.title}{c.temporary ? ' · temporary' : ''}</span>
         </button>
       )}
-      <span className="dnd-actions hidden group-hover:flex">
+      <span className="dnd-actions hidden shrink-0 max-md:flex md:group-hover:flex">
         <button title="Rename" onClick={() => setEd(true)} className={act}><Pencil size={14} /></button>
         <button title="Export this chat (.md + .json)" onClick={() => {
           const chat = useS.getState().chats.find((x) => x.id === c.id)
@@ -436,7 +436,7 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
   const item = 'flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm hover:bg-surf'
   const safeWidth = clampSidebarWidth(width)
   return (
-    <aside ref={asideRef} style={{ width: safeWidth, maxWidth: '90vw' }} className="z-20 flex min-w-0 shrink-0 flex-col gap-3 border-r border-bor bg-side p-3 max-md:fixed max-md:inset-y-0">
+    <aside ref={asideRef} style={{ width: safeWidth, maxWidth: '90vw' }} className="z-20 flex min-w-0 shrink-0 flex-col gap-3 border-r border-bor bg-side p-3 max-md:fixed max-md:inset-y-0 max-md:left-0">
       <div className="flex gap-2">
         <Btn v="solid" icon={s.prefs.temporaryByDefault ? Clock : Plus} title={s.prefs.temporaryByDefault ? 'New temporary chat' : 'New chat'} className="flex-1" onClick={() => s.newChat()}>{s.prefs.temporaryByDefault ? 'Temporary chat' : 'New chat'}</Btn>
         <Btn icon={s.prefs.temporaryByDefault ? Plus : Clock} title={s.prefs.temporaryByDefault ? 'New regular chat' : 'New temporary chat'} onClick={() => s.newChat(!s.prefs.temporaryByDefault)} />
@@ -477,7 +477,7 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
                 <Clock size={15} className="shrink-0 text-mu" /><span className="truncate">{c.title}</span>
               </button>
               <span title={c.expiresAt ? `Deletes in ${timeLeft(c)}` : 'Deletes when you leave'} className="shrink-0 text-xs text-mu">{timeLeft(c)}</span>
-              <button title="Delete chat (hold Shift to skip confirmation)" onClick={(e) => del(c.id, e.shiftKey)} className={cx(act, 'ml-1 hidden group-hover:grid hover:text-er')}><Trash2 size={14} /></button>
+              <button title="Delete chat (hold Shift to skip confirmation)" onClick={(e) => del(c.id, e.shiftKey)} className={cx(act, 'ml-1 hidden shrink-0 hover:text-er max-md:grid md:group-hover:grid')}><Trash2 size={14} /></button>
             </div>)}
             {!temporary.length && <p className="px-2.5 py-1 text-sm text-mu">No temporary chats. Nothing to clean up, nice.</p>}
           </div>
@@ -507,7 +507,7 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
                     <ChevronRight size={14} className={cx('shrink-0 text-mu transition-transform', o && 'rotate-90')} />
                   </button>
                 )}
-                <span className="hidden group-hover:flex">
+                <span className="hidden shrink-0 max-md:flex md:group-hover:flex">
                   <button title="Rename folder" onClick={() => setFe(f.id)} className={act}><Pencil size={14} /></button>
                   <button title="Delete folder (its chats are kept)" onClick={() => setFolderId(f.id)} className={cx(act, 'hover:text-er')}><Trash2 size={14} /></button>
                 </span>

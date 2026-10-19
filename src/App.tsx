@@ -117,7 +117,13 @@ export default function App() {
       <Sidebar open={side} toggle={() => setSide((v) => !v)} cfg={setCfg} width={clampSidebarWidth(prefs.sidebarWidth)} />
       {side && <div role="separator" aria-orientation="vertical" aria-label="Resize sidebar" onPointerDown={resize('sidebarWidth')} className="hidden w-1 shrink-0 cursor-col-resize bg-transparent hover:bg-ac/50 md:block" />}
       <Chat side={side} toggle={() => setSide(true)} cfg={setCfg} pal={() => setPal(true)} />
-      {rail && featOn({ features }, 'widgets') && Object.values(widgets).some(Boolean) && <><div role="separator" aria-orientation="vertical" aria-label="Resize widget panel" onPointerDown={resize('widgetWidth', true)} className="hidden w-1 shrink-0 cursor-col-resize bg-transparent hover:bg-ac/50 lg:block" /><Widgets width={clampWidgetWidth(prefs.widgetWidth)} /></>}
+      {rail && featOn({ features }, 'widgets') && Object.values(widgets).some(Boolean) && (
+        <>
+          <div className="fixed inset-0 z-10 bg-black/50 lg:hidden" onClick={() => useS.getState().patch({ rail: false })} />
+          <div role="separator" aria-orientation="vertical" aria-label="Resize widget panel" onPointerDown={resize('widgetWidth', true)} className="hidden w-1 shrink-0 cursor-col-resize bg-transparent hover:bg-ac/50 lg:block" />
+          <Widgets width={clampWidgetWidth(prefs.widgetWidth)} />
+        </>
+      )}
       {pal && <Palette close={() => setPal(false)} cfg={setCfg} toggleSide={() => setSide((v) => !v)} />}
       {cfg && <Settings tab={cfg} setTab={setCfg} />}
       {!setupDone && <Welcome addEndpoint={() => setCfg('eps')} close={() => {}} />}

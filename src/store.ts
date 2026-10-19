@@ -67,8 +67,8 @@ export type WorkspacePrefs = { defaultView: WorkspaceViewDefault; autoOpen: bool
 
 /* Advanced debugging aids. All off by default; only take effect while the
    `advanced` feature is enabled. */
-export type AdvancedPrefs = { verboseErrors: boolean; showHiddenTools: boolean; showSystemPrompt: boolean; showToolPayloads: boolean; showTokenCounts: boolean }
-export const DEFAULT_ADVANCED: AdvancedPrefs = { verboseErrors: false, showHiddenTools: false, showSystemPrompt: false, showToolPayloads: false, showTokenCounts: false }
+export type AdvancedPrefs = { verboseErrors: boolean; showHiddenTools: boolean; showSystemPrompt: boolean; showToolPayloads: boolean; showTokenCounts: boolean; showModelParams: boolean }
+export const DEFAULT_ADVANCED: AdvancedPrefs = { verboseErrors: false, showHiddenTools: false, showSystemPrompt: false, showToolPayloads: false, showTokenCounts: false, showModelParams: true }
 export const normAdvanced = (v: any): AdvancedPrefs => {
   const out = { ...DEFAULT_ADVANCED }
   if (v && typeof v === 'object') for (const k of Object.keys(DEFAULT_ADVANCED) as (keyof AdvancedPrefs)[]) if (typeof v[k] === 'boolean') out[k] = v[k]

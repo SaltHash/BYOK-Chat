@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
-import { Search, Plus, MessageSquare, Settings, Palette as Pi, Cpu, ScrollText, Download, PanelRight, Server, Trash2, Type, Maximize2, Sparkles, Wrench, Keyboard, FolderOpen, SlidersHorizontal, Brain, ListMusic, Terminal, TrendingUp, Database, FlaskConical, Library } from 'lucide-react'
+import { Search, Plus, MessageSquare, Settings, Palette as Pi, Cpu, ScrollText, Download, PanelRight, Server, Trash2, Type, Maximize2, Sparkles, Wrench, Keyboard, FolderOpen, SlidersHorizontal, Brain, ListMusic, Terminal, TrendingUp, Database, FlaskConical, Library, Eraser } from 'lucide-react'
 import { useS, THEMES, themePatch, modelsOf, modelNameOf, exportChat, featOn, FEATURES, LIBRARY_ITEMS, type FeatureId } from '../store'
 import { nextThemePatch, stepModelSelection, stepPromptSelection } from '../selection'
 import { SETTINGS_TABS, SETTING_LINKS, TAB_KEYWORDS } from '../settingsCatalog'
@@ -54,6 +54,7 @@ export function Palette({ close, cfg, toggleSide }: { close: () => void; cfg: (t
     action(Sparkles, 'Surprise me', 'Action', 'random theme shuffle surprise fun', () => { const keys = (Object.keys(THEMES) as (keyof typeof THEMES)[]).filter((k) => k !== 'custom'); s.patch(themePatch(s, keys[Math.floor(Math.random() * keys.length)])) }),
     action(Sparkles, 'Fortune cookie', 'Action', 'fortune cookie tip luck random', () => s.patch({ notice: { t: pickFortune() } })),
     action(Trash2, 'Clear model selection', 'Action', 'reset automatic endpoints models', () => s.patch({ sel: null })),
+    action(Eraser, 'Clear this chat’s messages', 'Action', 'clear wipe empty erase conversation messages history', () => { const st = useS.getState(); st.patch({ chats: st.chats.map((c) => (c.id === st.chat ? { ...c, msgs: [] } : c)) }) }),
     ...(featOn(s, 'prompts') ? [action(Type, 'Clear prompt selection', 'Action', 'reset system instructions', () => s.patch({ pr: '' }))] : []),
     ...(featOn(s, 'commands') ? s.cmds.filter((c) => c.on).map((c) => action(CI[c.in], '/' + c.name, c.desc || 'Command', `command slash ${c.name} ${c.desc}`, () => s.patch({ draft: '/' + c.name + ' ' }))) : []),
     // Every settings tab (single source of truth — no hardcoded subset).
@@ -116,12 +117,12 @@ export function Palette({ close, cfg, toggleSide }: { close: () => void; cfg: (t
             className="flex-1 bg-transparent outline-none"
           />
         </div>
-        <div className="space-y-0.5 overflow-y-auto p-1.5" style={{ maxHeight: s.prefs.paletteMax }}>
+        <div className="space-y-0.5 overflow-y-auto p-1.5" style={{ maxHeight: `min(${s.prefs.paletteMax}px, 60dvh)` }}>
           {L.map((x, n) => {
             const I = x.icon
             return (
               <button ref={(el) => { refs.current[n] = el }} key={n} onClick={() => run(n)} onMouseMove={() => setI(n)} className={cx('flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm', n === i && 'bg-hov')}>
-                <I size={16} className="text-mu" /><span className="flex-1 truncate">{x.t}</span><span className="text-xs text-mu">{x.h}</span>
+                <I size={16} className="shrink-0 text-mu" /><span className="min-w-0 flex-1 truncate">{x.t}</span><span className="hidden shrink-0 text-xs text-mu sm:inline">{x.h}</span>
               </button>
             )
           })}

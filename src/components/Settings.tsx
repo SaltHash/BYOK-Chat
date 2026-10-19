@@ -1540,7 +1540,7 @@ function AdvancedTab() {
   if (!featOn(s, 'advanced')) return null
   const a = { ...DEFAULT_ADVANCED, ...s.advanced }
   const setA = (p: Partial<typeof a>) => s.patch({ advanced: { ...a, ...p } })
-  const row = (anchor: string, k: 'verboseErrors' | 'showHiddenTools' | 'showSystemPrompt' | 'showToolPayloads' | 'showTokenCounts', t: string, d: string) => (
+  const row = (anchor: string, k: 'verboseErrors' | 'showHiddenTools' | 'showSystemPrompt' | 'showToolPayloads' | 'showTokenCounts' | 'showModelParams', t: string, d: string) => (
     <Anchor id={anchor}>
     <div className="flex items-center gap-3 rounded-xl bg-surf p-3">
       <div className="flex flex-1 items-center gap-2 text-sm font-medium">{t}<HelpTip text={d} label={`Help: ${t}`} /></div>
@@ -1555,6 +1555,7 @@ function AdvancedTab() {
       {row('show-system-prompt', 'showSystemPrompt', 'Show full system prompt', 'Save the exact system prompt sent with each reply and show it in the process log: global prompt, selected prompt, tool guidance, skill catalog, and memory context.')}
       {row('show-tool-payloads', 'showToolPayloads', 'Show tool arguments and results', 'Render the full JSON arguments and returned text of every tool call in the process log instead of one-line summaries.')}
       {row('show-token-counts', 'showTokenCounts', 'Show per-step token counts', 'List reported input/output tokens beside each process-log entry when the provider reports them.')}
+      {row('show-model-params', 'showModelParams', 'Model parameters', 'Show the temperature, top-p, and max-tokens controls in the chat header. Turn off to hide them even while the Advanced feature stays on.')}
     </Panel>
   )
 }
@@ -1673,7 +1674,7 @@ export function Settings({ tab, setTab }: { tab: string; setTab: (t: string) => 
   }, [setTab])
   return (
     <Modal close={() => setTab('')} blur={false} opacity={settingsOpacity}>
-      <div style={{ width: `min(${settingsWidth}px, 96vw)`, height: `min(${settingsHeight}px, 92dvh)` }} className="settings-root modal-panel flex overflow-hidden rounded-2xl bg-bg">
+      <div style={{ width: `min(${settingsWidth}px, 100%)`, height: `min(${settingsHeight}px, 92dvh)` }} className="settings-root modal-panel flex overflow-hidden rounded-2xl bg-bg">
         <nav className="hidden w-56 shrink-0 flex-col border-r border-bor bg-side p-3 sm:flex">
           <div className="min-h-0 flex-1 space-y-0.5 overflow-y-auto">
             {tabs.map(([k, l, I], i) => (
@@ -1686,9 +1687,9 @@ export function Settings({ tab, setTab }: { tab: string; setTab: (t: string) => 
             ))}
           </div>
         </nav>
-        <div className="relative flex-1 overflow-y-auto p-6">
+        <div className="relative min-w-0 flex-1 overflow-y-auto p-4 sm:p-6">
         <div className="absolute right-3 top-3 z-20"><Btn icon={X} title="Close settings" aria-label="Close settings" onClick={() => setTab('')} /></div>
-          <div className="mb-4 pr-44 sm:hidden"><Sel value={active} set={setTab} opts={tabs.map(([k, l]) => [k, l] as [string, string])} /></div>
+          <div className="mb-4 pr-12 sm:hidden"><Sel value={active} set={setTab} opts={tabs.map(([k, l]) => [k, l] as [string, string])} /></div>
           <V />
         </div>
       </div>

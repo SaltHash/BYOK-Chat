@@ -77,7 +77,7 @@ export function ContextMeter() {
               {fmtTokens(tok)}
             </span>
             </span>
-            <span className="text-xs tabular-nums">{costHeader}</span>
+            <span className="hidden text-xs tabular-nums sm:inline">{costHeader}</span>
           </button>
         )}
       >

@@ -537,7 +537,7 @@ export function WorkspacePanel({ msg, live, workspace, selectedRevisionId, setSe
           workspace={workspace}
           selectedId={selectedRevisionId}
           onSelect={setSelectedRevisionId}
-          className="w-64"
+          className="w-32 shrink-0 sm:w-64"
         />
         <Btn sm icon={Share2} title="Share via GitHub Gist (optional token)" onClick={() => setGistOpen(true)} />
         <Btn sm icon={X} title="Close workspace panel" onClick={() => { setSelectedFilePath(null); onClose(); }} />

@@ -35,6 +35,19 @@
   * { scrollbar-width: thin; scrollbar-color: var(--hov) transparent; }
   button { cursor: pointer; }
   :focus-visible { outline: 2px solid var(--ac); outline-offset: 2px; }
+  html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+  /* The app owns its own scroll containers; stop the page itself from
+     rubber-banding (which would otherwise drag the whole shell). */
+  body { overscroll-behavior: none; }
+  button, a, [role="button"] { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
+}
+
+/* Touch pointers: a chat row is a drag handle, but tap targets must still be
+   scrollable. Allow vertical panning so the list scrolls; reordering on touch
+   goes through each row's "Move to folder" action instead. */
+@media (pointer: coarse) {
+  .dnd-handle { touch-action: pan-y; cursor: default; }
+  .cursor-col-resize, .cursor-row-resize { cursor: default; }
 }
 
 /* Settings dropdown styling stays scoped to the settings panel. Adjust the
