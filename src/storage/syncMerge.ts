@@ -250,7 +250,14 @@ export function mergeSyncData(local: SyncData, remote: SyncData, mode: SyncMerge
   const workspaces = mergeWorkspaces(local.workspaces, remote.workspaces)
   const settings = mergeSettings(local.settings, remote.settings, folders)
   // Keep the "open chat" pointer valid after chats and folders are merged.
-  if (typeof settings.chat !== 'string' || !(chats as AnyChat[]).some((c) => isObj(c) && c.id === settings.chat)) {
+  // Prefer the local open chat when it survived the merge: the app may have
+  // opened to it moments ago (startup, a brand-new chat) and a remote snapshot
+  // must not yank the view onto a different chat. Fall back to repair only when
+  // the local chat was dropped in the merge (deleted, or collapsed into a twin).
+  const localChatId = typeof local.settings.chat === 'string' ? local.settings.chat : ''
+  if (localChatId && (chats as AnyChat[]).some((c) => isObj(c) && c.id === localChatId)) {
+    settings.chat = localChatId as string
+  } else if (typeof settings.chat !== 'string' || !(chats as AnyChat[]).some((c) => isObj(c) && c.id === settings.chat)) {
     settings.chat = (isObj(chats[0]) ? (chats[0] as AnyChat).id : '') as string
   }
   const selectedRevision = mergeSelectedRevision(local.selectedRevision, remote.selectedRevision, workspaces)

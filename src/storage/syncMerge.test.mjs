@@ -97,3 +97,14 @@ test('the open-chat pointer is repaired when the chat is gone', () => {
   const out = mergeSyncData(local, remote)
   assert.equal(out.settings.chat, 'a')
 })
+
+test('the local open chat survives the merge even when the remote had a different one open', () => {
+  // The app opened to a freshly-created temporary chat; a sync pull arrives
+  // moments later. The view must stay on the local chat, not jump to the
+  // remote's open chat.
+  const local = empty({ chats: [{ id: 'tmp', title: 'Temporary chat', temporary: true, expiresAt: Date.now() + 3600000, msgs: [] }], settings: { chat: 'tmp' } })
+  const remote = empty({ chats: [chat('perm', 100)], settings: { chat: 'perm' } })
+  const out = mergeSyncData(local, remote)
+  assert.equal(out.settings.chat, 'tmp')
+  assert.deepEqual(out.chats.map((c) => c.id), ['tmp', 'perm'])
+})
