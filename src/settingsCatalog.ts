@@ -171,7 +171,7 @@ export const SETTING_LINKS: SettingLink[] = [
   { tab: 'look', anchor: 'appearance-mode', title: 'Appearance mode (dark / light)', keywords: 'dark light mode theme' },
   { tab: 'widgets', anchor: 'context-meter', title: 'Context meter', keywords: 'context meter tokens circle header appearance' },
   { tab: 'look', anchor: 'context-limit', title: 'Context meter limit', keywords: 'context limit estimated meter tokens' },
-  { tab: 'look', anchor: 'theme-picker', title: 'Theme picker', keywords: 'theme plum claude obsidian bronze paper sage frost sunset custom' },
+  { tab: 'look', anchor: 'theme-picker', title: 'Theme picker', keywords: 'theme plum claude obsidian graphite paper sage frost sunset custom' },
   { tab: 'look', anchor: 'custom-colors', title: 'Custom theme colors', keywords: 'custom colors hex background accent text code syntax' },
   { tab: 'look', anchor: 'seasonal', title: 'Seasonal touches', keywords: 'seasonal festive greeting holiday plain' },
   { tab: 'look', anchor: 'completion-cues', title: 'Completion cues', keywords: 'completion cues chime confetti deep research workspace finished' },

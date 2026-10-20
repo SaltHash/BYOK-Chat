@@ -82,6 +82,17 @@ export function Composer({ cfg }: { cfg: (t: string) => void }) {
   const fi = useRef<HTMLInputElement>(null)
   const v = s.draft
   const [hi, setHi] = useState(0)
+  // Focus the composer on load so typing starts here straight away. Skip when
+  // a dialog (welcome, settings, palette) owns focus, and never scroll the chat.
+  useEffect(() => {
+    const t = ta.current
+    if (!t) return
+    const id = requestAnimationFrame(() => {
+      if (document.activeElement !== document.body || document.querySelector('[role="dialog"]')) return
+      t.focus({ preventScroll: true })
+    })
+    return () => cancelAnimationFrame(id)
+  }, [])
   const [menuOff, setMenuOff] = useState(false)
   // Escape hides the slash/@ popup until the draft changes again.
   useEffect(() => { setMenuOff(false) }, [v])

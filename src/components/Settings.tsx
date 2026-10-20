@@ -1384,7 +1384,7 @@ function WidgetsTab() {
   )
 }
 
-const PAL: Record<string, string[]> = { plum: ['#120c16', '#17101c', '#dc8ad8'], claude: ['#121211', '#181817', '#d97757'], obsidian: ['#090c10', '#0f141c', '#2dd4bf'], bronze: ['#120e0c', '#1b1512', '#f59e0b'], paper: ['#f1f1ec', '#fbfbf9', '#3b5bdb'], sage: ['#e6ece8', '#f4f7f5', '#0d9488'], frost: ['#eef2f6', '#f8fafc', '#2563eb'], sunset: ['#efe6dd', '#faf5f0', '#ea580c'] }
+const PAL: Record<string, string[]> = { plum: ['#120c16', '#17101c', '#dc8ad8'], claude: ['#121211', '#181817', '#d97757'], obsidian: ['#090c10', '#0f141c', '#2dd4bf'], graphite: ['#0a0a0a', '#0f0f0f', '#c0c0c0'], paper: ['#f1f1ec', '#fbfbf9', '#3b5bdb'], sage: ['#e6ece8', '#f4f7f5', '#0d9488'], frost: ['#eef2f6', '#f8fafc', '#2563eb'], sunset: ['#efe6dd', '#faf5f0', '#ea580c'] }
 
 function FontPicker({ value, set, options }: { value: string; set: (v: string) => void; options: [string, string][] }) {
   const [query, setQuery] = useState(value === 'system' ? '' : value)

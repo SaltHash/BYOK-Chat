@@ -118,8 +118,8 @@ export const widgetOn = (s: { features?: Record<FeatureId, boolean>; widgets: Re
   return !!s.widgets[id]
 }
 
-export const THEMES = { plum: 'Plum', claude: 'Claude', obsidian: 'Obsidian', bronze: 'Bronze', paper: 'Paper', sage: 'Sage', frost: 'Frost', sunset: 'Sunset', custom: 'Custom' }
-export const DARK_THEMES = ['plum', 'claude', 'obsidian', 'bronze'] as const
+export const THEMES = { plum: 'Plum', claude: 'Claude', obsidian: 'Obsidian', graphite: 'Graphite', paper: 'Paper', sage: 'Sage', frost: 'Frost', sunset: 'Sunset', custom: 'Custom' }
+export const DARK_THEMES = ['plum', 'claude', 'obsidian', 'graphite'] as const
 export const LIGHT_THEMES = ['paper', 'sage', 'frost', 'sunset'] as const
 /** Migration map for theme keys removed from the palette. */
 export const LEGACY_THEME_MAP: Record<string, string> = { nord: 'claude', amoled: 'obsidian', sepia: 'sunset', porcelain: 'frost', sand: 'sunset' }
@@ -146,8 +146,14 @@ export const themeCustomOf = (s: { themeMode: ThemeMode; themeDark: DarkTheme; t
     ? (s.themeLight === 'custom' ? s.customLightColors : null)
     : (s.themeDark === 'custom' ? s.customDarkColors : null)
 /** Patch selecting a theme key, switching mode when the key belongs to the other palette. `custom` applies to the current mode. */
-export const themePatch = (s: { themeMode: ThemeMode }, key: keyof typeof THEMES) => {
-  if (key === 'custom') return s.themeMode === 'light' ? { themeLight: 'custom' as LightTheme } : { themeDark: 'custom' as DarkTheme }
+export const themePatch = (s: { themeMode: ThemeMode; themeDark: DarkTheme; themeLight: LightTheme }, key: keyof typeof THEMES) => {
+  if (key === 'custom') {
+    const cur = s.themeMode === 'light' ? s.themeLight : s.themeDark
+    const curKey = cur === 'custom' ? (s.themeMode === 'light' ? s.themeDark : s.themeLight) : cur
+    const colors = THEME_COLORS[curKey as string] ?? THEME_COLORS['plum']
+    if (s.themeMode === 'light') return { themeLight: 'custom' as LightTheme, customLightColors: colors }
+    return { themeDark: 'custom' as DarkTheme, customDarkColors: colors }
+  }
   if ((DARK_THEMES as readonly string[]).includes(key)) return { themeMode: 'dark' as ThemeMode, themeDark: key as DarkTheme }
   return { themeMode: 'light' as ThemeMode, themeLight: key as LightTheme }
 }
@@ -157,6 +163,16 @@ export type ThemeColors = Record<ThemeColorKey, string>
 export const THEME_COLOR_LABELS: Record<ThemeColorKey, string> = { bg: 'Main background', side: 'Sidebar', surf: 'Panel surface', hov: 'Hover and selection', tx: 'Main text', mu: 'Muted text', ac: 'Accent', acx: 'Text on accent', er: 'Error', code: 'Code block', codeh: 'Code block header', c2: 'Syntax: strings', c3: 'Syntax: numbers', c4: 'Syntax: titles', c5: 'Syntax: types' }
 export const DEFAULT_CUSTOM_COLORS: ThemeColors = { bg: '#17101c', side: '#120c16', surf: '#211828', hov: '#2c2036', tx: '#f3eaf7', mu: '#a893b4', ac: '#dc8ad8', acx: '#1b1020', er: '#ff8fa3', code: '#100b15', codeh: '#2f2040', c2: '#9fe3c5', c3: '#f2b98b', c4: '#8fb9ff', c5: '#c7a6ff' }
 export const DEFAULT_CUSTOM_LIGHT_COLORS: ThemeColors = { bg: '#fbfbf9', side: '#f1f1ec', surf: '#efefe9', hov: '#e4e4dc', tx: '#1d1d1b', mu: '#6f6f66', ac: '#3b5bdb', acx: '#ffffff', er: '#c92a2a', code: '#e6e5dd', codeh: '#d3d2c6', c2: '#2b8a3e', c3: '#d9480f', c4: '#7048e8', c5: '#0b7285' }
+export const THEME_COLORS: Record<string, ThemeColors> = {
+  plum: { bg: '#17101c', side: '#120c16', surf: '#211828', hov: '#2c2036', tx: '#f3eaf7', mu: '#a893b4', ac: '#dc8ad8', acx: '#1b1020', er: '#ff8fa3', code: '#100b15', codeh: '#2f2040', c2: '#9fe3c5', c3: '#f2b98b', c4: '#8fb9ff', c5: '#c7a6ff' },
+  claude: { bg: '#181817', side: '#121211', surf: '#20201f', hov: '#2c2b2a', tx: '#ece7db', mu: '#a09891', ac: '#d97757', acx: '#121211', er: '#f28b82', code: '#111110', codeh: '#121211', c2: '#7ec699', c3: '#f4a58a', c4: '#7cace8', c5: '#e8c47c' },
+  obsidian: { bg: '#0f141c', side: '#090c10', surf: '#161e2b', hov: '#222e40', tx: '#e1e7ed', mu: '#788896', ac: '#2dd4bf', acx: '#0b1e1c', er: '#f87171', code: '#0a0d12', codeh: '#131a24', c2: '#34d399', c3: '#fbbf24', c4: '#38bdf8', c5: '#c084fc' },
+  graphite: { bg: '#0f0f0f', side: '#0a0a0a', surf: '#1c1c1c', hov: '#262626', tx: '#eaeaea', mu: '#888888', ac: '#c0c0c0', acx: '#131313', er: '#ef4444', code: '#0f0f0f', codeh: '#1a1a1a', c2: '#a3e635', c3: '#fb923c', c4: '#facc15', c5: '#e879f9' },
+  paper: { bg: '#fbfbf9', side: '#f1f1ec', surf: '#efefe9', hov: '#e4e4dc', tx: '#1d1d1b', mu: '#6f6f66', ac: '#3b5bdb', acx: '#ffffff', er: '#c92a2a', code: '#e6e5dd', codeh: '#d3d2c6', c2: '#2b8a3e', c3: '#d9480f', c4: '#7048e8', c5: '#0b7285' },
+  sage: { bg: '#f4f7f5', side: '#e6ece8', surf: '#ffffff', hov: '#d6e2db', tx: '#1c2826', mu: '#617571', ac: '#0d9488', acx: '#ffffff', er: '#e11d48', code: '#eaefea', codeh: '#dfe6e0', c2: '#15803d', c3: '#c2410c', c4: '#0284c7', c5: '#7e22ce' },
+  frost: { bg: '#f8fafc', side: '#eef2f6', surf: '#ffffff', hov: '#e2e8f0', tx: '#0f172a', mu: '#64748b', ac: '#2563eb', acx: '#ffffff', er: '#e11d48', code: '#f1f5f9', codeh: '#e2e8f0', c2: '#16a34a', c3: '#ea580c', c4: '#0369a1', c5: '#9333ea' },
+  sunset: { bg: '#faf5f0', side: '#efe6dd', surf: '#ffffff', hov: '#e4d5c7', tx: '#3b2c24', mu: '#8c7769', ac: '#ea580c', acx: '#ffffff', er: '#dc2626', code: '#f3eae1', codeh: '#e7dad0', c2: '#3f6212', c3: '#b45309', c4: '#1d4ed8', c5: '#a21caf' },
+}
 export const PRE: Record<string, ['openai' | 'anthropic', string, string, 'author' | 'provider']> = {
   Anthropic: ['anthropic', 'https://api.anthropic.com/v1', 'anthropic', 'author'],
   Google: ['openai', 'https://generativelanguage.googleapis.com/v1beta/openai/', 'google', 'author'],

@@ -57,9 +57,8 @@ export function ResearchPlanCard({ msg }: { msg: Msg }) {
   // The plan arrives after the generation round returns; adopt it (and reset
   // the edit state) whenever the stored plan or the status changes.
   useEffect(() => { setDraft(rs?.plan ?? null); setMode('view') }, [rs?.plan, rs?.status])
-  if (!rs || (rs.status !== 'planning' && rs.status !== 'plan')) return null
-  const planning = rs.status === 'planning'
-  const plan = draft ?? rs.plan
+  const planning = rs?.status === 'planning'
+  const plan = draft ?? rs?.plan
   // Trim trailing whitespace only when the plan is committed, never on every
   // keystroke: rewriting the controlled value mid-edit makes React reset the
   // caret, so pressing space at the end of a line jumps to the end of the field.
@@ -75,6 +74,9 @@ export function ResearchPlanCard({ msg }: { msg: Msg }) {
     const ta = document.getElementById('composer') as HTMLTextAreaElement | null
     if (ta) composerRef.current = ta
   }, [])
+  // Bail out only after every hook above has run so the hook order stays stable
+  // across the render where a message first gains a research run.
+  if (!rs || (rs.status !== 'planning' && rs.status !== 'plan')) return null
   const onEditText = () => {
     setMode('focus')
     const ta = composerRef.current ?? (document.getElementById('composer') as HTMLTextAreaElement | null)
