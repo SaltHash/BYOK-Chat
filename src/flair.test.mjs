@@ -86,7 +86,7 @@ test('a permanent chat keeps the seasonal line, then the greeting', () => {
 test('the temporary line is short, playful, and says the chat is temporary', () => {
   assert.ok(TEMPORARY_FLAIR.length <= 44, `the temporary line is too long: ${TEMPORARY_FLAIR}`)
   assert.match(TEMPORARY_FLAIR, /temporary/i)
-  assert.match(TEMPORARY_FLAIR, /poof/i)
+  assert.doesNotMatch(TEMPORARY_FLAIR, /poof/i, 'the header pill already says poof')
   assert.doesNotMatch(TEMPORARY_FLAIR, /\b(halloween|christmas|holidays|new year|valentine|happy)\b/i)
 })
 

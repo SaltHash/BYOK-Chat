@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { useShallow } from 'zustand/react/shallow'
-import { DEFAULT_TOOLS, KEYS, WIDGETS } from './meta'
+import { DEFAULT_TOOLS, KEYS, WIDGETS, TOOLS } from './meta'
 import { est, redact, stream, wire, trimHistory, estimateHistoryTokens, runToolLoop, type ToolCall, type ToolResult, searchWeb, formatSearch, fetchPage, formatPage, can, ocrImage, clearSessionCache, setDynamicTools, DYNAMIC_TOOLS, type ToolSpec, type PageExcerpt } from './engine'
 import { normMcpServers, mcpBindings, callMcpTool, toolParameters, type McpServer, type McpTool } from './mcp'
 import { generateImages, normImageGen, BLANK_IMAGE_GEN, imageSummary, type ImageGenPrefs } from './imagegen'
@@ -200,6 +200,7 @@ const PRESET_PRE: Record<string, ['openai' | 'anthropic', string, string, 'autho
  * example a future registry entry) are appended rather than dropped. */
 export const PRESET_ORDER = [
   'OpenRouter',
+  'AIHubMix',
   'OpenAI',
   'Anthropic',
   'Google',
@@ -289,10 +290,10 @@ export const exportChat = () => {
   dl(c.title.replace(/[^\w-]+/g, '_') + '.md', chatMd(c), 'text/markdown')
 }
 
-export type SearchProvider = 'tinyfish' | 'you' | 'exa' | 'firecrawl' | 'brightdata'
+export type SearchProvider = 'tinyfish' | 'you' | 'exa' | 'firecrawl' | 'brightdata' | 'jina'
 export type ReaderProvider = 'builtin' | 'jina' | 'firecrawl' | 'exa' | 'custom'
 export type CiteStyle = 'pills' | 'links' | 'off'
-export const SEARCH_PROVIDERS: [SearchProvider, string][] = [['tinyfish', 'TinyFish'], ['you', 'You.com'], ['exa', 'Exa'], ['firecrawl', 'Firecrawl'], ['brightdata', 'Bright Data']]
+export const SEARCH_PROVIDERS: [SearchProvider, string][] = [['tinyfish', 'TinyFish'], ['you', 'You.com'], ['exa', 'Exa'], ['firecrawl', 'Firecrawl'], ['brightdata', 'Bright Data'], ['jina', 'Jina AI']]
 export const READER_PROVIDERS: [ReaderProvider, string][] = [
   ['builtin', 'Built-in reader (direct page fetch)'],
   ['jina', 'Jina Reader (r.jina.ai)'],
@@ -310,7 +311,7 @@ export type SearchPrefs = {
   readerSummary: boolean; readerSummaryEp: string; readerSummaryModel?: string; readerSummaryChars: number
 }
 export const BLANK_SEARCH: SearchPrefs = {
-  provider: 'tinyfish', keys: { tinyfish: '', you: '', exa: '', firecrawl: '', brightdata: '' }, zone: '',
+  provider: 'tinyfish', keys: { tinyfish: '', you: '', exa: '', firecrawl: '', brightdata: '', jina: '' }, zone: '',
   maxResults: 8, timeoutMs: 8000, maxSnippetChars: 1800, evidenceBudget: 12000,
   maxRetries: 2, retryBaseMs: 300, fetchTimeoutMs: 8000, fetchMaxChars: 12000, fetchMaxRetries: 2, fetchRetryBaseMs: 300,
   citeStyle: 'pills', sourcesOpen: false, reader: true, strictCitations: false,
@@ -330,7 +331,7 @@ export const normStartup = (v: unknown): StartupMode => (v === 'new' || v === 't
 export const DEFAULT_PREFS: S['prefs'] = { showBy: true, showLog: true, showTps: false, enterSends: true, autoTitle: true, temporaryByDefault: false, seasonal: true, cues: false, showModelPricing: false, showContextMeter: true, titleEp: '', titleModel: '', effortEp: '', effortModel: '', recallEp: '', recallModel: '', tempHours: 3, startup: 'recent', tempShow: 2, fontBody: 'system', fontMono: 'system', fontHeader: 'system', modelPrimary: 'name', modelSecondary: 'none', paletteMax: 320, chatWidth: 'standard', settingsWidth: 1024, settingsHeight: 780, modelPickerHeight: 480, sidebarWidth: 288, widgetWidth: 320, workspaceWidth: 0.4, workspaceSplit: 0.2, modalBlur: 12, settingsOpacity: 55, streamFade: 0.3, streamMd: true, remoteImages: false, glassComposer: true }
 export const DEFAULT_PARAMS: S['params'] = { def: true, temp: 0.7, topp: 1, max: 4096, maxToolRounds: 8, highToolsUnlocked: false }
 export const DEFAULT_WIDGET_PREFS: S['widgetPrefs'] = { usageGroup: 'endpoint', usageMode: 'success', usageFormat: '{in}/{out}', usageTotal: false, usagePeriod: 'all', lastSpeed: true, timeUnit: 'auto', widgetOrder: WIDGETS.map(([k]) => k), shortcuts: KEYS.map(([k]) => k), contextLimit: 128000, showDisabledEndpoints: true, scratchRows: 6, snippetLimit: 20, costDecimals: 4, activePromptsOnly: false, charsPerToken: 4, hideDoneTodos: false }
-const SEARCH_VALID_PROVIDERS: SearchProvider[] = ['tinyfish', 'you', 'exa', 'firecrawl', 'brightdata']
+const SEARCH_VALID_PROVIDERS: SearchProvider[] = ['tinyfish', 'you', 'exa', 'firecrawl', 'brightdata', 'jina']
 const READER_VALID_PROVIDERS: ReaderProvider[] = ['builtin', 'jina', 'firecrawl', 'exa', 'custom']
 const clampInt = (v: unknown, fallback: number, min: number, max: number): number =>
   Number.isInteger(v) ? Math.max(min, Math.min(max, v as number)) : fallback
@@ -422,6 +423,9 @@ export const readerSummaryModelOf = (
 type S = {
   eps: Ep[]; prompts: Prompt[]; pls: Pl[]; cmds: Cmd[]; mcps: McpServer[]; chats: Chat[]; chat: string
   tools: Record<string, boolean>
+  /** Tools the user allowed for good ("do not ask again"). Enabling one of
+   *  these skips the allow popup; the entry is dropped when the tool is off. */
+  toolConsent: Record<string, boolean>
   imageGen: ImageGenPrefs
   codeRun: CodeRunPrefs
   voicePrefs: VoicePrefs
@@ -1651,7 +1655,7 @@ export const useS = create<S>()(
           { id: 'k6', name: 'translate', desc: 'Translate text', in: 'text', sys: 'Translate the provided text into the language requested. If no target language is specified, ask which language.', tpl: '{{input}}', pl: '', on: true },
           { id: 'k7', name: 'brainstorm', desc: 'Generate useful ideas', in: 'text', sys: 'Generate varied, practical ideas. Keep each idea distinct and briefly explain why it may work.', tpl: '{{input}}', pl: '', on: true },
         ],
-        chats: [], chat: '', drafts: {}, memories: [], imageGen: { ...BLANK_IMAGE_GEN }, codeRun: { ...BLANK_CODE_RUN }, voicePrefs: { ...BLANK_VOICE }, memoryPrefs: { enabled: false, intent: 'balanced', recall: 'contextual', method: 'local', classifierEp: '', classifierModel: '' }, docPrefs: { ...BLANK_DOCS }, research: { ...BLANK_RESEARCH }, tools: { ...DEFAULT_TOOLS }, search: { ...BLANK_SEARCH, keys: { ...BLANK_SEARCH.keys } }, skills: DEFAULT_SKILL_STATE.map((s) => ({ ...s })), widgets: {}, widgetPrefs: { ...DEFAULT_WIDGET_PREFS, widgetOrder: [...DEFAULT_WIDGET_PREFS.widgetOrder], shortcuts: [...DEFAULT_WIDGET_PREFS.shortcuts] }, rail: false, pad: '', snips: [],
+        chats: [], chat: '', drafts: {}, memories: [], imageGen: { ...BLANK_IMAGE_GEN }, codeRun: { ...BLANK_CODE_RUN }, voicePrefs: { ...BLANK_VOICE }, memoryPrefs: { enabled: false, intent: 'balanced', recall: 'contextual', method: 'local', classifierEp: '', classifierModel: '' }, docPrefs: { ...BLANK_DOCS }, research: { ...BLANK_RESEARCH }, tools: { ...DEFAULT_TOOLS }, toolConsent: {}, search: { ...BLANK_SEARCH, keys: { ...BLANK_SEARCH.keys } }, skills: DEFAULT_SKILL_STATE.map((s) => ({ ...s })), widgets: {}, widgetPrefs: { ...DEFAULT_WIDGET_PREFS, widgetOrder: [...DEFAULT_WIDGET_PREFS.widgetOrder], shortcuts: [...DEFAULT_WIDGET_PREFS.shortcuts] }, rail: false, pad: '', snips: [],
         params: { ...DEFAULT_PARAMS }, effort: {},
         workspacePrefs: { defaultView: 'latest', autoOpen: true, autoFollow: true },
         advanced: { ...DEFAULT_ADVANCED },
@@ -2022,6 +2026,8 @@ export const useS = create<S>()(
         if (p.prefs && p.prefs.showTps === undefined) p.prefs.showTps = false
         p.prefs = { ...p.prefs, tempHours: p.prefs?.tempHours ?? 3, startup: normStartup(p.prefs?.startup), tempShow: Number.isInteger(p.prefs?.tempShow) ? Math.max(0, Math.min(6, p.prefs.tempShow)) : 2, fontBody: p.prefs?.fontBody ?? 'system', fontMono: p.prefs?.fontMono ?? 'system', fontHeader: p.prefs?.fontHeader ?? 'system', modelPrimary: p.prefs?.modelPrimary ?? ({ none: 'id', name: 'name', provider: 'id', both: 'name' } as const)[(p.prefs?.modelDisplay as string) ?? 'both'] ?? 'name', modelSecondary: p.prefs?.modelSecondary ?? ({ none: 'none', name: 'none', provider: 'provider', both: 'provider' } as const)[(p.prefs?.modelDisplay as string) ?? 'both'] ?? 'none', paletteMax: p.prefs?.paletteMax ?? 320, chatWidth: p.prefs?.chatWidth ?? 'standard', settingsWidth: p.prefs?.settingsWidth ?? 1024, settingsHeight: p.prefs?.settingsHeight ?? 780, modelPickerHeight: p.prefs?.modelPickerHeight ?? 480, showModelPricing: p.prefs?.showModelPricing ?? false, showContextMeter: p.prefs?.showContextMeter ?? true, titleEp: p.prefs?.titleEp ?? '', titleModel: p.prefs?.titleModel ?? '', effortEp: p.prefs?.effortEp ?? '', effortModel: p.prefs?.effortModel ?? '', recallEp: p.prefs?.recallEp ?? '', recallModel: p.prefs?.recallModel ?? '', routingMode: ['ordered', 'fastest', 'cheapest'].includes(p.prefs?.routingMode) ? p.prefs.routingMode : 'ordered', sidebarWidth: p.prefs?.sidebarWidth ?? 288, widgetWidth: p.prefs?.widgetWidth ?? 320, workspaceWidth: typeof p.prefs?.workspaceWidth === 'number' && p.prefs.workspaceWidth <= 1 ? p.prefs.workspaceWidth : 0.4, workspaceSplit: typeof p.prefs?.workspaceSplit === 'number' ? p.prefs.workspaceSplit : 0.2, modalBlur: p.prefs?.modalBlur ?? 12, settingsOpacity: p.prefs?.settingsOpacity ?? 55, temporaryByDefault: p.prefs?.temporaryByDefault ?? false, streamFade: typeof p.prefs?.streamFade === 'number' && p.prefs.streamFade >= 0 && p.prefs.streamFade <= 1 ? p.prefs.streamFade : 0.3, streamMd: p.prefs?.streamMd ?? true, glassComposer: p.prefs?.glassComposer ?? true }
         p.tools = { ...DEFAULT_TOOLS, ...(p.tools ?? {}) }
+        // Only boolean flags for known tools survive a reload.
+        p.toolConsent = Object.fromEntries(Object.entries(p.toolConsent ?? {}).filter(([k, v]) => v === true && TOOLS.some(([id]) => id === k)))
         p.mcps = normMcpServers(p.mcps)
         p.imageGen = normImageGen(p.imageGen)
         p.codeRun = normCodeRun(p.codeRun)

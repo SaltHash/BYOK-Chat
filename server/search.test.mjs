@@ -46,6 +46,32 @@ test('normalizes provider aliases', () => {
   assert.equal(normalizeProvider('exa.ai'), 'exa')
   assert.equal(normalizeProvider('Firecrawl'), 'firecrawl')
   assert.equal(normalizeProvider('Bright Data'), 'brightdata')
+  assert.equal(normalizeProvider('jina.ai'), 'jina')
+  assert.equal(normalizeProvider('Jina AI'), 'jina')
+})
+
+test('Jina AI searches work with or without a key', () => {
+  assert.equal(normalizeProvider('jina'), 'jina')
+  // Jina Search runs keyless at a lower rate limit, so no key is not an error.
+  assert.equal(providerNeedsKey('jina'), false)
+  const anon = buildApiRequest('jina', 'hello world', { apiKey: '' })
+  assert.match(anon.url, /s\.jina\.ai\/\?q=hello\+world/)
+  assert.equal(anon.options.headers.Authorization, undefined)
+  const keyed = buildApiRequest('jina', 'hello', { apiKey: 'jk' })
+  assert.match(String(keyed.options.headers.Authorization), /^Bearer jk$/)
+})
+
+test('parses Jina AI search results into grounded sources', () => {
+  const rows = parseApiResponse('jina', { code: 200, data: [
+    { title: 'J', url: 'https://j.example/', description: 'jd', content: 'jc' },
+    { title: 'K', url: 'https://k.example/', description: 'kd' },
+  ] })
+  assert.equal(rows.length, 2)
+  assert.equal(rows[0].url, 'https://j.example/')
+  assert.equal(rows[0].engine, 'jina.ai')
+  assert.match(rows[0].content, /jd/)
+  assert.match(rows[0].content, /jc/)
+  assert.deepEqual(parseApiResponse('jina', { data: 'nope' }), [])
 })
 
 test('builds authenticated API requests per provider', () => {

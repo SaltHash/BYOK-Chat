@@ -6,7 +6,7 @@ import { nextThemePatch, stepModelSelection, stepPromptSelection } from '../sele
 import { SETTINGS_TABS, SETTING_LINKS, TAB_KEYWORDS } from '../settingsCatalog'
 import { visibleTabs } from './Settings'
 import { normSkills, resolveSkill } from '../skills'
-import { CI, TOOLS, WIDGETS, KEYS } from '../meta'
+import { CI, WIDGETS, KEYS, orderTools } from '../meta'
 import { WORKSPACE_TEMPLATES } from '../workspace'
 import { pickFortune } from '../flair'
 import { Modal, cx, type Ic } from './ui'
@@ -27,7 +27,7 @@ export function Palette({ close, cfg, toggleSide }: { close: () => void; cfg: (t
      keystrokes, streaming text updates and widget state no longer re-render it. */
   const s = useS(useShallow((st) => ({
     chats: st.chats, skills: st.skills, eps: st.eps, pls: st.pls, prompts: st.prompts, cmds: st.cmds, pr: st.pr,
-    features: st.features, prefs: st.prefs, sel: st.sel, rail: st.rail,
+    features: st.features, prefs: st.prefs, sel: st.sel, rail: st.rail, tools: st.tools,
     themeMode: st.themeMode, themeLight: st.themeLight, themeDark: st.themeDark,
     newChat: st.newChat, patch: st.patch, add: st.add,
   })))
@@ -74,7 +74,7 @@ export function Palette({ close, cfg, toggleSide }: { close: () => void; cfg: (t
       return action(Sparkles, `Skill: ${name}`, 'Setting', `skill ${name} ${st.id} ${st.description ?? def?.description ?? ''} instructions`, () => cfg(`skills#skill-${st.id}`))
     }) : []),
     // Every tool, including its search/workspace sub-settings via the catalog.
-    ...(featOn(s, 'tools') ? TOOLS.filter(([k]) => k !== 'memory').map(([k, n, I, u, d]) => action(I, `Tool: ${n}`, 'Setting', `tool ${n} ${k} ${u} ${d}`, () => cfg(`tools#tool-${k}`))) : []),
+    ...(featOn(s, 'tools') ? orderTools(s.tools).map(([k, n, I, u, d]) => action(I, `Tool: ${n}`, 'Setting', `tool ${n} ${k} ${u} ${d}`, () => cfg(`tools#tool-${k}`))) : []),
     // Every widget.
     ...(featOn(s, 'widgets') ? WIDGETS.map(([k, n, I, d]) => action(I, `Widget: ${n}`, 'Setting', `widget ${n} ${k} ${d} panel`, () => cfg(`widgets#widget-${k}`))) : []),
     // Every shortcut.

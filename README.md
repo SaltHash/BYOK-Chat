@@ -13,15 +13,29 @@ npm run dev
 
 `npm run dev` runs Vite with an `/api` proxy to the Node server (`server.mjs`). The dev entry also loads a gitignored `.env` file (Node's built-in `process.loadEnvFile()`, so real environment variables win); production hosts keep using environment variables only. To run the Cloudflare deployment model locally instead (workerd serving the built `dist/` and the Worker API on one origin), build first and use `npm run cf:dev`; optional local secrets go in a gitignored `.dev.vars` file.
 
-There are no committed environment files. Search tuning lives in the app under Settings → Tools → Web search and grounding (results per search, request timeout, text per result, total text per search, retries, retry delay) and is sent with each search request; the server only enforces hard caps (10 results, 3000 characters per result, 24000 total characters per search, 1–30s timeout, 0–4 retries). The page reader has its own API, key, timeout, text limit, retries and retry delay in the same section.
+There are no committed environment files. Search tuning lives in the app under Settings → Tools → Web search and grounding (results per search, request timeout, text per result, total text per search, retries, retry delay) and is sent with each search request; the server only enforces hard caps (10 results, 3000 characters per result, 24000 total characters per search, 1–30s timeout, 0–4 retries). The page reader has its own API, key, timeout, text limit, retries and retry delay under the Page reader tool, next to the reader settings they belong to.
+
+Every settings page is grouped into labelled sections (for example Chats → Replies, Temporary chats, Behavior, Documents), so related settings sit together. In Settings → Tools the tool list is ordered by relevance, and enabled tools are pinned to the top of the list while keeping that order. Turning a tool on asks for permission first; tick **Do not ask again** in that popup to allow the tool for good (the card then shows *Always allowed*, and the choice can be undone there).
 
 ## Inference providers per model
 
 For OpenRouter endpoints each model row under Settings → Endpoints has a low-key **Provider** button. It opens a modal listing the providers currently serving that model, fetched live from OpenRouter's `/api/v1/models/{id}/endpoints` API (Amazon Bedrock, Anthropic, Google Vertex, region/variant endpoints, …). Picking one pins every request for that model to it — the body carries `provider: { order: [tag], allow_fallbacks: false }` — while **Automatic** keeps OpenRouter's default price-load-balanced routing. A provider slug can also be typed by hand when a model is not listed. Non-OpenRouter endpoints never show the button, and the choice is stored per model and travels with config exports.
 
+## AIHubMix
+
+[AIHubMix](https://aihubmix.com) is a unified model gateway: one key, 500+ models from OpenAI, Anthropic, Google, and leading open-source providers, behind four wire protocols. Pick the **AIHubMix** preset in Settings → Endpoints and paste your key; the model list is then fetched live from the gateway.
+
+- OpenAI Chat Completions (the preset default): base URL `https://aihubmix.com/v1`, chat at `/v1/chat/completions`, `Authorization: Bearer <key>`.
+- Anthropic Messages: set the endpoint's *API format* to **Anthropic Messages** and keep the base URL at `https://aihubmix.com/v1`. Requests then go to `/v1/messages` with `x-api-key` and `anthropic-version: 2023-06-01`.
+- Google Gemini (`/gemini/v1beta/models/{model}:generateContent` with `x-goog-api-key`) is not wired into the app; add it as a custom endpoint if you need it.
+
+Discovery uses `GET https://aihubmix.com/v1/models`, whose rows carry an `owned_by` field; the picker shows it as the upstream owner. The gateway also accepts `model: "auto"` for smart routing.
+
+Keys are created in the [AIHubMix console](https://console.aihubmix.com/) and can be restricted to a model list, an IP allowlist, a spend cap, and an expiry date. Error responses carry a `tid` trace id — quote it when reporting an issue. For the live smoke test, export `AIHUBMIX_API_KEY` (and optionally `AIHUBMIX_MODEL`) and run `npm run smoke:providers -- --provider=aihubmix`.
+
 ## AI search providers
 
-Search is bring-your-own-key: paste a provider key in Settings → Tools → Web search and grounding. It is stored only in the browser (like model keys) and sent with each search request; the server never stores browser keys. Server-side keys remain supported as a shared fallback when the browser sends none. Providers: TinyFish, You.com, Exa, Firecrawl, or Bright Data.
+Search is bring-your-own-key: paste a provider key in Settings → Tools → Web search and grounding. It is stored only in the browser (like model keys) and sent with each search request; the server never stores browser keys. Server-side keys remain supported as a shared fallback when the browser sends none. Providers: TinyFish, You.com, Exa, Firecrawl, Bright Data, or Jina AI.
 
 Server configuration (hosting environment only; no `.env` files):
 
@@ -61,8 +75,9 @@ Provider request details (verified against each provider's official documentatio
 - Exa: `POST https://api.exa.ai/search` with an `X-API-Key` header and `{ query, type: "auto", numResults, contents: { highlights: true } }` ([docs](https://exa.ai/docs/reference/search)).
 - Firecrawl: `POST https://api.firecrawl.dev/v2/search` with an optional `Authorization: Bearer` header and `{ query, limit }`. The key is optional: search works keyless at lower limits ([docs](https://docs.firecrawl.dev/api-reference/endpoint/search)).
 - Bright Data: `POST https://api.brightdata.com/request` with an `Authorization: Bearer` header and `{ zone, url, format: "raw", data_format: "parsed_light" }`; a SERP zone is required ([docs](https://docs.brightdata.com/products/serp-api/introduction)).
+- Jina AI: `GET https://s.jina.ai/?q=…` with an optional `Authorization: Bearer` header. The key is optional: Jina Search works keyless at lower rate limits, and it is the same service as Jina Reader, so one key covers both search and page reads ([docs](https://docs.jina.ai/api-reference/search)).
 
-Without any keys, You.com and Exa answer with HTTP 402 (billing/payment required) and Bright Data/TinyFish with HTTP 401, which the backend surfaces as `billing` / `upstream_auth` rather than an outage.
+Without any keys, You.com and Exa answer with HTTP 402 (billing/payment required) and Bright Data/TinyFish with HTTP 401, which the backend surfaces as `billing` / `upstream_auth` rather than an outage. Jina AI and Firecrawl answer without a key.
 
 ## Skills
 
@@ -175,7 +190,7 @@ Citation ids are numbered **for the whole reply**, not per search: the first sou
 
 Every grounded reply shows a **Sources** button below the workspaces and above the message options. Expanding it lists each source with its truncated snippet, host, engine, and query, plus per-source actions: **Open** (new tab), **Read page** (full excerpt via the reader), **Copy link**, **Copy cite**. Unknown ids and uncited grounded replies are flagged, with optional strict warnings.
 
-`GET /api/extract?url=…` reads one public `http(s)` page through the backend (SSRF-blocked private hosts, 8s default timeout, 1.5MB HTML cap, 12k-character default excerpt, 10-minute cache) and backs both the `fetch_page` model tool and the per-source Read page button. It accepts optional `timeoutMs`, `maxChars` (up to 50k), `maxRetries` and `retryBaseMs` parameters from the reader settings. `POST /api/reader` does the same through a different reader API when one is configured (Jina, Firecrawl, Exa, or your own service), with a fallback to the built-in reader when the reader API fails. The process log shows each search as `Web search · query (N sources · provider)` and each read as `Page reader · title · host`; the live status reads Searching… / Reading page…. Related settings (citation style, expand-by-default, page reader on/off, reader API and key, page timeout, text kept per page, page retries, strict warnings) live in Settings → Tools → Web search → Sources & transparency.
+`GET /api/extract?url=…` reads one public `http(s)` page through the backend (SSRF-blocked private hosts, 8s default timeout, 1.5MB HTML cap, 12k-character default excerpt, 10-minute cache) and backs both the `fetch_page` model tool and the per-source Read page button. It accepts optional `timeoutMs`, `maxChars` (up to 50k), `maxRetries` and `retryBaseMs` parameters from the reader settings. `POST /api/reader` does the same through a different reader API when one is configured (Jina, Firecrawl, Exa, or your own service), with a fallback to the built-in reader when the reader API fails. The process log shows each search as `Web search · query (N sources · provider)` and each read as `Page reader · title · host`; the live status reads Searching… / Reading page…. Related settings (citation style, expand-by-default, strict warnings) live in Settings → Tools → Web search → Sources & transparency; the reader settings (page reader on/off, reader API and key, page timeout, text kept per page, page retries, page summary model) live under the Page reader tool in Settings → Tools → Page reader.
 
 ### Page summaries (reader subagent)
 

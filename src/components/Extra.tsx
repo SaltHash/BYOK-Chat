@@ -12,7 +12,7 @@ import { combo, fmt, rec as R, testEp } from '../engine'
 import { probeProviderCors, resolveProvider } from '../providerAdapter'
 import { KEYS, TOOLS, DEFAULT_TOOLS } from '../meta'
 import { Btn, Toggle, Checkbox, Confirm, Modal, Surface, Input, cx, type Ic } from './ui'
-import { Panel, Anchor } from './Settings'
+import { Panel, Anchor, Section } from './Settings'
 import { detectAvailableCategories, buildExportPayload } from '../configIO'
 import { encryptBackup, decryptBackup, isEncryptedBackup } from '../storage/backupCrypto'
 import { SyncBox } from './SyncBox'
@@ -155,6 +155,7 @@ export function StatsTab() {
   )
   return (
     <Panel id="stats">
+      <Section title="Totals" desc="All-time counters. They are not affected by deleting chats.">
       <div className="grid gap-3 sm:grid-cols-2">
         <Anchor id="tokens-sent">{card(ArrowUp, 'Tokens sent', t.tin, `${t.historyIn.toLocaleString()} history · ${t.explicitIn.toLocaleString()} explicit input`)}</Anchor>
         <Anchor id="tokens-generated">{card(ArrowDown, 'Tokens generated', t.tout, 'Reply tokens, including partial replies')}</Anchor>
@@ -162,7 +163,10 @@ export function StatsTab() {
         <Anchor id="chats-started">{card(MessagesSquare, 'Chats started', t.chats, 'A chat counts when its first message is sent')}</Anchor>
       </div>
       <p className="text-xs text-mu">Total {(t.tin + t.tout).toLocaleString()} tokens since {new Date(t.since).toLocaleDateString()}. Totals are all-time and are not affected by deleting chats. They use token counts reported by the provider when available, and a rough 4-characters-per-token estimate otherwise.</p>
+      </Section>
+      <Section title="Reset" desc="Start the counters over.">
       <Anchor id="reset-stats"><Btn v="danger" icon={RotateCcw} onClick={() => setCf(true)}>Reset stats</Btn></Anchor>
+      </Section>
       {cf && <Confirm title="Reset all stats?" text="Tokens, messages and chats-started totals go back to zero. Your chats and settings are not affected." ok="Reset" close={() => setCf(false)} run={() => useS.getState().resetStats()} />}
     </Panel>
   )
@@ -192,6 +196,7 @@ export function KeysTab() {
   if (off) return null
   return (
     <Panel id="keys">
+      <Section title="Shortcuts" desc="Press Change, then the keys you want. Shortcuts need Ctrl/Cmd or Alt.">
       <div className="space-y-2">
         {KEYS.map(([id, label, def]) => {
           const cur = keys[id] ?? def
@@ -213,6 +218,7 @@ export function KeysTab() {
         <Anchor id="reset-all-keys"><Btn v="soft" icon={RotateCcw} onClick={() => patch({ keys: Object.fromEntries(KEYS.map(([k, , d]) => [k, d])) })}>Reset all</Btn></Anchor>
         <span className="text-xs text-mu">Press Escape while recording to cancel. Some browser shortcuts, such as opening a new tab, cannot be overridden.</span>
       </div>
+      </Section>
     </Panel>
   )
 }
@@ -407,6 +413,7 @@ export function DataTab() {
   }
   return (
     <Panel id="data">
+      <Section title="Sync and transfer" desc="Keep this browser in sync, or move your setup somewhere else.">
       <Anchor id="device-sync"><SyncBox /></Anchor>
       <Anchor id="export">
       <Box icon={Download} t="Export data" d="Choose which data to include in a JSON file. Add a password to encrypt it.">
@@ -422,17 +429,22 @@ export function DataTab() {
         {msg && <span className="basis-full text-xs text-mu">{msg}</span>}
       </Box>
       </Anchor>
+      </Section>
+      <Section title="Storage" desc="What this browser holds for the app.">
+      <Anchor id="browser-storage"><StorageBox /></Anchor>
+      </Section>
+      <Section title="Danger zone" desc="Actions that remove data from this browser.">
       <Anchor id="chat-history">
       <Box icon={FileText} t="Chat history" d="Include conversations in data exports, or delete them all. Stats are kept.">
         <Btn v="danger" disabled={!chatCount} onClick={() => setCf(1)}>Delete all</Btn>
       </Box>
       </Anchor>
-      <Anchor id="browser-storage"><StorageBox /></Anchor>
       <Anchor id="erase-everything">
       <Box icon={Trash2} t="Erase everything" d="Removes all endpoints, keys, prompts, skills, memories, chats, stats and settings from this browser.">
         <Btn v="danger" onClick={() => setCf(2)}>Erase</Btn>
       </Box>
       </Anchor>
+      </Section>
       {cf === 1 && <Confirm title="Delete all chats?" text="Every saved chat is removed. Stats and settings are kept." ok="Delete all" close={() => setCf(0)} run={() => patch({ chats: [], chat: '' })} />}
       {cf === 2 && <Confirm title="Erase everything?" text="Endpoints, API keys, prompts, playlists, commands, skills, memories, chats, stats and all other settings are removed from this browser. This cannot be undone." ok="Erase" close={() => setCf(0)} run={() => { void (async () => {
         // Cancel queued writes first: a pending persist flush or durable

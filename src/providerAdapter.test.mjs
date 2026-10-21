@@ -360,6 +360,55 @@ test('the real send flow follows The Grid redirect and uses provider auth header
   )
 })
 
+test('AIHubMix resolves by preset and host and uses Bearer auth', () => {
+  assert.equal(resolveProvider('AIHubMix').id, 'aihubmix')
+  assert.equal(resolveProvider({ url: 'https://aihubmix.com/v1' }).id, 'aihubmix')
+  const provider = resolveProvider('aihubmix')
+  assert.equal(providerModelsUrl(provider), 'https://aihubmix.com/v1/models')
+  const headers = providerHeaders(provider, { key: 'mix-key' })
+  assert.equal(headers.authorization, 'Bearer mix-key')
+  const req = buildChatRequest(provider, { endpoint: { key: 'mix-key' }, model: 'gpt-4o-mini', messages: [{ role: 'user', content: 'hi' }] })
+  assert.equal(req.url, 'https://aihubmix.com/v1/chat/completions')
+})
+
+test('AIHubMix discovery lists the gateway models with their upstream owner', async () => {
+  clearProviderDiscoveryCache()
+  const provider = resolveProvider('aihubmix')
+  const calls = []
+  const fetchFn = async (url, init) => {
+    calls.push({ url, headers: init.headers })
+    return json({ data: [
+      { id: 'gpt-4o-mini', owned_by: 'OpenAI' },
+      { id: 'claude-sonnet-5', owned_by: 'Anthropic' },
+    ] })
+  }
+  const found = await discoverProviderModels(provider, { key: 'mix-key' }, fetchFn)
+  assert.equal(calls[0].url, 'https://aihubmix.com/v1/models')
+  assert.equal(calls[0].headers.authorization, 'Bearer mix-key')
+  assert.deepEqual(found.entries.map((x) => x.id), ['gpt-4o-mini', 'claude-sonnet-5'])
+  assert.equal(found.entries[0].providerId, 'OpenAI')
+})
+
+test('the real send flow reaches AIHubMix over both wire formats', () => {
+  const ep = (patch) => ({ id: 'e', name: 'E', type: 'openai', url: '', key: '', model: 'm', on: true, ...patch })
+  const msgs = [{ role: 'user', content: 'hi' }]
+
+  const openai = buildStreamRequest(ep({
+    preset: 'AIHubMix', url: 'https://aihubmix.com/v1', key: 'mix-key', model: 'gpt-4o-mini',
+  }), '', msgs)
+  assert.equal(openai.url, 'https://aihubmix.com/v1/chat/completions')
+  assert.equal(openai.headers.authorization, 'Bearer mix-key')
+
+  // AIHubMix also speaks the Anthropic Messages protocol, which authenticates
+  // with x-api-key instead of a bearer token.
+  const anthropic = buildStreamRequest(ep({
+    preset: 'AIHubMix', type: 'anthropic', url: 'https://aihubmix.com/v1', key: 'mix-key', model: 'claude-sonnet-5',
+  }), '', msgs)
+  assert.equal(anthropic.url, 'https://aihubmix.com/v1/messages')
+  assert.equal(anthropic.headers['x-api-key'], 'mix-key')
+  assert.equal(anthropic.headers['anthropic-version'], '2023-06-01')
+})
+
 test('chatCompletion maps non-OK responses through the provider mapper', async () => {
   const provider = resolveProvider('portkey')
   await assert.rejects(

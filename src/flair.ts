@@ -98,7 +98,7 @@ export function greetingFor(now: Date, seed: number): string {
 
 /* A temporary chat gets its own line: one fixed phrase, whatever the date, so
    the reader always knows this chat is on its way out. */
-export const TEMPORARY_FLAIR = 'Temporary chat. It poofs on its own.'
+export const TEMPORARY_FLAIR = 'Temporary chat. Disappears on its own.'
 
 export type FlairOptions = {
   /** The chat is temporary, so it gets the temporary line instead. */

@@ -5,7 +5,7 @@ import { RESEARCH_TIERS, type ResearchTierId } from '../research'
 import { normSkills, resolveSkill, validateCustomSkill, enabledSkills, BUILTIN_SKILLS, SKILL_TOOL_NAME, type SkillState } from '../skills'
 import { findDuplicatePairs, mergeMemory } from '../recall'
 import { TOOL_REGISTRY, can } from '../engine'
-import { CI, TOOLS, WIDGETS, KEYS } from '../meta'
+import { CI, TOOLS, WIDGETS, KEYS, orderTools } from '../meta'
 import { SETTINGS_TABS, splitSettingTarget, settingDomId } from '../settingsCatalog'
 import { PROMPT_QUALITIES, type GlobalPrompt } from '../flair'
 import { DataTab, StatsTab, KeysTab, TestRow, TestAllEndpoints } from './Extra'
@@ -87,6 +87,21 @@ const INFO: Record<string, string> = {
   look: 'Theme, display options, and auto-generated chat names settings.',
   data: 'Export or import your setup. Exports leave API keys out unless you include them.',
   adv: 'Debugging aids for understanding what the model sees and does. Everything here is off by default; enable the Advanced feature to use it.',
+}
+
+/** A titled group of related settings inside a tab. Sections give every
+ *  settings page the same shape: a header, then the settings that belong
+ *  together. */
+export function Section({ title, desc, children }: { title: string; desc?: string; children: ReactNode }) {
+  return (
+    <section className="space-y-3">
+      <div className="border-b border-bor pb-1.5">
+        <h3 className="text-sm font-semibold tracking-wide text-tx">{title}</h3>
+        {desc && <p className="mt-0.5 text-xs text-mu">{desc}</p>}
+      </div>
+      {children}
+    </section>
+  )
 }
 
 export function Panel({ id, k, n, add, children }: { id: string; k?: Kind; n?: number; add?: string; children: ReactNode }) {
@@ -419,6 +434,7 @@ function FeaturesTab() {
   const byId = (id: FeatureId) => FEATURES.find(([f]) => f === id)!
   return (
     <Panel id="features">
+      <Section title="Features" desc="Turn whole features on or off. A disabled feature is hidden everywhere.">
       {order.map((id) => {
         const [, label, desc] = byId(id)
         return (
@@ -438,6 +454,7 @@ function FeaturesTab() {
         </Anchor>
         )
       })}
+      </Section>
       {confirm === 'stats' && (
         <Modal close={() => setConfirm(null)}>
           <div className="modal-panel w-full max-w-sm space-y-4 rounded-2xl bg-bg p-5">
@@ -546,6 +563,7 @@ function Eps() {
   }
   return (
     <Panel id="eps" k="eps" n={eps.length} add="Add endpoint">
+      <Section title="Helper models" desc="The models that do the small jobs behind the scenes.">
       <HelperModels />
       <Anchor id="model-pricing-toggle">
       <div className="rounded-xl bg-surf p-3 space-y-2">
@@ -553,6 +571,8 @@ function Eps() {
         <div className="text-xs text-mu">Adds per-model pricing fields to each endpoint. Off by default.</div>
       </div>
       </Anchor>
+      </Section>
+      <Section title="Endpoints" desc="The model APIs you connect with your own key.">
       <SortableCards k="eps" ids={eps.map((x) => x.id)} label="Endpoint" renderCard={(eid, handle) => {
         const e = eps.find((x) => x.id === eid)
         if (!e) return null
@@ -644,6 +664,7 @@ function Eps() {
       }} />
       <Anchor id="add-endpoint"><span className="block text-xs text-mu">Use Add endpoint above to connect a provider, then test each model here.</span></Anchor>
       {!!eps.length && <TestAllEndpoints eps={eps} />}
+      </Section>
     </Panel>
   )
 }
@@ -655,6 +676,7 @@ function Prompts() {
   const setG = (v: Partial<GlobalPrompt>) => patch({ globalPrompt: { ...g, ...v } })
   return (
     <Panel id="prompts" k="prompts" n={prompts.length} add="Add prompt">
+      <Section title="Global prompt" desc="Applied to every message in every chat.">
       <Anchor id="global-prompt"><Card icon={ScrollText} title="Global system prompt" sub={g.on ? (g.text.trim() || qualities.length ? 'On · applies to every message in every chat' : 'On · no text yet') : 'Off'} muted={!g.on}>
         <div className="flex items-center justify-between gap-3"><div><div className="text-sm font-medium">Apply to every message</div><div className="text-xs text-mu">Added before everything else in every chat, alongside the per-chat prompt.</div></div><Toggle on={g.on} set={(on) => setG({ on })} /></div>
         <Field label="Or pick an existing prompt" hint="Copies its text into the global box.">
@@ -675,6 +697,8 @@ function Prompts() {
         <Field label="Global system prompt" hint="This is the base. Write one from scratch, or copy an existing prompt above."><Area rows={6} value={g.text} set={(v) => setG({ text: v })} /></Field>
         <div className="flex justify-end"><Btn v="soft" icon={CornerDownRight} onClick={() => setG({ on: true, text: GENERAL_PROMPT_TEXT, qualities: [] })}>Revert to default</Btn></div>
       </Card></Anchor>
+      </Section>
+      <Section title="Chat prompts" desc="Reusable system prompts you pick per chat.">
       <Anchor id="add-prompt"><span className="block text-xs text-mu">Use Add prompt above for per-chat prompts; each prompt below is individually addressable.</span></Anchor>
       <SortableCards k="prompts" ids={prompts.map((x) => x.id)} label="Prompt" renderCard={(pid, handle) => {
         const p = prompts.find((x) => x.id === pid)
@@ -689,6 +713,7 @@ function Prompts() {
         </Anchor>
         )
       }} />
+      </Section>
     </Panel>
   )
 }
@@ -706,6 +731,7 @@ function Pls() {
     .sort((a, b) => b.calls - a.calls)
   return (
     <Panel id="pls" k="pls" n={pls.length} add="Add playlist">
+      <Section title="Routing" desc="How a request picks the model that answers it.">
       <Anchor id="routing-mode"><Card icon={Route} title="Routing mode" sub="How multi-model requests try models">
         <Field label="Candidate order" hint="Ordered tries list order. Fastest tries the quickest-measured models first (new models go first until measured). Cheapest tries the lowest input price first (models without a price go last). A playlist classifier, when set, still picks first; the mode orders the rest.">
           <Seg v={routingMode} set={(v) => useS.getState().patch({ prefs: { ...useS.getState().prefs, routingMode: v as typeof routingMode } })} opts={[['ordered', 'Ordered'], ['fastest', 'Fastest'], ['cheapest', 'Cheapest']]} />
@@ -721,6 +747,8 @@ function Pls() {
           ))}
         </div>
       </Card></Anchor>
+      </Section>
+      <Section title="Playlists" desc="Ordered lists of models tried one after another.">
       <Anchor id="add-playlist"><span className="block text-xs text-mu">Use Add playlist above; each playlist below is individually addressable.</span></Anchor>
       <SortableCards k="pls" ids={pls.map((x) => x.id)} label="Playlist" renderCard={(plid, handle) => {
         const p = pls.find((x) => x.id === plid)
@@ -771,6 +799,7 @@ function Pls() {
           </Anchor>
         )
       }} />
+      </Section>
     </Panel>
   )
 }
@@ -779,6 +808,7 @@ function Cmds() {
   const { cmds, pls, upd } = useSConfig()
   return (
     <Panel id="cmds" k="cmds" n={cmds.length} add="Add command">
+      <Section title="Commands" desc="Slash commands that apply a system prompt to a typed input.">
       <Anchor id="add-command"><span className="block text-xs text-mu">Use Add command above; each command below is individually addressable.</span></Anchor>
       <SortableCards k="cmds" ids={cmds.map((x) => x.id)} label="Command" renderCard={(cid, handle) => {
         const c = cmds.find((x) => x.id === cid)
@@ -802,6 +832,7 @@ function Cmds() {
           </Anchor>
         )
       }} />
+      </Section>
     </Panel>
   )
 }
@@ -967,16 +998,20 @@ function CodeRunCard() {
 function Tools() {
   const s = useSConfig()
   const [ask, setAsk] = useState<string | null>(null)
+  const [askAlways, setAskAlways] = useState(false)
   const [showSearchKey, setShowSearchKey] = useState(false)
   const [showReaderKey, setShowReaderKey] = useState(false)
-  const [health, setHealth] = useState<{ searchConfigured?: boolean; apiProviders?: Record<string, { label: string; configured: boolean; needsZone?: boolean }> } | null>(null)
+  const [health, setHealth] = useState<{ searchConfigured?: boolean; apiProviders?: Record<string, { label: string; configured: boolean; needsZone?: boolean; optionalKey?: boolean }> } | null>(null)
   useEffect(() => {
     fetch('/api/health').then((r) => r.json()).then((x) => setHealth(x)).catch(() => setHealth({ searchConfigured: false }))
   }, [])
   const t = TOOLS.find((x) => x[0] === ask)
+  /* Tools the user allowed for good: enabling one of these skips the popup. */
+  const consent = s.toolConsent ?? {}
   const search = normSearch(s.search)
   const setSearch = (p: Partial<typeof search>) => s.patch({ search: { ...search, ...p } })
   const ownKey = (search.keys[search.provider] || '').trim()
+  const keyless = !!health?.apiProviders?.[search.provider]?.optionalKey
   /* The page-summary picker lists every endpoint model, so the user picks
    * the exact model (not just an endpoint) that writes page summaries. */
   const summaryRef = search.readerSummaryEp ? `${search.readerSummaryEp}::${search.readerSummaryModel ?? ''}` : ''
@@ -988,10 +1023,27 @@ function Tools() {
     const i = ref.indexOf('::')
     setSearch({ readerSummaryEp: i < 0 ? '' : ref.slice(0, i), readerSummaryModel: i < 0 ? '' : ref.slice(i + 2) })
   }
+  /* Enabling a tool asks first, unless the user already said not to ask. */
+  const allow = (k: string, always: boolean) => {
+    s.patch({ tools: { ...s.tools, [k]: true }, ...(always ? { toolConsent: { ...consent, [k]: true } } : {}) })
+    setAsk(null)
+    setAskAlways(false)
+  }
+  const askFor = (k: string) => { setAsk(k); setAskAlways(false) }
+  const toggleTool = (k: string, v: boolean) => {
+    if (!v) { s.patch({ tools: { ...s.tools, [k]: false } }); return }
+    if (consent[k]) allow(k, false)
+    else askFor(k)
+  }
+  /* Enabled tools first, then everything else; both groups keep relevance order. */
+  const listed = orderTools(s.tools)
   return (
     <Panel id="tools">
+      <Section title="Execution" desc="How many model → tool rounds a single reply may run, and the extra capabilities the model can call.">
       <ToolLimitCard />
       <CodeRunCard />
+      </Section>
+      <Section title="Capabilities" desc="Optional features that add their own tools to every request.">
       <ImageGenCard />
       <Anchor id="deep-research">
       <Card icon={Brain} title="Deep research" sub="@research(query)">
@@ -1002,16 +1054,19 @@ function Tools() {
         </Field>
       </Card>
       </Anchor>
-      {TOOLS.filter(([k]) => k !== 'memory').map(([k, n, I, u, d, p]) => (
+      </Section>
+      <Section title="Tools" desc="The tools the model may call. Enabled tools are listed first.">
+      {listed.map(([k, n, I, u, d, p]) => (
         <Anchor key={k} id={`tool-${k}`}>
         <Card icon={I} title={n} sub={u} muted={!s.tools[k]} right={
           <>
-            <span className="hidden items-center gap-1.5 text-xs text-mu sm:flex">{s.tools[k] ? <ShieldCheck size={14} className="text-ac" /> : <Shield size={14} />}{s.tools[k] ? 'Allowed' : 'Off'}</span>
-            <Toggle on={!!s.tools[k]} set={(v) => (v ? setAsk(k) : s.patch({ tools: { ...s.tools, [k]: false } }))} />
+            <span className="hidden items-center gap-1.5 text-xs text-mu sm:flex">{s.tools[k] ? <ShieldCheck size={14} className="text-ac" /> : <Shield size={14} />}{s.tools[k] ? (consent[k] ? 'Always allowed' : 'Allowed') : 'Off'}</span>
+            <Toggle on={!!s.tools[k]} set={(v) => toggleTool(k, v)} />
           </>
         }>
           <p className="text-sm">{d}</p>
           <p className="text-sm text-mu">Permission: {p}</p>
+          {consent[k] && <div className="flex items-center justify-between gap-3 rounded-xl bg-bg p-3"><div><div className="text-sm font-medium">Do not ask again</div><div className="text-xs text-mu">Enabling this tool no longer shows the allow popup. The permission above still applies.</div></div><Toggle on={!!consent[k]} set={(v) => s.patch({ toolConsent: { ...consent, [k]: v } })} label="Do not ask again" /></div>}
           {k === 'workspace_upsert' && <Anchor id="workspace-view"><div className="space-y-3 rounded-xl bg-bg p-3">
             <div className="flex items-center justify-between gap-3"><div><div className="text-sm font-medium">Default view for workspace tiles</div><div className="text-xs text-mu">Pinned shows the revision created by each message. Latest shows the most recent revision with a dropdown to go back.</div></div><Seg v={s.workspacePrefs?.defaultView ?? 'pinned'} set={(defaultView) => s.patch({ workspacePrefs: { ...s.workspacePrefs, defaultView } })} opts={[['pinned', 'Pinned'], ['latest', 'Latest']]} /></div>
             <div className="flex items-center justify-between gap-3"><div><div className="text-sm font-medium">Auto-open workspace panel</div><div className="text-xs text-mu">Automatically open the side panel when the AI starts writing files.</div></div><Toggle on={s.workspacePrefs?.autoOpen ?? true} set={(autoOpen) => s.patch({ workspacePrefs: { ...s.workspacePrefs, autoOpen } })} /></div>
@@ -1019,11 +1074,12 @@ function Tools() {
           </div></Anchor>}
           {k === 'search' && <div className="space-y-3 rounded-xl bg-bg p-3">
             <Anchor id="search-provider">
-            <Field label="API provider" hint="Your searches run through this provider with your own key below.">
+            <Field label="API provider" hint="Your searches run through this provider with your own key below. The results ground the reply and become its sources. Jina AI works without a key at a lower rate limit.">
               <Sel value={search.provider} set={(provider) => { setShowSearchKey(false); setSearch({ provider: provider as typeof search.provider }) }} opts={SEARCH_PROVIDERS.map(([id, label]) => [id, label] as [string, string])} />
             </Field>
             </Anchor>
-            {!ownKey && search.provider !== 'firecrawl' && <p role="status" className="rounded-lg bg-er/10 px-3 py-2 text-xs text-er">No {health?.apiProviders?.[search.provider]?.label ?? search.provider} key saved in this browser yet. Searches will fail until you paste one below.</p>}
+            {!ownKey && !keyless && <p role="status" className="rounded-lg bg-er/10 px-3 py-2 text-xs text-er">No {health?.apiProviders?.[search.provider]?.label ?? search.provider} key saved in this browser yet. Searches will fail until you paste one below.</p>}
+            {keyless && !ownKey && <p className="rounded-lg bg-hov px-3 py-2 text-xs text-mu">{health?.apiProviders?.[search.provider]?.label ?? search.provider} works without a key at a lower rate limit. Add one to raise the limits.</p>}
             <Anchor id="search-key">
             <Field label={`${health?.apiProviders?.[search.provider]?.label ?? search.provider} API key`} hint="Bring your own key. Stored unencrypted in this browser and sent only to your search backend with each query.">
               <div className="relative">
@@ -1070,79 +1126,83 @@ function Tools() {
                 <Seg v={search.citeStyle} set={(citeStyle) => setSearch({ citeStyle })} opts={[['off', 'Off'], ['pills', 'Pills'], ['links', 'Links']]} />
               </Field>
               <div className="flex items-center justify-between gap-3"><div><div className="text-sm font-medium">Expand Sources by default</div><div className="text-xs text-mu">Show the source list open on every grounded reply instead of behind the Sources button.</div></div><Toggle on={search.sourcesOpen} set={(sourcesOpen) => setSearch({ sourcesOpen })} /></div>
-              <div className="flex items-center justify-between gap-3"><div><div className="text-sm font-medium">Page reader</div><div className="text-xs text-mu">Let the model open a search result to read the full page. Turn off to keep grounding to snippets.</div></div><Toggle on={search.reader} set={(reader) => setSearch({ reader })} /></div>
-              {search.reader && <div className="space-y-3 rounded-lg bg-bg p-3">
-                <Anchor id="reader-api">
-                <Field label="Reader API" hint="Which service reads a page when the model opens a search result. Pick a different service than your search API to use a separate provider and key.">
-                  <Sel value={search.readerProvider} set={(readerProvider) => setSearch({ readerProvider: readerProvider as typeof search.readerProvider })} opts={READER_PROVIDERS.map(([id, label]) => [id, label] as [string, string])} />
-                </Field>
-                </Anchor>
-                {search.readerProvider !== 'builtin' && <>
-                  <Anchor id="reader-key">
-                  <Field label="Reader API key" hint={search.readerProvider === 'exa'
-                    ? 'Required by Exa. Stored in this browser like the search key. Your Exa search key is reused when this is empty.'
-                    : search.readerProvider === 'jina'
-                      ? 'Optional for Jina Reader. Leave empty to use Jina without a key.'
-                      : search.readerProvider === 'firecrawl'
-                        ? 'Optional for Firecrawl. Leave empty to use your Firecrawl search key.'
-                        : 'Optional. Sent as a bearer token to your reader service.'}>
-                    <div className="relative">
-                      <Input type={showReaderKey ? 'text' : 'password'} value={search.readerKey} set={(v) => setSearch({ readerKey: v })} placeholder={search.readerProvider === 'exa' ? 'Paste your reader API key' : 'Optional'} />
-                      <button onClick={() => setShowReaderKey(!showReaderKey)} title="Show or hide key" className="absolute right-2 top-1/2 -translate-y-1/2 text-mu hover:text-tx">{showReaderKey ? <EyeOff size={16} /> : <Eye size={16} />}</button>
-                    </div>
-                  </Field>
-                  </Anchor>
-                  {search.readerProvider === 'custom' && <Anchor id="reader-url">
-                  <Field label="Reader API URL" hint="Your own reader endpoint. Use {url} where the page address should go, for example https://example.com/read?url={url}. It must return JSON with a text field, or plain text.">
-                    <Input value={search.readerUrl} set={(v) => setSearch({ readerUrl: v })} placeholder="https://example.com/read?url={url}" />
-                  </Field>
-                  </Anchor>}
-                  <div className="flex items-center justify-between gap-3"><div><div className="text-sm font-medium">Fall back to the built-in reader</div><div className="text-xs text-mu">If the reader API fails or has no key, read the page directly instead of failing the read.</div></div><Toggle on={search.readerFallback} set={(readerFallback) => setSearch({ readerFallback })} /></div>
-                </>}
-                <Anchor id="reader-summary">
-                <div className="flex items-center justify-between gap-3"><div><div className="text-sm font-medium">Summarize pages with another model</div><div className="text-xs text-mu">Send the page to a second model that returns a clean summary. The main model then gets the summary instead of the whole page, which keeps long articles from filling up the context.</div></div><Toggle on={search.readerSummary} set={(readerSummary) => setSearch({ readerSummary })} /></div>
-                </Anchor>
-                {search.readerSummary && <>
-                  <Anchor id="reader-summary-model">
-                  <Field label="Summary model" hint="The exact model that writes the summary. Pick the endpoint and the model id; there is no silent fallback, and a failed summary uses the raw page instead.">
-                    <Sel value={summaryRef} set={setSummaryRef} opts={summaryOpts} />
-                  </Field>
-                  </Anchor>
-                  <Anchor id="reader-summary-length">
-                  <Field label={`Summary length · ${search.readerSummaryChars.toLocaleString()} characters`} hint="Roughly how long a page summary may be. Shorter keeps the context small, longer keeps more detail.">
-                    <RangeSlider label="Summary length" min={400} max={8000} step={200} value={search.readerSummaryChars} valueText={`${search.readerSummaryChars.toLocaleString()} characters`} set={(readerSummaryChars) => setSearch({ readerSummaryChars: Math.round(readerSummaryChars) })} className="w-full" />
-                  </Field>
-                  </Anchor>
-                </>}
-                <Anchor id="fetch-timeout">
-                <Field label={`Page request timeout · ${(search.fetchTimeoutMs / 1000).toFixed(search.fetchTimeoutMs % 1000 ? 1 : 0)}s`} hint="How long to wait for a page before retrying or failing.">
-                  <RangeSlider label="Page request timeout" min={1000} max={30000} step={1000} value={search.fetchTimeoutMs} valueText={`${(search.fetchTimeoutMs / 1000).toFixed(search.fetchTimeoutMs % 1000 ? 1 : 0)} seconds`} set={(fetchTimeoutMs) => setSearch({ fetchTimeoutMs: Math.round(fetchTimeoutMs) })} className="w-full" />
-                </Field>
-                </Anchor>
-                <Anchor id="fetch-chars">
-                <Field label={`Text kept per page · ${(search.fetchMaxChars / 1000).toFixed(search.fetchMaxChars % 1000 ? 1 : 0)}k characters`} hint="How much page text to read. Capped at 50,000 characters. When summaries are on, this is the text the summary model sees.">
-                  <RangeSlider label="Text kept per page" min={1000} max={50000} step={1000} value={search.fetchMaxChars} valueText={`${search.fetchMaxChars.toLocaleString()} characters`} set={(fetchMaxChars) => setSearch({ fetchMaxChars: Math.round(fetchMaxChars) })} className="w-full" />
-                </Field>
-                </Anchor>
-                <Anchor id="fetch-retries">
-                <Field label="Page retries" hint="Bounded retries for transient failures (429/5xx/timeouts). Permanent errors are never retried.">
-                  <Sel value={String(search.fetchMaxRetries)} set={(v) => setSearch({ fetchMaxRetries: Number(v) })} opts={[['0', '0 · none'], ['1', '1'], ['2', '2'], ['3', '3'], ['4', '4 · max']]} />
-                </Field>
-                </Anchor>
-                <Anchor id="fetch-retry-delay">
-                <Field label="Page retry base delay" hint="Base backoff between page retries (doubles each attempt, capped at 4s).">
-                  <Sel value={String(search.fetchRetryBaseMs)} set={(v) => setSearch({ fetchRetryBaseMs: Number(v) })} opts={[['50', '50ms'], ['100', '100ms'], ['300', '300ms'], ['500', '500ms'], ['1000', '1s'], ['2000', '2s · max']]} />
-                </Field>
-                </Anchor>
-              </div>}
               <div className="flex items-center justify-between gap-3"><div><div className="text-sm font-medium">Strict citation warnings</div><div className="text-xs text-mu">Flag grounded replies that cite nothing, or cite sources they weren't given.</div></div><Toggle on={search.strictCitations} set={(strictCitations) => setSearch({ strictCitations })} /></div>
             </div>
+            </Anchor>
+          </div>}
+          {k === 'fetch_page' && <div className="space-y-3 rounded-xl bg-bg p-3">
+            <Anchor id="page-reader">
+            <div className="flex items-center justify-between gap-3"><div><div className="text-sm font-medium">Page reader</div><div className="text-xs text-mu">Let the model open a search result to read the full page. Turn off to keep grounding to snippets.</div></div><Toggle on={search.reader} set={(reader) => setSearch({ reader })} /></div>
+            </Anchor>
+            <Anchor id="reader-api">
+            <Field label="Reader API" hint="Which service reads a page when the model opens a search result. Pick a different service than your search API to use a separate provider and key.">
+              <Sel value={search.readerProvider} set={(readerProvider) => setSearch({ readerProvider: readerProvider as typeof search.readerProvider })} opts={READER_PROVIDERS.map(([id, label]) => [id, label] as [string, string])} />
+            </Field>
+            </Anchor>
+            {search.readerProvider !== 'builtin' && <>
+              <Anchor id="reader-key">
+              <Field label="Reader API key" hint={search.readerProvider === 'exa'
+                ? 'Required by Exa. Stored in this browser like the search key. Your Exa search key is reused when this is empty.'
+                : search.readerProvider === 'jina'
+                  ? 'Optional for Jina Reader. Leave empty to use Jina without a key.'
+                  : search.readerProvider === 'firecrawl'
+                    ? 'Optional for Firecrawl. Leave empty to use your Firecrawl search key.'
+                    : 'Optional. Sent as a bearer token to your reader service.'}>
+                <div className="relative">
+                  <Input type={showReaderKey ? 'text' : 'password'} value={search.readerKey} set={(v) => setSearch({ readerKey: v })} placeholder={search.readerProvider === 'exa' ? 'Paste your reader API key' : 'Optional'} />
+                  <button onClick={() => setShowReaderKey(!showReaderKey)} title="Show or hide key" className="absolute right-2 top-1/2 -translate-y-1/2 text-mu hover:text-tx">{showReaderKey ? <EyeOff size={16} /> : <Eye size={16} />}</button>
+                </div>
+              </Field>
+              </Anchor>
+              {search.readerProvider === 'custom' && <Anchor id="reader-url">
+              <Field label="Reader API URL" hint="Your own reader endpoint. Use {url} where the page address should go, for example https://example.com/read?url={url}. It must return JSON with a text field, or plain text.">
+                <Input value={search.readerUrl} set={(v) => setSearch({ readerUrl: v })} placeholder="https://example.com/read?url={url}" />
+              </Field>
+              </Anchor>}
+              <div className="flex items-center justify-between gap-3"><div><div className="text-sm font-medium">Fall back to the built-in reader</div><div className="text-xs text-mu">If the reader API fails or has no key, read the page directly instead of failing the read.</div></div><Toggle on={search.readerFallback} set={(readerFallback) => setSearch({ readerFallback })} /></div>
+            </>}
+            <Anchor id="reader-summary">
+            <div className="flex items-center justify-between gap-3"><div><div className="text-sm font-medium">Summarize pages with another model</div><div className="text-xs text-mu">Send the page to a second model that returns a clean summary. The main model then gets the summary instead of the whole page, which keeps long articles from filling up the context.</div></div><Toggle on={search.readerSummary} set={(readerSummary) => setSearch({ readerSummary })} /></div>
+            </Anchor>
+            {search.readerSummary && <>
+              <Anchor id="reader-summary-model">
+              <Field label="Summary model" hint="The exact model that writes the summary. Pick the endpoint and the model id; there is no silent fallback, and a failed summary uses the raw page instead.">
+                <Sel value={summaryRef} set={setSummaryRef} opts={summaryOpts} />
+              </Field>
+              </Anchor>
+              <Anchor id="reader-summary-length">
+              <Field label={`Summary length · ${search.readerSummaryChars.toLocaleString()} characters`} hint="Roughly how long a page summary may be. Shorter keeps the context small, longer keeps more detail.">
+                <RangeSlider label="Summary length" min={400} max={8000} step={200} value={search.readerSummaryChars} valueText={`${search.readerSummaryChars.toLocaleString()} characters`} set={(readerSummaryChars) => setSearch({ readerSummaryChars: Math.round(readerSummaryChars) })} className="w-full" />
+              </Field>
+              </Anchor>
+            </>}
+            <Anchor id="fetch-timeout">
+            <Field label={`Page request timeout · ${(search.fetchTimeoutMs / 1000).toFixed(search.fetchTimeoutMs % 1000 ? 1 : 0)}s`} hint="How long to wait for a page before retrying or failing.">
+              <RangeSlider label="Page request timeout" min={1000} max={30000} step={1000} value={search.fetchTimeoutMs} valueText={`${(search.fetchTimeoutMs / 1000).toFixed(search.fetchTimeoutMs % 1000 ? 1 : 0)} seconds`} set={(fetchTimeoutMs) => setSearch({ fetchTimeoutMs: Math.round(fetchTimeoutMs) })} className="w-full" />
+            </Field>
+            </Anchor>
+            <Anchor id="fetch-chars">
+            <Field label={`Text kept per page · ${(search.fetchMaxChars / 1000).toFixed(search.fetchMaxChars % 1000 ? 1 : 0)}k characters`} hint="How much page text to read. Capped at 50,000 characters. When summaries are on, this is the text the summary model sees.">
+              <RangeSlider label="Text kept per page" min={1000} max={50000} step={1000} value={search.fetchMaxChars} valueText={`${search.fetchMaxChars.toLocaleString()} characters`} set={(fetchMaxChars) => setSearch({ fetchMaxChars: Math.round(fetchMaxChars) })} className="w-full" />
+            </Field>
+            </Anchor>
+            <Anchor id="fetch-retries">
+            <Field label="Page retries" hint="Bounded retries for transient failures (429/5xx/timeouts). Permanent errors are never retried.">
+              <Sel value={String(search.fetchMaxRetries)} set={(v) => setSearch({ fetchMaxRetries: Number(v) })} opts={[['0', '0 · none'], ['1', '1'], ['2', '2'], ['3', '3'], ['4', '4 · max']]} />
+            </Field>
+            </Anchor>
+            <Anchor id="fetch-retry-delay">
+            <Field label="Page retry base delay" hint="Base backoff between page retries (doubles each attempt, capped at 4s).">
+              <Sel value={String(search.fetchRetryBaseMs)} set={(v) => setSearch({ fetchRetryBaseMs: Number(v) })} opts={[['50', '50ms'], ['100', '100ms'], ['300', '300ms'], ['500', '500ms'], ['1000', '1s'], ['2000', '2s · max']]} />
+            </Field>
             </Anchor>
           </div>}
         </Card>
         </Anchor>
       ))}
+      </Section>
       {featOn(s, 'advanced') && s.advanced?.showHiddenTools && (
+        <Section title="Additional capabilities" desc="Owned by other features · read-only">
         <Anchor id="hidden-capabilities">
         <Card icon={FlaskConical} title="Additional capabilities" sub="Owned by other features · read-only">
           <p className="text-sm text-mu">These capabilities turn on automatically with their feature and can't be toggled here.</p>
@@ -1173,15 +1233,20 @@ function Tools() {
             })}
         </Card>
         </Anchor>
+        </Section>
       )}
       {t && (
         <Modal close={() => setAsk(null)}>
           <div className="modal-panel w-full max-w-sm space-y-4 rounded-2xl bg-bg p-5">
             <div className="flex items-center gap-2 font-semibold"><ShieldCheck size={18} className="text-ac" />Allow {t[1]}?</div>
             <p className="text-sm text-mu">{t[5]}</p>
+            <label className="flex items-start gap-3 rounded-xl bg-surf p-3 text-sm">
+              <input type="checkbox" checked={askAlways} onChange={(ev) => setAskAlways(ev.target.checked)} className="mt-0.5 size-4 accent-[var(--accent)]" />
+              <span><span className="font-medium">Do not ask again</span><span className="mt-0.5 block text-xs text-mu">Allow this tool for good. You can undo this later in the tool's card.</span></span>
+            </label>
             <div className="flex justify-end gap-2">
               <Btn v="soft" onClick={() => setAsk(null)}>Cancel</Btn>
-              <Btn v="solid" icon={Check} onClick={() => { s.patch({ tools: { ...s.tools, [t[0]]: true } }); setAsk(null) }}>Allow</Btn>
+              <Btn v="solid" icon={Check} onClick={() => allow(t[0], askAlways)}>{askAlways ? 'Allow and never ask' : 'Allow'}</Btn>
             </div>
           </div>
         </Modal>
@@ -1208,6 +1273,7 @@ function SkillsTab() {
   }
   return (
     <Panel id="skills">
+      <Section title="Skills" desc="Extra instructions the model can load for specific tasks.">
       {!!warnings.length && <p role="status" className="rounded-xl bg-er/10 px-3 py-2 text-xs text-er">{warnings[0]} Edit or reset the skill below to fix it.</p>}
       {skills.map((st) => {
         const def = resolveSkill(st)
@@ -1228,6 +1294,8 @@ function SkillsTab() {
           </Anchor>
         )
       })}
+      </Section>
+      <Section title="Custom skills" desc="Your own reusable instructions.">
       <Anchor id="add-skill">
       <Card icon={Plus} title="Add a custom skill" sub="Your own reusable instructions" open0={false}>
         <div className="grid gap-4 sm:grid-cols-2">
@@ -1240,6 +1308,7 @@ function SkillsTab() {
         <div><Btn v="solid" icon={Plus} onClick={add}>Add skill</Btn></div>
       </Card>
       </Anchor>
+      </Section>
     </Panel>
   )
 }
@@ -1252,6 +1321,7 @@ function VoiceTab() {
   const canSpeak = speechAvailable()
   return (
     <Panel id="voice">
+      <Section title="Dictation" desc="Turn speech into a message with the microphone.">
       <Anchor id="voice-dictation">
       <Card icon={AudioLines} title="Dictation" sub={canDictate ? 'Microphone button in the composer' : 'Not supported in this browser'} muted={!canDictate}>
         <p className="text-sm">Press the microphone beside Send and speak; the words land in the message box. Recognition stops on its own after a pause, and the transcript stays editable before you send.</p>
@@ -1262,6 +1332,8 @@ function VoiceTab() {
         </Field>
       </Card>
       </Anchor>
+      </Section>
+      <Section title="Read aloud" desc="Speak replies with the browser's own voice.">
       <Anchor id="voice-read-aloud">
       <Card icon={Volume2} title="Read aloud" sub={canSpeak ? (v.autoRead ? 'On · reads every new reply' : 'Button on each reply') : 'Not supported in this browser'} muted={!canSpeak}>
         <p className="text-sm">A speaker button on every reply reads it aloud with the browser\u2019s speech synthesis. Code blocks and links are skipped; only the prose is spoken.</p>
@@ -1283,6 +1355,7 @@ function VoiceTab() {
         </div>
       </Card>
       </Anchor>
+      </Section>
     </Panel>
   )
 }
@@ -1313,6 +1386,7 @@ function McpTab() {
   }
   return (
     <Panel id="mcp" k="mcps" n={mcps.length} add="Add server">
+      <Section title="Servers" desc="External tool servers whose tools join the normal tool loop.">
       <div className="space-y-2 rounded-xl bg-surf p-4 text-sm">
         <p>Servers speak MCP over Streamable HTTP. Press Test connection to run the handshake and load the tools; from then on every enabled server&rsquo;s tools are sent to the model with the rest of the tool list.</p>
         <p className="text-xs text-mu">Requests go straight from this browser to the server, so the server must allow browser origins (CORS). URLs, headers, and tokens stay here and are never stored by this app&rsquo;s backend. Custom headers use one <code>Name: value</code> pair per line, for example <code>Authorization: Bearer …</code>.</p>
@@ -1361,6 +1435,7 @@ function McpTab() {
         )
       })}
       <Anchor id="add-mcp-server"><span className="block text-xs text-mu">Use Add server above. A server with no loaded tools contributes nothing until you test it.</span></Anchor>
+      </Section>
     </Panel>
   )
 }
@@ -1389,6 +1464,7 @@ function MemoryTab() {
     setDupes((d) => (d ?? []).filter((p) => p.a !== a && p.b !== b && p.a !== b && p.b !== a))
   }
   return <Panel id="memory">
+    <Section title="Memory tool" desc="How the model stores and recalls things about you.">
     <Anchor id="memory-tool">
     <div className="rounded-xl bg-surf p-4 space-y-3">
       <div className="flex items-center justify-between gap-3"><div><div className="font-medium">Memory tool</div><div className="text-sm text-mu">Disabled by default. Memories stay in this browser and are sent to your selected model when recalled.</div></div><Toggle on={mp.enabled} set={(enabled) => setPrefs({ enabled })} /></div>
@@ -1410,6 +1486,8 @@ function MemoryTab() {
       {(mp.method ?? 'local') === 'classifier' && mp.recall !== 'holistic' && <HelperPointer anchor="recall-classifier" title="Memory recall model" desc="Set in Endpoints → Helper models. Chooses which saved memories matter for each reply." current={helperLabel(s, helperRef(s.prefs.recallEp, s.prefs.recallModel) || helperRef(mp.classifierEp, mp.classifierModel), 'Classification model (fallback)')} />}
     </div>
     </Anchor>
+    </Section>
+    <Section title="Your memories" desc="Everything stored in this browser.">
     <Anchor id="add-memory">
     <div className="rounded-xl bg-surf p-4 space-y-3"><div className="font-medium">Add a memory</div><Area rows={2} value={draft} set={setDraft} placeholder="A short fact, preference, or reminder…" /><div className="flex gap-2"><Input value={category} set={setCategory} placeholder="Category" /><Btn v="solid" icon={Plus} onClick={addMemory}>Add memory</Btn></div>
       <p className="text-xs text-mu">New memories merge into near-duplicates automatically instead of piling up copies.</p></div>
@@ -1437,6 +1515,7 @@ function MemoryTab() {
     </Anchor>
     {s.memories.map((m) => <div key={m.id} className="rounded-xl bg-surf p-3 space-y-2"><div className="flex gap-2"><Input value={m.category} set={(category) => s.patch({ memories: s.memories.map((x) => x.id === m.id ? { ...x, category, updatedAt: Date.now() } : x) })} placeholder="Category" /><Btn v="danger" icon={Trash2} title="Delete memory" onClick={() => s.patch({ memories: s.memories.filter((x) => x.id !== m.id) })}>Delete</Btn></div><Area rows={2} value={m.text} set={(text) => s.patch({ memories: s.memories.map((x) => x.id === m.id ? { ...x, text, updatedAt: Date.now() } : x) })} /></div>)}
     {!s.memories.length && <p className="rounded-xl bg-surf p-4 text-sm text-mu">No memories stored yet. Add one here or enable memory and choose a mode.</p>}
+    </Section>
   </Panel>
 }
 
@@ -1452,6 +1531,7 @@ function WidgetsTab() {
   }
   return (
     <Panel id="widgets">
+      <Section title="Context meter" desc="The token ring in the chat header.">
       <Anchor id="context-meter">
       <div className="rounded-xl bg-surf p-3 space-y-3">
         <label className="flex items-center justify-between gap-3 text-sm">Show context meter<Toggle on={s.prefs.showContextMeter ?? true} set={(showContextMeter) => s.patch({ prefs: { ...s.prefs, showContextMeter } })} /></label>
@@ -1460,7 +1540,10 @@ function WidgetsTab() {
         <Field label="Characters per estimated token" hint="A rough estimate; 4 is a common default for English text."><Input type="number" min="1" max="10" value={s.widgetPrefs.charsPerToken} set={(v) => s.patch({ widgetPrefs: { ...s.widgetPrefs, charsPerToken: Math.min(10, Math.max(1, Number(v) || 4)) } })} /></Field>
       </div>
       </Anchor>
-      {WIDGETS.map(([k, n, I, d]) => {
+      </Section>
+      <Section title="Panels" desc="The optional panels beside the chat. Enabled panels are listed first.">
+      {/* Enabled panels first; the rest keep their relevance order. */}
+      {WIDGETS.map((w, i) => ({ w, i })).sort((a, b) => (s.widgets[a.w[0]] ? 0 : 1) - (s.widgets[b.w[0]] ? 0 : 1) || a.i - b.i).map(({ w: [k, n, I, d] }) => {
         const blocked = blockedBy(k)
         return (
         <Anchor key={k} id={`widget-${k}`}>
@@ -1491,6 +1574,7 @@ function WidgetsTab() {
         </Anchor>
         )
       })}
+      </Section>
     </Panel>
   )
 }
@@ -1538,6 +1622,7 @@ function Look() {
   const row = (anchor: string, k: PrefToggle, t: string, d: string) => prefRow(s, anchor, k, t, d)
   return (
     <Panel id="look">
+      <Section title="Appearance" desc="Theme, colors and the small flourishes.">
       <Anchor id="appearance-mode">
       <div className="rounded-xl bg-surf p-3 space-y-2">
         <div className="text-sm font-medium">Appearance mode</div>
@@ -1579,6 +1664,8 @@ function Look() {
       })()}
       {row('seasonal', 'seasonal', 'Seasonal touches', 'Show a festive greeting on holidays. Turn off to keep the greeting plain.')}
       {row('completion-cues', 'cues', 'Completion cues', 'A soft chime and a little confetti when deep research or a workspace update finishes.')}
+      </Section>
+      <Section title="Model picker" desc="What the model menu shows and how tall it may grow.">
       <Anchor id="model-picker-labels">
       <div className="rounded-xl bg-surf p-3 space-y-2">
         <div className="text-sm font-medium">Model picker main label</div>
@@ -1596,6 +1683,11 @@ function Look() {
         <Seg v={s.prefs.modelSecondary ?? 'none'} set={(modelSecondary) => s.patch({ prefs: { ...s.prefs, modelSecondary } })} opts={(s.prefs.modelPrimary ?? 'name') === 'name' ? [["provider", "Provider"], ["id", "Model ID"], ["none", "None"]] : [["provider", "Provider"], ["name", "Model name"], ["none", "None"]]} />
       </div>
       </Anchor>
+      <Anchor id="model-picker-height">
+      <div className="rounded-xl bg-surf p-3 space-y-2"><div className="text-sm font-medium">Model picker height</div><div className="text-xs text-mu">Maximum height of the model and playlist menu. Smaller screens constrain it to fit.</div><Field label={`Height · ${modelPickerHeight}px`}><RangeSlider label="Model picker height" min={320} max={720} step={20} value={modelPickerHeight} set={(modelPickerHeight) => s.patch({ prefs: { ...s.prefs, modelPickerHeight } })} className="w-full" /></Field></div>
+      </Anchor>
+      </Section>
+      <Section title="Layout" desc="Sizes and spacing of the chat, the composer and the panels.">
       <Anchor id="palette-height">
       <div className="rounded-xl bg-surf p-3 space-y-2">
         <div className="text-sm font-medium">Command palette height</div>
@@ -1621,9 +1713,6 @@ function Look() {
         <Field label={`Height · ${settingsHeight}px`}><RangeSlider label="Settings window height" min={520} max={1000} step={20} value={settingsHeight} set={(settingsHeight) => s.patch({ prefs: { ...s.prefs, settingsHeight } })} className="w-full" /></Field>
       </div>
       </Anchor>
-      <Anchor id="model-picker-height">
-      <div className="rounded-xl bg-surf p-3 space-y-2"><div className="text-sm font-medium">Model picker height</div><div className="text-xs text-mu">Maximum height of the model and playlist menu. Smaller screens constrain it to fit.</div><Field label={`Height · ${modelPickerHeight}px`}><RangeSlider label="Model picker height" min={320} max={720} step={20} value={modelPickerHeight} set={(modelPickerHeight) => s.patch({ prefs: { ...s.prefs, modelPickerHeight } })} className="w-full" /></Field></div>
-      </Anchor>
       <Anchor id="overlay">
       <div className="rounded-xl bg-surf p-3 space-y-3">
         <div><div className="text-sm font-medium">Overlay appearance</div><div className="text-xs text-mu">Control how dialogs and the settings panel sit over the workspace.</div></div>
@@ -1631,6 +1720,8 @@ function Look() {
         <Field label={`Settings background opacity · ${s.prefs.settingsOpacity}%`} hint="How much the settings backdrop dims the workspace behind the settings panel."><RangeSlider label="Settings background opacity" min={0} max={100} step={5} value={s.prefs.settingsOpacity} set={(settingsOpacity) => s.patch({ prefs: { ...s.prefs, settingsOpacity } })} className="w-full" /></Field>
       </div>
       </Anchor>
+      </Section>
+      <Section title="Typography" desc="The fonts used across the app.">
       <Anchor id="fonts">
       <div className="rounded-xl bg-surf p-3 space-y-3">
         <div><div className="text-sm font-medium">Fonts</div><div className="text-xs text-mu">Fonts already loaded in the app are reused; other choices load from Google Fonts.</div></div>
@@ -1639,6 +1730,7 @@ function Look() {
         <Field label="Monospace font"><FontPicker value={s.prefs.fontMono} set={(fontMono) => s.patch({ prefs: { ...s.prefs, fontMono } })} options={MONO_OPTIONS} /></Field>
       </div>
       </Anchor>
+      </Section>
     </Panel>
   )
 }
@@ -1661,12 +1753,16 @@ function AdvancedTab() {
   )
   return (
     <Panel id="adv">
+      <Section title="Diagnostics" desc="What the app shows about the requests it makes.">
       {row('verbose-errors', 'verboseErrors', 'Verbose errors', 'Show exact provider error messages in the process log and failure replies. The endpoint key is still masked; other key-like tokens are shown verbatim.')}
-      {row('show-hidden-tools', 'showHiddenTools', 'Show additional capabilities', 'List capabilities owned by other features in Settings → Tools. They stay read-only and cannot be toggled there.')}
       {row('show-system-prompt', 'showSystemPrompt', 'Show full system prompt', 'Save the exact system prompt sent with each reply and show it in the process log: global prompt, selected prompt, tool guidance, skill catalog, and memory context.')}
       {row('show-tool-payloads', 'showToolPayloads', 'Show tool arguments and results', 'Render the full JSON arguments and returned text of every tool call in the process log instead of one-line summaries.')}
       {row('show-token-counts', 'showTokenCounts', 'Show per-step token counts', 'List reported input/output tokens beside each process-log entry when the provider reports them.')}
+      </Section>
+      <Section title="Interface" desc="Extra details in the chat and the settings.">
+      {row('show-hidden-tools', 'showHiddenTools', 'Show additional capabilities', 'List capabilities owned by other features in Settings → Tools. They stay read-only and cannot be toggled there.')}
       {row('show-model-params', 'showModelParams', 'Model parameters', 'Show the temperature, top-p, and max-tokens controls in the chat header. Turn off to hide them even while the Advanced feature stays on.')}
+      </Section>
     </Panel>
   )
 }
@@ -1679,11 +1775,14 @@ function WorkspaceTab() {
   const draft = useS((s) => s.draft)
   return (
     <Panel id="workspace">
+      <Section title="Panel" desc="How the workspace side panel behaves.">
       <div className="space-y-3">
         <Anchor id="default-view"><Field label="Default view"><Seg v={wp.defaultView ?? 'pinned'} set={(defaultView) => set({ defaultView: defaultView as typeof wp.defaultView })} opts={[['pinned', 'Pinned'], ['latest', 'Latest']]} /></Field></Anchor>
         <Anchor id="auto-open"><div className="flex items-center justify-between gap-3"><div><div className="text-sm font-medium">Auto-open panel</div><div className="text-xs text-mu">Open the side panel when the AI starts writing files.</div></div><Toggle on={wp.autoOpen ?? true} set={(autoOpen) => set({ autoOpen })} /></div></Anchor>
         <Anchor id="auto-follow"><div className="flex items-center justify-between gap-3"><div><div className="text-sm font-medium">Auto-follow file</div><div className="text-xs text-mu">Select the file the AI is writing automatically.</div></div><Toggle on={wp.autoFollow ?? true} set={(autoFollow) => set({ autoFollow })} /></div></Anchor>
       </div>
+      </Section>
+      <Section title="Project templates" desc="Starter file sets the model can scaffold.">
       <Anchor id="templates">
       <Card icon={LayoutTemplate} title="Project templates" sub="Starter file sets the model can scaffold with template + createNew">
         <div className="space-y-2">
@@ -1707,6 +1806,8 @@ function WorkspaceTab() {
         </div>
       </Card>
       </Anchor>
+      </Section>
+      <Section title="Sharing" desc="Send workspace files to a GitHub Gist.">
       <Anchor id="gist-sharing">
       <Card icon={Share2} title="GitHub Gist sharing" sub="Optional personal token · saved with your settings">
         <Field label="Gist token (classic, gist scope)" hint="Only used when you press Share in a workspace panel. Leave empty to disable sharing. When device sync is on, it is included in the encrypted sync payload.">
@@ -1717,6 +1818,7 @@ function WorkspaceTab() {
         </Field>
       </Card>
       </Anchor>
+      </Section>
     </Panel>
   )
 }
@@ -1726,24 +1828,29 @@ function Chats() {
   const row = (anchor: string, k: PrefToggle, t: string, d: string) => prefRow(s, anchor, k, t, d)
   return (
     <Panel id="chats">
+      <Section title="Replies" desc="What each reply shows and how it is rendered.">
       {row('show-by', 'showBy', 'Show which model answered', 'Label each reply with the endpoint and model that produced it.')}
       {row('show-log', 'showLog', 'Show model-use details', 'List every model called for a reply, including classifiers and failures.')}
       {row('show-tps', 'showTps', 'Show generation speed', 'Show tokens per second below each reply.')}
-      {row('enter-sends', 'enterSends', 'Enter sends the message', 'Turn off to send with the button and use Enter for new lines.')}
-      {row('auto-title', 'autoTitle', 'Auto-generate chat names', 'Automatically generate a concise title after the first reply.')}
+      {row('stream-md', 'streamMd', 'Render markdown while streaming', 'Format each completed line as markdown as it arrives instead of plain text. Off shows plain text until the reply finishes.')}
+      {row('remote-images', 'remoteImages', 'Load remote images', 'Render images that replies link to over the network. Off keeps them behind a click-to-load button, so reading a reply never contacts third-party hosts.')}
+      <Anchor id="stream-fade">
+      <div className="rounded-xl bg-surf p-3 space-y-3">
+        <div><div className="text-sm font-medium">Reply fade-in</div><div className="text-xs text-mu">Each chunk of a streaming reply fades in as it arrives. Off disables it entirely.</div></div>
+        <div className="flex items-center gap-3">
+          <RangeSlider label="Reply fade-in duration" min={0} max={1} step={0.1} value={s.prefs.streamFade} set={(streamFade) => s.patch({ prefs: { ...s.prefs, streamFade } })} className="flex-1" />
+          <span className="w-24 text-right text-sm">{s.prefs.streamFade === 0 ? 'Off' : `${Math.round(s.prefs.streamFade * 1000)}ms`}</span>
+        </div>
+      </div>
+      </Anchor>
+      </Section>
+      <Section title="Temporary chats" desc="Chats that are removed automatically after a while.">
       {row('temporary-default', 'temporaryByDefault', 'New chats are temporary by default', 'New chats are deleted after the retention period, or when you leave if retention is set to Immediate.')}
       <Anchor id="temp-retention">
       <div className="rounded-xl bg-surf p-3 space-y-2">
         <div className="text-sm font-medium">Temporary chat retention</div>
         <div className="text-xs text-mu">Temporary chats are removed automatically after this time. Immediate also removes them when you start another chat or leave this page.</div>
         <div className="flex items-center gap-3"><RangeSlider label="Temporary chat retention" min={0} max={48} step={1} value={s.prefs.tempHours} set={(tempHours) => s.patch({ prefs: { ...s.prefs, tempHours } })} className="flex-1" /><span className="w-24 text-right text-sm">{s.prefs.tempHours === 0 ? 'Immediate' : `${s.prefs.tempHours} hours`}</span></div>
-      </div>
-      </Anchor>
-      <Anchor id="startup">
-      <div className="rounded-xl bg-surf p-3 space-y-2">
-        <div className="text-sm font-medium">Open on load</div>
-        <div className="text-xs text-mu">Which conversation the app shows when you open it. Most recent permanent chats never pick a temporary one.</div>
-        <Sel value={normStartup(s.prefs.startup)} set={(startup) => s.patch({ prefs: { ...s.prefs, startup: normStartup(startup) } })} opts={STARTUP_MODES as [string, string][]} />
       </div>
       </Anchor>
       <Anchor id="temp-visible">
@@ -1756,19 +1863,22 @@ function Chats() {
         </div>
       </div>
       </Anchor>
-      <Anchor id="stream-fade">
-      <div className="rounded-xl bg-surf p-3 space-y-3">
-        <div><div className="text-sm font-medium">Reply fade-in</div><div className="text-xs text-mu">Each chunk of a streaming reply fades in as it arrives. Off disables it entirely.</div></div>
-        <div className="flex items-center gap-3">
-          <RangeSlider label="Reply fade-in duration" min={0} max={1} step={0.1} value={s.prefs.streamFade} set={(streamFade) => s.patch({ prefs: { ...s.prefs, streamFade } })} className="flex-1" />
-          <span className="w-24 text-right text-sm">{s.prefs.streamFade === 0 ? 'Off' : `${Math.round(s.prefs.streamFade * 1000)}ms`}</span>
-        </div>
+      </Section>
+      <Section title="Behavior" desc="How the app handles sending messages and opening chats.">
+      {row('enter-sends', 'enterSends', 'Enter sends the message', 'Turn off to send with the button and use Enter for new lines.')}
+      {row('auto-title', 'autoTitle', 'Auto-generate chat names', 'Automatically generate a concise title after the first reply.')}
+      <Anchor id="startup">
+      <div className="rounded-xl bg-surf p-3 space-y-2">
+        <div className="text-sm font-medium">Open on load</div>
+        <div className="text-xs text-mu">Which conversation the app shows when you open it. Most recent permanent chats never pick a temporary one.</div>
+        <Sel value={normStartup(s.prefs.startup)} set={(startup) => s.patch({ prefs: { ...s.prefs, startup: normStartup(startup) } })} opts={STARTUP_MODES as [string, string][]} />
       </div>
       </Anchor>
-      {row('stream-md', 'streamMd', 'Render markdown while streaming', 'Format each completed line as markdown as it arrives instead of plain text. Off shows plain text until the reply finishes.')}
-      {row('remote-images', 'remoteImages', 'Load remote images', 'Render images that replies link to over the network. Off keeps them behind a click-to-load button, so reading a reply never contacts third-party hosts.')}
+      </Section>
+      <Section title="Documents" desc="Reading attached files and images.">
       <DocumentsCard />
       <HelperPointer anchor="title-model" title="Title generation model" desc="Set in Endpoints → Helper models. Names new chats automatically; when empty, the model that answered is used." current={helperLabel(s, helperRef(s.prefs.titleEp, s.prefs.titleModel), 'Default (model that answered)')} />
+      </Section>
     </Panel>
   )
 }

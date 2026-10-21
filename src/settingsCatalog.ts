@@ -39,7 +39,7 @@ export const SETTINGS_TABS: [SettingsTabId, string, Ic][] = [
 
 export const TAB_KEYWORDS: Record<SettingsTabId, string> = {
   features: 'features toggles enable disable library advanced',
-  eps: 'endpoints models providers api keys connections model aliases base url preset credentials pricing test helper classification title effort auto recall',
+  eps: 'endpoints models providers api keys connections model aliases base url preset credentials pricing test helper classification title effort auto recall aihubmix openrouter requesty portkey litellm bifrost',
   prompts: 'prompts system instructions global',
   skills: 'skills instructions custom builtin extra tasks',
   pls: 'playlists routes groups ordered fastest cheapest classifier routing performance',
@@ -132,7 +132,7 @@ export const SETTING_LINKS: SettingLink[] = [
   { tab: 'chats', anchor: 'ocr', title: 'Image text extraction (OCR)', keywords: 'ocr vision endpoint auto always image transcription attachments' },
   { tab: 'chats', anchor: 'per-file-chars', title: 'Text per document', keywords: 'per file characters budget document attachments' },
   { tab: 'tools', anchor: 'deep-research', title: 'Deep research default depth', keywords: 'research quick standard thorough tier' },
-  { tab: 'tools', anchor: 'search-provider', title: 'Search API provider', keywords: 'tinyfish you exa firecrawl brightdata provider' },
+  { tab: 'tools', anchor: 'search-provider', title: 'Search API provider', keywords: 'tinyfish you exa firecrawl brightdata jina provider grounding' },
   { tab: 'tools', anchor: 'search-key', title: 'Search API key', keywords: 'search key bring your own stored browser' },
   { tab: 'tools', anchor: 'search-zone', title: 'Bright Data SERP zone', keywords: 'brightdata serp zone' },
   { tab: 'tools', anchor: 'search-max-results', title: 'Results per search', keywords: 'max results count per search' },
@@ -143,6 +143,7 @@ export const SETTING_LINKS: SettingLink[] = [
   { tab: 'tools', anchor: 'search-retry-delay', title: 'Search retry delay', keywords: 'retry base delay backoff ms' },
   { tab: 'tools', anchor: 'fetch-timeout', title: 'Page request timeout', keywords: 'page reader fetch timeout wait retry' },
   { tab: 'tools', anchor: 'fetch-chars', title: 'Text kept per page', keywords: 'page reader fetch max chars characters limit text' },
+  { tab: 'tools', anchor: 'page-reader', title: 'Page reader toggle', keywords: 'page reader enable grounding snippets read full page' },
   { tab: 'tools', anchor: 'reader-api', title: 'Page reader API', keywords: 'reader api service provider jina firecrawl exa custom separate from search' },
   { tab: 'tools', anchor: 'reader-key', title: 'Reader API key', keywords: 'reader key jina firecrawl exa credentials stored browser' },
   { tab: 'tools', anchor: 'reader-url', title: 'Custom reader API URL', keywords: 'reader url endpoint custom {url} json text' },
@@ -151,7 +152,7 @@ export const SETTING_LINKS: SettingLink[] = [
   { tab: 'tools', anchor: 'reader-summary-length', title: 'Page summary length', keywords: 'summary length characters size limit' },
   { tab: 'tools', anchor: 'fetch-retries', title: 'Page retries', keywords: 'page reader fetch retries transient backoff rate limit' },
   { tab: 'tools', anchor: 'fetch-retry-delay', title: 'Page retry delay', keywords: 'page reader fetch retry base delay backoff ms' },
-  { tab: 'tools', anchor: 'citations', title: 'Sources and citations', keywords: 'citations off pills links sources open reader strict warnings fetch page' },
+  { tab: 'tools', anchor: 'citations', title: 'Sources and citations', keywords: 'citations off pills links sources open strict warnings' },
   { tab: 'tools', anchor: 'workspace-view', title: 'Workspace tool defaults', keywords: 'workspace pinned latest auto open follow tiles' },
   { tab: 'tools', anchor: 'hidden-capabilities', title: 'Additional capabilities', keywords: 'additional capabilities read only show' },
 

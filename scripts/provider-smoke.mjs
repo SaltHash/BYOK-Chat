@@ -14,6 +14,7 @@ const { PROVIDERS, discoverProviderModels, streamChatCompletion, probeProviderCo
 
 const KEY_ENV = {
   openrouter: ['OPENROUTER_API_KEY'],
+  aihubmix: ['AIHUBMIX_API_KEY'],
   thegrid: ['THEGRID_API_KEY', 'THE_GRID_API_KEY'],
   compactifai: ['COMPACTIFAI_API_KEY'],
   aimlapi: ['AIMLAPI_API_KEY', 'AIML_API_KEY'],
@@ -33,6 +34,7 @@ const BASE_ENV = {
 }
 const MODEL_ENV = {
   openrouter: ['OPENROUTER_MODEL'],
+  aihubmix: ['AIHUBMIX_MODEL'],
   thegrid: ['THEGRID_MODEL', 'THE_GRID_MODEL'],
   compactifai: ['COMPACTIFAI_MODEL'],
   aimlapi: ['AIMLAPI_MODEL'],

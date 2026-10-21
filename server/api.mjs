@@ -60,7 +60,7 @@ export function searchStatus(env = {}) {
   return {
     ok: true,
     searchConfigured: true,
-    apiProviders: Object.fromEntries(Object.entries(SEARCH_API_PROVIDERS).map(([id, meta]) => [id, { label: meta.label, configured: apiKeys[id], needsZone: Boolean(meta.needsZone) }])),
+    apiProviders: Object.fromEntries(Object.entries(SEARCH_API_PROVIDERS).map(([id, meta]) => [id, { label: meta.label, configured: apiKeys[id], needsZone: Boolean(meta.needsZone), optionalKey: Boolean(meta.optionalKey) }])),
     apiConfigured,
     readerProviders: Object.fromEntries(Object.entries(READER_PROVIDERS).map(([id, meta]) => [id, { label: meta.label }])),
   }

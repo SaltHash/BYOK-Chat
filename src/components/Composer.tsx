@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import { Plus, FileUp, FileText, Image as ImageIcon, ArrowUp, Square, CornerDownRight, ChevronRight, ListMusic, Cpu, ScrollText, Settings, Search, BookOpen, X, TriangleAlert, Wrench, Link as LinkIcon, ScanText, Mic } from 'lucide-react'
 import { useS, usable, modelsOf, modelNameOf, featOn, normDocs, normSearch, fetchOptsOf, effortClassifierOf, type Att, type Ep } from '../store'
-import { CI, TOOLS } from '../meta'
+import { CI, orderTools } from '../meta'
 import { composerWidth } from '../layout'
 import { can, fmt, readAtts, ocrImage, fetchPage } from '../engine'
 import { fitDoc } from '../docs'
@@ -248,7 +248,7 @@ export function Composer({ cfg }: { cfg: (t: string) => void }) {
     ? s.cmds.filter((c) => c.on && c.name.startsWith(v.slice(1))).map((c) => ({ k: c.id, icon: CI[c.in], label: '/' + c.name, hint: c.desc || c.in, pick: () => s.patch({ draft: '/' + c.name + ' ' }) }))
     : tw && featOn(s, 'tools')
       ? [
-        ...TOOLS.filter((t) => t[3].startsWith(tw.toLowerCase())).map((t) => ({ k: t[0], icon: t[2], label: t[3].split('(')[0], hint: s.tools[t[0]] ? t[4] : 'Off. Enable in Settings → Tools', pick: () => s.patch({ draft: v.slice(0, v.length - tw.length) + '@' + t[0] + (/^(calc|count|json|base64|search|fetch_page|random|hash)$/.test(t[0]) ? '(' : ' ') }) })),
+        ...orderTools(s.tools).filter((t) => t[3].startsWith(tw.toLowerCase())).map((t) => ({ k: t[0], icon: t[2], label: t[3].split('(')[0], hint: s.tools[t[0]] ? t[4] : 'Off. Enable in Settings → Tools', pick: () => s.patch({ draft: v.slice(0, v.length - tw.length) + '@' + t[0] + (/^(calc|count|json|base64|search|fetch_page|random|hash)$/.test(t[0]) ? '(' : ' ') }) })),
         ...('@research'.startsWith(tw.toLowerCase()) ? [{ k: 'deep_research', icon: BookOpen as Ic, label: '@research', hint: 'Start deep research: pick a depth, review the plan, then run', pick: () => s.patch({ draft: v.slice(0, v.length - tw.length) + '@research(' }) }] : []),
       ]
       : null

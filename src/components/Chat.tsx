@@ -1,6 +1,6 @@
 import { memo, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
-import { GitBranch, ChevronLeft, ChevronRight, ChevronDown, Sparkles, Server, Cpu, Copy, Check, RefreshCw, Trash2, ListOrdered, CircleCheck, CircleX, TriangleAlert, Paperclip, Download, ExternalLink, Volume2 } from 'lucide-react'
+import { GitBranch, ChevronLeft, ChevronRight, ChevronDown, Sparkles, Clock, Server, Cpu, Copy, Check, RefreshCw, Trash2, ListOrdered, CircleCheck, CircleX, TriangleAlert, Paperclip, Download, ExternalLink, Volume2 } from 'lucide-react'
 import { useS, useLive, usable, featOn, previewSysFor, type Msg } from '../store'
 import { clampWorkspaceFrac, roundFrac, CHAT_WIDTH } from '../layout'
 import { startPointerDrag } from '../hooks'
@@ -676,7 +676,7 @@ export function Chat({ side, toggle, cfg, pal }: { side: boolean; toggle: () => 
               <Tutorial cfg={cfg} />
             ) : (
               <div className="mx-auto flex h-full max-w-xl flex-col items-center justify-center gap-6 px-4 text-center">
-                <span className="grid size-12 place-items-center rounded-2xl bg-surf text-ac"><Sparkles size={22} /></span>
+                <span className="grid size-12 place-items-center rounded-2xl bg-surf text-ac">{c?.temporary === true ? <Clock size={22} /> : <Sparkles size={22} />}</span>
                 <h2 className="text-xl font-semibold">{flairLine(new Date(), { temporary: c?.temporary === true, seasonal: s.prefs.seasonal, seed: s.chats.length })}</h2>
                 <div className="grid w-full gap-2 sm:grid-cols-2">
                   {!s.eps.length && <Tile icon={Server} t="Add an endpoint" d="Connect a model with your own key" on={() => cfg('eps')} />}

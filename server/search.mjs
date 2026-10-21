@@ -97,6 +97,19 @@ export const SEARCH_API_PROVIDERS = {
     needsZone: true,
     envKeys: ['BRIGHTDATA_API_KEY', 'BRIGHT_DATA_API_KEY'],
   },
+  jina: {
+    label: 'Jina AI',
+    // Jina Search (s.jina.ai) is the search half of the Jina Reader suite and
+    // is what grounds replies: results carry a title, a URL and page text.
+    endpoint: 'https://s.jina.ai/',
+    method: 'GET',
+    keyHeader: 'Authorization',
+    bearer: true,
+    // s.jina.ai works without a key at a lower rate limit, so a missing key
+    // must not fail the request locally.
+    optionalKey: true,
+    envKeys: ['JINA_API_KEY'],
+  },
 }
 
 const PROVIDER_ALIASES = {
@@ -105,6 +118,7 @@ const PROVIDER_ALIASES = {
   exa: 'exa', 'exa.ai': 'exa',
   firecrawl: 'firecrawl',
   brightdata: 'brightdata', 'bright-data': 'brightdata', 'bright data': 'brightdata', bright: 'brightdata',
+  jina: 'jina', 'jina.ai': 'jina', 'jina-ai': 'jina', 'jina ai': 'jina', jinaai: 'jina', 'jina search': 'jina', 's.jina.ai': 'jina',
 }
 
 export function normalizeProvider(value, fallback = 'tinyfish') {
@@ -217,6 +231,13 @@ export function buildApiRequest(provider, query, { apiKey = '', zone = '', count
     const searchUrl = `https://www.google.com/search?q=${encodeURIComponent(q)}&hl=en&gl=us&brd_json=1`
     return { url: endpoint, options: { method: 'POST', headers: wire, body: JSON.stringify({ zone, url: searchUrl, format: 'raw', data_format: 'parsed_light' }) } }
   }
+  if (id === 'jina') {
+    // Jina Search takes the query as a `q` parameter and answers with JSON
+    // when the response type is negotiated.
+    const url = new URL(endpoint)
+    url.searchParams.set('q', q)
+    return { url: url.toString(), options: { method: 'GET', headers: { ...wire, accept: 'application/json' } } }
+  }
   throw new Error(`Unsupported search API provider: ${provider}`)
 }
 
@@ -268,6 +289,17 @@ export function parseApiResponse(provider, body) {
       content: x?.description || x?.snippet || x?.text,
       engine: 'brightdata',
       score: Number.isFinite(Number(x?.global_rank)) ? 100 - Number(x.global_rank) : rows.length - i,
+    }))
+  }
+  if (id === 'jina') {
+    // Jina Search answers with { data: [ { title, url, description, content } ] }.
+    const rows = Array.isArray(body.data) ? body.data : Array.isArray(body.results) ? body.results : []
+    return rows.map((x, i) => ({
+      title: x?.title,
+      url: x?.url,
+      content: joinSnippet([x?.description, x?.content, x?.snippet, x?.text]),
+      engine: 'jina.ai',
+      score: rows.length - i,
     }))
   }
   return []

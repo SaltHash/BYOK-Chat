@@ -234,7 +234,7 @@
 .hljs-strong { font-weight: 700; }
 
 /* Temporary-chat flair: a dashed badge with a solid accent tint and a
-   flipping hourglass. The tint and the icon are the non-text cue; the label
+   still hourglass. The tint and the icon are the non-text cue; the label
    says what the chat is. Clicking the whole badge opens the temporary-chat
    settings. */
 .temp-flair {
@@ -248,11 +248,4 @@
   background: color-mix(in srgb, var(--ac) 16%, transparent);
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--ac) 30%, transparent);
 }
-.temp-flair-icon { animation: temp-hourglass 6s ease-in-out infinite; }
-@keyframes temp-hourglass {
-  0%, 42%, 100% { transform: rotate(0deg); }
-  52%, 92% { transform: rotate(180deg); }
-}
-@media (prefers-reduced-motion: reduce) {
-  .temp-flair-icon { animation: none; }
-}
+
