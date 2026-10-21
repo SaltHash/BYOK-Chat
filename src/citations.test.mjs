@@ -86,3 +86,32 @@ test('parses labelled page excerpts and strips trailing punctuation from urls', 
   const rounds = [{ calls: [{ name: 'fetch_page', arguments: '{}', result: labelled }] }]
   assert.deepEqual(c.collectMessageSources(rounds).map((x) => x.citeId), ['S5'])
 })
+
+test('the standing citation rule tells the model to keep citing', () => {
+  const rule = c.citationRule()
+  // The rule is re-sent with every round, so it must stand on its own: what
+  // to cite, how to format it, and that it still applies to the last reply.
+  assert.match(rule, /\[S1\]/)
+  assert.match(rule, /never invent an id/i)
+  assert.match(rule, /final one you write after your last tool call/i)
+  assert.match(rule, /keep counting up/i)
+  // An id from an earlier message has no source list in this reply, so the
+  // model is told to name that source instead of reusing the number.
+  assert.match(rule, /name the source in words instead of an id/i)
+  // Citations off: the model must not add markers, but the sources stay listed.
+  const off = c.citationRule({ inline: false })
+  assert.match(off, /do not put \[S1\]/i)
+  assert.doesNotMatch(off, /cite every factual claim/i)
+})
+
+test('citation ids are numbered across a reply and reused for the same url', () => {
+  const ids = c.createCiteIds()
+  assert.equal(ids.idFor('https://a.example/1'), 'S1')
+  assert.equal(ids.idFor('https://b.example/2'), 'S2')
+  // The same page keeps its id, however it is spelled.
+  assert.equal(ids.idFor('https://a.example/1'), 'S1')
+  assert.equal(ids.idFor('https://a.example/1/'), 'S1')
+  assert.equal(ids.idFor('https://a.example/1#frag'), 'S1')
+  // A second search continues the numbering instead of restarting at S1.
+  assert.equal(ids.idFor('https://c.example/3'), 'S3')
+})

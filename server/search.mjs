@@ -22,11 +22,15 @@ export function selectResults(items, { maxResults = 8, maxSnippetChars = 1800, e
   let budget = evidenceBudget
   const normalized = (Array.isArray(items) ? items : []).map((x, i) => {
     const url = canonicalUrl(x?.url)
+    const title = String(x?.title || 'Untitled result').trim().slice(0, 300)
+    const snippet = String(x?.content || x?.snippet || '').replace(/\s+/g, ' ').trim().slice(0, maxSnippetChars)
     return {
-      title: String(x?.title || 'Untitled result').trim().slice(0, 300),
+      title,
       url,
       host: url ? new URL(url).hostname : '',
-      snippet: String(x?.content || x?.snippet || '').replace(/\s+/g, ' ').trim().slice(0, maxSnippetChars),
+      // Some providers return a result with no extract at all. Keeping the
+      // title as its text is better than dropping a ranked result.
+      snippet: snippet || title,
       engine: String(x?.engine || '').slice(0, 80),
       score: Number.isFinite(Number(x?.score)) ? Number(x.score) : 0,
       order: i,

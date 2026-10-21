@@ -154,8 +154,6 @@ export async function exportGist(token: string, description: string, pub: boolea
   return data.html_url
 }
 
-export const gistTokenKey = 'byok.gist.token'
-
 /* Shared folder/file tree used by both the compact tile and the side panel.
  * `variant` preserves each caller's styling; recursion + sorting live here once. */
 export function WorkspaceFileTree<T extends { path: string; content: string }>({
@@ -650,10 +648,11 @@ export function WorkspacePanel({ msg, live, workspace, selectedRevisionId, setSe
   )
 }
 
-/* Optional Gist sharing dialog. The token is the user's own (BYOK-style) and
- * stays in this browser; nothing is sent anywhere until they press Share. */
+/* Optional Gist sharing dialog. The token is the user's own (BYOK-style), kept
+ * in the synced settings store, and only sent to GitHub when they press Share. */
 function GistModal({ workspace, revision, close }: { workspace: Workspace; revision: WorkspaceRevision; close: () => void }) {
-  const [token, setToken] = useState(() => { try { return localStorage.getItem(gistTokenKey) ?? '' } catch { return '' } })
+  const token = useS((s) => s.gistToken ?? '')
+  const setToken = (v: string) => useS.getState().patch({ gistToken: v })
   const [desc, setDesc] = useState(workspace.name)
   const [pub, setPub] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -663,7 +662,6 @@ function GistModal({ workspace, revision, close }: { workspace: Workspace; revis
     setBusy(true); setError(''); setResult(null)
     try {
       const url = await exportGist(token, desc, pub, revision.files)
-      try { localStorage.setItem(gistTokenKey, token) } catch { /* ignore */ }
       setResult(url)
     } catch (x: any) { setError(String(x?.message ?? x)) }
     finally { setBusy(false) }
@@ -672,7 +670,7 @@ function GistModal({ workspace, revision, close }: { workspace: Workspace; revis
     <div className="fixed inset-0 z-50 grid place-items-center bg-black/50 p-4" onMouseDown={(e) => { if (e.target === e.currentTarget) close() }}>
       <div role="dialog" aria-modal="true" aria-label="Share workspace via Gist" className="w-full max-w-md space-y-4 rounded-2xl border border-bor bg-bg p-5">
         <div className="flex items-center gap-2 font-semibold"><Share2 size={18} className="text-ac" />Share via GitHub Gist</div>
-        <p className="text-sm text-mu">Optional: shares the {revision.files.length} file{revision.files.length === 1 ? '' : 's'} of “{revision.name}” as a gist. Needs a classic personal access token with the <b>gist</b> scope; it stays in this browser.</p>
+        <p className="text-sm text-mu">Optional: shares the {revision.files.length} file{revision.files.length === 1 ? '' : 's'} of “{revision.name}” as a gist. Needs a classic personal access token with the <b>gist</b> scope; it is stored with your settings and encrypted when device sync is on.</p>
         <Field label="GitHub token (gist scope)">
           <Input type="password" value={token} set={setToken} placeholder="ghp_…" />
         </Field>

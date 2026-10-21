@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { htmlToText, isPublicHttp, fetchPageText } from './extract.mjs'
+import { htmlToText, isPublicHttp, fetchPageText, fetchPageViaProvider } from './extract.mjs'
 
 test('blocks private and non-http targets', () => {
   assert.equal(isPublicHttp('https://example.com/a'), true)
@@ -75,6 +75,20 @@ test('cancels the upstream stream when the HTML cap is reached', async () => {
   assert.equal(cancelled, true)
 })
 
+test('fetchPageText honors maxChars and retries transient failures', async () => {
+  let calls = 0
+  const html = `<html><head><title>Retry</title></head><body><p>${'word '.repeat(5000)}</p></body></html>`
+  const fetchFn = async () => {
+    calls++
+    if (calls === 1) throw Object.assign(Error('temporary network error'), { code: 'network', retryable: true })
+    return new Response(html, { headers: { 'content-type': 'text/html' } })
+  }
+  const page = await fetchPageText('https://retry.example/page', { fetchFn, maxChars: 2000, maxRetries: 1, retryBaseMs: 50 })
+  assert.equal(calls, 2)
+  assert.equal(page.text.length, 2000)
+  assert.equal(page.truncated, true)
+})
+
 test('fetchPageText caps text and rejects bad types', async () => {
   const html = `<html><head><title>T</title></head><body><p>${'x '.repeat(20000)}</p></body></html>`
   const ok = await fetchPageText('https://example.com/a', { fetchFn: async () => new Response(html, { headers: { 'content-type': 'text/html' } }) })
@@ -86,4 +100,97 @@ test('fetchPageText caps text and rejects bad types', async () => {
     /not a readable page/,
   )
   await assert.rejects(() => fetchPageText('http://10.0.0.1/'), /public http/)
+})
+
+test('the Jina reader returns clean markdown with the page title', async () => {
+  const fetchFn = async (url) => {
+    assert.match(String(url), /^https:\/\/r\.jina\.ai\//)
+    return new Response('Title: Jina Page\nURL Source: https://example.com/a\nMarkdown Content:\n\n# Heading\n\nBody text.', { headers: { 'content-type': 'text/plain' } })
+  }
+  const page = await fetchPageViaProvider('https://example.com/jina', { provider: 'jina', fetchFn })
+  assert.equal(page.title, 'Jina Page')
+  assert.match(page.text, /# Heading/)
+  assert.equal(page.reader, 'jina')
+})
+
+test('the Firecrawl reader extracts markdown from its scrape payload', async () => {
+  const fetchFn = async (_url, init) => {
+    const body = JSON.parse(init.body)
+    assert.equal(body.url, 'https://example.com/firecrawl')
+    assert.equal(init.headers.authorization, 'Bearer fc-key')
+    return new Response(JSON.stringify({ data: { markdown: '# Firecrawl', metadata: { title: 'FC Page' } } }), { headers: { 'content-type': 'application/json' } })
+  }
+  const page = await fetchPageViaProvider('https://example.com/firecrawl', { provider: 'firecrawl', apiKey: 'fc-key', fetchFn })
+  assert.equal(page.text, '# Firecrawl')
+  assert.equal(page.title, 'FC Page')
+})
+
+test('the Exa reader needs a key and returns the extracted text', async () => {
+  const fetchFn = async (_url, init) => {
+    assert.equal(init.headers['x-api-key'], 'exa-key')
+    return new Response(JSON.stringify({ results: [{ title: 'Exa Page', text: 'exa text' }] }), { headers: { 'content-type': 'application/json' } })
+  }
+  const page = await fetchPageViaProvider('https://example.com/exa', { provider: 'exa', apiKey: 'exa-key', fetchFn })
+  assert.equal(page.text, 'exa text')
+  assert.equal(page.title, 'Exa Page')
+  await assert.rejects(
+    () => fetchPageViaProvider('https://example.com/exa-nokey', { provider: 'exa', fallback: false, fetchFn }),
+    (e) => e.code === 'missing_key',
+  )
+})
+
+test('a custom reader API receives the page address and returns its text', async () => {
+  let seen = ''
+  const fetchFn = async (url) => {
+    seen = String(url)
+    return new Response(JSON.stringify({ text: 'custom text' }), { headers: { 'content-type': 'application/json' } })
+  }
+  const page = await fetchPageViaProvider('https://example.com/custom', { provider: 'custom', baseUrl: 'https://reader.example/read?url={url}', fetchFn })
+  assert.match(seen, /^https:\/\/reader\.example\/read\?url=https%3A%2F%2Fexample\.com%2Fcustom$/)
+  assert.equal(page.text, 'custom text')
+})
+
+test('a failing reader API falls back to the built-in reader', async () => {
+  const fetchFn = async (url) => {
+    if (String(url).includes('r.jina.ai')) return new Response('nope', { status: 401 })
+    return new Response('<html><head><title>Fallback</title></head><body><p>Fallback body</p></body></html>', { headers: { 'content-type': 'text/html' } })
+  }
+  const page = await fetchPageViaProvider('https://example.com/fallback', { provider: 'jina', fetchFn })
+  assert.equal(page.title, 'Fallback')
+  assert.equal(page.fallbackUsed, true)
+  await assert.rejects(
+    () => fetchPageViaProvider('https://example.com/fallback-off', { provider: 'jina', fallback: false, fetchFn }),
+    (e) => e.code === 'upstream_auth',
+  )
+})
+
+test('the reader never targets private addresses', async () => {
+  await assert.rejects(() => fetchPageViaProvider('http://127.0.0.1/', { provider: 'jina', fetchFn: async () => new Response('x') }), /public http/)
+})
+
+test('a reader API that stalls is cut off by the request timeout', async () => {
+  const fetchFn = async (_url, init) => new Response(new ReadableStream({
+    start(controller) {
+      init.signal?.addEventListener('abort', () => {
+        const e = Error('aborted')
+        e.name = 'AbortError'
+        controller.error(e)
+      })
+    },
+  }), { headers: { 'content-type': 'text/plain' } })
+  await assert.rejects(
+    () => fetchPageViaProvider('https://example.com/stall', { provider: 'jina', timeoutMs: 1000, maxRetries: 0, fallback: false, fetchFn }),
+    (e) => e.code === 'timeout' || e.code === 'network',
+  )
+})
+
+test('a reader response that breaks mid-body does not hang the read', async () => {
+  const fetchFn = async () => new Response(new ReadableStream({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode('partial text'))
+      setTimeout(() => controller.error(Error('connection reset')), 5)
+    },
+  }), { headers: { 'content-type': 'text/plain' } })
+  const page = await fetchPageViaProvider('https://example.com/partial', { provider: 'jina', fallback: false, fetchFn })
+  assert.match(page.text, /partial text/)
 })

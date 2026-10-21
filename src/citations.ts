@@ -22,6 +22,55 @@ export const truncateSnippet = (s: string, n = 220): string => {
   return t.length > n ? `${t.slice(0, n).trimEnd()}…` : t
 }
 
+/* The standing citation policy, added to the system prompt whenever the
+ * model can pull in web evidence.
+ *
+ * This rule used to live only inside the search tool's result, and models
+ * routinely dropped it: the instruction sat far up in the context, and by the
+ * time the model wrote the final reply it had drifted out of attention. As
+ * part of the system prompt it is re-sent with every round of the tool loop,
+ * so the model always has it in view — including in the round that writes the
+ * answer. */
+export function citationRule(opts: { inline?: boolean } = {}): string {
+  if (opts.inline === false) {
+    return 'Citations: the app lists the sources separately, so do not put [S1], [S2], etc. markers in your reply — refer to a source by name or link instead.'
+  }
+  return [
+    'Citations: web search results and page reads are numbered [S1], [S2], … in the order the tools return them, and those numbers keep counting up across every tool call in this reply.',
+    'Cite every factual claim you take from that evidence inline, right after the claim, as [S1] (group several sources as [S1, S2]).',
+    'Use only the ids the tools gave you in this reply: never invent an id, never cite a number that was not returned, and never renumber a source. For evidence from an earlier message in the chat, name the source in words instead of an id.',
+    'The rule applies to every reply, including the final one you write after your last tool call, and it applies again if you call another tool.',
+    'If a claim has no supporting source, say that it is unsourced rather than citing anyway.',
+  ].join(' ')
+}
+
+/* Citation ids for one reply: one S<n> per distinct URL, numbered across
+ * every search and page read in the turn. Two searches would otherwise both
+ * number their results from S1, and the model's [S1] would be ambiguous. */
+export function createCiteIds() {
+  const byUrl = new Map<string, string>()
+  let next = 1
+  const keyOf = (url: string) => {
+    try {
+      const u = new URL(url)
+      u.hash = ''
+      return u.toString().replace(/\/$/, '').toLowerCase()
+    } catch { return String(url ?? '').toLowerCase() }
+  }
+  return {
+    /** The id for a URL. The same URL always keeps the id it was given, and
+     * each new URL takes the next free number. */
+    idFor(url: string): string {
+      const k = keyOf(url)
+      const hit = byUrl.get(k)
+      if (hit) return hit
+      const id = `S${next++}`
+      byUrl.set(k, id)
+      return id
+    },
+  }
+}
+
 /* Parse one formatSearch() evidence block back into sources. Tolerates the
  * header line plus [Source S1] sections; never throws. The evidence `S<n>`
  * label is preserved as `citeId` so absolute, run-wide numbering survives
@@ -57,8 +106,8 @@ export function parseSearchEvidence(result: string): { query: string; provider: 
 export function parsePageExcerpt(result: string): CiteSource | null {
   const text = String(result ?? '')
   // Preferred: formatted excerpt carrying its absolute source id.
-  const labelled = /Page excerpt\s+\[Source (S\d+)\]\s+for\s+(\S+)/i.exec(text)
-  const unlabelled = /Page excerpt for (\S+)/i.exec(text)
+  const labelled = /Page (?:excerpt|summary)\s+\[Source (S\d+)\]\s+for\s+(\S+)/i.exec(text)
+  const unlabelled = /Page (?:excerpt|summary) for (\S+)/i.exec(text)
   const url = (labelled?.[2] ?? unlabelled?.[1] ?? '').trim().replace(/[.,;:!?)\]]+$/, '')
   if (!/^https?:\/\//i.test(url)) {
     // Fall back to a raw JSON payload (non-research callers).

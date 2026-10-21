@@ -10,7 +10,8 @@
     "deploy": "npm run build && wrangler deploy",
     "cf:dev": "wrangler dev",
     "test": "node --import ./tests/register-loader.mjs --test",
-    "test:worker": "node scripts/worker-smoke.mjs"
+    "test:worker": "node scripts/worker-smoke.mjs",
+    "smoke:providers": "node --import ./tests/register-loader.mjs scripts/provider-smoke.mjs"
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.2.0",

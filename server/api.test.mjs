@@ -75,3 +75,28 @@ test('sync failures keep client errors but never leak backend internals', () => 
   assert.equal(coded.status, 503)
   assert.equal(coded.body.code, 'sync_unavailable')
 })
+
+test('the reader route reads a page through the selected reader API', async () => {
+  let seen = null
+  const fetchFn = async (url, init) => {
+    seen = { url: String(url), body: init?.body ? JSON.parse(init.body) : null, headers: init?.headers ?? {} }
+    return new Response(JSON.stringify({ data: { markdown: 'reader text', metadata: { title: 'Reader Page' } } }), { headers: { 'content-type': 'application/json' } })
+  }
+  const req = { method: 'POST', url: '/api/reader', headers: {}, text: async () => JSON.stringify({ url: 'https://example.com/a', provider: 'firecrawl', apiKey: 'k', maxChars: 5000 }) }
+  const result = await apiRoute(req, {}, { fetchFn })
+  assert.equal(result.status, 200)
+  assert.equal(result.body.text, 'reader text')
+  assert.equal(result.body.title, 'Reader Page')
+  assert.equal(seen.body.url, 'https://example.com/a')
+  assert.equal(seen.headers.authorization, 'Bearer k')
+  assert.ok(!Number.isNaN(Date.parse(result.body.fetchedAt)))
+})
+
+test('the reader route rejects the wrong method and a missing url', async () => {
+  const wrong = await apiRoute({ method: 'GET', url: '/api/reader', headers: {} }, {})
+  assert.equal(wrong.status, 405)
+  assert.equal(wrong.headers.allow, 'POST')
+  const missing = await apiRoute({ method: 'POST', url: '/api/reader', headers: {}, text: async () => JSON.stringify({}) }, {})
+  assert.equal(missing.status, 400)
+  assert.equal(missing.body.error, 'Missing url parameter')
+})

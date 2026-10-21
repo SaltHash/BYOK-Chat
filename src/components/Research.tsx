@@ -69,9 +69,9 @@ export function ResearchPlanCard({ msg }: { msg: Msg }) {
   // Single click on "Edit plan" jumps back into the composer with a quick
   // outline fade animation, then the button relabels so a second click opens
   // the manual editor.
-  const composerRef = useRef<HTMLTextAreaElement | null>(null)
+  const composerRef = useRef<HTMLElement | null>(null)
   useEffect(() => {
-    const ta = document.getElementById('composer') as HTMLTextAreaElement | null
+    const ta = document.getElementById('composer')
     if (ta) composerRef.current = ta
   }, [])
   // Bail out only after every hook above has run so the hook order stays stable
@@ -79,16 +79,16 @@ export function ResearchPlanCard({ msg }: { msg: Msg }) {
   if (!rs || (rs.status !== 'planning' && rs.status !== 'plan')) return null
   const onEditText = () => {
     setMode('focus')
-    const ta = composerRef.current ?? (document.getElementById('composer') as HTMLTextAreaElement | null)
+    const ta = composerRef.current ?? (document.getElementById('composer') as HTMLElement | null)
     if (ta) {
       ta.focus()
-      // Quick outline that fades in then out of the accent color, anchored
-      // to the composer box, to confirm focus moved there.
+      // Quick outline that fades in then out in the theme's main border color,
+      // anchored to the composer box, to confirm focus moved there.
       const host = ta.parentElement
       if (host) {
         const el = document.createElement('div')
         el.className = 'composer-focus-outline'
-        el.style.cssText = 'position:absolute;pointer-events:none;border-radius:1.25rem;border:2px solid var(--ac);opacity:0;animation:composerOutlineFade 0.45s ease-out forwards;'
+        el.style.cssText = 'position:absolute;pointer-events:none;border-radius:1.25rem;border:2px solid var(--bor);opacity:0;animation:composerOutlineFade 0.45s ease-out forwards;'
         const r = ta.getBoundingClientRect()
         const h = host.getBoundingClientRect()
         el.style.left = `${r.left - h.left}px`

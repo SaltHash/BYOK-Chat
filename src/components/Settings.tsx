@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { X, Plus, Trash2, ArrowUp, ArrowDown, CornerDownRight, ChevronRight, Eye, EyeOff, Play, ShieldCheck, Shield, Download, Upload, Check, CircleCheck, CircleX, Cpu, Route, GripVertical, Server, ListMusic, ScrollText, Terminal, Wrench, Palette, FolderOpen, FileText, PanelRight, TrendingUp, Keyboard, Search, Brain, Pencil, Sparkles, RotateCcw, SlidersHorizontal, FlaskConical, Library, Database, Lock, LockOpen, LayoutTemplate, Share2, Plug, Image as ImageIcon, Volume2, AudioLines, Code2 } from 'lucide-react'
-import { useS, useSConfig, PRE, THEMES, DARK_THEMES, LIGHT_THEMES, THEME_COLOR_KEYS, THEME_COLOR_LABELS, SEARCH_PROVIDERS, FEATURES, LIBRARY_ITEMS, FEATURE_TABS, FEATURE_WIDGETS, DEFAULT_LIBRARY_SHOW, DEFAULT_ADVANCED, featOn, normSearch, normResearch, normAdvanced, normDocs, usable, modelsOf, modelNameOf, helperRef, splitHelperRef, effortClassifierOf, TOOL_ROUNDS_DEFAULT, TOOL_ROUNDS_MIN, TOOL_ROUNDS_BASE_MAX, TOOL_ROUNDS_MAX, toolRoundLimitOf, isToolRoundsUnlimited, GENERAL_PROMPT_TEXT, STARTUP_MODES, normStartup, type Kind, type FeatureId, type DocPrefs, type ModelPrice } from '../store'
+import { useS, useSConfig, PRE, THEMES, DARK_THEMES, LIGHT_THEMES, THEME_COLOR_KEYS, THEME_COLOR_LABELS, SEARCH_PROVIDERS, READER_PROVIDERS, FEATURES, LIBRARY_ITEMS, FEATURE_TABS, FEATURE_WIDGETS, DEFAULT_LIBRARY_SHOW, DEFAULT_ADVANCED, featOn, normSearch, normResearch, normAdvanced, normDocs, usable, modelsOf, modelNameOf, helperRef, splitHelperRef, effortClassifierOf, TOOL_ROUNDS_DEFAULT, TOOL_ROUNDS_MIN, TOOL_ROUNDS_BASE_MAX, TOOL_ROUNDS_MAX, toolRoundLimitOf, isToolRoundsUnlimited, GENERAL_PROMPT_TEXT, STARTUP_MODES, normStartup, type Kind, type FeatureId, type DocPrefs, type ModelPrice } from '../store'
 import { RESEARCH_TIERS, type ResearchTierId } from '../research'
 import { normSkills, resolveSkill, validateCustomSkill, enabledSkills, BUILTIN_SKILLS, SKILL_TOOL_NAME, type SkillState } from '../skills'
 import { findDuplicatePairs, mergeMemory } from '../recall'
@@ -11,7 +11,8 @@ import { PROMPT_QUALITIES, type GlobalPrompt } from '../flair'
 import { DataTab, StatsTab, KeysTab, TestRow, TestAllEndpoints } from './Extra'
 import { Btn, Field, Input, Area, Sel, Toggle, Seg, RangeSlider, Checkbox, HelpTip, Modal, Surface, Chip, cx, type Ic } from './ui'
 import { SortableList, type SortHandleProps, type SortItemApi } from './dnd'
-import { fetchModelCatalog, fetchModelProviders, filterCatalogByEndpoint, prioritizeProviderRows, type CatalogEntry, type CatalogProvider } from '../catalog'
+import { fetchModelCatalog, fetchModelProviders, filterCatalogByEndpoint, prioritizeProviderRows, type CatalogEntry, type CatalogProvider, type CatalogSource } from '../catalog'
+import { resolveProvider } from '../providerRegistry'
 import { WORKSPACE_TEMPLATES } from '../workspace'
 import { probeMcpServer, mcpToolName, type McpServer } from '../mcp'
 import { BLANK_IMAGE_GEN, IMAGE_SIZES, normImageGen } from '../imagegen'
@@ -139,7 +140,7 @@ export function Card({ icon: I, title, sub, right, open0, handle, children, mute
       <div className="flex items-center gap-3 p-3">
         {handle && <span {...handle} title="Drag to reorder" className="dnd-handle -mr-1 cursor-grab text-mu"><GripVertical size={16} /></span>}
         <div role="button" tabIndex={0} onClick={() => setO(!o)} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setO(!o) } }} className="flex min-w-0 flex-1 cursor-pointer items-center gap-3 text-left">
-          <span className={cx('grid size-9 shrink-0 place-items-center rounded-lg bg-hov', muted ? 'text-mu opacity-60' : 'text-ac')}><I size={18} /></span>
+          <span className={cx('grid size-9 shrink-0 place-items-center rounded-lg bg-hov', muted ? 'text-mu' : 'text-ac')}><I size={18} className={muted ? 'opacity-60' : undefined} /></span>
           <span className="min-w-0"><span className="block truncate font-medium">{title}</span>{sub && <span className="block truncate text-sm text-mu">{sub}</span>}</span>
         </div>
         {right}
@@ -265,6 +266,7 @@ function ModelsEditor({ e, update }: { e: any; update: (p: object) => void }) {
   const [picker, setPicker] = useState(false)
   const [catalog, setCatalog] = useState<CatalogEntry[]>([])
   const [catalogState, setCatalogState] = useState('')
+  const [catalogSource, setCatalogSource] = useState<CatalogSource>('openrouter')
   const [query, setQuery] = useState('')
   const [searchIdea, setSearchIdea] = useState<string | null>(null)
   const [selectedModels, setSelectedModels] = useState<string[]>([])
@@ -273,8 +275,15 @@ function ModelsEditor({ e, update }: { e: any; update: (p: object) => void }) {
   const endpointId = e.endpointId ?? presetInfo?.[2] ?? ''
   const endpointFilter = e.endpointFilter ?? presetInfo?.[3] ?? 'author'
   const isOpenRouter = /openrouter\.ai/i.test(e.url)
+  // Direct provider lists return bare, endpoint-native IDs. Only aggregated
+  // catalogs need the OpenRouter-style `author/model` prefix added or removed.
+  const directCatalog = catalogSource === 'provider' || catalogSource === 'base'
   const storedId = (id: string) => !isOpenRouter && endpointFilter === 'author' && endpointId && id.toLowerCase().startsWith(`${endpointId.toLowerCase()}/`) ? id.slice(endpointId.length + 1) : id
-  const catalogId = (id: string) => !id.includes('/') && endpointFilter === 'author' && endpointId ? `${endpointId}/${id}` : id
+  const catalogId = (id: string) => directCatalog ? id : !id.includes('/') && endpointFilter === 'author' && endpointId ? `${endpointId}/${id}` : id
+  const priceSource = catalogSource === 'openrouter' ? 'openrouter' as const : 'provider' as const
+  const priceFrom = (item: CatalogEntry | undefined) => item && item.inputPrice !== undefined && item.outputPrice !== undefined
+    ? { input: item.inputPrice, output: item.outputPrice, source: priceSource, ...(item.cacheReadPrice !== undefined ? { cacheRead: item.cacheReadPrice } : {}) }
+    : undefined
   useEffect(() => {
     if (!picker) return
     const dismiss = (ev: KeyboardEvent) => { if (ev.key === 'Escape') { ev.preventDefault(); ev.stopImmediatePropagation(); setPicker(false) } }
@@ -291,32 +300,55 @@ function ModelsEditor({ e, update }: { e: any; update: (p: object) => void }) {
   const loadCatalog = async () => {
     setPicker(true); setCatalogState('Loading documented models…')
     try {
-      const { entries, error } = await fetchModelCatalog(e)
+      const { entries, error, source = 'openrouter', stale } = await fetchModelCatalog(e)
+      setCatalogSource(source)
       if (error && !entries.length) { setCatalogState(`${error} You can still enter a model ID below.`); return }
       // The request awaited: re-read the live endpoint so edits made meanwhile
       // are not overwritten by the write below with a stale snapshot.
       const cur = useS.getState().eps.find((x) => x.id === e.id) ?? e
       const liveModels = Array.isArray(cur.models) ? cur.models : models
-      let found = endpointId ? filterCatalogByEndpoint(entries, endpointId, endpointFilter) : entries
-      if (isOpenRouter) found = prioritizeProviderRows(found, endpointId, endpointFilter)
+      // A provider's own list is already scoped to that provider. Aggregated
+      // OpenRouter/LiteLLM catalogs still need endpoint-brand filtering.
+      let found = source === 'provider' || source === 'base'
+        ? entries
+        : endpointId ? filterCatalogByEndpoint(entries, endpointId, endpointFilter) : entries
+      if (source === 'openrouter') found = prioritizeProviderRows(found, endpointId, endpointFilter)
       setCatalog(found)
       const detectedEntries = found.filter(x => liveModels.includes(storedId(x.id)) && x.source === 'auto' && !cur.modelEffortSource?.[storedId(x.id)])
       const detected = Object.fromEntries(detectedEntries.map(x => [storedId(x.id), x.efforts]))
       const detectedSources = Object.fromEntries(detectedEntries.map(x => [storedId(x.id), 'auto']))
       const providedNames = Object.fromEntries(found.filter(x => liveModels.includes(storedId(x.id)) && x.name && !cur.modelNames?.[storedId(x.id)]).map(x => [storedId(x.id), x.name]))
       const providedContext = Object.fromEntries(found.filter(x => liveModels.includes(storedId(x.id)) && x.context && Number(x.context) > 0).map(x => [storedId(x.id), Number(x.context)]))
-      if (Object.keys(detected).length || Object.keys(providedNames).length || Object.keys(providedContext).length) update({ modelEfforts: { ...cur.modelEfforts, ...detected }, modelEffortSource: { ...cur.modelEffortSource, ...detectedSources }, modelNames: { ...cur.modelNames, ...providedNames }, modelContext: { ...cur.modelContext, ...providedContext } })
-      setCatalogState(found.length ? `${found.length} models found. Catalog entries are suggestions; confirm any model ID.` : 'No catalog entries were returned. Enter a model ID below.')
+      const providedPrices = Object.fromEntries(found.filter(x => liveModels.includes(storedId(x.id)) && !cur.prices?.[storedId(x.id)] && x.inputPrice !== undefined && x.outputPrice !== undefined).map(x => [storedId(x.id), { input: x.inputPrice!, output: x.outputPrice!, source: source === 'openrouter' ? 'openrouter' as const : 'provider' as const, ...(x.cacheReadPrice !== undefined ? { cacheRead: x.cacheReadPrice } : {}) }]))
+      if (Object.keys(detected).length || Object.keys(providedNames).length || Object.keys(providedContext).length || Object.keys(providedPrices).length) update({ modelEfforts: { ...cur.modelEfforts, ...detected }, modelEffortSource: { ...cur.modelEffortSource, ...detectedSources }, modelNames: { ...cur.modelNames, ...providedNames }, modelContext: { ...cur.modelContext, ...providedContext }, ...(Object.keys(providedPrices).length ? { prices: { ...cur.prices, ...providedPrices } } : {}) })
+      const from = source === 'provider' ? 'this provider' : source === 'openrouter' ? 'OpenRouter' : source === 'litellm' ? 'the LiteLLM catalog' : 'this server'
+      const staleNote = stale && error ? ` Showing the last known list because the refresh failed: ${error}` : ''
+      setCatalogState(found.length ? `${found.length} models found from ${from}.${staleNote || ' Catalog entries are suggestions; confirm any model ID.'}` : 'No catalog entries were returned. Enter a model ID below.')
     } catch (err: any) { setCatalogState(`${err?.message || 'Catalog lookup failed.'} You can still enter a model ID below.`) }
   }
   const addModel = (id: string, efforts: string[] = [], autoDetected = false) => {
     const clean = storedId(id.trim())
     if (!clean) return
     if (!models.includes(clean)) setModels([...models.filter(Boolean), clean])
-    const providedName = catalog.find(x => storedId(x.id) === clean)?.name
-    const providedCtx = catalog.find(x => storedId(x.id) === clean)?.context
-    update({ modelEfforts: { ...e.modelEfforts, [clean]: efforts }, modelEffortSource: { ...e.modelEffortSource, [clean]: autoDetected ? (efforts.length ? 'auto' : catalog.find(x => storedId(x.id) === clean)?.source ?? 'manual') : 'manual' }, ...(providedName && !e.modelNames?.[clean] ? { modelNames: { ...e.modelNames, [clean]: providedName } } : {}), ...(providedCtx && Number(providedCtx) > 0 ? { modelContext: { ...e.modelContext, [clean]: Number(providedCtx) } } : {}) })
+    const item = catalog.find(x => storedId(x.id) === clean)
+    const providedName = item?.name
+    const providedCtx = item?.context
+    const providedPrice = priceFrom(item)
+    update({ modelEfforts: { ...e.modelEfforts, [clean]: efforts }, modelEffortSource: { ...e.modelEffortSource, [clean]: autoDetected ? (efforts.length ? 'auto' : item?.source ?? 'manual') : 'manual' }, ...(providedName && !e.modelNames?.[clean] ? { modelNames: { ...e.modelNames, [clean]: providedName } } : {}), ...(providedCtx && Number(providedCtx) > 0 ? { modelContext: { ...e.modelContext, [clean]: Number(providedCtx) } } : {}), ...(providedPrice && !e.prices?.[clean] ? { prices: { ...e.prices, [clean]: providedPrice } } : {}) })
     setPicker(false); setQuery(''); setSearchIdea(null)
+  }
+  // Bulk-add from the picker. Extracted from the button so pricing and effort
+  // metadata from direct provider lists stay in one place.
+  const addSelected = () => {
+    const adding = [...new Set([...selectedModels, ...(searchIdea ? [searchIdea] : [])])]
+    const next = [...new Set([...models.filter(Boolean), ...adding])]
+    const itemFor = (id: string) => catalog.find(x => storedId(x.id) === id)
+    const effortEntries = selectedModels.flatMap(id => { const item = itemFor(id); return item ? [[id, item.efforts] as const] : [] })
+    const modelNames = Object.fromEntries(adding.flatMap(id => { const name = itemFor(id)?.name; return name ? [[id, name] as const] : [] }))
+    const modelCtx = Object.fromEntries(adding.flatMap(id => { const ctx = itemFor(id)?.context; return ctx && Number(ctx) > 0 ? [[id, Number(ctx)] as const] : [] }))
+    const modelPrices = Object.fromEntries(adding.flatMap(id => { const price = priceFrom(itemFor(id)); return price && !e.prices?.[id] ? [[id, price] as const] : [] }))
+    update({ models: next, model: next[0] ?? '', modelNames: { ...e.modelNames, ...modelNames }, modelContext: { ...e.modelContext, ...modelCtx }, ...(Object.keys(modelPrices).length ? { prices: { ...e.prices, ...modelPrices } } : {}), modelEfforts: { ...e.modelEfforts, ...Object.fromEntries(effortEntries) }, modelEffortSource: { ...e.modelEffortSource, ...Object.fromEntries(effortEntries.map(([id, levels]) => [id, levels.length ? 'auto' : itemFor(id)?.source ?? 'manual'])) } })
+    setPicker(false); setSelectedModels([]); setSearchIdea(null)
   }
   return <div className="space-y-2">
     <SortableList
@@ -349,12 +381,12 @@ function ModelsEditor({ e, update }: { e: any; update: (p: object) => void }) {
     {picker && <Modal close={() => setPicker(false)} keyboard={false}><div className="modal-panel flex max-h-[80dvh] w-full max-w-xl flex-col gap-3 rounded-2xl bg-bg p-5 shadow-2xl">
       <div className="flex items-center justify-between"><div><h3 className="font-semibold">Choose a model</h3><p className="mt-0.5 text-xs text-mu">{e.name}{endpointId ? ` · ${endpointId}` : ''}</p></div><button onClick={() => setPicker(false)} className="grid size-8 place-items-center rounded-lg text-mu hover:bg-hov hover:text-tx" aria-label="Close model picker"><X size={16}/></button></div>
       <button onClick={loadCatalog} className="self-start rounded-lg bg-hov px-3 py-2 text-xs text-tx">{catalog.length ? 'Refresh model catalog' : 'Load available models'}</button>
-      <p className="text-xs text-mu">{catalogState || 'Loads models from the provider API, then public catalogs when unavailable.'} Catalog entries may not be enabled on your endpoint.</p>
+      <p className="text-xs text-mu">{catalogState || 'Loads this endpoint’s own model list when the provider offers one, then public catalogs when unavailable.'} Catalog entries may not be enabled on your endpoint.</p>
       <input value={query} onChange={ev => setQuery(ev.target.value)} placeholder="Search available models" className="w-full rounded-lg bg-surf px-3 py-2 text-sm outline-none"/>
       <div className="min-h-0 flex-1 space-y-1 overflow-auto">{[...catalog].sort((a,b) => modelIdCompare(storedId(a.id).replace(/^~+/, ''), storedId(b.id).replace(/^~+/, ''))).filter(x => `${x.name.replace(/^~+/, '')} ${storedId(x.id).replace(/^~+/, '')}`.toLowerCase().includes(query.toLowerCase()) && !models.includes(storedId(x.id))).slice(0,250).map(x => { const id = storedId(x.id), visibleId = id.replace(/^~+/, ''), checked = selectedModels.includes(id); return <button key={x.id} onClick={() => setSelectedModels(checked ? selectedModels.filter(m => m !== id) : [...selectedModels, id])} className="flex w-full items-center gap-3 rounded-md px-2 py-2 text-left text-sm hover:bg-hov"><span className={cx('grid size-4 shrink-0 place-items-center rounded border', checked ? 'border-ac bg-ac text-acx' : 'border-mu/60')}>{checked && <Check size={12}/>}</span><span className="min-w-0 flex-1"><span className="block truncate">{visibleId}</span>{(x.context || x.inputPrice !== undefined || x.outputPrice !== undefined) && <span className="block text-xs text-mu">{[x.context ? `${contextLabel(x.context)} context` : '', x.inputPrice !== undefined ? `$${x.inputPrice.toFixed(2)}/M in` : '', x.outputPrice !== undefined ? `$${x.outputPrice.toFixed(2)}/M out` : ''].filter(Boolean).join(' · ')}</span>}</span></button>})}
         {query.trim() && !models.includes(catalogId(query.trim())) && <button type="button" role="checkbox" aria-checked={searchIdea === catalogId(query.trim())} onClick={() => setSearchIdea(searchIdea === catalogId(query.trim()) ? null : catalogId(query.trim()))} className="flex w-full items-center gap-3 rounded-md px-2 py-2 text-left text-sm hover:bg-hov"><span aria-hidden="true" className={cx('grid size-4 shrink-0 place-items-center rounded border', searchIdea === catalogId(query.trim()) ? 'border-ac bg-ac text-acx' : 'border-mu/60')}>{searchIdea === catalogId(query.trim()) && <Check size={12}/>}</span><span className="min-w-0 truncate">Add “{catalogId(query.trim())}” model</span></button>}
       </div>
-      {(selectedModels.length > 0 || searchIdea) && <button onClick={() => { const adding = [...new Set([...selectedModels, ...(searchIdea ? [searchIdea] : [])])]; const next = [...new Set([...models.filter(Boolean), ...adding])]; const effortEntries = selectedModels.map(id => { const item = catalog.find(x => storedId(x.id) === id); return item ? [id, item.efforts] as const : null }).filter(Boolean) as [string, string[]][]; const modelNames = Object.fromEntries(adding.map(id => [id, catalog.find(x => storedId(x.id) === id)?.name]).filter(([, name]) => !!name)); const modelCtx = Object.fromEntries(adding.map(id => [id, catalog.find(x => storedId(x.id) === id)?.context]).filter(([, ctx]) => Number(ctx) > 0)); update({ models: next, model: next[0] ?? '', modelNames: { ...e.modelNames, ...modelNames }, modelContext: { ...e.modelContext, ...modelCtx }, modelEfforts: { ...e.modelEfforts, ...Object.fromEntries(effortEntries) }, modelEffortSource: { ...e.modelEffortSource, ...Object.fromEntries(effortEntries.map(([id, levels]) => [id, levels.length ? 'auto' : catalog.find(x => storedId(x.id) === id)?.source ?? 'manual'])) } }); setPicker(false); setSelectedModels([]); setSearchIdea(null) }} className="self-start rounded-lg bg-ac px-3 py-2 text-xs text-acx">Add selected models ({selectedModels.length + (searchIdea ? 1 : 0)})</button>}
+      {(selectedModels.length > 0 || searchIdea) && <button onClick={addSelected} className="self-start rounded-lg bg-ac px-3 py-2 text-xs text-acx">Add selected models ({selectedModels.length + (searchIdea ? 1 : 0)})</button>}
     </div></Modal>}
   </div>
 }
@@ -525,6 +557,7 @@ function Eps() {
         const e = eps.find((x) => x.id === eid)
         if (!e) return null
         const u = (p: object) => upd('eps', e.id, p)
+        const provider = resolveProvider({ preset: e.preset, url: e.url })
         return (
           <Anchor key={eid} id={`ep-${e.id}`}>
           <Card handle={handle} icon={Server} title={editingName === e.id
@@ -532,7 +565,7 @@ function Eps() {
             : <span className="inline-flex min-w-0 items-center gap-1.5"><span className="truncate">{e.name}</span><button type="button" title="Rename endpoint" aria-label="Rename endpoint" onClick={(ev) => { ev.stopPropagation(); setEditingName(e.id) }} className="grid size-6 shrink-0 place-items-center rounded text-mu hover:bg-hov hover:text-tx"><Pencil size={13}/></button></span>} sub={e.model || 'No model id'} open0={!e.model && !e.key} muted={!e.on} right={<Toggle on={e.on} set={(v) => u({ on: v })} />}>
             <div className="space-y-3">
               <Anchor id="models"><section className="space-y-3 rounded-xl bg-bg p-3"><div className="text-sm font-medium">Models</div>
-              <Field label="Preset"><Sel value={e.preset ?? presetForUrl(e.url)?.[0] ?? ''} set={(v) => v ? selectPreset(e.id, v) : u({ preset: '', endpointId: '', endpointFilter: 'author' })} opts={[[ '', 'Choose a preset'], ...Object.keys(PRE).map((k) => [k, k] as [string, string])]} /></Field>
+              <Field label="Preset"><Sel value={e.preset ?? presetForUrl(e.url)?.[0] ?? ''} set={(v) => v ? selectPreset(e.id, v) : u({ preset: '', endpointId: '', endpointFilter: 'author' })} opts={[[ '', 'Choose a preset'], ...Object.keys(PRE).map((k) => [k, k] as [string, string])]} placeholder="Search endpoints" /></Field>
               <Field label="Models" hint="Press Enter to add the next row. Every row uses this endpoint and API key.">
                 <ModelsEditor e={e} update={u} />
               </Field>
@@ -552,6 +585,9 @@ function Eps() {
                 <Field label="Base URL" hint="The app adds the API path to this URL automatically."><Input value={e.url} set={(v) => { const match = presetForUrl(v); u({ url: v, ...(match ? { preset: match[0], endpointId: match[1][2], endpointFilter: match[1][3] } : { preset: '', endpointId: '', endpointFilter: 'author' }) }) }} placeholder="https://…/v1" /></Field>
                 <Field label="API format"><Seg v={e.type} set={(v) => u({ type: v })} opts={[[ 'openai', 'OpenAI-compatible'], ['anthropic', 'Anthropic Messages']]} /></Field>
                 <Field label="Endpoint ID" hint="Used to limit OpenRouter catalog suggestions to this brand or hosting provider."><Input value={e.endpointId ?? presetForUrl(e.url)?.[1][2] ?? ''} set={(endpointId) => u({ endpointId, endpointFilter: catalogPrefs(endpointId) })} placeholder="e.g. anthropic" /></Field>
+                {provider?.accountScoped && <Field label="Account ID" hint="Cloudflare account-scoped APIs put this in the base URL. Find it in the Cloudflare dashboard; it is stored in this browser with the key."><Input value={e.accountId ?? ''} set={(accountId) => u({ accountId })} placeholder="Cloudflare account ID" /></Field>}
+                {provider?.gatewayHeader && <Field label={provider.gatewayHeader.label} hint={`Sent as the ${provider.gatewayHeader.header} header. Workers AI models (${provider.gatewayHeader.modelPrefix ?? '@cf/'}) require an AI Gateway.`}><Input value={e.gatewayId ?? ''} set={(gatewayId) => u({ gatewayId })} placeholder="Optional AI Gateway id" /></Field>}
+                {provider && <p className="text-xs text-mu">Browser access to {provider.name}: <span className={provider.cors === 'blocked' ? 'text-er' : provider.cors === 'confirmed' ? 'text-ac' : 'text-mu'}>{provider.cors}</span>. {provider.corsNote}</p>}
               </div></details></Anchor>
             </div>
             {useS.getState().prefs.showModelPricing && modelsOf(e).length > 0 && <Anchor id="model-pricing"><div className="space-y-3 rounded-xl bg-bg p-3">
@@ -595,8 +631,8 @@ function Eps() {
                     <label className="text-xs text-mu">Cache read $/1M<input type="number" min="0" step="0.01" value={price.cacheRead ?? ''} placeholder={String(price.input)} onChange={(ev) => setCache('cacheRead', ev.target.value)} className="mt-1 w-full rounded-lg bg-bg px-2.5 py-2 text-sm text-tx" /></label>
                     <label className="text-xs text-mu">Cache write $/1M<input type="number" min="0" step="0.01" value={price.cacheWrite ?? ''} placeholder={String(price.input)} onChange={(ev) => setCache('cacheWrite', ev.target.value)} className="mt-1 w-full rounded-lg bg-bg px-2.5 py-2 text-sm text-tx" /></label>
                   </div>
-                  <div className="mt-2 text-xs text-mu">Cache rates are optional. Empty falls back to the input rate; Auto-detect fills them from OpenRouter when published.</div>
-                  <div className="mt-2 flex items-center justify-between gap-2"><span className="text-xs text-mu">{price.source === 'openrouter' ? 'Detected price' : e.prices?.[model] ? 'Entered manually' : 'No price set'}</span>{/openrouter\.ai/i.test(e.url) && <Btn sm icon={Search} onClick={detect}>Auto-detect</Btn>}</div>
+                  <div className="mt-2 text-xs text-mu">Cache rates are optional. Empty falls back to the input rate; loading a model catalog fills them when the provider publishes them.</div>
+                  <div className="mt-2 flex items-center justify-between gap-2"><span className="text-xs text-mu">{price.source === 'openrouter' || price.source === 'provider' ? 'Detected price' : e.prices?.[model] ? 'Entered manually' : 'No price set'}</span>{/openrouter\.ai/i.test(e.url) && <Btn sm icon={Search} onClick={detect}>Auto-detect</Btn>}</div>
                 </div>
               })}
             </div></Anchor>}
@@ -619,7 +655,7 @@ function Prompts() {
   const setG = (v: Partial<GlobalPrompt>) => patch({ globalPrompt: { ...g, ...v } })
   return (
     <Panel id="prompts" k="prompts" n={prompts.length} add="Add prompt">
-      <Anchor id="global-prompt"><Card icon={ScrollText} title="Global system prompt" sub={g.on ? (g.text.trim() || qualities.length ? 'On · applies to every message in every chat' : 'On · no text yet') : 'Off'} muted={!g.on} open0>
+      <Anchor id="global-prompt"><Card icon={ScrollText} title="Global system prompt" sub={g.on ? (g.text.trim() || qualities.length ? 'On · applies to every message in every chat' : 'On · no text yet') : 'Off'} muted={!g.on}>
         <div className="flex items-center justify-between gap-3"><div><div className="text-sm font-medium">Apply to every message</div><div className="text-xs text-mu">Added before everything else in every chat, alongside the per-chat prompt.</div></div><Toggle on={g.on} set={(on) => setG({ on })} /></div>
         <Field label="Or pick an existing prompt" hint="Copies its text into the global box.">
           <Sel value="" set={(v) => { const p = prompts.find((x) => x.id === v); if (p) setG({ text: p.text }) }} opts={[['', 'Choose a prompt…'], ...prompts.map((p) => [p.id, p.name] as [string, string])]} />
@@ -824,7 +860,7 @@ function DocumentsCard() {
   const ocrEp = s.eps.find((e) => e.id === d.ocrEp)
   return (
     <Anchor id="documents">
-    <Card icon={FileText} title="Documents" sub="PDF text, Office files, archives, transcripts, image OCR" open0>
+    <Card icon={FileText} title="Documents" sub="PDF text, Office files, archives, transcripts, image OCR">
       <div className="flex items-center justify-between gap-3"><div><div className="text-sm font-medium">Extract PDF text</div><div className="text-xs text-mu">Read the text layer of PDFs so every endpoint (not just Anthropic) can use them. Scanned pages still need OCR or a vision endpoint.</div></div><Toggle on={d.pdfText} set={(pdfText) => set({ pdfText })} /></div>
       <div className="flex items-center justify-between gap-3"><div><div className="text-sm font-medium">Read Office documents</div><div className="text-xs text-mu">Extract text from .docx, .odt, .rtf, .pptx and first-sheet .xlsx locally. Legacy .doc/.xls/.ppt still need conversion.</div></div><Toggle on={d.office} set={(office) => set({ office })} /></div>
       <div className="flex items-center justify-between gap-3"><div><div className="text-sm font-medium">Unpack archives</div><div className="text-xs text-mu">Expand .zip and .gz attachments into individual files (up to 25 entries). Pair .vtt/.srt transcripts with matching audio/video automatically.</div></div><Toggle on={d.archives} set={(archives) => set({ archives })} /></div>
@@ -858,7 +894,7 @@ function ImageGenCard() {
   const ep = s.eps.find((e) => e.id === g.ep && usable(e)) ?? eps[0]
   return (
     <Anchor id="image-generation">
-      <Card icon={ImageIcon} title="Image generation" sub={g.on ? (ep ? `On · ${ep.name}${g.model ? ` · ${g.model}` : ''}` : 'On · no OpenAI-compatible endpoint') : 'Off by default'} muted={!g.on} open0={g.on && !eps.length} right={<Toggle on={g.on} set={(on) => set({ on })} label="Allow image generation" />}>
+      <Card icon={ImageIcon} title="Image generation" sub={g.on ? `@generate_image · On${ep ? ` · ${ep.name}${g.model ? ` · ${g.model}` : ''}` : ' · no OpenAI-compatible endpoint'}` : '@generate_image · Off'} muted={!g.on} open0={g.on && !eps.length} right={<Toggle on={g.on} set={(on) => set({ on })} label="Allow image generation" />}>
         <p className="text-sm">Lets the model generate pictures with an OpenAI-compatible <code>/images/generations</code> endpoint. Images appear beside the reply and are stored in this browser so they survive a reload; nothing binary is added to the chat or the context window.</p>
         <p className="text-sm text-mu">Anthropic endpoints cannot generate images. Requests use the endpoint below with your key, like any other model call.</p>
         {!eps.length && <p role="status" className="rounded-lg bg-er/10 px-3 py-2 text-xs text-er">No enabled OpenAI-compatible endpoint is available. Add one in Endpoints first.</p>}
@@ -891,7 +927,7 @@ function CodeRunCard() {
   const secs = c.timeoutMs / 1000
   return (
     <Anchor id="code-execution">
-      <Card icon={Code2} title="Code execution" sub={c.on ? `On · JavaScript${c.python ? ' and Python' : ''} · ${secs}s limit` : 'Off by default'} muted={!c.on} right={<Toggle on={c.on} set={(on) => set({ on })} label="Allow code execution" />}>
+      <Card icon={Code2} title="Code execution" sub={c.on ? `@run_code · On · JavaScript${c.python ? ' and Python' : ''} · ${secs}s limit` : '@run_code · Off'} muted={!c.on} right={<Toggle on={c.on} set={(on) => set({ on })} label="Allow code execution" />}>
         <p className="text-sm">Lets the model run short snippets and read their stdout. Every run happens in a disposable Web Worker in this browser: no page DOM, no app storage, no files, and no network for JavaScript. The worker is stopped when the time limit runs out, so an infinite loop cannot freeze the app.</p>
         <p className="text-sm text-mu">Each run starts fresh, so nothing carries between calls. Code and output are capped, and results are returned to the model as text.</p>
         <Anchor id="code-timeout">
@@ -932,6 +968,7 @@ function Tools() {
   const s = useSConfig()
   const [ask, setAsk] = useState<string | null>(null)
   const [showSearchKey, setShowSearchKey] = useState(false)
+  const [showReaderKey, setShowReaderKey] = useState(false)
   const [health, setHealth] = useState<{ searchConfigured?: boolean; apiProviders?: Record<string, { label: string; configured: boolean; needsZone?: boolean }> } | null>(null)
   useEffect(() => {
     fetch('/api/health').then((r) => r.json()).then((x) => setHealth(x)).catch(() => setHealth({ searchConfigured: false }))
@@ -940,12 +977,22 @@ function Tools() {
   const search = normSearch(s.search)
   const setSearch = (p: Partial<typeof search>) => s.patch({ search: { ...search, ...p } })
   const ownKey = (search.keys[search.provider] || '').trim()
+  /* The page-summary picker lists every endpoint model, so the user picks
+   * the exact model (not just an endpoint) that writes page summaries. */
+  const summaryRef = search.readerSummaryEp ? `${search.readerSummaryEp}::${search.readerSummaryModel ?? ''}` : ''
+  const summaryOpts: [string, string][] = [
+    ['', 'None (send the raw page)'],
+    ...s.eps.flatMap((e) => modelsOf(e).map((m) => [`${e.id}::${m}`, `${e.name} · ${modelNameOf(e, m)}`] as [string, string])),
+  ]
+  const setSummaryRef = (ref: string) => {
+    const i = ref.indexOf('::')
+    setSearch({ readerSummaryEp: i < 0 ? '' : ref.slice(0, i), readerSummaryModel: i < 0 ? '' : ref.slice(i + 2) })
+  }
   return (
     <Panel id="tools">
       <ToolLimitCard />
       <CodeRunCard />
       <ImageGenCard />
-      <DocumentsCard />
       <Anchor id="deep-research">
       <Card icon={Brain} title="Deep research" sub="@research(query)">
         <p className="text-sm">Multi-step investigation: the model drafts a research plan for you to review, then searches and reads on its own within the depth budget, narrating progress as it goes, ending in a long cited report opened from a card in a document-styled side panel.</p>
@@ -987,8 +1034,8 @@ function Tools() {
             </Anchor>
             {search.provider === 'brightdata' && <Anchor id="search-zone"><Field label="SERP zone" hint="Your Bright Data SERP API zone name. Stored in this browser like the key."><Input value={search.zone} set={(zone) => setSearch({ zone })} placeholder="e.g. serp_api1" /></Field></Anchor>}
             <Anchor id="search-max-results">
-            <Field label={`Results per search · ${search.maxResults}`} hint="Results shown for each search. The model may use fewer for simple questions, but never more than this.">
-              <RangeSlider label="Results per search" min={1} max={8} step={1} value={search.maxResults} valueText={`${search.maxResults} result${search.maxResults === 1 ? '' : 's'}`} set={(maxResults) => setSearch({ maxResults: Math.round(maxResults) })} className="w-full" />
+            <Field label={`Results per search · ${search.maxResults}`} hint="How many search results the model gets each time. The model may ask for fewer, but never more than this. Most search APIs top out at 10.">
+              <RangeSlider label="Results per search" min={1} max={10} step={1} value={search.maxResults} valueText={`${search.maxResults} result${search.maxResults === 1 ? '' : 's'}`} set={(maxResults) => setSearch({ maxResults: Math.round(maxResults) })} className="w-full" />
             </Field>
             </Anchor>
             <Anchor id="search-timeout">
@@ -997,13 +1044,13 @@ function Tools() {
             </Field>
             </Anchor>
             <Anchor id="search-snippet">
-            <Field label={`Snippet length · ${search.maxSnippetChars} chars`} hint="Maximum characters kept per result snippet. Capped at 3000.">
-              <RangeSlider label="Snippet length" min={200} max={3000} step={100} value={search.maxSnippetChars} valueText={`${search.maxSnippetChars} characters`} set={(maxSnippetChars) => setSearch({ maxSnippetChars: Math.round(maxSnippetChars) })} className="w-full" />
+            <Field label={`Text per result · ${search.maxSnippetChars} characters`} hint="How much text to keep from each search result. More text means more detail but uses more of the model's context.">
+              <RangeSlider label="Text per result" min={200} max={3000} step={100} value={search.maxSnippetChars} valueText={`${search.maxSnippetChars.toLocaleString()} characters`} set={(maxSnippetChars) => setSearch({ maxSnippetChars: Math.round(maxSnippetChars) })} className="w-full" />
             </Field>
             </Anchor>
             <Anchor id="search-evidence">
-            <Field label={`Evidence budget · ${search.evidenceBudget} chars`} hint="Total character budget across titles, URLs, and snippets per search. Capped at 16000.">
-              <RangeSlider label="Evidence budget" min={1000} max={16000} step={500} value={search.evidenceBudget} valueText={`${search.evidenceBudget} characters`} set={(evidenceBudget) => setSearch({ evidenceBudget: Math.round(evidenceBudget) })} className="w-full" />
+            <Field label={`Total text per search · ${search.evidenceBudget.toLocaleString()} characters`} hint="The overall text budget for one search, shared by all results. Raise it if results get cut short, lower it to save context.">
+              <RangeSlider label="Total text per search" min={1000} max={24000} step={500} value={search.evidenceBudget} valueText={`${search.evidenceBudget.toLocaleString()} characters`} set={(evidenceBudget) => setSearch({ evidenceBudget: Math.round(evidenceBudget) })} className="w-full" />
             </Field>
             </Anchor>
             <Anchor id="search-retries">
@@ -1024,6 +1071,70 @@ function Tools() {
               </Field>
               <div className="flex items-center justify-between gap-3"><div><div className="text-sm font-medium">Expand Sources by default</div><div className="text-xs text-mu">Show the source list open on every grounded reply instead of behind the Sources button.</div></div><Toggle on={search.sourcesOpen} set={(sourcesOpen) => setSearch({ sourcesOpen })} /></div>
               <div className="flex items-center justify-between gap-3"><div><div className="text-sm font-medium">Page reader</div><div className="text-xs text-mu">Let the model open a search result to read the full page. Turn off to keep grounding to snippets.</div></div><Toggle on={search.reader} set={(reader) => setSearch({ reader })} /></div>
+              {search.reader && <div className="space-y-3 rounded-lg bg-bg p-3">
+                <Anchor id="reader-api">
+                <Field label="Reader API" hint="Which service reads a page when the model opens a search result. Pick a different service than your search API to use a separate provider and key.">
+                  <Sel value={search.readerProvider} set={(readerProvider) => setSearch({ readerProvider: readerProvider as typeof search.readerProvider })} opts={READER_PROVIDERS.map(([id, label]) => [id, label] as [string, string])} />
+                </Field>
+                </Anchor>
+                {search.readerProvider !== 'builtin' && <>
+                  <Anchor id="reader-key">
+                  <Field label="Reader API key" hint={search.readerProvider === 'exa'
+                    ? 'Required by Exa. Stored in this browser like the search key. Your Exa search key is reused when this is empty.'
+                    : search.readerProvider === 'jina'
+                      ? 'Optional for Jina Reader. Leave empty to use Jina without a key.'
+                      : search.readerProvider === 'firecrawl'
+                        ? 'Optional for Firecrawl. Leave empty to use your Firecrawl search key.'
+                        : 'Optional. Sent as a bearer token to your reader service.'}>
+                    <div className="relative">
+                      <Input type={showReaderKey ? 'text' : 'password'} value={search.readerKey} set={(v) => setSearch({ readerKey: v })} placeholder={search.readerProvider === 'exa' ? 'Paste your reader API key' : 'Optional'} />
+                      <button onClick={() => setShowReaderKey(!showReaderKey)} title="Show or hide key" className="absolute right-2 top-1/2 -translate-y-1/2 text-mu hover:text-tx">{showReaderKey ? <EyeOff size={16} /> : <Eye size={16} />}</button>
+                    </div>
+                  </Field>
+                  </Anchor>
+                  {search.readerProvider === 'custom' && <Anchor id="reader-url">
+                  <Field label="Reader API URL" hint="Your own reader endpoint. Use {url} where the page address should go, for example https://example.com/read?url={url}. It must return JSON with a text field, or plain text.">
+                    <Input value={search.readerUrl} set={(v) => setSearch({ readerUrl: v })} placeholder="https://example.com/read?url={url}" />
+                  </Field>
+                  </Anchor>}
+                  <div className="flex items-center justify-between gap-3"><div><div className="text-sm font-medium">Fall back to the built-in reader</div><div className="text-xs text-mu">If the reader API fails or has no key, read the page directly instead of failing the read.</div></div><Toggle on={search.readerFallback} set={(readerFallback) => setSearch({ readerFallback })} /></div>
+                </>}
+                <Anchor id="reader-summary">
+                <div className="flex items-center justify-between gap-3"><div><div className="text-sm font-medium">Summarize pages with another model</div><div className="text-xs text-mu">Send the page to a second model that returns a clean summary. The main model then gets the summary instead of the whole page, which keeps long articles from filling up the context.</div></div><Toggle on={search.readerSummary} set={(readerSummary) => setSearch({ readerSummary })} /></div>
+                </Anchor>
+                {search.readerSummary && <>
+                  <Anchor id="reader-summary-model">
+                  <Field label="Summary model" hint="The exact model that writes the summary. Pick the endpoint and the model id; there is no silent fallback, and a failed summary uses the raw page instead.">
+                    <Sel value={summaryRef} set={setSummaryRef} opts={summaryOpts} />
+                  </Field>
+                  </Anchor>
+                  <Anchor id="reader-summary-length">
+                  <Field label={`Summary length · ${search.readerSummaryChars.toLocaleString()} characters`} hint="Roughly how long a page summary may be. Shorter keeps the context small, longer keeps more detail.">
+                    <RangeSlider label="Summary length" min={400} max={8000} step={200} value={search.readerSummaryChars} valueText={`${search.readerSummaryChars.toLocaleString()} characters`} set={(readerSummaryChars) => setSearch({ readerSummaryChars: Math.round(readerSummaryChars) })} className="w-full" />
+                  </Field>
+                  </Anchor>
+                </>}
+                <Anchor id="fetch-timeout">
+                <Field label={`Page request timeout · ${(search.fetchTimeoutMs / 1000).toFixed(search.fetchTimeoutMs % 1000 ? 1 : 0)}s`} hint="How long to wait for a page before retrying or failing.">
+                  <RangeSlider label="Page request timeout" min={1000} max={30000} step={1000} value={search.fetchTimeoutMs} valueText={`${(search.fetchTimeoutMs / 1000).toFixed(search.fetchTimeoutMs % 1000 ? 1 : 0)} seconds`} set={(fetchTimeoutMs) => setSearch({ fetchTimeoutMs: Math.round(fetchTimeoutMs) })} className="w-full" />
+                </Field>
+                </Anchor>
+                <Anchor id="fetch-chars">
+                <Field label={`Text kept per page · ${(search.fetchMaxChars / 1000).toFixed(search.fetchMaxChars % 1000 ? 1 : 0)}k characters`} hint="How much page text to read. Capped at 50,000 characters. When summaries are on, this is the text the summary model sees.">
+                  <RangeSlider label="Text kept per page" min={1000} max={50000} step={1000} value={search.fetchMaxChars} valueText={`${search.fetchMaxChars.toLocaleString()} characters`} set={(fetchMaxChars) => setSearch({ fetchMaxChars: Math.round(fetchMaxChars) })} className="w-full" />
+                </Field>
+                </Anchor>
+                <Anchor id="fetch-retries">
+                <Field label="Page retries" hint="Bounded retries for transient failures (429/5xx/timeouts). Permanent errors are never retried.">
+                  <Sel value={String(search.fetchMaxRetries)} set={(v) => setSearch({ fetchMaxRetries: Number(v) })} opts={[['0', '0 · none'], ['1', '1'], ['2', '2'], ['3', '3'], ['4', '4 · max']]} />
+                </Field>
+                </Anchor>
+                <Anchor id="fetch-retry-delay">
+                <Field label="Page retry base delay" hint="Base backoff between page retries (doubles each attempt, capped at 4s).">
+                  <Sel value={String(search.fetchRetryBaseMs)} set={(v) => setSearch({ fetchRetryBaseMs: Number(v) })} opts={[['50', '50ms'], ['100', '100ms'], ['300', '300ms'], ['500', '500ms'], ['1000', '1s'], ['2000', '2s · max']]} />
+                </Field>
+                </Anchor>
+              </div>}
               <div className="flex items-center justify-between gap-3"><div><div className="text-sm font-medium">Strict citation warnings</div><div className="text-xs text-mu">Flag grounded replies that cite nothing, or cite sources they weren't given.</div></div><Toggle on={search.strictCitations} set={(strictCitations) => setSearch({ strictCitations })} /></div>
             </div>
             </Anchor>
@@ -1563,7 +1674,7 @@ function AdvancedTab() {
 function WorkspaceTab() {
   const wp = useS((s) => s.workspacePrefs ?? { defaultView: 'latest', autoOpen: true, autoFollow: true })
   const set = (p: Partial<typeof wp>) => useS.getState().patch({ workspacePrefs: { ...useS.getState().workspacePrefs, ...p } })
-  const [gistToken, setGistToken] = useState(() => { try { return localStorage.getItem('byok.gist.token') ?? '' } catch { return '' } })
+  const gistToken = useS((s) => s.gistToken ?? '')
   const [showToken, setShowToken] = useState(false)
   const draft = useS((s) => s.draft)
   return (
@@ -1597,10 +1708,10 @@ function WorkspaceTab() {
       </Card>
       </Anchor>
       <Anchor id="gist-sharing">
-      <Card icon={Share2} title="GitHub Gist sharing" sub="Optional personal token, stored only here">
-        <Field label="Gist token (classic, gist scope)" hint="Only used when you press Share in a workspace panel. Leave empty to disable sharing.">
+      <Card icon={Share2} title="GitHub Gist sharing" sub="Optional personal token · saved with your settings">
+        <Field label="Gist token (classic, gist scope)" hint="Only used when you press Share in a workspace panel. Leave empty to disable sharing. When device sync is on, it is included in the encrypted sync payload.">
           <div className="relative">
-            <Input type={showToken ? 'text' : 'password'} value={gistToken} set={(v) => { setGistToken(v); try { v ? localStorage.setItem('byok.gist.token', v) : localStorage.removeItem('byok.gist.token') } catch { /* ignore */ } }} placeholder="ghp_…" />
+            <Input type={showToken ? 'text' : 'password'} value={gistToken} set={(v) => useS.getState().patch({ gistToken: v })} placeholder="ghp_…" />
             <button onClick={() => setShowToken(!showToken)} title="Show or hide token" className="absolute right-2 top-1/2 -translate-y-1/2 text-mu hover:text-tx">{showToken ? <EyeOff size={16} /> : <Eye size={16} />}</button>
           </div>
         </Field>
@@ -1656,6 +1767,7 @@ function Chats() {
       </Anchor>
       {row('stream-md', 'streamMd', 'Render markdown while streaming', 'Format each completed line as markdown as it arrives instead of plain text. Off shows plain text until the reply finishes.')}
       {row('remote-images', 'remoteImages', 'Load remote images', 'Render images that replies link to over the network. Off keeps them behind a click-to-load button, so reading a reply never contacts third-party hosts.')}
+      <DocumentsCard />
       <HelperPointer anchor="title-model" title="Title generation model" desc="Set in Endpoints → Helper models. Names new chats automatically; when empty, the model that answered is used." current={helperLabel(s, helperRef(s.prefs.titleEp, s.prefs.titleModel), 'Default (model that answered)')} />
     </Panel>
   )

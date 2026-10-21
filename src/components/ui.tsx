@@ -127,11 +127,11 @@ export const Input = ({ value, set, ...p }: { value: string | number; set: (v: s
 export const Area = ({ value, set, rows = 4, ...p }: { value: string; set: (v: string) => void; rows?: number } & Omit<TextareaHTMLAttributes<HTMLTextAreaElement>, 'value' | 'onChange'>) => (
   <textarea {...p} rows={rows} value={value} onChange={(e) => set(e.target.value)} className={cx(IN, 'resize-y')} />
 )
-export const Sel = ({ value, set, opts }: { value: string; set: (v: string) => void; opts: [string, string][] }) => (
-  <SearchSelect value={value} set={set} opts={opts} />
+export const Sel = ({ value, set, opts, placeholder }: { value: string; set: (v: string) => void; opts: [string, string][]; placeholder?: string }) => (
+  <SearchSelect value={value} set={set} opts={opts} {...(placeholder ? { placeholder } : {})} />
 )
 
-export function SearchSelect({ value, set, opts, ariaLabel = 'Choose an option' }: { value: string; set: (v: string) => void; opts: [string, string][]; ariaLabel?: string }) {
+export function SearchSelect({ value, set, opts, ariaLabel = 'Choose an option', placeholder = 'Type to search' }: { value: string; set: (v: string) => void; opts: [string, string][]; ariaLabel?: string; placeholder?: string }) {
   const [open, setOpen] = useState(false), [query, setQuery] = useState(''), [active, setActive] = useState(0)
   const root = useRef<HTMLDivElement>(null), search = useRef<HTMLInputElement>(null)
   const filtered = opts.filter(([, label]) => label.toLowerCase().includes(query.toLowerCase()))
@@ -141,7 +141,7 @@ export function SearchSelect({ value, set, opts, ariaLabel = 'Choose an option' 
   return <div ref={root} className="relative">
     <button type="button" aria-label={ariaLabel} aria-haspopup="listbox" aria-expanded={open} onClick={() => setOpen(!open)} onKeyDown={(e) => { if (e.key === 'ArrowDown' || e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setOpen(true) } }} className={cx(IN, 'flex items-center justify-between text-left')}><span className="truncate">{opts.find(([k]) => k === value)?.[1] ?? value}</span><ChevronRight size={14} aria-hidden="true" className={cx('ml-2 shrink-0 text-mu transition-transform', open && 'rotate-90')} /></button>
     {open && <div className="absolute z-40 mt-1 w-full"><Menu className="settings-dropdown max-h-56 overflow-y-auto">
-      <input ref={search} value={query} onChange={(e) => { setQuery(e.target.value); setActive(0) }} onKeyDown={(e) => { if (e.key === 'ArrowDown') { e.preventDefault(); setActive((n) => Math.min(n + 1, filtered.length - 1)) } else if (e.key === 'ArrowUp') { e.preventDefault(); setActive((n) => Math.max(n - 1, 0)) } else if (e.key === 'Enter' && filtered[active]) { e.preventDefault(); choose(filtered[active]) } else if (e.key === 'Escape') { setOpen(false); setQuery('') } }} placeholder="Type to search" aria-label="Search options" className="mb-1 w-full rounded-lg bg-surf px-2.5 py-2 text-sm outline-none focus:ring-2 focus:ring-ac/40" />
+      <input ref={search} value={query} onChange={(e) => { setQuery(e.target.value); setActive(0) }} onKeyDown={(e) => { if (e.key === 'ArrowDown') { e.preventDefault(); setActive((n) => Math.min(n + 1, filtered.length - 1)) } else if (e.key === 'ArrowUp') { e.preventDefault(); setActive((n) => Math.max(n - 1, 0)) } else if (e.key === 'Enter' && filtered[active]) { e.preventDefault(); choose(filtered[active]) } else if (e.key === 'Escape') { setOpen(false); setQuery('') } }} placeholder={placeholder} aria-label="Search options" className="mb-1 w-full rounded-lg bg-surf px-2.5 py-2 text-sm outline-none focus:ring-2 focus:ring-ac/40" />
       <div role="listbox" aria-label={ariaLabel} className="max-h-56 overflow-y-auto">{filtered.map((item, i) => <button type="button" role="option" aria-selected={item[0] === value} key={item[0]} onMouseEnter={() => setActive(i)} onClick={() => choose(item)} className={cx('block w-full rounded-lg px-2.5 py-2 text-left text-sm', active === i ? 'bg-hov text-tx' : 'text-mu')}>{item[1]}</button>)}{!filtered.length && <div className="px-2.5 py-2 text-sm text-mu">No matches</div>}</div>
     </Menu></div>}
   </div>

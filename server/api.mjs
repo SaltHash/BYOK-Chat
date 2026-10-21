@@ -4,7 +4,7 @@
  * response type. Secrets are read from the `env` argument only (process.env
  * for the Node server, Worker bindings for Cloudflare) and never logged. */
 import { boundedInt, normalizeProvider, providerLabel, providerNeedsKey, apiKeyFor, resolveApiKey, resolveZone, apiBaseUrlFor, runApiSearch, SEARCH_API_PROVIDERS } from './search.mjs'
-import { fetchPageText } from './extract.mjs'
+import { fetchPageText, fetchPageViaProvider, normalizeReaderProvider, READER_PROVIDERS } from './extract.mjs'
 import { handleSyncPush, handleSyncPull } from './sync.mjs'
 import { syncBackend, redact } from './syncStore.mjs'
 import { shareBackend } from './shareStore.mjs'
@@ -13,10 +13,12 @@ import { clientIp, headerValue, jsonResult, readBodyText, requestHost, sameOrigi
 
 // Hard server-side caps. Per-request tuning arrives from the user's search
 // settings in Settings → Tools → Web search and is bounded below.
-const MAX_RESULTS = 8
+const MAX_RESULTS = 10
 const MAX_SNIPPET_CHARS = 3000
-const EVIDENCE_BUDGET = 16000
+// Ten results at a readable snippet length need more room than eight did.
+const EVIDENCE_BUDGET = 24000
 const SEARCH_BODY_LIMIT = 16_384
+const READER_BODY_LIMIT = 16_384
 const EXTRACT_TIMEOUT_MS = 8000
 const RATE_LIMIT = 30
 const RATE_WINDOW_MS = 60_000
@@ -60,6 +62,7 @@ export function searchStatus(env = {}) {
     searchConfigured: true,
     apiProviders: Object.fromEntries(Object.entries(SEARCH_API_PROVIDERS).map(([id, meta]) => [id, { label: meta.label, configured: apiKeys[id], needsZone: Boolean(meta.needsZone) }])),
     apiConfigured,
+    readerProviders: Object.fromEntries(Object.entries(READER_PROVIDERS).map(([id, meta]) => [id, { label: meta.label }])),
   }
 }
 
@@ -169,10 +172,22 @@ export async function apiExtract(req, env = process.env, opts = {}) {
   const url = new URL(req.url || '/', 'http://localhost')
   const target = (url.searchParams.get('url') || '').trim().slice(0, 2000)
   if (!target) return jsonResult(400, { error: 'Missing url parameter' })
+  const intParam = (name) => {
+    const raw = url.searchParams.get(name)
+    if (raw == null || raw === '') return undefined
+    const n = Number(raw)
+    return Number.isInteger(n) ? n : undefined
+  }
   try {
     // The Node host passes a fetch that pins the resolved address at connect
     // time (DNS-rebinding guard); the Worker uses its default fetch.
-    const data = await fetchPageText(target, { timeoutMs: EXTRACT_TIMEOUT_MS, fetchFn: opts.fetchFn })
+    const data = await fetchPageText(target, {
+      timeoutMs: intParam('timeoutMs') ?? EXTRACT_TIMEOUT_MS,
+      maxChars: intParam('maxChars'),
+      maxRetries: intParam('maxRetries'),
+      retryBaseMs: intParam('retryBaseMs'),
+      fetchFn: opts.fetchFn,
+    })
     return jsonResult(200, { ...data, fetchedAt: new Date().toISOString() }, { 'cache-control': 'private, max-age=300' })
   } catch (e) {
     const code = e.code || 'upstream_unavailable'
@@ -181,6 +196,56 @@ export async function apiExtract(req, env = process.env, opts = {}) {
       : code === 'empty' ? 422
       : e.status === 404 ? 404 : 502
     console.error(`[extract] code=${code} upstream=${e.status ?? 0} urlChars=${target.length}`)
+    return jsonResult(status, { error: e.message || 'Could not read the page.', code, retryable: e.retryable === true })
+  }
+}
+
+/* POST /api/reader reads one page through a selected reader API. The key is
+ * in the JSON body (never a URL) and is redacted from all logs. GET
+ * /api/extract keeps the direct built-in reader for compatibility. */
+export async function apiReader(req, env = process.env, opts = {}) {
+  if (req.method !== 'POST') return jsonResult(405, { error: 'Method not allowed' }, { allow: 'POST' })
+  if (!sameOrigin(headerValue(req, 'origin'), requestHost(req))) return jsonResult(403, { error: 'Cross-origin request refused' })
+  const ip = clientIp(req, env)
+  const now = Date.now()
+  if (overRateLimit(extractLimit, ip, now)) return jsonResult(429, { error: 'Reader limit reached. Try again in a minute.' }, { 'retry-after': '60' })
+  bumpRateLimit(extractLimit, ip, now)
+  const raw = await readBodyText(req, READER_BODY_LIMIT)
+  if (raw === null) return jsonResult(413, { error: 'Request is too large' })
+  let parsed
+  try { parsed = JSON.parse(raw) } catch { return jsonResult(400, { error: 'Expected JSON with a url field' }) }
+  const target = typeof parsed?.url === 'string' ? parsed.url.trim().slice(0, 2000) : ''
+  if (!target) return jsonResult(400, { error: 'Missing url parameter' })
+  const provider = normalizeReaderProvider(parsed?.provider ?? 'builtin', 'builtin')
+  const clientKey = typeof parsed?.apiKey === 'string' ? parsed.apiKey.slice(0, 500) : ''
+  const clientUrl = typeof parsed?.baseUrl === 'string' ? parsed.baseUrl.trim().slice(0, 500) : ''
+  const envSuffix = provider.toUpperCase()
+  const serverKey = String(env[`READER_API_KEY_${envSuffix}`] || env.READER_API_KEY || '').trim()
+  const serverUrl = String(env[`READER_API_URL_${envSuffix}`] || env.READER_API_URL || '').trim()
+  const apiKey = clientKey || serverKey
+  const baseUrl = clientUrl || serverUrl
+  const intParam = (name) => (Number.isInteger(parsed?.[name]) ? parsed[name] : undefined)
+  try {
+    const data = await fetchPageViaProvider(target, {
+      provider,
+      apiKey,
+      baseUrl,
+      fallback: parsed?.fallback !== false,
+      timeoutMs: intParam('timeoutMs') ?? EXTRACT_TIMEOUT_MS,
+      maxChars: intParam('maxChars'),
+      maxRetries: intParam('maxRetries'),
+      retryBaseMs: intParam('retryBaseMs'),
+      fetchFn: opts.fetchFn,
+    })
+    return jsonResult(200, { ...data, fetchedAt: new Date().toISOString() }, { 'cache-control': 'private, max-age=300' })
+  } catch (e) {
+    const code = e.code || 'upstream_unavailable'
+    const status = code === 'bad_url' || code === 'bad_type' || code === 'missing_key' ? 400
+      : code === 'timeout' || code === 'network' ? 503
+      : code === 'empty' ? 422
+      : code === 'rate_limited' ? 429
+      : e.status === 404 ? 404 : 502
+    console.error(`[reader] provider=${provider} code=${code} upstream=${e.status ?? 0} urlChars=${target.length}`)
     return jsonResult(status, { error: e.message || 'Could not read the page.', code, retryable: e.retryable === true })
   }
 }
@@ -284,6 +349,7 @@ export async function apiRoute(req, env = process.env, opts = {}) {
   if (url.pathname === '/api/health') result = apiHealth(req, env)
   else if (url.pathname === '/api/search') result = await apiSearch(req, env)
   else if (url.pathname === '/api/extract') result = await apiExtract(req, env, opts)
+  else if (url.pathname === '/api/reader') result = await apiReader(req, env, opts)
   else if (url.pathname === '/api/share' || url.pathname.startsWith('/api/share/')) result = await apiShare(req, env)
   else if (url.pathname.startsWith('/api/sync/')) result = await apiSync(req, env)
   else if (url.pathname === '/api' || url.pathname.startsWith('/api/')) result = jsonResult(404, { error: 'Not found' })

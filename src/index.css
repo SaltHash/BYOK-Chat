@@ -124,6 +124,11 @@
 /* Hairline edges: panes, menus and dialogs read as separate surfaces. */
 /* --bor is the single border color used across the app; --edge aliases it. */
 :root { --bor: color-mix(in srgb, var(--hov) 80%, var(--mu)); --edge: var(--bor); }
+/* Plum and Obsidian have bright muted tones, which makes the default mix read
+   as a drawn line. Lean a little further toward each theme's surface color so
+   the hairline stays a subtle seam. */
+[data-t=plum] { --bor: color-mix(in srgb, var(--hov) 86%, var(--mu)); --edge: var(--bor); }
+[data-t=obsidian] { --bor: color-mix(in srgb, var(--hov) 86%, var(--mu)); --edge: var(--bor); }
 /* Claude keeps a flatter, warmer hairline: the default mix reads a touch bright
    against its dark background, so it is pinned to the weight of the composer's
    own focused outline instead of following --mu. */
@@ -136,9 +141,8 @@
   .glass-composer { background: var(--surf); }
 }
 
-/* Mention pills: the composer mirrors the draft into a backdrop layer behind a
-   transparent textarea. Equal and opposite padding/margin keeps a pill from
-   changing the text advance, so the caret and the visible text stay aligned. */
+/* Mention pills: the composer renders these inline as atomic, non-editable
+   tokens, so the caret and the visible text share the same layout. */
 .mention-pill {
   padding: 0 0.45em;
   margin: 0 -0.45em;
@@ -148,6 +152,15 @@
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--ac) 32%, transparent);
   -webkit-box-decoration-break: clone;
   box-decoration-break: clone;
+}
+/* The overlay hack's negative margin is unnecessary (and makes the caret look
+   crowded) now that pills are part of the editable line itself. */
+.composer-input { caret-color: var(--ac); }
+.composer-input .mention-pill { margin: 0 0.08em; }
+.composer-input:empty::before {
+  content: attr(data-placeholder);
+  color: color-mix(in srgb, var(--mu) 70%, transparent);
+  pointer-events: none;
 }
 .mention-pill-off {
   color: var(--mu);
@@ -162,8 +175,8 @@
 .mention-input::selection { background: color-mix(in srgb, var(--ac) 30%, transparent); }
 @keyframes mention-in { from { opacity: 0; } to { opacity: 1; } }
 .mention-banner { animation: mention-in 140ms ease-out both; }
-/* Composer focus outline: a quick accent outline that pulses in then out when
-   "Edit plan" hands focus back to the composer. */
+/* Composer focus outline: a quick border-colored outline that pulses in then
+   out when "Edit plan" hands focus back to the composer. */
 @keyframes composerOutlineFade {
   0% { opacity: 0; transform: scale(1); }
   20% { opacity: 1; }
@@ -219,3 +232,27 @@
 .hljs-deletion { color: var(--er); }
 .hljs-emphasis { font-style: italic; }
 .hljs-strong { font-weight: 700; }
+
+/* Temporary-chat flair: a dashed badge with a solid accent tint and a
+   flipping hourglass. The tint and the icon are the non-text cue; the label
+   says what the chat is. Clicking the whole badge opens the temporary-chat
+   settings. */
+.temp-flair {
+  border-color: color-mix(in srgb, var(--ac) 58%, var(--bor));
+  background-color: color-mix(in srgb, var(--ac) 12%, transparent);
+}
+.temp-flair:hover {
+  background-color: color-mix(in srgb, var(--ac) 20%, transparent);
+}
+.temp-flair-mark {
+  background: color-mix(in srgb, var(--ac) 16%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--ac) 30%, transparent);
+}
+.temp-flair-icon { animation: temp-hourglass 6s ease-in-out infinite; }
+@keyframes temp-hourglass {
+  0%, 42%, 100% { transform: rotate(0deg); }
+  52%, 92% { transform: rotate(180deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .temp-flair-icon { animation: none; }
+}

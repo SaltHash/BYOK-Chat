@@ -1,6 +1,6 @@
 import { memo, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
-import { GitBranch, ChevronLeft, ChevronRight, ChevronDown, Sparkles, Server, Cpu, Copy, Check, RefreshCw, Trash2, ListOrdered, CircleCheck, CircleX, TriangleAlert, Paperclip, CornerDownLeft, CornerDownRight, Download, ExternalLink, Volume2 } from 'lucide-react'
+import { GitBranch, ChevronLeft, ChevronRight, ChevronDown, Sparkles, Server, Cpu, Copy, Check, RefreshCw, Trash2, ListOrdered, CircleCheck, CircleX, TriangleAlert, Paperclip, Download, ExternalLink, Volume2 } from 'lucide-react'
 import { useS, useLive, usable, featOn, previewSysFor, type Msg } from '../store'
 import { clampWorkspaceFrac, roundFrac, CHAT_WIDTH } from '../layout'
 import { startPointerDrag } from '../hooks'
@@ -9,9 +9,10 @@ import { CI, fmtDuration } from '../meta'
 import { Btn, Chip, cx, type Ic } from './ui'
 import { Composer } from './Composer'
 import { Header } from './Header'
+import { MessageActions } from './ReplyActions'
 import { Tutorial } from './Extra'
 import { Md, UserText } from './Md'
-import { activityLine, greetingFor, seasonalLine, thinkingLine } from '../flair'
+import { activityLine, flairLine, thinkingLine } from '../flair'
 import { splitStream } from '../streamMd'
 import { WorkspaceTile, WorkspacePanel } from './Workspace'
 import { ResearchTierPicker, ResearchPlanCard, ResearchProgressCard, ResearchTile, ResearchPanel } from './Research'
@@ -29,7 +30,12 @@ function toolStep(name: string, rawArgs: string, result?: string) {
   const expression = typeof args.expression === 'string' ? args.expression : ''
   const text = typeof args.text === 'string' ? args.text : ''
   if (name === 'prompt_chip') return `Follow-up · ${typeof args.label === 'string' ? args.label : 'Continue'}`
-  if (name === 'inline_poll') return `Choice · ${typeof args.question === 'string' ? args.question : 'Choose an option'}`
+  if (name === 'inline_poll') {
+    const questions = Array.isArray(args.questions) ? args.questions : []
+    const first = questions[0] && typeof questions[0] === 'object' ? (questions[0] as Record<string, unknown>).label : ''
+    const label = typeof args.question === 'string' ? args.question : typeof first === 'string' ? first : ''
+    return `Choice · ${label || 'Quick questions'}`
+  }
   const clip = (s: string, n = 90) => s.length > n ? `${s.slice(0, n)}…` : s
   if (name.startsWith('mcp_')) {
     const label = name.slice(4).replace(/_/g, ' ')
@@ -62,6 +68,9 @@ function toolStep(name: string, rawArgs: string, result?: string) {
   }
   if (name === 'fetch_page') {
     let label = ''
+    // A summarized read is labelled apart from a raw excerpt, so the process
+    // log shows that a second model was involved.
+    const summarized = /^\s*Page summary/i.test(String(result ?? ''))
     try {
       const j = JSON.parse(result ?? '')
       const title = typeof j?.title === 'string' ? j.title : ''
@@ -70,7 +79,7 @@ function toolStep(name: string, rawArgs: string, result?: string) {
       try { host = new URL(url).hostname.replace(/^www\./, '') } catch { /* keep empty */ }
       label = [title ? `“${clip(title, 70)}”` : '', host].filter(Boolean).join(' · ') || clip(String(args.url ?? 'page'), 80)
     } catch { label = clip(String(args.url ?? 'page'), 80) }
-    return `Page reader · ${label || 'page'}`
+    return `${summarized ? 'Page summary' : 'Page reader'} · ${label || 'page'}`
   }
   if (name === 'time') return 'Checked the current date and time'
   if (name === 'date') return 'Checked the current date'
@@ -169,35 +178,6 @@ function Payload({ label, text, open, onToggle }: { label: string; text: string;
       )}
     </span>
   )
-}
-
-function MessageActions({ calls }: { calls: { id: string; name: string; arguments: string; error?: boolean }[] }) {
-  const busy = useS((s) => s.busy)
-  const [chosen, setChosen] = useState<Record<string, number[]>>({})
-  const [used, setUsed] = useState<Record<string, boolean>>({})
-  const actions = calls.filter((call) => !call.error && ['prompt_chip', 'inline_poll'].includes(call.name))
-  if (!actions.length) return null
-  const parse = (raw: string) => { try { return JSON.parse(raw || '{}') as Record<string, any> } catch { return {} } }
-  const run = async (key: string, prompt: string) => { if (!prompt.trim() || busy) return; if (await useS.getState().send(prompt, [])) setUsed((v) => ({ ...v, [key]: true })) }
-  return <div className="space-y-2 pt-1">
-    {actions.map((call) => {
-      const args = parse(call.arguments)
-      if (call.name === 'prompt_chip') return <button key={call.id} disabled={busy || used[call.id]} onClick={() => { void run(call.id, String(args.prompt ?? '')) }} className="inline-flex min-h-9 items-center gap-2 rounded-full border border-bor bg-surf px-3 py-1.5 text-sm text-tx transition-colors hover:bg-hov focus-visible:ring-2 focus-visible:ring-ac disabled:opacity-50"><CornerDownRight size={14} className="text-ac" />{String(args.label || 'Continue')}</button>
-      const options = Array.isArray(args.options) ? args.options.map((o: any) => typeof o === 'string' ? { label: o, prompt: o } : o).filter((o: any) => o && typeof o.label === 'string').slice(0, 6) : []
-      const selected = chosen[call.id] ?? []
-      const multi = args.mode === 'multiple'
-      const pick = (index: number) => setChosen((v) => ({ ...v, [call.id]: multi ? selected.includes(index) ? selected.filter((x) => x !== index) : [...selected, index] : [index] }))
-      return <section key={call.id} aria-label="Assistant choice" className="max-w-xl rounded-xl border border-bor bg-surf p-4">
-        <h3 className="text-sm font-medium">{String(args.question || 'Choose an option')}</h3>
-        <div role={multi ? 'group' : 'radiogroup'} aria-label={String(args.question || 'Choose an option')} className="mt-3 grid gap-2 sm:grid-cols-2">
-          {options.map((option: any, index: number) => <button key={index} type="button" role={multi ? 'checkbox' : 'radio'} aria-checked={selected.includes(index)} disabled={used[call.id] || busy} onClick={() => pick(index)} onKeyDown={(e) => { if (!multi && ['ArrowDown', 'ArrowRight', 'ArrowUp', 'ArrowLeft'].includes(e.key)) { e.preventDefault(); const next = (index + (e.key === 'ArrowDown' || e.key === 'ArrowRight' ? 1 : -1) + options.length) % options.length; pick(next); e.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>('[role="radio"]')[next]?.focus() } }} className={cx('flex min-h-10 items-center gap-2 rounded-lg border px-3 py-2 text-left text-sm transition-colors hover:bg-hov disabled:opacity-50', selected.includes(index) ? 'border-ac bg-ac/10' : 'border-bor')}>
-            <span aria-hidden="true" className={cx('grid size-4 shrink-0 place-items-center border', multi ? 'rounded' : 'rounded-full', selected.includes(index) ? 'border-ac bg-ac text-acx' : 'border-mu/60')} >{selected.includes(index) && <Check size={11} strokeWidth={3} />}</span>{option.label}
-          </button>)}
-        </div>
-        <div className="mt-3 flex items-center justify-between"><span aria-live="polite" className="text-xs text-mu">{used[call.id] ? 'Sent' : multi ? 'Choose one or more' : 'Choose one'}</span><button disabled={!selected.length || busy || used[call.id]} onClick={() => { void run(call.id, options.filter((_: any, i: number) => selected.includes(i)).map((o: any) => o.prompt).join('\n\n')) }} className="rounded-lg bg-ac px-3 py-1.5 text-sm font-medium text-acx transition-opacity hover:opacity-90 disabled:opacity-40">Continue</button></div>
-      </section>
-    })}
-  </div>
 }
 
 /* During streaming, each provider chunk renders as its own <span> so the
@@ -697,7 +677,7 @@ export function Chat({ side, toggle, cfg, pal }: { side: boolean; toggle: () => 
             ) : (
               <div className="mx-auto flex h-full max-w-xl flex-col items-center justify-center gap-6 px-4 text-center">
                 <span className="grid size-12 place-items-center rounded-2xl bg-surf text-ac"><Sparkles size={22} /></span>
-                <h2 className="text-xl font-semibold">{(s.prefs.seasonal !== false && seasonalLine(new Date())) || greetingFor(new Date(), s.chats.length)}</h2>
+                <h2 className="text-xl font-semibold">{flairLine(new Date(), { temporary: c?.temporary === true, seasonal: s.prefs.seasonal, seed: s.chats.length })}</h2>
                 <div className="grid w-full gap-2 sm:grid-cols-2">
                   {!s.eps.length && <Tile icon={Server} t="Add an endpoint" d="Connect a model with your own key" on={() => cfg('eps')} />}
                   {tiles.map((k) => <Tile key={k.id} icon={CI[k.in]} t={'/' + k.name} d={k.desc} on={() => s.patch({ draft: '/' + k.name + ' ' })} />)}

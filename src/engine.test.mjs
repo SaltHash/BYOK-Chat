@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 
 const { TOOLS } = await import('./meta.ts')
 const { executeTool, executeToolCalls, runToolLoop, stream, toolsFor, wire, searchWeb, fetchPage, formatPage, clearSessionCache } = await import('./engine.ts')
-const { normSearch, searchCountOf } = await import('./store.ts')
+const { normSearch, searchCountOf, readerKeyOf, fetchOptsOf } = await import('./store.ts')
 const jsonResponse = (value) => new Response(JSON.stringify(value), { headers: { 'content-type': 'application/json' } })
 const openai = { type: 'openai', url: 'https://provider.example/v1', key: 'test-key', model: 'test-model' }
 const anthropic = { ...openai, type: 'anthropic' }
@@ -364,7 +364,7 @@ const { estimateHistoryTokens, trimHistory, readAtt, readAtts } = await import('
 test('search results-per-search defaults to the user max and never exceeds it', () => {
   assert.equal(normSearch({}).maxResults, 8)
   assert.equal(normSearch({ maxResults: 3 }).maxResults, 3)
-  assert.equal(normSearch({ maxResults: 99 }).maxResults, 8)
+  assert.equal(normSearch({ maxResults: 99 }).maxResults, 10)
   assert.equal(normSearch({ maxResults: 0 }).maxResults, 1)
   assert.equal(normSearch({ maxResults: 'junk' }).maxResults, 8)
   const prefs = normSearch({ maxResults: 5 })
@@ -373,6 +373,33 @@ test('search results-per-search defaults to the user max and never exceeds it', 
   assert.equal(searchCountOf(prefs, 7), 5)
   assert.equal(searchCountOf(prefs, 0), 1)
   assert.equal(searchCountOf(prefs, 'junk'), 5)
+  // The provider ceiling is 10 results, and the model cannot ask for more.
+  const wide = normSearch({ maxResults: 10 })
+  assert.equal(searchCountOf(wide), 10)
+  assert.equal(searchCountOf(wide, 25), 10)
+})
+
+test('page-reader preferences keep a separate API, key and summary model', () => {
+  const blank = normSearch({})
+  assert.equal(blank.readerProvider, 'builtin')
+  assert.equal(blank.readerKey, '')
+  assert.equal(blank.readerFallback, true)
+  assert.equal(blank.readerSummary, false)
+  assert.equal(blank.readerSummaryChars, 2400)
+  assert.equal(normSearch({ readerProvider: 'jina' }).readerProvider, 'jina')
+  assert.equal(normSearch({ readerProvider: 'nope' }).readerProvider, 'builtin')
+  assert.equal(normSearch({ readerFallback: false }).readerFallback, false)
+  assert.equal(normSearch({ readerSummary: true, readerSummaryEp: 'e1', readerSummaryModel: 'm1' }).readerSummaryEp, 'e1')
+  assert.equal(normSearch({ readerSummaryChars: 99999 }).readerSummaryChars, 8000)
+  assert.equal(normSearch({ readerSummaryChars: 10 }).readerSummaryChars, 400)
+  // A reader key falls back to the matching search key for Firecrawl and Exa.
+  const prefs = normSearch({ readerProvider: 'exa', keys: { exa: 'exa-key' } })
+  assert.equal(readerKeyOf(prefs), 'exa-key')
+  assert.equal(readerKeyOf(normSearch({ readerProvider: 'exa', readerKey: 'own' })), 'own')
+  assert.equal(readerKeyOf(normSearch({ readerProvider: 'jina' })), '')
+  const opts = fetchOptsOf(normSearch({ readerProvider: 'custom', readerUrl: 'https://reader.example/r?url={url}' }))
+  assert.equal(opts.provider, 'custom')
+  assert.equal(opts.baseUrl, 'https://reader.example/r?url={url}')
 })
 
 test('inline citations default to pills but honour an explicit off', () => {
@@ -406,7 +433,7 @@ test('searchWeb forwards a clamped count to the backend', async () => {
     await searchWeb('q', { count: 3 })
     assert.equal(bodies.at(-1).count, 3)
     await searchWeb('q', { count: 99 })
-    assert.equal(bodies.at(-1).count, 8)
+    assert.equal(bodies.at(-1).count, 10)
     await searchWeb('q', {})
     assert.equal('count' in bodies.at(-1), false)
   } finally { globalThis.fetch = original }
@@ -607,4 +634,48 @@ test('the session cache serves repeated searches and pages without refetching', 
     globalThis.fetch = realFetch
     clearSessionCache()
   }
+})
+
+test('a remote page reader posts to the reader API and keeps its own cache entry', async () => {
+  const realFetch = globalThis.fetch
+  const calls = []
+  globalThis.fetch = async (url, init) => {
+    calls.push({ url: String(url), body: init?.body ? JSON.parse(init.body) : null })
+    return jsonResponse({ url: 'https://a.test/page', title: 'A', text: 'body' })
+  }
+  try {
+    await fetchPage('https://a.test/page', { cache: true, provider: 'jina', apiKey: 'k' })
+    assert.equal(calls[0].url, '/api/reader')
+    assert.equal(calls[0].body.provider, 'jina')
+    assert.equal(calls[0].body.apiKey, 'k')
+    await fetchPage('https://a.test/page', { cache: true, provider: 'jina', apiKey: 'k' })
+    assert.equal(calls.length, 1, 'the second read is served from cache')
+    await fetchPage('https://a.test/page', { cache: true, provider: 'exa', apiKey: 'k' })
+    assert.equal(calls.length, 2, 'a different reader API is a different cache entry')
+  } finally {
+    globalThis.fetch = realFetch
+    clearSessionCache()
+  }
+})
+
+test('the built-in page reader keeps using the extract endpoint', async () => {
+  const realFetch = globalThis.fetch
+  const calls = []
+  globalThis.fetch = async (url) => {
+    calls.push(String(url))
+    return jsonResponse({ url: 'https://a.test/page', title: 'A', text: 'body' })
+  }
+  try {
+    await fetchPage('https://a.test/page', { provider: 'builtin' })
+    assert.match(calls[0], /^\/api\/extract\?/)
+  } finally {
+    globalThis.fetch = realFetch
+    clearSessionCache()
+  }
+})
+
+test('a summarized page is still labelled as a page result', () => {
+  const text = formatPage({ url: 'https://a.test/p', title: 'T', text: 'summary body' }, { citeId: 's3', summarized: true })
+  assert.match(text, /^Page summary \[Source S3\] for https:\/\/a\.test\/p/)
+  assert.match(text, /<page_excerpt>/)
 })

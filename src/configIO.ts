@@ -64,7 +64,9 @@ export function buildExportPayload(
   if (exports.tools) {
     data.tools = s.tools
     const sp = normSearch(s.search)
-    data.search = withKeys ? sp : { ...sp, keys: { tinyfish: '', you: '', exa: '', firecrawl: '', brightdata: '' } }
+    // The reader key is a credential like the search keys: it is only
+    // exported when the export explicitly includes keys.
+    data.search = withKeys ? sp : { ...sp, keys: { tinyfish: '', you: '', exa: '', firecrawl: '', brightdata: '' }, readerKey: '' }
     // MCP headers usually carry a bearer token: strip them unless the export
     // explicitly includes keys, exactly like endpoint API keys.
     const mcps = Array.isArray(s.mcps) ? s.mcps : []

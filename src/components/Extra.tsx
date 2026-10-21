@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import { useShallow } from 'zustand/react/shallow'
-import { Info, X, Server, Play, MessageSquare, Keyboard, ArrowUp, ArrowDown, MessagesSquare, RotateCcw, Download, Upload, FileText, Trash2, CircleCheck, CircleX, Gauge } from 'lucide-react'
+import { Info, X, Server, Play, MessageSquare, Keyboard, ArrowUp, ArrowDown, MessagesSquare, RotateCcw, Download, Upload, FileText, Trash2, CircleCheck, CircleX, Gauge, ShieldCheck } from 'lucide-react'
 import { useS, dl, BLANK, THEMES, themePatch, DEFAULT_FEATURES, DEFAULT_PREFS, DEFAULT_PARAMS, DEFAULT_WIDGET_PREFS, modelsOf, modelNameOf, normSearch, normAdvanced, normFeatureOrder, normDocs, featOn, errText, storageUsage, QUOTA_FLAG, type Ep, type Kind, type FeatureId } from '../store'
 import { normSkills } from '../skills'
 import { normMcpServers } from '../mcp'
@@ -9,6 +9,7 @@ import { normCodeRun } from '../codesandbox'
 import { normVoice } from '../voice'
 import { normGlobalPrompt } from '../flair'
 import { combo, fmt, rec as R, testEp } from '../engine'
+import { probeProviderCors, resolveProvider } from '../providerAdapter'
 import { KEYS, TOOLS, DEFAULT_TOOLS } from '../meta'
 import { Btn, Toggle, Checkbox, Confirm, Modal, Surface, Input, cx, type Ic } from './ui'
 import { Panel, Anchor } from './Settings'
@@ -62,6 +63,14 @@ export function Tutorial({ cfg }: { cfg: (t: string) => void }) {
 
 export function TestRow({ e }: { e: Ep }) {
   const [r, setR] = useState<{ s: 'run' | 'ok' | 'err'; t: string; model: string }[]>([])
+  const [cors, setCors] = useState<{ s: 'run' | 'ok' | 'err'; t: string } | null>(null)
+  const provider = resolveProvider({ preset: e.preset, url: e.url })
+  const checkCors = async () => {
+    if (!provider || cors?.s === 'run') return
+    setCors({ s: 'run', t: `Checking browser access to ${provider.name}…` })
+    const result = await probeProviderCors(provider, e)
+    setCors({ s: result.ok ? 'ok' : 'err', t: result.ok ? `${provider.name} allows this origin (HTTP ${result.status}${result.allowOrigin ? `, Access-Control-Allow-Origin: ${result.allowOrigin}` : ''}).` : result.error ?? `${provider.name} failed its CORS preflight.` })
+  }
   const run = async () => {
     const models = modelsOf(e)
     setR(models.map((model) => ({ model, s: 'run', t: 'Testing…' })))
@@ -77,7 +86,14 @@ export function TestRow({ e }: { e: Ep }) {
   }
   return (
     <div className="space-y-2">
-      <Btn v="soft" icon={Play} disabled={r.some((x) => x.s === 'run')} onClick={run}>Test all model connections</Btn>
+      <div className="flex flex-wrap items-center gap-2">
+        <Btn v="soft" icon={Play} disabled={r.some((x) => x.s === 'run')} onClick={run}>Test all model connections</Btn>
+        {provider && <Btn v="soft" icon={ShieldCheck} disabled={cors?.s === 'run'} onClick={() => void checkCors()}>Check browser access (CORS)</Btn>}
+      </div>
+      {cors && <div className={cx('flex items-start gap-2 text-sm', cors.s === 'err' ? 'text-er' : cors.s === 'ok' ? 'text-ac' : 'text-mu')}>
+        {cors.s === 'err' ? <CircleX size={14} className="mt-0.5 shrink-0" /> : cors.s === 'ok' ? <CircleCheck size={14} className="mt-0.5 shrink-0" /> : null}
+        <span>{cors.t}</span>
+      </div>}
       {r.map((x) => <div key={x.model} className={cx('flex items-start gap-2 text-sm', x.s === 'err' ? 'text-er' : x.s === 'ok' ? 'text-ac' : 'text-mu')}>
         {x.s === 'err' ? <CircleX size={14} className="mt-0.5 shrink-0" /> : x.s === 'ok' ? <CircleCheck size={14} className="mt-0.5 shrink-0" /> : null}
         <span><b>{modelNameOf(e, x.model)}</b> <span className="text-mu">({x.model})</span>: {x.t}</span>

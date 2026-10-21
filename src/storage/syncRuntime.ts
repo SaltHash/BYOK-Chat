@@ -15,6 +15,9 @@ import { syncPull, syncPush } from './syncClient'
 import { useS } from '../store'
 import { STORE_VERSION } from '../persistence'
 
+/* Device-local link state, deliberately outside the synced store: the token is
+ * the credential that opens the slot itself, and auto/last-sync describe this
+ * device's link rather than shared configuration. Everything else syncs. */
 const TOKEN_KEY = 'byok.sync.token'
 const AUTO_KEY = 'byok.sync.auto'
 const LAST_KEY = 'byok.sync.last'
@@ -23,8 +26,12 @@ const LAST_KEY = 'byok.sync.last'
 export const SYNC_PULL_INTERVAL_MS = 5 * 60_000
 /** Quiet period after a local change before it is pushed. */
 export const SYNC_PUSH_DEBOUNCE_MS = 2500
-/** Live-only fields that must never ride a remote snapshot. */
-const LIVE_ONLY = ['busy', 'draft', 'drafts', 'notice', 'flashMsg', 'researchPanel']
+/** Backoff after a failed push; the next edit retries sooner. */
+export const SYNC_PUSH_RETRY_MS = 30_000
+/** Live-only fields that must never ride a remote snapshot. Every other field
+ *  in the store is configuration/content and is included automatically, so a
+ *  new setting is synced without touching this list. */
+export const SYNC_LIVE_ONLY = ['busy', 'draft', 'drafts', 'notice', 'flashMsg', 'researchPanel']
 
 export const getSyncToken = (): string => { try { return localStorage.getItem(TOKEN_KEY) ?? '' } catch { return '' } }
 export const setSyncToken = (t: string): void => { try { t ? localStorage.setItem(TOKEN_KEY, t) : localStorage.removeItem(TOKEN_KEY) } catch { /* blocked storage */ } }
@@ -41,7 +48,7 @@ export const autoSyncEnabled = (): boolean => !!getSyncToken() && getAutoSync()
 export function readLocalData(): SyncData {
   const s = useS.getState() as unknown as Record<string, unknown>
   const { chats, workspaces, selectedRevision, ...settings } = s
-  for (const k of LIVE_ONLY) delete settings[k]
+  for (const k of SYNC_LIVE_ONLY) delete settings[k]
   return {
     settings,
     chats: Array.isArray(chats) ? chats : [],
@@ -66,7 +73,12 @@ export function applySyncData(data: SyncData): void {
     // Never let the applied snapshot look like a fresh local edit, or the
     // watcher would push it straight back and the two devices would chatter.
     refreshWatchers()
-    setTimeout(() => { applying = false }, 0)
+    setTimeout(() => {
+      applying = false
+      // A local edit that landed while this snapshot was being applied still
+      // needs to reach the slot (the merged state above already includes it).
+      if (pendingDirty) schedulePush()
+    }, 0)
   }
 }
 
@@ -131,6 +143,7 @@ export async function linkAndMerge(token: string, mode: 'merge' | 'remote' | 'lo
 
 let started = false
 let pushing = false
+let pendingDirty = false
 let pushTimer: ReturnType<typeof setTimeout> | null = null
 let watcherSettings: Record<string, unknown> = {}
 let watcherChats: unknown = null
@@ -141,7 +154,7 @@ let watcherSelected: unknown = null
 const snapshot = () => {
   const s = useS.getState() as unknown as Record<string, unknown>
   const { chats, workspaces, selectedRevision, ...settings } = s
-  for (const k of LIVE_ONLY) delete settings[k]
+  for (const k of SYNC_LIVE_ONLY) delete settings[k]
   return { settings, chats, workspaces, selectedRevision }
 }
 const refreshWatchers = () => {
@@ -152,14 +165,25 @@ const refreshWatchers = () => {
   watcherSelected = selectedRevision
 }
 
-const schedulePush = () => {
+const schedulePush = (delay = SYNC_PUSH_DEBOUNCE_MS) => {
   if (pushTimer) return
   pushTimer = setTimeout(() => {
     pushTimer = null
-    if (!autoSyncEnabled() || pushing || applying || useS.getState().busy) return
+    if (!autoSyncEnabled()) return
+    // A reply, an in-flight push or an incoming merge pauses the write, but
+    // the change stays dirty and is retried when that state clears.
+    if (pushing || applying || useS.getState().busy) { pendingDirty = true; return }
+    if (!pendingDirty) return
+    pendingDirty = false
     pushing = true
-    void pushNow().catch(() => {}).finally(() => { pushing = false })
-  }, SYNC_PUSH_DEBOUNCE_MS)
+    void pushNow()
+      .catch(() => { pendingDirty = true; schedulePush(SYNC_PUSH_RETRY_MS) })
+      .finally(() => {
+        pushing = false
+        // A change that landed during the push still needs its own write.
+        if (pendingDirty && !pushTimer) schedulePush()
+      })
+  }, delay)
 }
 
 /** Shallow compare of the synchronisable slice: immutable updates replace the
@@ -198,8 +222,7 @@ export function startSyncRuntime(): void {
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') pull() })
   useS.subscribe(() => {
     if (!autoSyncEnabled() || applying) return
-    if (!changed()) return
-    if (useS.getState().busy) return
-    schedulePush()
+    if (changed()) pendingDirty = true
+    if (pendingDirty && !useS.getState().busy) schedulePush()
   })
 }

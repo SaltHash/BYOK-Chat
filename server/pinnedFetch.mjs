@@ -70,9 +70,15 @@ function adaptResponse(res, signal) {
     },
     text: () => new Promise((resolve, reject) => {
       const chunks = []
+      let settled = false
+      const finish = (value) => { if (!settled) { settled = true; resolve(value) } }
       res.on('data', (c) => chunks.push(c))
-      res.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')))
-      res.on('error', (error) => reject(normalizeError(error, signal)))
+      res.on('end', () => finish(Buffer.concat(chunks).toString('utf8')))
+      // A closed socket ends the body too (abort, reset, or a server that
+      // never sends the last chunk). Without this the promise would hang
+      // forever, because `end` never fires for a destroyed response.
+      res.on('close', () => finish(Buffer.concat(chunks).toString('utf8')))
+      res.on('error', (error) => { if (!settled) { settled = true; reject(normalizeError(error, signal)) } })
     }),
   }
 }

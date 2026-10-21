@@ -1,5 +1,7 @@
 import type { Ep } from './store'
 import type { Wire } from './engine'
+import { withCode } from './errors'
+import { hasUnresolvedPlaceholder, providerBaseUrl, providerHeaders, resolveProvider } from './providerRegistry'
 
 export type StreamOptions = { cap?: number; max?: number; temp?: number; topp?: number; effort?: string }
 
@@ -14,9 +16,12 @@ export function buildStreamRequest(
   ms: Wire[],
   availableTools: unknown[] = [],
   o: StreamOptions = {},
-): { url: string; headers: Record<string, string>; body: unknown; isAnthropic: boolean } {
+): { url: string; headers: Record<string, string>; body: unknown; isAnthropic: boolean; redirect?: RequestRedirect; providerId?: string } {
   const an = e.type === 'anthropic'
   const b = e.url.trim().replace(/\/+$/, '')
+  const provider = an ? undefined : resolveProvider({ preset: e.preset, url: b })
+  const base = provider ? providerBaseUrl(provider, e) : b
+  if (provider && hasUnresolvedPlaceholder(base)) throw withCode(`${provider.name} needs an Account ID before it can send a request. Add it in Settings → Endpoints.`, 'bad_request')
   const h: Record<string, string> = { 'content-type': 'application/json' }
   let u: string
   let body: Record<string, unknown>
@@ -34,8 +39,9 @@ export function buildStreamRequest(
       body.output_config = { effort: o.effort }
     } else if (o.temp != null) body.temperature = o.temp
   } else {
-    u = b + '/chat/completions'
-    if (e.key) h.authorization = 'Bearer ' + e.key
+    u = base + (provider?.chatPath ?? '/chat/completions')
+    if (provider) Object.assign(h, providerHeaders(provider, e))
+    else if (e.key) h.authorization = 'Bearer ' + e.key
     body = { model: e.model, stream: true, messages: sys ? [{ role: 'system', content: sys }, ...ms] : ms }
     // Ask providers to include token usage (and, for OpenRouter, cost) in
     // the final streamed chunk. Without this most OpenAI-compatible APIs
@@ -43,7 +49,7 @@ export function buildStreamRequest(
     body.stream_options = { include_usage: true }
     // OpenRouter reports per-request cost in `usage.cost`, but only when
     // explicitly requested. Harmless to other providers; only send there.
-    if (/openrouter\.ai/i.test(b)) {
+    if (/openrouter\.ai/i.test(base)) {
       body.usage = { include: true }
       // Per-model provider pin (Settings → Endpoints → model → Provider).
       // `order` alone only prioritizes, so also block fallbacks: picking a
@@ -58,7 +64,14 @@ export function buildStreamRequest(
     const reportedOpen = e.modelEffortSource?.[e.model] ? e.modelEfforts?.[e.model] ?? [] : undefined
     if (o.effort && o.effort.toLowerCase() !== 'off' && reportedOpen?.includes(o.effort) && supportsEffort(e.model, 'openai', reportedOpen)) body.reasoning_effort = o.effort
   }
-  return { url: u, headers: h, body, isAnthropic: an }
+  return {
+    url: u,
+    headers: h,
+    body,
+    isAnthropic: an,
+    ...(provider?.followRedirects ? { redirect: 'follow' as RequestRedirect } : {}),
+    ...(provider ? { providerId: provider.id } : {}),
+  }
 }
 
 /** Split one SSE text buffer into complete lines + remainder (pure). */

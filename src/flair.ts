@@ -96,6 +96,27 @@ export function greetingFor(now: Date, seed: number): string {
   return pick(slot, seed)
 }
 
+/* A temporary chat gets its own line: one fixed phrase, whatever the date, so
+   the reader always knows this chat is on its way out. */
+export const TEMPORARY_FLAIR = 'Temporary chat. It poofs on its own.'
+
+export type FlairOptions = {
+  /** The chat is temporary, so it gets the temporary line instead. */
+  temporary?: boolean
+  /** Whether holiday lines are allowed (the "seasonal touches" preference). */
+  seasonal?: boolean
+  /** Rotates the time-of-day greeting. */
+  seed?: number
+}
+
+/** The line shown for an empty chat. A temporary chat wins over the seasonal
+ *  line and over the plain greeting; the seasonal preference only gates the
+ *  holiday lines. */
+export function flairLine(now: Date, opts: FlairOptions = {}): string {
+  if (opts.temporary) return TEMPORARY_FLAIR
+  return (opts.seasonal !== false && seasonalLine(now)) || greetingFor(now, opts.seed ?? 0)
+}
+
 const THINKING = ['Thinking…']
 
 /** A plain status line, stable for a given message so it does not flicker. */

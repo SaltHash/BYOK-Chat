@@ -64,7 +64,9 @@ export function planRequest(s: PlanState, um: Msg, defaultFeatures: Record<Featu
     : ''
   const baseSys = [globalSys, scoped].filter(Boolean).join('\n\n')
   const enabledTools = F.tools ? TOOLS.filter(([name]) => s.tools[name] === true).map(([name]) => name) : []
-  const toolSys = enabledTools.length ? `${baseSys}${baseSys ? '\n\n' : ''}You may use the enabled tools when needed to answer the user. Call a tool for requests that need its actual result, then base your answer on the returned result.` : baseSys
+  const widgetTools = enabledTools.some((name) => name === 'prompt_chip' || name === 'inline_poll')
+  const widgetSys = widgetTools ? 'Follow-up chips and choice cards are rendered by the interface after your reply. Never mention them in your prose, never say that you added follow-up options, and never tell the user to click or fill them.' : ''
+  const toolSys = enabledTools.length ? `${baseSys}${baseSys ? '\n\n' : ''}You may use the enabled tools when needed to answer the user. Call a tool for requests that need its actual result, then base your answer on the returned result.${widgetSys ? ` ${widgetSys}` : ''}` : baseSys
   const skills = F.skills ? enabledSkills(normSkills(s.skills).skills) : []
   const sys = composeSystemPrompt(toolSys, skills)
   let err: Notice = null

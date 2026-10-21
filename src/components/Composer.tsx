@@ -1,18 +1,163 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import { Plus, FileUp, FileText, Image as ImageIcon, ArrowUp, Square, CornerDownRight, ChevronRight, ListMusic, Cpu, ScrollText, Settings, Search, BookOpen, X, TriangleAlert, Wrench, Link as LinkIcon, ScanText, Mic } from 'lucide-react'
-import { useS, usable, modelsOf, modelNameOf, featOn, normDocs, effortClassifierOf, type Att, type Ep } from '../store'
+import { useS, usable, modelsOf, modelNameOf, featOn, normDocs, normSearch, fetchOptsOf, effortClassifierOf, type Att, type Ep } from '../store'
 import { CI, TOOLS } from '../meta'
 import { composerWidth } from '../layout'
 import { can, fmt, readAtts, ocrImage, fetchPage } from '../engine'
 import { fitDoc } from '../docs'
-import { bannerOf, armMention, isPill, mentionsOf, pillEdit, stripMention, tokenizeMentions, type Mention } from '../mentions'
+import { bannerOf, armMention, isPill, mentionsOf, stripMention, tokenizeMentions, type Mention, type Seg as MentionSeg } from '../mentions'
 import { Btn, Item, Pop, Seg, RangeSlider, Toggle, cx, type Ic } from './ui'
 import { MentionBanner, MentionInfo } from './Mention'
 import { Notice } from './Extra'
 import { dictationAvailable, startDictation, stopSpeaking, normVoice, type Dictation } from '../voice'
 
 const chip = 'flex h-9 min-w-0 items-center gap-2 rounded-lg px-2.5 text-sm text-mu hover:bg-hov hover:text-tx'
+
+/* The composer is a contenteditable surface, so the DOM is the source of truth
+ * while the user types. These helpers keep the DOM and the plain-text draft in
+ * lockstep without fighting the native caret. */
+
+/** Plain-text value of a composer node. Pills contribute their label once. */
+function textOf(node: Node): string {
+  let out = ''
+  const walk = (n: Node) => {
+    if (n.nodeType === 3) { out += n.nodeValue ?? ''; return }
+    if (n.nodeType !== 1 && n.nodeType !== 11) return
+    if (n.nodeType === 1) {
+      const el = n as HTMLElement
+      if (el.dataset.pill != null) { out += el.dataset.label ?? el.textContent ?? ''; return }
+      if (el.tagName === 'BR') { if (el.dataset.sentinel == null) out += '\n'; return }
+      // Browser-generated blocks (undo, some paste paths) represent lines.
+      if ((el.tagName === 'DIV' || el.tagName === 'P') && out && !out.endsWith('\n')) out += '\n'
+    }
+    for (const child of Array.from(n.childNodes)) walk(child)
+  }
+  walk(node)
+  return out
+}
+
+/** Structural signature of the pills currently in the DOM. */
+function pillSignature(root: HTMLElement): string {
+  return Array.from(root.querySelectorAll<HTMLElement>('[data-pill]'))
+    .map((el) => `${el.dataset.label ?? ''}:${el.dataset.off ?? ''}`)
+    .join('|')
+}
+
+function appendText(frag: DocumentFragment, text: string) {
+  text.replace(/\r\n?/g, '\n').split('\n').forEach((part, i) => {
+    if (i) frag.appendChild(document.createElement('br'))
+    if (part) frag.appendChild(document.createTextNode(part))
+  })
+}
+
+/** A trailing line break needs a second, non-semantic br to keep the empty line
+ * visible. It is ignored when serializing back to the draft. */
+function ensureTrailingBreak(root: HTMLElement) {
+  root.querySelectorAll('br[data-sentinel]').forEach((br) => br.remove())
+  while (root.lastChild && root.lastChild.nodeType === 3 && !(root.lastChild.nodeValue ?? '')) root.lastChild.remove()
+  const last = root.lastChild as HTMLElement | null
+  if (last && last.nodeType === 1 && last.tagName === 'BR') {
+    const sentinel = document.createElement('br')
+    sentinel.dataset.sentinel = '1'
+    root.appendChild(sentinel)
+  }
+}
+
+/** Rebuild the visual composer content from the tokenized draft. */
+function renderComposer(root: HTMLElement, segs: MentionSeg[]) {
+  const frag = document.createDocumentFragment()
+  let index = 0
+  for (const sg of segs) {
+    if (sg.kind === 'text') { appendText(frag, sg.text); continue }
+    if (isPill(sg.m)) {
+      const pill = document.createElement('span')
+      pill.className = 'mention-pill' + (sg.m.enabled ? '' : ' mention-pill-off')
+      pill.contentEditable = 'false'
+      pill.dataset.pill = String(index++)
+      pill.dataset.label = sg.m.label
+      if (!sg.m.enabled) pill.dataset.off = '1'
+      pill.textContent = sg.m.label
+      frag.appendChild(pill)
+    } else {
+      const label = document.createElement('span')
+      label.textContent = sg.m.label
+      frag.appendChild(label)
+    }
+  }
+  root.replaceChildren(frag)
+  ensureTrailingBreak(root)
+}
+
+/** Caret offset in plain-text units, or null when the selection is elsewhere. */
+function caretOffset(root: HTMLElement): number | null {
+  const sel = window.getSelection()
+  if (!sel || !sel.rangeCount) return null
+  const range = sel.getRangeAt(0)
+  if (!root.contains(range.startContainer) || !root.contains(range.endContainer)) return null
+  const before = document.createRange()
+  before.selectNodeContents(root)
+  before.setEnd(range.startContainer, range.startOffset)
+  return textOf(before.cloneContents()).length
+}
+
+/** Put the caret back at a plain-text offset, skipping over atomic pills. */
+function setCaret(root: HTMLElement, offset: number) {
+  const sel = window.getSelection()
+  if (!sel) return
+  const range = document.createRange()
+  let rest = Math.max(0, offset)
+  let found = false
+  const visit = (node: Node): boolean => {
+    for (const n of Array.from(node.childNodes)) {
+      if (n.nodeType === 3) {
+        const len = (n.nodeValue ?? '').length
+        if (rest <= len) { range.setStart(n, rest); found = true; return true }
+        rest -= len
+      } else if (n.nodeType === 1) {
+        const el = n as HTMLElement
+        if (el.tagName === 'BR') {
+          if (el.dataset.sentinel != null) {
+            if (rest <= 0) { range.setStartBefore(el); found = true; return true }
+            continue
+          }
+          if (rest <= 0) { range.setStartBefore(el); found = true; return true }
+          rest -= 1
+        } else if (el.dataset.pill != null) {
+          const len = (el.dataset.label ?? el.textContent ?? '').length
+          if (rest <= 0) { range.setStartBefore(el); found = true; return true }
+          if (rest <= len) { range.setStartAfter(el); found = true; return true }
+          rest -= len
+        } else if (visit(el)) return true
+      }
+    }
+    return false
+  }
+  visit(root)
+  if (!found) { range.selectNodeContents(root); range.collapse(false) }
+  else range.collapse(true)
+  sel.removeAllRanges()
+  sel.addRange(range)
+}
+
+/** Insert plain text (including newlines) at the native selection. */
+function insertText(root: HTMLElement, text: string) {
+  const sel = window.getSelection()
+  if (!sel || !sel.rangeCount) return
+  const range = sel.getRangeAt(0)
+  const before = document.createRange()
+  before.selectNodeContents(root)
+  before.setEnd(range.startContainer, range.startOffset)
+  const start = textOf(before.cloneContents()).length
+  range.deleteContents()
+  const frag = document.createDocumentFragment()
+  const plain = text.replace(/\r\n?/g, '\n')
+  appendText(frag, plain)
+  range.insertNode(frag)
+  root.querySelectorAll('br[data-sentinel]').forEach((br) => br.remove())
+  ensureTrailingBreak(root)
+  setCaret(root, start + plain.length)
+}
 
 function ModelMenu({ close, cfg }: { close: () => void; cfg: (t: string) => void }) {
   const s = useS(useShallow((st) => { const { chats, ...rest } = st; void chats; return rest }))
@@ -74,11 +219,10 @@ function ModelMenu({ close, cfg }: { close: () => void; cfg: (t: string) => void
 export function Composer({ cfg }: { cfg: (t: string) => void }) {
   const s = useS(useShallow((st) => { const { chats, ...rest } = st; void chats; return rest }))
   const [att, setAtt] = useState<Att[]>([])
-  const ta = useRef<HTMLTextAreaElement>(null)
-  const bd = useRef<HTMLDivElement>(null)
+  const ta = useRef<HTMLDivElement>(null)
   const box = useRef<HTMLDivElement>(null)
-  const spans = useRef<Record<number, HTMLSpanElement | null>>({})
-  const pending = useRef<number | null>(null)
+  const pending = useRef<number | 'end' | null>(null)
+  const composing = useRef(false)
   const fi = useRef<HTMLInputElement>(null)
   const v = s.draft
   const [hi, setHi] = useState(0)
@@ -98,7 +242,7 @@ export function Composer({ cfg }: { cfg: (t: string) => void }) {
   useEffect(() => { setMenuOff(false) }, [v])
   const [ime, setIme] = useState(false)
   const [armed, setArmed] = useState<'search' | 'research' | null>(null)
-  const [active, setActive] = useState<{ m: Mention; left: number; top: number } | null>(null)
+  const [active, setActive] = useState<{ i: number; m: Mention; left: number; top: number } | null>(null)
   const tw = v.match(/(?:^|\s)(@\w*)$/)?.[1]
   const menu: { k: string; icon: Ic; label: string; hint: string; pick: () => void }[] | null = /^\/\S*$/.test(v) && featOn(s, 'commands')
     ? s.cmds.filter((c) => c.on && c.name.startsWith(v.slice(1))).map((c) => ({ k: c.id, icon: CI[c.in], label: '/' + c.name, hint: c.desc || c.in, pick: () => s.patch({ draft: '/' + c.name + ' ' }) }))
@@ -130,22 +274,38 @@ export function Composer({ cfg }: { cfg: (t: string) => void }) {
     setArmed(hit.kind)
     if (hit.rest !== v) s.patch({ draft: hit.rest })
   }, [v])
-  // Auto-grow plus caret restore after programmatic pill deletes, so the real
-  // input and the mirror layer behind it never disagree on height or position.
+  // Keep the contenteditable DOM in sync with the draft. While the user types,
+  // the serialized DOM already equals the draft, so this is a no-op and the
+  // native caret keeps blinking. A rebuild only happens when the pill structure
+  // changes (a mention just completed or was broken) or the draft was changed
+  // programmatically; in that case the caret offset is restored.
   useLayoutEffect(() => {
-    const t = ta.current
-    if (!t) return
-    const keep = t.scrollTop
-    t.style.height = 'auto'
-    t.style.height = Math.min(t.scrollHeight, 208) + 'px'
-    t.scrollTop = keep
-    if (bd.current) bd.current.scrollTop = t.scrollTop
-    if (pending.current != null) {
-      const p = Math.max(0, Math.min(t.value.length, pending.current))
+    const el = ta.current
+    if (!el) return
+    const want = pills.map((m) => `${m.label}:${m.enabled ? '' : '1'}`).join('|')
+    if (!v && el.childNodes.length) {
+      el.replaceChildren()
       pending.current = null
-      t.setSelectionRange(p, p)
+      if (document.activeElement === el) setCaret(el, 0)
+      return
     }
-  }, [v])
+    if (textOf(el) === v && pillSignature(el) === want) return
+    const focused = document.activeElement === el
+    const prev = pending.current === 'end'
+      ? v.length
+      : typeof pending.current === 'number' ? pending.current : caretOffset(el)
+    renderComposer(el, segs)
+    pending.current = null
+    if (focused) setCaret(el, Math.max(0, Math.min(v.length, prev ?? v.length)))
+  }, [v, segs, pills])
+  // Keep the pill info selection highlight in step with `active`.
+  useEffect(() => {
+    const el = ta.current
+    if (!el) return
+    el.querySelectorAll<HTMLElement>('[data-pill]').forEach((pill) => {
+      pill.classList.toggle('mention-pill-sel', active != null && Number(pill.dataset.pill) === active.i)
+    })
+  }, [active, v])
   // A file dropped outside the composer box must not navigate the tab away
   // (the browser default replaces the SPA with the file). Drops on the box are
   // handled by its own onDrop above.
@@ -176,7 +336,7 @@ export function Composer({ cfg }: { cfg: (t: string) => void }) {
     if (!u || urlBusy) return
     setUrlBusy(true)
     try {
-      const page = await fetchPage(u)
+      const page = await fetchPage(u, fetchOptsOf(normSearch(s.search)))
       const txtChars = att.reduce((a, x) => a + (x.text?.length ?? 0), 0)
       const { text } = fitDoc(page.text, Math.min(normDocs(s.docPrefs).perFileChars, 200000))
       if (txtChars + text.length > 500000) { s.patch({ notice: { t: 'That page did not fit, because this message is already at its text limit. Shorten the message or remove an attachment, then try again.' } }); return }
@@ -198,7 +358,7 @@ export function Composer({ cfg }: { cfg: (t: string) => void }) {
     try {
       dict.current = startDictation({
         lang: normVoice(s.voicePrefs).dictLang,
-        onText: (text) => s.patch({ draft: base && !/\s$/.test(base) ? `${base} ${text}` : `${base}${text}` }),
+        onText: (text) => { pending.current = 'end'; s.patch({ draft: base && !/\s$/.test(base) ? `${base} ${text}` : `${base}${text}` }) },
         onEnd: () => { dict.current = null; setListening(false) },
         onError: (message) => s.patch({ notice: { t: message } }),
       })
@@ -241,49 +401,79 @@ export function Composer({ cfg }: { cfg: (t: string) => void }) {
     // research planner still receive exactly what they expect.
     const raw = armed ? `@${armed}(${v.trim()})` : v, files = att
     if (await s.send(raw, files)) {
-      if (useS.getState().draft === v) s.patch({ draft: '' })
+      if (useS.getState().draft === v) { pending.current = 'end'; s.patch({ draft: '' }) }
       setArmed(null)
       setAtt([])
       setActive(null)
-      if (ta.current) ta.current.style.height = 'auto'
     }
   }
-  /* Atomic pill editing: every decision uses the real textarea selection, so
-     the pill, the caret and the underlying draft can never drift apart. */
-  const editDraft = (next: string, caret: number) => { pending.current = caret; setActive(null); s.patch({ draft: next }) }
-  const pillKey = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    const t = ta.current
-    if (!t || ime) return false
-    const edit = pillEdit(segs, e.key, t.selectionStart, t.selectionEnd)
-    if (!edit) return false
-    e.preventDefault()
-    if (edit.kind === 'caret') { setActive(null); t.setSelectionRange(edit.pos, edit.pos); return true }
-    editDraft(v.slice(0, edit.start) + v.slice(edit.end), edit.start)
-    return true
+  /* The contenteditable DOM owns typing, so its plain-text serialization is the
+     draft. Pills are non-editable elements: arrow keys step over them and a
+     backspace/delete adjacent to one removes it as a whole. */
+  const commitInput = () => {
+    const el = ta.current
+    if (!el) return
+    const next = textOf(el)
+    ensureTrailingBreak(el)
+    if (next === s.draft) return
+    setActive(null)
+    s.patch({ draft: next })
+    setHi(0)
   }
-  const syncActive = () => {
-    const t = ta.current
-    if (!t) return
-    const a = t.selectionStart, b = t.selectionEnd
-    const hit = a !== b ? pills.find((m) => m.start === a && m.end === b) : null
-    const el = hit ? spans.current[hit.start] : null, host = box.current
-    if (!hit || !el || !host) { setActive(null); return }
+  const moveCaret = (pos: number) => {
+    const el = ta.current
+    if (el) setCaret(el, pos)
+  }
+  const pillKeys = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    const el = ta.current
+    if (!el) return false
+    const sel = window.getSelection()
+    if (!sel || !sel.isCollapsed || !sel.rangeCount) return false
+    const pos = caretOffset(el)
+    if (pos == null) return false
+    if (e.key === 'ArrowLeft') {
+      const hit = pills.find((m) => pos > m.start && pos <= m.end)
+      if (!hit) return false
+      e.preventDefault()
+      moveCaret(hit.start)
+      return true
+    }
+    if (e.key === 'ArrowRight') {
+      const hit = pills.find((m) => pos >= m.start && pos < m.end)
+      if (!hit) return false
+      e.preventDefault()
+      moveCaret(hit.end)
+      return true
+    }
+    if (e.key === 'Backspace' || e.key === 'Delete') {
+      const hit = e.key === 'Backspace'
+        ? pills.find((m) => pos > m.start && pos <= m.end)
+        : pills.find((m) => pos >= m.start && pos < m.end)
+      if (!hit) return false
+      e.preventDefault()
+      pending.current = hit.start
+      setActive(null)
+      s.patch({ draft: v.slice(0, hit.start) + v.slice(hit.end) })
+      return true
+    }
+    return false
+  }
+  const clickPill = (e: React.MouseEvent<HTMLDivElement>) => {
+    const el = (e.target as HTMLElement).closest<HTMLElement>('[data-pill]')
+    if (!el) { setActive(null); return }
+    const i = Number(el.dataset.pill)
+    const m = pills[i]
+    const host = box.current
+    if (!m || !host) return
     const r = el.getBoundingClientRect(), c = host.getBoundingClientRect()
-    setActive({ m: hit, left: r.left - c.left + r.width / 2, top: r.top - c.top })
-  }
-  const selectPill = () => {
-    const t = ta.current
-    if (!t || ime || t.selectionStart !== t.selectionEnd) return
-    const hit = pills.find((m) => t.selectionStart >= m.start && t.selectionStart <= m.end)
-    if (!hit) { setActive(null); return }
-    t.setSelectionRange(hit.start, hit.end)
-    syncActive()
+    setActive({ i, m, left: r.left - c.left + r.width / 2, top: r.top - c.top })
   }
   const dismissBanner = () => {
-    if (armed) { setArmed(null); ta.current?.focus(); return }
-    if (typed?.kind === 'research') { s.patch({ draft: typed.query ?? '' }); ta.current?.focus(); return }
-    if (typed?.kind === 'search' && typed.m) { s.patch({ draft: stripMention(v, typed.m) }); ta.current?.focus() }
+    if (armed) { setArmed(null); pending.current = 'end'; ta.current?.focus(); return }
+    if (typed?.kind === 'research') { pending.current = 'end'; s.patch({ draft: typed.query ?? '' }); ta.current?.focus(); return }
+    if (typed?.kind === 'search' && typed.m) { pending.current = 'end'; s.patch({ draft: stripMention(v, typed.m) }); ta.current?.focus() }
   }
+  const placeholder = armed === 'search' ? 'What should I search for?' : armed === 'research' ? 'What should I research?' : s.eps.some(usable) ? (featOn(s, 'commands') && featOn(s, 'tools') ? 'Message, / for commands, @ for tools' : featOn(s, 'commands') ? 'Message, / for commands' : featOn(s, 'tools') ? 'Message, @ for tools' : 'Message') : 'Add a model endpoint to start (press Send for a walkthrough)'
   return (
     <div className="w-full self-center">
       <div className="mx-auto w-full px-4" style={{ maxWidth: composerWidth(s.prefs.chatWidth) }}>
@@ -293,7 +483,7 @@ export function Composer({ cfg }: { cfg: (t: string) => void }) {
         {menu && !menuOff && (
           <div className="edge-border absolute inset-x-0 bottom-full mb-2 rounded-xl bg-hov p-1.5">
             {menu.length ? menu.map((o, i) => (
-              <Item key={o.k} icon={o.icon} on={i === hl} sub={o.hint} onClick={() => { o.pick(); ta.current?.focus() }}>{o.label}</Item>
+              <Item key={o.k} icon={o.icon} on={i === hl} sub={o.hint} onClick={() => { pending.current = 'end'; o.pick(); ta.current?.focus() }}>{o.label}</Item>
             )) : <p className="px-2.5 py-3 text-sm text-mu">{tw ? 'No tool matches.' : 'No enabled command matches. Manage commands in Settings.'}</p>}
           </div>
         )}
@@ -323,38 +513,52 @@ export function Composer({ cfg }: { cfg: (t: string) => void }) {
           </div>
         )}
         <div className="relative">
-          <div ref={bd} aria-hidden="true" className={cx('pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words px-1 py-1', ime && 'invisible')}>
-            {segs.map((sg, i) => sg.kind === 'text'
-              ? <span key={i}>{sg.text}</span>
-              : isPill(sg.m)
-                ? <span key={i} ref={(el) => { if (el) spans.current[sg.m.start] = el }} className={cx('mention-pill', !sg.m.enabled && 'mention-pill-off', active?.m.start === sg.m.start && 'mention-pill-sel')}>{sg.m.label}</span>
-                : <span key={i}>{sg.m.label}</span>)}
-          </div>
-          <textarea
-            id="composer" ref={ta} rows={1} value={v} placeholder={armed === 'search' ? 'What should I search for?' : armed === 'research' ? 'What should I research?' : s.eps.some(usable) ? (featOn(s, 'commands') && featOn(s, 'tools') ? 'Message, / for commands, @ for tools' : featOn(s, 'commands') ? 'Message, / for commands' : featOn(s, 'tools') ? 'Message, @ for tools' : 'Message') : 'Add a model endpoint to start (press Send for a walkthrough)'}
-            onChange={(e) => { setActive(null); s.patch({ draft: e.target.value }); setHi(0) }}
-            onScroll={(e) => { if (bd.current) bd.current.scrollTop = e.currentTarget.scrollTop }}
+          <div
+            id="composer"
+            ref={ta}
+            contentEditable
+            suppressContentEditableWarning
+            role="textbox"
+            aria-multiline="true"
+            aria-label="Message"
+            aria-placeholder={placeholder}
+            spellCheck
+            data-placeholder={placeholder}
+            onInput={() => { if (!composing.current) commitInput() }}
             onKeyDown={(e) => {
               // Never handle Enter/arrows while an IME candidate window is open.
-              if (e.nativeEvent.isComposing || ime) return
+              if (e.nativeEvent.isComposing || composing.current || ime) return
               if (menu && !menuOff && menu.length && !e.shiftKey && ['ArrowDown', 'ArrowUp', 'Tab', 'Enter'].includes(e.key)) {
                 e.preventDefault()
                 if (e.key === 'ArrowDown') setHi((hl + 1) % menu.length)
                 else if (e.key === 'ArrowUp') setHi((hl - 1 + menu.length) % menu.length)
-                else menu[hl].pick()
+                else { pending.current = 'end'; menu[hl].pick() }
                 return
               }
               if (menu && !menuOff && e.key === 'Escape') { e.preventDefault(); setMenuOff(true); return }
-              if (pillKey(e)) return
-              if (e.key === 'Enter' && !e.shiftKey && s.prefs.enterSends && !s.busy) { e.preventDefault(); submit() }
+              if (pillKeys(e)) return
+              if (e.key === 'Enter') {
+                if (!e.shiftKey && s.prefs.enterSends && !s.busy) { e.preventDefault(); void submit(); return }
+                // Shift+Enter (or Enter when send-on-enter is off) inserts a
+                // real line break instead of letting the browser invent divs.
+                e.preventDefault()
+                const el = ta.current
+                if (el) { insertText(el, '\n'); commitInput() }
+              }
             }}
-            onSelect={syncActive}
-            onClick={selectPill}
-            onCompositionStart={() => setIme(true)}
-            onCompositionEnd={() => setIme(false)}
+            onClick={clickPill}
+            onCompositionStart={() => { composing.current = true; setIme(true) }}
+            onCompositionEnd={() => { composing.current = false; setIme(false); commitInput() }}
             onBlur={() => setActive(null)}
-            onPaste={(e) => { if (e.clipboardData.files.length) { e.preventDefault(); add(e.clipboardData.files) } }}
-            className={cx('mention-input relative max-h-52 w-full resize-none rounded-md bg-transparent px-1 py-1 outline-none', ime ? 'text-tx' : 'text-transparent caret-ac')}
+            onPaste={(e) => {
+              if (e.clipboardData.files.length) { e.preventDefault(); void add(e.clipboardData.files); return }
+              const text = e.clipboardData.getData('text/plain')
+              if (!text) return
+              e.preventDefault()
+              const el = ta.current
+              if (el) { insertText(el, text); commitInput() }
+            }}
+            className="composer-input mention-input relative max-h-52 min-h-7 w-full overflow-y-auto whitespace-pre-wrap break-words rounded-md bg-transparent px-1 py-1 text-tx caret-ac outline-none"
           />
         </div>
         {active && !ime && (
@@ -371,19 +575,19 @@ export function Composer({ cfg }: { cfg: (t: string) => void }) {
               <>
                 <div className={row}>
                   <button className={main} onClick={() => { pick(''); close() }}><FileUp size={16} className="shrink-0 text-mu" /><span className="min-w-0 flex-1 truncate">Upload a file</span></button>
-                  <button aria-label="Document settings" title="Document settings" className={gear} onClick={() => { close(); cfg('tools') }}><Settings size={15} /></button>
+                  <button aria-label="Document settings" title="Document settings" className={gear} onClick={() => { close(); cfg('chats#documents') }}><Settings size={15} /></button>
                 </div>
                 <div className={row}>
                   <button className={main} onClick={() => { setUrlOpen(true); close() }}><LinkIcon size={16} className="shrink-0 text-mu" /><span className="min-w-0 flex-1 truncate">Attach page from URL</span></button>
-                  <button aria-label="Document settings" title="Document settings" className={gear} onClick={() => { close(); cfg('tools') }}><Settings size={15} /></button>
+                  <button aria-label="Page reader settings" title="Page reader settings" className={gear} onClick={() => { close(); cfg('tools#citations') }}><Settings size={15} /></button>
                 </div>
                 <div className={row}>
-                  <button className={main} onClick={() => { s.patch({ draft: v ? `${v.trim()} @research(` : '@research(' }); close(); ta.current?.focus() }}><BookOpen size={16} className="shrink-0 text-mu" /><span className="min-w-0 flex-1 truncate">Deep research…</span></button>
+                  <button className={main} onClick={() => { pending.current = 'end'; s.patch({ draft: v ? `${v.trim()} @research(` : '@research(' }); close(); ta.current?.focus() }}><BookOpen size={16} className="shrink-0 text-mu" /><span className="min-w-0 flex-1 truncate">Deep research…</span></button>
                   <button aria-label="Deep research settings" title="Deep research settings" className={gear} onClick={() => { close(); cfg('tools') }}><Settings size={15} /></button>
                 </div>
                 {searchEnabled && (
                   <div className={row}>
-                    <button className={main} onClick={() => { s.patch({ draft: v ? `${v.trim()} @search(` : '@search(' }); close(); ta.current?.focus() }}><Search size={16} className="shrink-0 text-mu" /><span className="min-w-0 flex-1 truncate">Search the web…</span></button>
+                    <button className={main} onClick={() => { pending.current = 'end'; s.patch({ draft: v ? `${v.trim()} @search(` : '@search(' }); close(); ta.current?.focus() }}><Search size={16} className="shrink-0 text-mu" /><span className="min-w-0 flex-1 truncate">Search the web…</span></button>
                     <button aria-label="Search settings" title="Search settings" className={gear} onClick={() => { close(); cfg('tools') }}><Settings size={15} /></button>
                   </div>
                 )}

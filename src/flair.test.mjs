@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-const { PROMPT_QUALITIES, normQualities, normGlobalPrompt, qualityPrompt, seasonalLine, seasonalLines } = await import('./flair.ts')
+const { PROMPT_QUALITIES, normQualities, normGlobalPrompt, qualityPrompt, seasonalLine, seasonalLines, greetingFor, flairLine, TEMPORARY_FLAIR } = await import('./flair.ts')
 
 const at = (y, m, d) => new Date(y, m - 1, d, 12)
 
@@ -59,6 +59,35 @@ test('a holiday draws one line at random and then holds it', () => {
   } finally {
     Math.random = real
   }
+})
+
+test('a temporary chat gets its own fixed line, whatever the date', () => {
+  assert.equal(flairLine(at(2026, 12, 25), { temporary: true, seasonal: true, seed: 3 }), TEMPORARY_FLAIR)
+  assert.equal(flairLine(at(2026, 3, 15), { temporary: true, seasonal: true, seed: 3 }), TEMPORARY_FLAIR)
+  assert.equal(flairLine(at(2026, 3, 15), { temporary: true, seasonal: false, seed: 3 }), TEMPORARY_FLAIR)
+  assert.equal(
+    flairLine(at(2027, 6, 1), { temporary: true, seasonal: true, seed: 9 }),
+    flairLine(at(2026, 1, 1), { temporary: true, seasonal: true, seed: 1 }),
+    'the temporary line should not vary with the date or the seed',
+  )
+})
+
+test('a temporary chat wins over the seasonal line', () => {
+  assert.ok(seasonalLine(at(2026, 12, 25)), 'sanity: Christmas should have a line here')
+  assert.equal(flairLine(at(2026, 12, 25), { temporary: true, seasonal: true, seed: 3 }), TEMPORARY_FLAIR)
+})
+
+test('a permanent chat keeps the seasonal line, then the greeting', () => {
+  assert.equal(flairLine(at(2026, 12, 25), { temporary: false, seasonal: true, seed: 1 }), seasonalLine(at(2026, 12, 25)))
+  assert.equal(flairLine(at(2026, 12, 25), { temporary: false, seasonal: false, seed: 1 }), greetingFor(at(2026, 12, 25), 1))
+  assert.equal(flairLine(at(2026, 3, 15), { temporary: false, seasonal: true, seed: 1 }), greetingFor(at(2026, 3, 15), 1))
+})
+
+test('the temporary line is short, playful, and says the chat is temporary', () => {
+  assert.ok(TEMPORARY_FLAIR.length <= 44, `the temporary line is too long: ${TEMPORARY_FLAIR}`)
+  assert.match(TEMPORARY_FLAIR, /temporary/i)
+  assert.match(TEMPORARY_FLAIR, /poof/i)
+  assert.doesNotMatch(TEMPORARY_FLAIR, /\b(halloween|christmas|holidays|new year|valentine|happy)\b/i)
 })
 
 test('quality ids are unique and have short prompt text', () => {

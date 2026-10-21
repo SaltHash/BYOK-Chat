@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { PanelLeft, PanelRight, Download, Command, SlidersHorizontal, Share2, MoreVertical, Bookmark } from 'lucide-react'
+import { PanelLeft, PanelRight, Download, Command, SlidersHorizontal, Share2, MoreVertical, Bookmark, Hourglass, Settings2 } from 'lucide-react'
 import { useShallow } from 'zustand/react/shallow'
 import { useS, exportChat, featOn, DEFAULT_ADVANCED } from '../store'
 import { Btn, Pop, Toggle, RangeSlider, Item, cx } from './ui'
@@ -28,12 +28,41 @@ function ParamsBody({ p, set }: { p: Params; set: (x: Partial<Params>) => void }
   )
 }
 
+/** Playful but unmistakable marker for a chat that will disappear. Clicking it
+ *  opens the Chats tab at the temporary-retention controls. */
+function TemporaryFlair({ cfg, expiresAt, tempHours }: { cfg: (t: string) => void; expiresAt?: number; tempHours: number }) {
+  const left = expiresAt != null ? Math.max(0, expiresAt - Date.now()) : null
+  const detail = tempHours === 0
+    ? 'Poofs when you leave'
+    : left != null
+      ? left < 60_000 ? 'Poofs in under a minute' : `Poofs in ${Math.ceil(left / 3_600_000) || 1}h`
+      : 'Kept briefly'
+  return (
+    <button
+      type="button"
+      onClick={() => cfg('chats#temp-retention')}
+      title={`Temporary chat · ${detail}. Open temporary chat settings`}
+      aria-label={`Temporary chat, ${detail}. Open temporary chat settings`}
+      className="temp-flair group inline-flex min-h-8 shrink-0 items-center gap-1.5 rounded-full border border-dashed px-2.5 py-1 text-xs font-medium text-tx transition-colors"
+    >
+      <span aria-hidden="true" className="temp-flair-mark grid size-5 shrink-0 place-items-center rounded-full">
+        <Hourglass size={12} className="temp-flair-icon text-ac" />
+      </span>
+      <span className="whitespace-nowrap">Temporary<span className="hidden sm:inline"> chat</span></span>
+      <span className="hidden whitespace-nowrap text-mu lg:inline">· {detail}</span>
+      <Settings2 size={12} className="shrink-0 text-mu transition-colors group-hover:text-tx" aria-hidden="true" />
+    </button>
+  )
+}
+
 export function Header({ side, toggle, cfg, pal, title }: { side: boolean; toggle: () => void; cfg: (t: string) => void; pal: () => void; title: string }) {
   const { params: p, patch, widgets, rail, features, advanced } = useS(useShallow((s) => ({ params: s.params, patch: s.patch, widgets: s.widgets, rail: s.rail, features: s.features, advanced: s.advanced })))
   // Narrow boolean slices: the header re-renders only when these flip, not on
   // every streamed chunk of the open chat.
   const hasChat = useS((s) => s.chats.some((c) => c.id === s.chat))
   const curTemporary = useS((s) => { const c = s.chats.find((x) => x.id === s.chat); return c?.temporary === true })
+  const tempExpiresAt = useS((s) => { const c = s.chats.find((x) => x.id === s.chat); return c?.temporary ? c.expiresAt : undefined })
+  const tempHours = useS((s) => s.prefs.tempHours)
   const [shareChat, setShareChat] = useState<string | null>(null)
   const openShare = () => {
     const st = useS.getState()
@@ -57,6 +86,7 @@ export function Header({ side, toggle, cfg, pal, title }: { side: boolean; toggl
     <header className="flex h-14 shrink-0 items-center gap-0.5 px-2 sm:gap-1 sm:px-3">
       {!side && <Btn icon={PanelLeft} title="Show sidebar" onClick={toggle} />}
       <h1 className="min-w-0 flex-1 truncate px-1 font-medium sm:px-2">{title}</h1>
+      {curTemporary && <TemporaryFlair cfg={cfg} expiresAt={tempExpiresAt} tempHours={tempHours} />}
       <ContextMeter />
       {/* Wide layout: each secondary action keeps its own icon button. */}
       <Btn icon={Command} title="Command palette" onClick={pal} className="hidden sm:inline-flex" />

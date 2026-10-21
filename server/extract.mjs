@@ -5,6 +5,12 @@
 
 export const EXTRACT_MAX_HTML = 1_500_000
 export const EXTRACT_MAX_TEXT = 12_000
+export const EXTRACT_TEXT_MAX = 50_000
+const RETRY_MAX_DELAY_MS = 4_000
+
+const clampInt = (value, fallback, min, max) =>
+  Number.isInteger(value) ? Math.max(min, Math.min(max, value)) : fallback
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
 const cache = new Map()
 
@@ -181,38 +187,334 @@ async function readPublicPage(fetchFn, url, signal) {
   return htmlToText(html)
 }
 
-export async function fetchPageText(url, { timeoutMs = 8000, fetchFn = fetch } = {}) {
+export async function fetchPageText(url, { timeoutMs = 8000, maxChars = EXTRACT_MAX_TEXT, maxRetries = 0, retryBaseMs = 300, fetchFn = fetch } = {}) {
   if (!isPublicHttp(url)) {
     const e = Error('Only public http(s) pages can be read.')
     e.code = 'bad_url'
     throw e
   }
-  const key = String(url)
+  const limit = clampInt(maxChars, EXTRACT_MAX_TEXT, 1_000, EXTRACT_TEXT_MAX)
+  const timeout = clampInt(timeoutMs, 8000, 1_000, 30_000)
+  const retries = clampInt(maxRetries, 0, 0, 4)
+  const baseDelay = clampInt(retryBaseMs, 300, 50, 2_000)
+  const key = `${url}|${limit}`
   const hit = cache.get(key)
   if (hit && Date.now() - hit.at < 600_000) return hit.data
-  const ac = new AbortController()
-  const timer = setTimeout(() => ac.abort(), timeoutMs)
+  let lastError
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    const ac = new AbortController()
+    const timer = setTimeout(() => ac.abort(), timeout)
+    try {
+      const { title, text } = await readPublicPage(fetchFn, url, ac.signal)
+      if (!text) {
+        const err = Error('No readable text found on that page.')
+        err.code = 'empty'
+        throw err
+      }
+      const truncated = text.length > limit
+      const data = { url, title: title || url, text: truncated ? text.slice(0, limit) : text, truncated }
+      cache.set(key, { at: Date.now(), data })
+      if (cache.size > 200) cache.delete(cache.keys().next().value)
+      return data
+    } catch (e) {
+      if (e?.code) {
+        // Structured failures pass through unchanged; only transient ones retry.
+        lastError = e
+      } else {
+        lastError = Error(e?.name === 'AbortError' ? 'The page took too long to respond.' : `Could not reach the page (${e?.message || 'network error'}).`)
+        lastError.code = e?.name === 'AbortError' ? 'timeout' : 'network'
+        lastError.retryable = true
+      }
+      if (lastError.retryable !== true || attempt >= retries) throw lastError
+    } finally {
+      clearTimeout(timer)
+    }
+    await wait(Math.min(baseDelay * 2 ** attempt, RETRY_MAX_DELAY_MS))
+  }
+  throw lastError
+}
+
+export { isPublicHttp }
+
+/* ---- Optional page-reader APIs ----
+ * The built-in reader fetches the page directly. Some users prefer a hosted
+ * extraction API instead (Jina, Firecrawl, Exa) or their own service. Those
+ * requests go through /api/reader so a reader key never appears in a URL. */
+
+export const READER_PROVIDERS = {
+  builtin: { label: 'Built-in reader' },
+  jina: { label: 'Jina Reader', endpoint: 'https://r.jina.ai/' },
+  firecrawl: { label: 'Firecrawl', endpoint: 'https://api.firecrawl.dev/v2/scrape', optionalKey: true },
+  exa: { label: 'Exa', endpoint: 'https://api.exa.ai/contents', requiresKey: true },
+  custom: { label: 'Custom reader API' },
+}
+
+const READER_ALIASES = {
+  builtin: 'builtin', direct: 'builtin', fetch: 'builtin', 'built-in': 'builtin',
+  jina: 'jina', 'jina.ai': 'jina', 'jina-reader': 'jina', reader: 'jina',
+  firecrawl: 'firecrawl',
+  exa: 'exa', 'exa.ai': 'exa',
+  custom: 'custom', own: 'custom', self: 'custom',
+}
+
+export function normalizeReaderProvider(value, fallback = 'builtin') {
+  const v = String(value || '').trim().toLowerCase()
+  if (READER_ALIASES[v]) return READER_ALIASES[v]
+  if (READER_PROVIDERS[v]) return v
+  return fallback
+}
+
+export function readerProviderLabel(provider) {
+  return READER_PROVIDERS[normalizeReaderProvider(provider, '')]?.label || String(provider || '')
+}
+
+function readerFailure(message, { status = 0, code = 'upstream_unavailable', retryable = false } = {}) {
+  const error = Error(message)
+  error.status = status
+  error.code = code
+  error.retryable = retryable
+  return error
+}
+
+function classifyReaderStatus(status, detail = '') {
+  const clipped = String(detail || '').slice(0, 200)
+  const suffix = clipped ? `: ${clipped}` : '.'
+  if (status === 401 || status === 403) return readerFailure(`The reader API rejected the key (HTTP ${status})${suffix} Check the reader key in Settings → Tools.`, { status, code: 'upstream_auth' })
+  if (status === 429) return readerFailure(`The reader API is rate-limiting requests (HTTP 429)${suffix} Wait a moment and try again.`, { status, code: 'rate_limited', retryable: true })
+  if (status === 402) return readerFailure(`The reader API reported a billing problem (HTTP 402)${suffix}`, { status, code: 'billing' })
+  if (status === 400 || status === 404 || status === 422) return readerFailure(`The reader API could not read that page (HTTP ${status})${suffix}`, { status, code: 'bad_response' })
+  if (status >= 500) return readerFailure(`The reader API is temporarily unavailable (HTTP ${status})${suffix}`, { status, code: 'upstream_unavailable', retryable: true })
+  return readerFailure(`The reader API returned an unexpected response (HTTP ${status})${suffix}`, { status, code: 'bad_response' })
+}
+
+const readerSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+
+/* Run one reader request with a hard timeout and bounded retries. */
+async function withReaderRetry(fn, { timeoutMs, maxRetries, retryBaseMs, label }) {
+  const timeout = clampInt(timeoutMs, 8000, 1000, 30_000)
+  const retries = clampInt(maxRetries, 0, 0, 4)
+  const base = clampInt(retryBaseMs, 300, 50, 2_000)
+  let lastError
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    const ac = new AbortController()
+    const timer = setTimeout(() => ac.abort(), timeout)
+    try {
+      return await fn(ac.signal)
+    } catch (e) {
+      if (e?.code) lastError = e
+      else {
+        const timedOut = e?.name === 'AbortError'
+        lastError = readerFailure(timedOut ? `${label} timed out.` : `${label} could not be reached (${e?.message || 'network error'}).`,
+          { code: timedOut ? 'timeout' : 'network', retryable: true })
+      }
+      if (lastError.retryable !== true || attempt >= retries) throw lastError
+    } finally {
+      clearTimeout(timer)
+    }
+    await readerSleep(Math.min(base * 2 ** attempt, RETRY_MAX_DELAY_MS))
+  }
+  throw lastError
+}
+
+/* Read a response body as text with a hard cap. The stream reader is used
+ * (not `res.text()`) so an aborted or closed socket ends the read instead of
+ * leaving the request hanging, and so a huge body cannot exhaust memory. */
+async function readBoundedText(response, cap = 2_000_000) {
+  const reader = response.body?.getReader?.()
+  if (!reader) {
+    const raw = await response.text()
+    return String(raw ?? '').slice(0, cap)
+  }
+  const dec = new TextDecoder()
+  let out = ''
   try {
-    const { title, text } = await readPublicPage(fetchFn, url, ac.signal)
-    if (!text) {
-      const err = Error('No readable text found on that page.')
+    while (out.length <= cap) {
+      const { done, value } = await reader.read()
+      if (done) break
+      out += dec.decode(value, { stream: true })
+    }
+    if (out.length > cap) {
+      out = out.slice(0, cap)
+      await reader.cancel().catch(() => {})
+    } else {
+      out += dec.decode()
+    }
+  } catch (e) {
+    if (out) return out
+    throw e
+  }
+  return out
+}
+
+async function responseText(response) {
+  if (!response.ok) {
+    const detail = await readBoundedText(response, 4000).catch(() => '')
+    throw classifyReaderStatus(response.status, detail)
+  }
+  return readBoundedText(response)
+}
+
+async function responseJson(response) {
+  if (!response.ok) {
+    const detail = await readBoundedText(response, 4000).catch(() => '')
+    throw classifyReaderStatus(response.status, detail)
+  }
+  const raw = await readBoundedText(response)
+  try { return JSON.parse(raw) }
+  catch { throw readerFailure('The reader API returned invalid JSON.', { code: 'bad_response' }) }
+}
+
+function pickReaderText(body) {
+  const candidates = [
+    body?.text, body?.content, body?.markdown, body?.data?.text, body?.data?.content, body?.data?.markdown,
+    body?.data?.content?.markdown, body?.data?.content?.text, body?.data?.data?.content,
+    body?.results?.[0]?.text, body?.results?.[0]?.content, body?.results?.[0]?.markdown,
+  ]
+  for (const value of candidates) if (typeof value === 'string' && value.trim()) return value
+  return ''
+}
+
+function pickReaderTitle(body) {
+  const candidates = [body?.title, body?.data?.title, body?.data?.metadata?.title, body?.metadata?.title, body?.results?.[0]?.title]
+  for (const value of candidates) if (typeof value === 'string' && value.trim()) return value
+  return ''
+}
+
+function parseJinaText(raw) {
+  let text = String(raw || '').trim()
+  let title = ''
+  const titleMatch = /^Title:\s*(.+)$/m.exec(text)
+  if (titleMatch) title = titleMatch[1].trim()
+  if (/^Title:\s*/m.test(text)) {
+    text = text.replace(/^Title:\s*.*\n?/m, '').replace(/^URL Source:\s*.*\n?/m, '').replace(/^Markdown Content:\s*\n?/m, '')
+  }
+  return { title, text: text.trim() }
+}
+
+function readerTarget(url, base, placeholderMode = false) {
+  const baseUrl = String(base || '').trim()
+  if (placeholderMode || baseUrl.includes('{url}')) {
+    const target = baseUrl.includes('{url}')
+      ? baseUrl.replace(/\{url\}/g, encodeURIComponent(url))
+      : `${baseUrl}${baseUrl.includes('?') ? '&' : '?'}url=${encodeURIComponent(url)}`
+    return target
+  }
+  return `${baseUrl.replace(/\/+$/, '')}/${url}`
+}
+
+async function runReaderProvider(provider, targetUrl, { apiKey, baseUrl, timeoutMs, maxRetries, retryBaseMs, fetchFn, limit }) {
+  const meta = READER_PROVIDERS[provider]
+  const key = String(apiKey || '').trim()
+  const base = String(baseUrl || '').trim() || meta?.endpoint || ''
+  if (provider === 'jina') {
+    if (!base) throw readerFailure('Add the Jina Reader URL.', { code: 'missing_key' })
+    const endpoint = readerTarget(targetUrl, base)
+    if (!isPublicHttp(endpoint)) throw readerFailure('The reader URL must be a public http(s) address.', { code: 'bad_url' })
+    return withReaderRetry(async (signal) => {
+      const res = await fetchFn(endpoint, {
+        signal,
+        headers: { accept: 'text/plain', 'x-respond-with': 'markdown', 'user-agent': 'byok-chat-reader/1.0', ...(key ? { authorization: `Bearer ${key}` } : {}) },
+      })
+      const { title, text } = parseJinaText(await responseText(res))
+      return { title, text }
+    }, { timeoutMs, maxRetries, retryBaseMs, label: meta.label })
+  }
+  if (provider === 'firecrawl') {
+    if (!base) throw readerFailure('Add the Firecrawl reader URL.', { code: 'missing_key' })
+    if (!isPublicHttp(base)) throw readerFailure('The reader URL must be a public http(s) address.', { code: 'bad_url' })
+    return withReaderRetry(async (signal) => {
+      const res = await fetchFn(base, {
+        method: 'POST',
+        signal,
+        headers: { accept: 'application/json', 'content-type': 'application/json', 'user-agent': 'byok-chat-reader/1.0', ...(key ? { authorization: `Bearer ${key}` } : {}) },
+        body: JSON.stringify({ url: targetUrl, formats: ['markdown'], onlyMainContent: true }),
+      })
+      const body = await responseJson(res)
+      return { title: pickReaderTitle(body), text: pickReaderText(body) }
+    }, { timeoutMs, maxRetries, retryBaseMs, label: meta.label })
+  }
+  if (provider === 'exa') {
+    if (!key) throw readerFailure('Exa needs a reader API key. Paste one in Settings → Tools → Page reader, or use the Exa search key.', { code: 'missing_key' })
+    if (!base) throw readerFailure('Add the Exa reader URL.', { code: 'missing_key' })
+    if (!isPublicHttp(base)) throw readerFailure('The reader URL must be a public http(s) address.', { code: 'bad_url' })
+    return withReaderRetry(async (signal) => {
+      const res = await fetchFn(base, {
+        method: 'POST',
+        signal,
+        headers: { accept: 'application/json', 'content-type': 'application/json', 'x-api-key': key, 'user-agent': 'byok-chat-reader/1.0' },
+        body: JSON.stringify({ urls: [targetUrl], text: { maxCharacters: limit } }),
+      })
+      const body = await responseJson(res)
+      return { title: pickReaderTitle(body), text: pickReaderText(body) }
+    }, { timeoutMs, maxRetries, retryBaseMs, label: meta.label })
+  }
+  // Custom service: `{url}` is replaced when present, otherwise ?url= is appended.
+  if (!base) throw readerFailure('Add your reader API URL in Settings → Tools → Page reader.', { code: 'missing_key' })
+  const endpoint = readerTarget(targetUrl, base, true)
+  const check = base.includes('{url}') ? base.replace(/\{url\}/g, 'https://example.com') : base
+  if (!isPublicHttp(check)) throw readerFailure('The reader URL must be a public http(s) address.', { code: 'bad_url' })
+  return withReaderRetry(async (signal) => {
+    const res = await fetchFn(endpoint, {
+      signal,
+      headers: { accept: 'application/json, text/plain;q=0.9, */*;q=0.5', 'user-agent': 'byok-chat-reader/1.0', ...(key ? { authorization: `Bearer ${key}` } : {}) },
+    })
+    const type = res.headers?.get?.('content-type') ?? ''
+    if (!res.ok) {
+      const detail = await readBoundedText(res, 4000).catch(() => '')
+      throw classifyReaderStatus(res.status, detail)
+    }
+    if (/json/i.test(type)) {
+      const body = await responseJson(res)
+      const text = pickReaderText(body)
+      return { title: pickReaderTitle(body), text: typeof text === 'string' ? text : JSON.stringify(body) }
+    }
+    return parseJinaText(await responseText(res))
+  }, { timeoutMs, maxRetries, retryBaseMs, label: meta.label })
+}
+
+/* Read a page through a chosen extraction API. Falls back to the built-in
+ * reader when configured, so a transient reader-API failure does not break
+ * grounding. */
+export async function fetchPageViaProvider(url, {
+  provider = 'builtin',
+  apiKey = '',
+  baseUrl = '',
+  fallback = true,
+  timeoutMs = 8000,
+  maxChars = EXTRACT_MAX_TEXT,
+  maxRetries = 0,
+  retryBaseMs = 300,
+  fetchFn = fetch,
+} = {}) {
+  const id = normalizeReaderProvider(provider)
+  if (id === 'builtin') return fetchPageText(url, { timeoutMs, maxChars, maxRetries, retryBaseMs, fetchFn })
+  if (!isPublicHttp(url)) {
+    const e = Error('Only public http(s) pages can be read.')
+    e.code = 'bad_url'
+    throw e
+  }
+  const limit = clampInt(maxChars, EXTRACT_MAX_TEXT, 1_000, EXTRACT_TEXT_MAX)
+  const key = `${id}|${baseUrl || ''}|${url}|${limit}`
+  const hit = cache.get(key)
+  if (hit && Date.now() - hit.at < 600_000) return hit.data
+  try {
+    const { title, text } = await runReaderProvider(id, url, { apiKey, baseUrl, timeoutMs, maxRetries, retryBaseMs, fetchFn, limit })
+    const clean = String(text || '').replace(/\r\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim()
+    if (!clean) {
+      const err = Error('The reader API returned no readable text for that page.')
       err.code = 'empty'
       throw err
     }
-    const truncated = text.length > EXTRACT_MAX_TEXT
-    const data = { url, title: title || url, text: truncated ? text.slice(0, EXTRACT_MAX_TEXT) : text, truncated }
+    const truncated = clean.length > limit
+    const data = { url, title: String(title || url).replace(/\s+/g, ' ').trim().slice(0, 300), text: truncated ? clean.slice(0, limit) : clean, truncated, reader: id }
     cache.set(key, { at: Date.now(), data })
     if (cache.size > 200) cache.delete(cache.keys().next().value)
     return data
   } catch (e) {
-    if (e?.code) throw e // structured failures pass through unchanged
-    const err = Error(e?.name === 'AbortError' ? 'The page took too long to respond.' : `Could not reach the page (${e?.message || 'network error'}).`)
-    err.code = e?.name === 'AbortError' ? 'timeout' : 'network'
-    err.retryable = true
-    throw err
-  } finally {
-    clearTimeout(timer)
+    if (fallback !== false && e?.code !== 'bad_url') {
+      const data = await fetchPageText(url, { timeoutMs, maxChars, maxRetries, retryBaseMs, fetchFn })
+      return { ...data, reader: 'builtin', fallbackUsed: true }
+    }
+    throw e
   }
 }
-
-export { isPublicHttp }

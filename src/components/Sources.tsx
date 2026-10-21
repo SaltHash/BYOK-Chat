@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { BookOpen, ChevronDown, ChevronUp, Copy, Check, ExternalLink, FileText, Link2, AlertTriangle } from 'lucide-react'
 import { fetchPage } from '../engine'
+import { fetchOptsOf, normSearch, useS } from '../store'
 import { truncateSnippet, citationCoverage, type CiteSource } from '../citations'
 import { cx } from './ui'
 
@@ -22,7 +23,7 @@ function Row({ msgId, source, flash, cited }: { msgId: string; source: CiteSourc
     if (excerpt != null || busy) return
     setBusy(true); setErr('')
     try {
-      const page = await fetchPage(source.url)
+      const page = await fetchPage(source.url, fetchOptsOf(normSearch(useS.getState().search)))
       setExcerpt(page.text.slice(0, 2000))
     } catch (e) { setErr((e as Error).message) }
     finally { setBusy(false) }

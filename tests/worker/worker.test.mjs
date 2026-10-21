@@ -183,6 +183,15 @@ test('extract rejects unsupported methods, missing urls and private targets', as
   assert.equal((await privateTarget.json()).code, 'bad_url')
 })
 
+test('the reader route refuses private targets and the wrong method', async () => {
+  const wrong = await call('/api/reader')
+  assert.equal(wrong.status, 405)
+  assert.equal(wrong.headers.get('allow'), 'POST')
+  const privateTarget = await post('/api/reader', { url: 'http://127.0.0.1:9/private' })
+  assert.equal(privateTarget.status, 400)
+  assert.equal((await privateTarget.json()).code, 'bad_url')
+})
+
 test('extract reads a public page through the worker', async () => {
   // The extract SSRF guard blocks loopback hosts, so stub the outbound fetch
   // (as server/search.mjs tests do) while the request still flows through
