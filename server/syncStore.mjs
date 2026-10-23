@@ -91,7 +91,17 @@ async function neonStore(env = process.env) {
   return neonClient
 }
 
+/* Neon is switched off for now: the device-sync slot lives in the server's
+ * memory instead, so a deployment no longer talks to the database. Everything
+ * else — the token format, the encryption, the merge, the API and the client
+ * runtime — is untouched and works exactly the same.
+ * Set SYNC_BACKEND=neon (plus DATABASE_URL) to turn the database back on. */
+export function neonSyncEnabled(env = process.env) {
+  return String(env?.SYNC_BACKEND || '').trim().toLowerCase() === 'neon'
+}
+
 export async function syncBackend(env = process.env) {
+  if (!neonSyncEnabled(env)) return memStore()
   if (!String(env?.DATABASE_URL || '').trim()) return memStore()
   try {
     return await neonStore(env)

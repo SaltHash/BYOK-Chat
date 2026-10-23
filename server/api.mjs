@@ -6,10 +6,11 @@
 import { boundedInt, normalizeProvider, providerLabel, providerNeedsKey, apiKeyFor, resolveApiKey, resolveZone, apiBaseUrlFor, runApiSearch, SEARCH_API_PROVIDERS } from './search.mjs'
 import { fetchPageText, fetchPageViaProvider, normalizeReaderProvider, READER_PROVIDERS } from './extract.mjs'
 import { handleSyncPush, handleSyncPull } from './sync.mjs'
-import { syncBackend, redact } from './syncStore.mjs'
+import { syncBackend, redact, neonSyncEnabled } from './syncStore.mjs'
 import { shareBackend } from './shareStore.mjs'
 import { handleShareCreate, handleShareGet, handleShareUpdate, shareIdOf } from './share.mjs'
 import { clientIp, headerValue, jsonResult, readBodyText, requestHost, sameOrigin } from './http.mjs'
+import { overRateLimit, bumpRateLimit } from './ratelimit.mjs'
 
 // Hard server-side caps. Per-request tuning arrives from the user's search
 // settings in Settings → Tools → Web search and is bounded below.
@@ -20,39 +21,16 @@ const EVIDENCE_BUDGET = 24000
 const SEARCH_BODY_LIMIT = 16_384
 const READER_BODY_LIMIT = 16_384
 const EXTRACT_TIMEOUT_MS = 8000
-const RATE_LIMIT = 30
-const RATE_WINDOW_MS = 60_000
 
-/* Rate limits and caches live in module scope. On Cloudflare Workers each
- * isolate keeps its own copy, so limits are approximate — a burst can exceed
- * RATE_LIMIT per window by the number of live isolates — and caches are
- * per-isolate and short-lived. On the Node host there is a single process, so
- * both are exact. */
+/* Per-route limit buckets (the sliding-window mechanics live in
+ * ratelimit.mjs, shared with the request proxy). */
 const searchLimit = new Map()
 const extractLimit = new Map()
 const syncLimit = new Map()
 const shareLimit = new Map()
 const searchCache = new Map()
 
-/* Sliding window: a fixed window lets a client send RATE_LIMIT requests at
- * the end of one window and RATE_LIMIT more at the start of the next. */
-function hitsInWindow(bucket, ip, now) {
-  const times = bucket.get(ip)
-  if (!times) return []
-  while (times.length && now - times[0] >= RATE_WINDOW_MS) times.shift()
-  return times
-}
-
-export function overRateLimit(bucket, ip, now) {
-  return hitsInWindow(bucket, ip, now).length >= RATE_LIMIT
-}
-
-export function bumpRateLimit(bucket, ip, now) {
-  const times = hitsInWindow(bucket, ip, now)
-  times.push(now)
-  bucket.set(ip, times)
-  if (bucket.size > 1000) bucket.delete(bucket.keys().next().value)
-}
+export { overRateLimit, bumpRateLimit }
 
 export function searchStatus(env = {}) {
   const apiKeys = Object.fromEntries(Object.keys(SEARCH_API_PROVIDERS).map((id) => [id, Boolean(apiKeyFor(id, env))]))
@@ -279,11 +257,20 @@ export async function apiSync(req, env = process.env) {
     if (url.pathname === '/api/sync/status' && (req.method === 'GET' || req.method === 'HEAD')) {
       try {
         const backend = await syncBackend(env)
-        return jsonResult(200, { ok: true, backend: backend.kind, configured: Boolean(env.DATABASE_URL) })
+        // `configured` means the slot is shared between devices (a database).
+        // With Neon switched off the slot lives in this server's memory, so
+        // the UI can say so instead of pretending two devices sync.
+        return jsonResult(200, {
+          ok: true,
+          backend: backend.kind,
+          configured: backend.kind === 'neon',
+          neonConfigured: Boolean(env.DATABASE_URL) && neonSyncEnabled(env),
+          shared: backend.kind === 'neon',
+        })
       } catch {
         // Keep status cheap and always 200 so the UI can show that sync is
         // configured but currently unreachable.
-        return jsonResult(200, { ok: false, backend: 'unavailable', configured: Boolean(env.DATABASE_URL) })
+        return jsonResult(200, { ok: false, backend: 'unavailable', configured: false, neonConfigured: Boolean(env.DATABASE_URL) && neonSyncEnabled(env), shared: false })
       }
     }
     const backend = await syncBackend(env)

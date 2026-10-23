@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import { Info, X, Server, Play, MessageSquare, Keyboard, ArrowUp, ArrowDown, MessagesSquare, RotateCcw, Download, Upload, FileText, Trash2, CircleCheck, CircleX, Gauge, ShieldCheck } from 'lucide-react'
-import { useS, dl, BLANK, THEMES, themePatch, DEFAULT_FEATURES, DEFAULT_PREFS, DEFAULT_PARAMS, DEFAULT_WIDGET_PREFS, modelsOf, modelNameOf, normSearch, normAdvanced, normFeatureOrder, normDocs, featOn, errText, storageUsage, QUOTA_FLAG, type Ep, type Kind, type FeatureId } from '../store'
+import { useS, dl, BLANK, THEMES, themePatch, DEFAULT_FEATURES, DEFAULT_PREFS, DEFAULT_PARAMS, DEFAULT_WIDGET_PREFS, DEFAULT_CUSTOM_DARK_THEME, DEFAULT_CUSTOM_LIGHT_THEME, normCustomTheme, modelsOf, modelNameOf, normSearch, normAdvanced, normFeatureOrder, normDocs, featOn, errText, storageUsage, QUOTA_FLAG, type Ep, type Kind, type FeatureId } from '../store'
 import { normSkills } from '../skills'
 import { normMcpServers } from '../mcp'
 import { normImageGen } from '../imagegen'
@@ -34,7 +34,7 @@ export function Notice({ cfg }: { cfg: (t: string) => void }) {
 export function Tutorial({ cfg }: { cfg: (t: string) => void }) {
   const { eps, add } = useS(useShallow((s) => ({ eps: s.eps, add: s.add })))
   const steps: [Ic, string, string][] = [
-    [Server, 'Add an endpoint', 'Pick a provider preset or enter any base URL, then paste your API key and the model id. Your keys never leave this browser. Pinky promise.'],
+    [Server, 'Add an endpoint', 'Pick a provider preset or enter any base URL, then paste your API key and the model id. Keys are stored in this browser and only sent to the providers you choose (or relayed through this app’s own server when a provider blocks browser requests).'],
     [Play, 'Test it', 'Press Test connection on the endpoint. You will see whether it answers and how long it takes.'],
     [MessageSquare, 'Send a message', 'Type below and press Enter. Type / for commands and @ for tools.'],
   ]
@@ -69,7 +69,12 @@ export function TestRow({ e }: { e: Ep }) {
     if (!provider || cors?.s === 'run') return
     setCors({ s: 'run', t: `Checking browser access to ${provider.name}…` })
     const result = await probeProviderCors(provider, e)
-    setCors({ s: result.ok ? 'ok' : 'err', t: result.ok ? `${provider.name} allows this origin (HTTP ${result.status}${result.allowOrigin ? `, Access-Control-Allow-Origin: ${result.allowOrigin}` : ''}).` : result.error ?? `${provider.name} failed its CORS preflight.` })
+    setCors({
+      s: result.ok ? 'ok' : 'err',
+      t: result.ok
+        ? `${provider.name} allows this origin (HTTP ${result.status}${result.allowOrigin ? `, Access-Control-Allow-Origin: ${result.allowOrigin}` : ''}).`
+        : `${result.error ?? `${provider.name} failed its CORS preflight.`} Requests will be relayed through this app's server (Settings → Endpoints → Request routing).`,
+    })
   }
   const run = async () => {
     const models = modelsOf(e)
@@ -157,12 +162,13 @@ export function StatsTab() {
     <Panel id="stats">
       <Section title="Totals" desc="All-time counters. They are not affected by deleting chats.">
       <div className="grid gap-3 sm:grid-cols-2">
-        <Anchor id="tokens-sent">{card(ArrowUp, 'Tokens sent', t.tin, `${t.historyIn.toLocaleString()} history · ${t.explicitIn.toLocaleString()} explicit input`)}</Anchor>
+        <Anchor id="tokens-sent">{card(ArrowUp, 'Tokens sent', t.tin, `${t.explicitIn.toLocaleString()} explicitly sent · ${t.historyIn.toLocaleString()} history + tool calls`)}</Anchor>
         <Anchor id="tokens-generated">{card(ArrowDown, 'Tokens generated', t.tout, 'Reply tokens, including partial replies')}</Anchor>
         <Anchor id="messages-sent">{card(MessageSquare, 'Messages sent', t.sent, 'Includes edited and resent messages')}</Anchor>
         <Anchor id="chats-started">{card(MessagesSquare, 'Chats started', t.chats, 'A chat counts when its first message is sent')}</Anchor>
       </div>
       <p className="text-xs text-mu">Total {(t.tin + t.tout).toLocaleString()} tokens since {new Date(t.since).toLocaleDateString()}. Totals are all-time and are not affected by deleting chats. They use token counts reported by the provider when available, and a rough 4-characters-per-token estimate otherwise.</p>
+      <p className="text-xs text-mu">Tokens sent are split into what you wrote (explicitly sent) and everything that travelled with it: the system prompt, the chat history, and any tool calls and their results (history + tool calls).</p>
       </Section>
       <Section title="Reset" desc="Start the counters over.">
       <Anchor id="reset-stats"><Btn v="danger" icon={RotateCcw} onClick={() => setCf(true)}>Reset stats</Btn></Anchor>
@@ -392,7 +398,7 @@ export function DataTab() {
         ...(imports.skills && Array.isArray(j.skills) ? { skills: normSkills(merge ? [...(st as any).skills ?? [], ...j.skills] : j.skills).skills } : {}),
         ...(imports.memory ? { ...(Array.isArray(j.memories) ? { memories: merge ? [...st.memories.filter((x) => !validMemories.some((y: any) => y.id === x.id)), ...validMemories] : validMemories } : {}), ...(j.memoryPrefs && typeof j.memoryPrefs === 'object' ? { memoryPrefs: { ...st.memoryPrefs, ...(merge ? {} : { enabled: false, intent: 'balanced', recall: 'contextual', method: 'local', classifierEp: '', classifierModel: '' }), ...Object.fromEntries(Object.entries(j.memoryPrefs).filter(([k]) => ['enabled', 'intent', 'recall', 'method', 'classifierEp', 'classifierModel'].includes(k))) } } : {}) } : {}),
         ...(imports.keys ? { keys: merge ? { ...st.keys, ...cleanStrings(j.keys) } : Object.fromEntries(Object.entries(cleanStrings(j.keys)).filter(([k]) => KEYS.some(([id]) => id === k))) } : {}),
-        ...(imports.appearance ? { ...(j.themeMode === 'dark' || j.themeMode === 'light' ? { themeMode: j.themeMode } : {}), ...(Object.hasOwn(THEMES, j.themeDark) ? { themeDark: j.themeDark } : {}), ...(Object.hasOwn(THEMES, j.themeLight) ? { themeLight: j.themeLight } : {}), ...(j.customDarkColors && typeof j.customDarkColors === 'object' ? { customDarkColors: merge ? { ...st.customDarkColors, ...j.customDarkColors } : j.customDarkColors } : {}), ...(j.customLightColors && typeof j.customLightColors === 'object' ? { customLightColors: merge ? { ...st.customLightColors, ...j.customLightColors } : j.customLightColors } : {}), ...(Object.hasOwn(THEMES, j.theme) ? themePatch(st, j.theme) : {}), ...(j.customColors && typeof j.customColors === 'object' ? { customDarkColors: merge ? { ...st.customDarkColors, ...j.customColors } : j.customColors } : {}), ...(j.prefs && typeof j.prefs === 'object' ? { prefs: merge ? { ...st.prefs, ...j.prefs } : { ...DEFAULT_PREFS, ...j.prefs } } : {}) } : {}),
+        ...(imports.appearance ? { ...(j.themeMode === 'dark' || j.themeMode === 'light' ? { themeMode: j.themeMode } : {}), ...(Object.hasOwn(THEMES, j.themeDark) ? { themeDark: j.themeDark } : {}), ...(Object.hasOwn(THEMES, j.themeLight) ? { themeLight: j.themeLight } : {}), ...(j.customDarkColors && typeof j.customDarkColors === 'object' ? { customDarkColors: merge ? { ...st.customDarkColors, ...j.customDarkColors } : j.customDarkColors } : {}), ...(j.customLightColors && typeof j.customLightColors === 'object' ? { customLightColors: merge ? { ...st.customLightColors, ...j.customLightColors } : j.customLightColors } : {}), ...(j.customDarkTheme && typeof j.customDarkTheme === 'object' ? { customDarkTheme: normCustomTheme(merge ? { ...st.customDarkTheme, ...j.customDarkTheme } : j.customDarkTheme, st.customDarkTheme) } : {}), ...(j.customLightTheme && typeof j.customLightTheme === 'object' ? { customLightTheme: normCustomTheme(merge ? { ...st.customLightTheme, ...j.customLightTheme } : j.customLightTheme, st.customLightTheme) } : {}), ...(Object.hasOwn(THEMES, j.theme) ? themePatch(st, j.theme) : {}), ...(j.customColors && typeof j.customColors === 'object' ? { customDarkColors: merge ? { ...st.customDarkColors, ...j.customColors } : j.customColors } : {}), ...(j.prefs && typeof j.prefs === 'object' ? { prefs: merge ? { ...st.prefs, ...j.prefs } : { ...DEFAULT_PREFS, ...j.prefs } } : {}) } : {}),
         ...(imports.features ? { ...(j.features && typeof j.features === 'object' ? { features: merge ? { ...st.features, ...cleanFeatures(j.features) } : { ...DEFAULT_FEATURES, ...cleanFeatures(j.features) } } : {}), ...(j.libraryShow && typeof j.libraryShow === 'object' ? { libraryShow: merge ? { ...st.libraryShow, ...j.libraryShow } : j.libraryShow } : {}), ...(Array.isArray(j.featureOrder) ? { featureOrder: normFeatureOrder(merge ? [...st.featureOrder ?? [], ...j.featureOrder] : j.featureOrder) } : {}), ...(j.advanced && typeof j.advanced === 'object' ? { advanced: normAdvanced(merge ? { ...st.advanced, ...j.advanced } : j.advanced) } : {}) } : {}),
         ...(imports.tools ? { tools: merge ? { ...st.tools, ...cleanTools(j.tools) } : { ...DEFAULT_TOOLS, ...cleanTools(j.tools) }, ...(Array.isArray(j.mcps) ? (() => { const incoming = normMcpServers(j.mcps); return { mcps: merge ? [...st.mcps.filter((x) => !incoming.some((y) => y.id === x.id)), ...incoming] : incoming } })() : {}), ...(j.imageGen && typeof j.imageGen === 'object' ? { imageGen: normImageGen(merge ? { ...st.imageGen, ...j.imageGen } : j.imageGen) } : {}), ...(j.codeRun && typeof j.codeRun === 'object' ? { codeRun: normCodeRun(merge ? { ...st.codeRun, ...j.codeRun } : j.codeRun) } : {}), ...(j.search && typeof j.search === 'object' ? (() => {
           const current = normSearch((st as any).search)

@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-const { sanitizePath, parseWorkspaceArgsPartial, truncateWorkspaceContent, groupWorkspaceVersions, countWorkspaceFiles, buildZipEntries, zipFilename, WORKSPACE_MAX_CONTENT, WORKSPACE_MAX_FILES, migrateLegacyCanvasGroups, applyUnifiedDiff, diffLines, diffStat, changedFilesBetween, sanitizeHtmlPreview, previewKindFor, parseCsvPreview, WORKSPACE_TEMPLATES, templateById, pendingLiveCalls, findWritingPath } = await import('./workspace.ts')
+const { sanitizePath, parseWorkspaceArgsPartial, truncateWorkspaceContent, groupWorkspaceVersions, countWorkspaceFiles, buildZipEntries, zipFilename, WORKSPACE_MAX_CONTENT, migrateLegacyCanvasGroups, applyUnifiedDiff, diffLines, diffStat, changedFilesBetween, sanitizeHtmlPreview, previewKindFor, parseCsvPreview, WORKSPACE_TEMPLATES, templateById, pendingLiveCalls, findWritingPath } = await import('./workspace.ts')
 
 test('sanitizePath keeps valid relative paths and never throws', () => {
   assert.equal(sanitizePath('src/app.py'), 'src/app.py')
@@ -98,7 +98,7 @@ test('findWritingPath reports only a real, still-pending file path', () => {
   assert.equal(findWritingPath([{ id: 'w', name: 'workspace_upsert', arguments: JSON.stringify({ path: 'src/app.py' }) }], [{ calls: [{ id: 'w', name: 'workspace_upsert', arguments: '' }] }]), null)
 })
 
-test('grouping collects versions by path in message order and caps files', () => {
+test('grouping collects versions by path in message order and has no file cap', () => {
   const calls = [
     { id: '1', name: 'calc', arguments: '{}' },
     { id: '2', name: 'workspace_upsert', arguments: JSON.stringify({ action: 'create', path: 'src/a.py', language: 'python', content: 'v1' }) },
@@ -110,10 +110,9 @@ test('grouping collects versions by path in message order and caps files', () =>
   assert.equal(groups[0].path, 'src/a.py')
   assert.deepEqual(groups[0].versions.map((v) => v.content), ['v1', 'v2'])
   assert.equal(countWorkspaceFiles(calls), 2)
-  const many = Array.from({ length: 12 }, (_, i) => ({ id: `c${i}`, name: 'workspace_upsert', arguments: JSON.stringify({ action: 'create', path: `f${i}.txt`, content: `${i}` }) }))
-  assert.equal(groupWorkspaceVersions(many).length, 12)
-  assert.equal(countWorkspaceFiles(many), 12)
-  assert.equal(WORKSPACE_MAX_FILES, 16)
+  const many = Array.from({ length: 40 }, (_, i) => ({ id: `c${i}`, name: 'workspace_upsert', arguments: JSON.stringify({ action: 'create', path: `f${i}.txt`, content: `${i}` }) }))
+  assert.equal(groupWorkspaceVersions(many).length, 40)
+  assert.equal(countWorkspaceFiles(many), 40)
 })
 
 test('zip entries sanitize, dedupe with -2/-3 suffixes, and name the archive', () => {
@@ -247,15 +246,18 @@ test('templates are valid, sanitized and addressable', () => {
   assert.equal(templateById('nope'), null)
 })
 
-test('tolerant parser reads files batches and template ids', () => {
+test('tolerant parser reads a single file and template ids', () => {
   const args = parseWorkspaceArgsPartial(JSON.stringify({
-    action: 'update', path: 'a.py', revisionName: 'r',
-    files: [{ path: 'b.py', content: 'x' }, { path: 'c.py', action: 'delete' }],
-    template: 'static-site',
+    action: 'update', path: 'a.py', revisionName: 'r', template: 'static-site',
   }))
   assert.equal(args.template, 'static-site')
-  assert.equal(args.files?.length, 2)
-  assert.equal(args.files?.[1].action, 'delete')
+  assert.equal(args.path, 'a.py')
+  // A batch list is not part of the tool any more: the parser ignores it.
+  const batch = parseWorkspaceArgsPartial(JSON.stringify({
+    action: 'update', path: 'a.py', files: [{ path: 'b.py', content: 'x' }],
+  }))
+  assert.equal(batch.files, undefined)
+  assert.equal(batch.path, 'a.py')
 })
 
 test('applyWorkspaceCall creates, folds same-message edits, and patches', async () => {
@@ -285,20 +287,32 @@ test('applyWorkspaceCall creates, folds same-message edits, and patches', async 
   assert.equal(third.selectedRevisionId, third.workspaces[wsId].revisions[1].id)
 })
 
-test('applyWorkspaceCall batches files atomically and scaffolds templates', async () => {
+test('applyWorkspaceCall scaffolds templates and holds any number of files', async () => {
   const { applyWorkspaceCall } = await import('./workspace.ts')
   let n = 100
   const uid = () => `id-${++n}`
   const r = applyWorkspaceCall({}, {
     createNew: true, workspaceName: 'Site', revisionName: 'Scaffold',
     action: 'create', path: 'extra.txt', content: 'e', template: 'static-site',
-    files: [{ path: 'extra2.txt', content: 'e2' }, { path: 'index.html', action: 'delete' }],
   }, { msgId: 'm1', uid })
   assert.equal(r.result.scaffolded, 3)
   const files = r.workspaces[r.result.workspaceId].revisions[0].files
-  // 3 template files + extra.txt + extra2.txt − deleted index.html = 4
+  // 3 template files + extra.txt
   assert.equal(files.length, 4)
-  assert.deepEqual(r.result.changes.slice(0, 2), ['extra.txt created', 'extra2.txt created'])
+  assert.deepEqual(r.result.changes, ['extra.txt created'])
+  // The result lists the paths the workspace holds, so the model can see what
+  // already exists before it writes the next file.
+  assert.equal(r.result.files.length, 4)
+  assert.ok(r.result.files.includes('extra.txt'))
+  // There is no cap on how many files a workspace may hold.
+  let ws = r.workspaces
+  for (let i = 0; i < 40; i++) {
+    ws = applyWorkspaceCall(ws, {
+      workspaceId: r.result.workspaceId, revisionName: `File ${i}`,
+      action: 'create', path: `f${i}.txt`, content: 'x',
+    }, { msgId: 'm1', uid }).workspaces
+  }
+  assert.equal(ws[r.result.workspaceId].revisions[0].files.length, 44)
   assert.throws(() => applyWorkspaceCall({}, {
     createNew: true, workspaceName: 'X', revisionName: 'R', action: 'create', path: 'a.txt', template: 'nope',
   }, { msgId: 'm1', uid }), /Unknown template/)
@@ -325,18 +339,40 @@ test('applyUnifiedDiff inserts zero-old-count hunks after the stated line', () =
   assert.equal(end.text, 'a\nb\nc\nX')
 })
 
-test('workspace call rejects entries that sanitize to the same path', async () => {
-  const { applyWorkspaceCall } = await import('./workspace.ts')
-  const uid = (() => { let n = 0; return () => `id${++n}` })()
-  assert.throws(() => applyWorkspaceCall({}, {
-    action: 'create', path: 'ok.txt', content: 'ok', revisionName: 'r1', createNew: true, workspaceName: 'W',
-    files: [{ path: 'a b.txt', content: 'one' }, { path: 'a_b.txt', content: 'two' }],
-  }, { msgId: 'm1', uid }), /same path/)
-})
-
 test('workspace update without content is rejected instead of blanking the file', async () => {
   const { applyWorkspaceCall } = await import('./workspace.ts')
   const uid = (() => { let n = 0; return () => `id${++n}` })()
   const first = applyWorkspaceCall({}, { action: 'create', path: 'a.txt', content: 'hello', revisionName: 'r1', createNew: true, workspaceName: 'W' }, { msgId: 'm1', uid })
   assert.throws(() => applyWorkspaceCall(first.workspaces, { action: 'update', path: 'a.txt', revisionName: 'r2', workspaceId: first.result.workspaceId }, { msgId: 'm2', uid }), /Missing content/)
+})
+
+test('activeWorkspaceId returns the workspace the chat last touched', async () => {
+  const { activeWorkspaceId } = await import('./workspace.ts')
+  assert.equal(activeWorkspaceId([]), undefined)
+  assert.equal(activeWorkspaceId([{ workspaceIds: [] }, {}]), undefined)
+  assert.equal(activeWorkspaceId([{ workspaceIds: ['ws1'] }, { workspaceIds: ['ws2', 'ws3'] }]), 'ws3')
+  // Newest message wins, even when an older one lists more workspaces.
+  assert.equal(activeWorkspaceId([{ workspaceIds: ['ws1', 'ws2'] }, { workspaceIds: ['ws3'] }]), 'ws3')
+})
+
+test('resolveWorkspaceTarget keeps the files in the workspace the user is looking at', async () => {
+  const { resolveWorkspaceTarget } = await import('./workspace.ts')
+  const workspaces = {
+    ws1: { id: 'ws1', name: 'Habit Tracker', revisions: [] },
+    ws2: { id: 'ws2', name: 'Other', revisions: [] },
+  }
+  // A known id wins.
+  assert.deepEqual(resolveWorkspaceTarget({ workspaceId: 'ws2' }, { workspaces, activeId: 'ws1' }), { workspaceId: 'ws2' })
+  // No id: the chat's active workspace is used.
+  assert.deepEqual(resolveWorkspaceTarget({}, { workspaces, activeId: 'ws1' }), { workspaceId: 'ws1', fallback: 'active' })
+  // A hallucinated id falls back to the active workspace instead of failing.
+  assert.deepEqual(resolveWorkspaceTarget({ workspaceId: 'nope' }, { workspaces, activeId: 'ws1' }), { workspaceId: 'ws1', fallback: 'active' })
+  // No workspace at all: a new one is created, with a usable name.
+  const fresh = resolveWorkspaceTarget({}, { workspaces: {} })
+  assert.equal(fresh.createNew, true)
+  assert.ok(fresh.workspaceName)
+  // createNew with a different name is a deliberate new project.
+  assert.equal(resolveWorkspaceTarget({ createNew: true, workspaceName: 'Second Project' }, { workspaces, activeId: 'ws1' }).createNew, true)
+  // createNew repeating the active workspace name is the same project.
+  assert.deepEqual(resolveWorkspaceTarget({ createNew: true, workspaceName: 'habit tracker' }, { workspaces, activeId: 'ws1' }), { workspaceId: 'ws1', fallback: 'active' })
 })

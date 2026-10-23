@@ -5,6 +5,13 @@ import { useS } from './store'
 import { hydrateDurable, mirrorToDurable } from './storage/boot'
 import { startSyncRuntime } from './storage/syncRuntime'
 import { withoutExpiredTemps } from './persistence'
+import { setProxyMode } from './net'
+
+// Keep the provider transport in step with the saved routing preference. The
+// relay itself lives in net.ts so non-React modules (engine, adapters) can use
+// it without importing the store.
+setProxyMode(useS.getState().prefs.proxyMode)
+useS.subscribe((s) => setProxyMode(s.prefs.proxyMode))
 
 createRoot(document.getElementById('root')!).render(<App />)
 

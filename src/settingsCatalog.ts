@@ -49,7 +49,7 @@ export const TAB_KEYWORDS: Record<SettingsTabId, string> = {
   mcp: 'mcp model context protocol servers tools external remote connect url headers bearer token',
   memory: 'memory tool mode recall method classifier add stored duplicates categories',
   widgets: 'widgets panels context meter endpoint status usage scratchpad snippets cost last reply prompts shortcuts draft counter checklist',
-  look: 'appearance fonts theme display layout max height width message settings model picker palette blur opacity',
+  look: 'appearance fonts theme hue saturation brightness sliders display layout max height width message settings model picker palette blur opacity',
   chats: 'chats conversation replies temporary retention hours immediate expires enter send title auto streaming markdown fade speed model answered log startup open load shown sidebar attachments documents pdf office archives ocr image transcription',
   voice: 'voice dictation microphone speech recognition read aloud speech synthesis language rate auto read',
   keys: 'shortcuts keybinds keyboard reset bindings',
@@ -183,7 +183,7 @@ export const SETTING_LINKS: SettingLink[] = [
   { tab: 'widgets', anchor: 'context-meter', title: 'Context meter', keywords: 'context meter tokens circle header appearance' },
   { tab: 'look', anchor: 'context-limit', title: 'Context meter limit', keywords: 'context limit estimated meter tokens' },
   { tab: 'look', anchor: 'theme-picker', title: 'Theme picker', keywords: 'theme plum claude obsidian graphite paper sage frost sunset custom' },
-  { tab: 'look', anchor: 'custom-colors', title: 'Custom theme colors', keywords: 'custom colors hex background accent text code syntax' },
+  { tab: 'look', anchor: 'custom-colors', title: 'Custom theme sliders', keywords: 'custom theme base hue saturation brightness sliders hex colors reset defaults' },
   { tab: 'look', anchor: 'seasonal', title: 'Seasonal touches', keywords: 'seasonal festive greeting holiday plain' },
   { tab: 'look', anchor: 'completion-cues', title: 'Completion cues', keywords: 'completion cues chime confetti deep research workspace finished' },
   { tab: 'chats', anchor: 'show-by', title: 'Show which model answered', keywords: 'show model answered label byline' },
@@ -217,7 +217,7 @@ export const SETTING_LINKS: SettingLink[] = [
   { tab: 'keys', anchor: 'reset-all-keys', title: 'Reset all shortcuts', keywords: 'reset all shortcuts defaults bindings' },
 
   // Stats
-  { tab: 'stats', anchor: 'tokens-sent', title: 'Tokens sent', keywords: 'tokens sent history explicit input' },
+  { tab: 'stats', anchor: 'tokens-sent', title: 'Tokens sent', keywords: 'tokens sent explicitly sent history tool calls input' },
   { tab: 'stats', anchor: 'tokens-generated', title: 'Tokens generated', keywords: 'tokens generated reply output' },
   { tab: 'stats', anchor: 'messages-sent', title: 'Messages sent', keywords: 'messages sent edited resent' },
   { tab: 'stats', anchor: 'chats-started', title: 'Chats started', keywords: 'chats started first message' },

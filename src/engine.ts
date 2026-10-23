@@ -2,9 +2,10 @@ import type { Ep, Att, Msg } from './store'
 import { TOOLS } from './meta'
 import { BLANK_DOCS, expandArchives, extractOffThread, fitDoc, pairTranscripts } from './docs'
 import { WORKSPACE_MAX_CONTENT, WORKSPACE_TRUNC_MARKER, sanitizePath } from './workspace'
-import { withCode } from './errors'
+import { withCode, type ErrorCode } from './errors'
 import { buildStreamRequest, splitSseBuffer } from './streamRequest'
 import { mapNetworkError, providerError, resolveProvider } from './providerAdapter'
+import { providerFetch, ProxyUnavailableError } from './net'
 
 export { supportsEffort } from './streamRequest'
 
@@ -122,7 +123,15 @@ export const fmt = (c: string) => c.replace('Mod', /Mac|iPhone|iPad/.test(naviga
 /* Every exposed tool has one schema and one explicitly registered handler. */
 export type ToolCall = { id: string; name: string; arguments: string; extra_content?: unknown }
 export type ToolResult = ToolCall & { result: string; error?: boolean; ms?: number }
-export type ToolSpec = { description: string; parameters: Record<string, unknown>; run: (args: any) => unknown | Promise<unknown> }
+export type ToolSpec = {
+  description: string
+  parameters: Record<string, unknown>
+  run: (args: any) => unknown | Promise<unknown>
+  /** Arguments the tool refuses, with the message shown to the model. Used for
+   *  arguments that are deliberately absent from the schema (so the model does
+   *  not plan around them) but that models like to send anyway. */
+  rejected?: Record<string, string>
+}
 const textArg = (description: string) => ({ type: 'string', description })
 
 /* Safe arithmetic evaluator: tokenizes + parses without eval/Function.
@@ -252,25 +261,12 @@ export const TOOL_REGISTRY: Record<string, ToolSpec> = {
   inline_poll: { description: 'Ask a short survey-style question card below your reply, to learn the user\'s environment, preferences, or any detail you need to answer accurately and safely. Use this whenever you are genuinely uncertain about something that materially affects your answer — the user\'s setup, constraints, context, or intent — and cannot safely assume. Each item in `questions` is one question with its own input type. Prefer multiple choice and sliders over typed text: use typed text or numbers only when a free-form answer is truly needed. Multiple choice options should include an "Other" choice with a typeable area next to it when the likely answers aren\'t fully covered. Keep questions few (1–4), each one focused, and phrase the label as a complete sentence. The user fills the card and presses Continue, and their answers are sent back to you as a message so you can proceed. Never mention the question card, the questions, or that you are asking through a widget in your prose; ask only through the card.', parameters: { type: 'object', properties: { questions: { type: 'array', minItems: 1, maxItems: 4, description: 'One question per item; the user answers each in turn.', items: { type: 'object', properties: { label: textArg('The question text, phrased as a complete sentence.'), type: { type: 'string', enum: ['choice', 'slider', 'text', 'number'], description: 'choice = multiple choice (prefer this). slider = a range with a visible value. text = short free-form answer. number = a numeric answer.' }, options: { type: 'array', minItems: 2, maxItems: 6, description: 'Required for choice. Each option is a visible label, or an object with label, an optional follow-up prompt, and an optional fillBlank flag. Set fillBlank:true only on the options that should accept a typed custom answer (usually "Other"); you choose per option. Do not add a separate "type your own" choice unless it uses fillBlank.', items: { anyOf: [{ type: 'string' }, { type: 'object', properties: { label: textArg('Visible choice label.'), prompt: textArg('Optional follow-up prompt sent for this choice.'), fillBlank: { type: 'boolean', description: 'Attach a typeable text field to this option when selected. Use for "Other" or any choice that needs a custom answer.' } }, required: ['label'], additionalProperties: false }] } }, min: { type: 'number', description: 'Required for slider. Minimum value.' }, max: { type: 'number', description: 'Required for slider. Maximum value.' }, step: { type: 'number', description: 'Optional for slider. Increment between values.' }, placeholder: textArg('Optional hint shown in the empty field. Use for text and number.'), defaultValue: textArg('Optional starting value. Use for text; for number this is a numeric default.'), multiline: { type: 'boolean', description: 'Optional for text. Use a taller textarea when the answer is likely to be a paragraph.' } }, required: ['label', 'type'], additionalProperties: false } } }, required: ['questions'], additionalProperties: false }, run: ({ questions }) => `Choice card ready: ${Array.isArray(questions) ? questions.length : 0} question(s)` },
   generate_image: { description: 'Generate one or more images from a text prompt and show them beside the reply. Only use when the user asks for a picture, illustration, logo concept, photo, or other visual; do not use it for diagrams that text or code can describe. Write a specific, visual prompt (subject, style, lighting, composition) in the language the user is using.', parameters: { type: 'object', properties: { prompt: textArg('Detailed visual description of the image to generate.'), size: textArg('Output size such as 1024x1024, 1024x1536, 1536x1024, 1024x1792, 1792x1024, 512x512, or 256x256. Optional; the user setting is used when omitted.'), count: { type: 'integer', minimum: 1, maximum: 4, description: 'How many images to generate (1-4). Optional; the user setting is used when omitted.' } }, required: ['prompt'], additionalProperties: false }, run: () => { throw Error('Image generation is not available in this context.') } },
   run_code: { description: 'Run a short JavaScript or Python snippet locally and return its stdout and result. Use for exact arithmetic, data transformations, text or date processing, trying an algorithm, or verifying output. The sandbox has no DOM, files, packages, or (for JavaScript) network, and each run starts fresh, so print everything needed and pass data in the code itself. Keep snippets small; output and run time are capped. Python must be enabled in settings by the user.', parameters: { type: 'object', properties: { language: { type: 'string', enum: ['javascript', 'python'], description: 'Runtime for the snippet.' }, code: textArg('Complete snippet. Use console.log or print for output; the last expression is also returned. Top-level await/return work in JavaScript.') }, required: ['language', 'code'], additionalProperties: false }, run: () => { throw Error('Code execution is not available in this context.') } },
-  workspace_upsert: { description: 'Create, update, or delete file artifacts in a Workspace (preview shown beside the reply, with versioning and a dedicated download button). Do not give download links in your text — use the panel button instead. Provide workspaceId to append to an existing workspace, or createNew with workspaceName to start a new one. Always supply a human-readable revisionName (e.g. "Add auth form"). When naming a workspace, prefer readability-first names (for example, "Habit Tracker" instead of "habit-tracker"). Action: create, update, delete, continue (append, for truncated files), or patch (apply a unified diff from content to the existing file). Prefer patch with a small unified diff over resending whole files. Send files: [{path, language?, content?, action?}] to change several files in one call (one revision). A create call (action create, or any files entry with action create) may add only one file in total; create multiple files with separate calls. Send template: "static-site" | "python-script" | "markdown-notes" with createNew to scaffold a starter project, then edit from there.', parameters: { type: 'object', properties: { workspaceId: textArg('Existing workspace ID to append to.'), createNew: { type: 'boolean', description: 'Create a new workspace (requires workspaceName).' }, workspaceName: textArg('Name for the new workspace (required if createNew).'), revisionName: textArg('Human-readable name for this revision, e.g. "Add auth form". Required.'), action: { type: 'string', enum: ['create', 'update', 'delete', 'continue', 'patch'], description: 'File action. patch applies content as a unified diff.' }, path: textArg('Relative path inside the download bundle, e.g. src/app.py.'), language: textArg('Programming language for syntax highlighting, e.g. python.'), content: textArg('Full file content, or a unified diff for patch. Omitted for delete.'), files: { type: 'array', description: 'Batch several file changes in one call (one revision).', items: { type: 'object', properties: { path: textArg('Relative path.'), language: textArg('Programming language.'), content: textArg('Full content, or unified diff when action is patch.'), action: { type: 'string', enum: ['create', 'update', 'delete', 'continue', 'patch'] } }, required: ['path'], additionalProperties: false } }, template: textArg('Starter template id: static-site, python-script, or markdown-notes (use with createNew).') }, required: ['revisionName', 'action', 'path'], additionalProperties: false }, run: ({ action, path, content, workspaceId, createNew, workspaceName, revisionName, files, template }) => {
+  workspace_upsert: { description: 'Write files into a Workspace: the files are shown beside the reply with a preview, diffs, versioning and a download button. Do not give download links in your text — use the panel button instead. One file per call: one call changes exactly one file, so to change several files you send one call per file. Provide workspaceId to write into the workspace the chat is already using (the system prompt names it); pass createNew with workspaceName only for a genuinely separate project, never for another file of the current one. Always supply a human-readable revisionName (e.g. "Add auth form"). When naming a workspace, prefer readability-first names (for example, "Habit Tracker" instead of "habit-tracker"). Action: create (a new file, full content), update (replace the whole file), patch (a small unified diff against the file as it is now), continue (append to a truncated file), delete. Prefer patch for a small change instead of resending the whole file, and never rewrite a file that already holds what you want. The tool result lists the files the workspace holds, so check it before writing: create a file only when it is not there yet, and update or patch it when it is.', parameters: { type: 'object', properties: { workspaceId: textArg('Existing workspace ID to append to.'), createNew: { type: 'boolean', description: 'Create a new workspace (requires workspaceName). Only for a separate project.' }, workspaceName: textArg('Name for the new workspace (required if createNew).'), revisionName: textArg('Human-readable name for this revision, e.g. "Add auth form". Required.'), action: { type: 'string', enum: ['create', 'update', 'delete', 'continue', 'patch'], description: 'File action. patch applies content as a unified diff.' }, path: textArg('Relative path inside the download bundle, e.g. src/app.py.'), language: textArg('Programming language for syntax highlighting, e.g. python.'), content: textArg('Full file content, or a unified diff for patch. Omitted for delete.'), template: textArg('Starter template id: static-site, python-script, or markdown-notes (use with createNew).') }, required: ['revisionName', 'action', 'path'], additionalProperties: false },
+    rejected: { files: 'This tool writes one file per call: send path, action and content for a single file. Make one workspace_upsert call per file instead of a files array.' },
+    run: ({ action, path, content, workspaceId, createNew, workspaceName, revisionName, template }) => {
     if (action !== 'create' && action !== 'update' && action !== 'delete' && action !== 'continue' && action !== 'patch') throw Error('action must be create, update, delete, continue, or patch')
     if (!workspaceId && !createNew) throw Error('Must provide workspaceId or createNew:true')
     if (createNew && !workspaceName) throw Error('workspaceName required when createNew:true')
-    if (!revisionName) throw Error('revisionName is required')
-    // When files[] is present it is the complete file list; otherwise the top-level path is the single file.
-    const entries = Array.isArray(files) ? files.map((f) => String((f as { action?: unknown }).action ?? 'update')) : [action]
-    const createCount = entries.filter((a) => a === 'create').length
-    const totalFiles = entries.length
-    if (createCount > 0 && totalFiles > 1) throw Error('a create call may add only one file; send each new file in its own call')
-    if (template != null && typeof template !== 'string') throw Error('template must be a template id string')
-    if (files != null) {
-      if (!Array.isArray(files) || !files.length || files.length > 16) throw Error('files must be a non-empty array of at most 16 entries')
-      for (const f of files) {
-        if (!f || typeof f !== 'object' || typeof (f as { path?: unknown }).path !== 'string') throw Error('each files entry needs a path string')
-        const a = (f as { action?: unknown }).action ?? 'update'
-        if (!['create', 'update', 'delete', 'continue', 'patch'].includes(String(a))) throw Error(`unsupported files entry action: ${String(a)}`)
-      }
-    }
     if (!revisionName) throw Error('revisionName is required')
     const p = sanitizePath(path)
     if (!p || p === 'file.txt') throw Error('path resolved to an invalid or empty name after sanitization')
@@ -331,7 +327,14 @@ export async function executeTool(call: ToolCall, enabled: Record<string, boolea
       const prop = properties[key]
       // External schemas (MCP) are often permissive: only reject unknown keys
       // when the schema explicitly forbids them.
-      if (!prop) { if (strict) throw Error(`Invalid argument: ${key}`); continue }
+      if (!prop) {
+        // A deliberately unsupported argument gets a message that tells the
+        // model how to proceed, instead of a bare "unknown key".
+        const refused = spec.rejected?.[key]
+        if (refused) throw Error(refused)
+        if (strict) throw Error(`Invalid argument: ${key}`)
+        continue
+      }
       if ((prop.type === 'string' && typeof value !== 'string') || (prop.type === 'number' && typeof value !== 'number') || (prop.type === 'integer' && !Number.isInteger(value))) throw Error(`Invalid argument: ${key}`)
     }
     const result = String(await (handlers[call.name] ? handlers[call.name](args) : spec.run(args)))
@@ -680,6 +683,21 @@ const idleRead = <T>(r: ReadableStreamDefaultReader<T>) => new Promise<ReadableS
   )
 })
 
+/* A refusal from this app's own request relay carries a marker header. It is a
+ * transport answer, not a provider answer, so it must not be mapped to
+ * "invalid API key" or "model not found". Returns null for real provider
+ * responses. */
+function relayErrorMessage(res: Response, snippet: string) {
+  if (res.headers.get('x-byok-proxy-error') !== '1') return null
+  let message = ''
+  try { message = String((JSON.parse(snippet) as { error?: unknown })?.error ?? '') } catch { /* plain text answer */ }
+  if (!message) message = `The request relay failed (HTTP ${res.status}).`
+  const code: ErrorCode = res.status === 429 ? 'rate_limited'
+    : res.status === 400 || res.status === 405 || res.status === 413 ? 'bad_request'
+      : 'cors'
+  return withCode(message, code, { status: res.status, retryable: res.status >= 500 })
+}
+
 export async function stream(e: Ep, sys: string, ms: Wire[], on: (t: string) => void, ac: AbortController, o: O = {}, onSummary: (t: string) => void = () => {}, availableTools: any[] = [], onToolDelta: (calls: ToolCall[]) => void = () => {}) {
   const req = buildStreamRequest(e, sys, ms, availableTools, o)
   const { url: u, headers: h, body, isAnthropic: an } = req
@@ -692,9 +710,11 @@ export async function stream(e: Ep, sys: string, ms: Wire[], on: (t: string) => 
     ...(req.redirect ? { redirect: req.redirect } : {}),
   })
   let res: Response
-  try { res = await fetch(u, fetchInit(body)) }
+  try { res = await providerFetch(u, fetchInit(body)) }
   catch (x: any) {
     if (x?.name === 'AbortError') throw withCode('Stopped', 'stopped')
+    // The relay itself is missing (static-only deployment): say so plainly.
+    if (x instanceof ProxyUnavailableError) throw withCode(x.message, 'cors')
     if (provider) {
       const mapped = mapNetworkError(provider, u)
       throw withCode(mapped.message, mapped.code, { retryable: mapped.retryable })
@@ -707,6 +727,10 @@ export async function stream(e: Ep, sys: string, ms: Wire[], on: (t: string) => 
   }
   if (!res.ok) {
     const snippet = (await res.text().catch(() => '')).slice(0, 2000) || res.statusText
+    // A refusal from this app's relay is not a provider answer: report it as a
+    // transport problem instead of mapping e.g. 403 to "check your API key".
+    const relayError = relayErrorMessage(res, snippet)
+    if (relayError) throw relayError
     if (provider) throw providerError(provider, res.status, snippet, { hasKey: !!e.key, headers: res.headers, key: e.key })
     const msg = `HTTP ${res.status}: ${snippet.slice(0, 300)}`
     if (res.status === 401 || res.status === 403) throw withCode(msg, 'upstream_auth', { status: res.status })
@@ -903,14 +927,17 @@ export async function stream(e: Ep, sys: string, ms: Wire[], on: (t: string) => 
         })()
       : body
     let fallback: Response
-    try { fallback = await fetch(u, fetchInit(fallbackBody)) }
+    try { fallback = await providerFetch(u, fetchInit(fallbackBody)) }
     catch (x: any) {
       if (x?.name === 'AbortError') throw withCode('Stopped', 'stopped')
+      if (x instanceof ProxyUnavailableError) throw withCode(x.message, 'cors')
       const mapped = mapNetworkError(provider, u)
       throw withCode(mapped.message, mapped.code, { retryable: mapped.retryable })
     }
     if (!fallback.ok) {
       const snippet = (await fallback.text().catch(() => '')).slice(0, 2000) || fallback.statusText
+      const relayError = relayErrorMessage(fallback, snippet)
+      if (relayError) throw relayError
       throw providerError(provider, fallback.status, snippet, { hasKey: !!e.key, headers: fallback.headers, key: e.key })
     }
     const json = await fallback.json()

@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
+import { createServer } from 'node:http'
 import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -189,7 +190,7 @@ test('extract blocks private targets at the HTTP layer', async () => {
 test('sync status reports the backend; unknown sync routes 404 as JSON', async () => {
   const status = await fetch(`${base}/api/sync/status`)
   assert.equal(status.status, 200)
-  assert.deepEqual(await status.json(), { ok: true, backend: 'memory', configured: false })
+  assert.deepEqual(await status.json(), { ok: true, backend: 'memory', configured: false, neonConfigured: false, shared: false })
   const unknown = await fetch(`${base}/api/sync/not-a-route`)
   assert.equal(unknown.status, 404)
   assert.match(unknown.headers.get('content-type') || '', /application\/json/)
@@ -204,6 +205,79 @@ test('cross-origin sync writes are refused before any storage happens', async ()
   })
   assert.equal(res.status, 403)
   assert.match((await res.json()).error, /Cross-origin/)
+})
+
+// --- /api/proxy -----------------------------------------------------------
+// A real upstream HTTP server, reached only through the relay: this is the
+// path that makes a provider with no CORS headers usable from a browser.
+let lastRelay = null
+const upstream = createServer(async (req, res) => {
+  const chunks = []
+  for await (const chunk of req) chunks.push(chunk)
+  lastRelay = { method: req.method, url: req.url, headers: req.headers, body: Buffer.concat(chunks).toString() }
+  if (req.url === '/v1/models') {
+    res.writeHead(200, { 'content-type': 'application/json', 'set-cookie': 'upstream=1' })
+    return res.end(JSON.stringify({ data: [{ id: 'mock/model' }] }))
+  }
+  if (req.url === '/v1/chat/completions') {
+    res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', 'access-control-allow-origin': '*' })
+    res.write('data: {"choices":[{"delta":{"content":"hel"}}]}\n\n')
+    res.write('data: {"choices":[{"delta":{"content":"lo"}}]}\n\n')
+    return res.end('data: [DONE]\n\n')
+  }
+  res.writeHead(404, { 'content-type': 'application/json' })
+  res.end('{"error":"no mock route"}')
+})
+await new Promise((resolve) => upstream.listen(0, '127.0.0.1', resolve))
+const upstreamOrigin = `http://127.0.0.1:${upstream.address().port}`
+test.after(() => { upstream.close() })
+
+const relayUrl = (target) => `${base}/api/proxy?url=${encodeURIComponent(target)}`
+
+test('proxy relays a POST to a provider with no CORS support, streaming SSE', async () => {
+  const res = await fetch(relayUrl(`${upstreamOrigin}/v1/chat/completions`), {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      authorization: 'Bearer relay-key',
+      origin: base,
+      cookie: 'should=not-forward',
+    },
+    body: JSON.stringify({ model: 'mock', stream: true }),
+  })
+  assert.equal(res.status, 200)
+  assert.match(res.headers.get('content-type') || '', /text\/event-stream/)
+  // Same-origin answer: upstream CORS headers and cookies must not leak.
+  assert.equal(res.headers.get('access-control-allow-origin'), null)
+  assert.equal(res.headers.get('set-cookie'), null)
+  const text = await res.text()
+  assert.match(text, /"hel"/)
+  assert.match(text, /\[DONE\]/)
+  assert.equal(lastRelay.method, 'POST')
+  assert.equal(lastRelay.headers.authorization, 'Bearer relay-key')
+  assert.equal(lastRelay.headers.origin, undefined)
+  assert.equal(lastRelay.headers.cookie, undefined)
+  assert.equal(lastRelay.body, JSON.stringify({ model: 'mock', stream: true }))
+})
+
+test('proxy relays GET discovery requests', async () => {
+  const res = await fetch(relayUrl(`${upstreamOrigin}/v1/models`))
+  assert.equal(res.status, 200)
+  assert.deepEqual(await res.json(), { data: [{ id: 'mock/model' }] })
+})
+
+test('proxy refuses cross-origin writes and non-http targets', async () => {
+  const evil = await fetch(relayUrl(`${upstreamOrigin}/v1/chat/completions`), {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', origin: 'https://evil.example' },
+    body: '{}',
+  })
+  assert.equal(evil.status, 403)
+  assert.equal((await evil.json()).code, 'cross_origin')
+
+  const bad = await fetch(relayUrl('file:///etc/passwd'))
+  assert.equal(bad.status, 400)
+  assert.equal((await bad.json()).code, 'bad_target')
 })
 
 test('spoofing proxy headers cannot bypass the per-IP search rate limit', async () => {

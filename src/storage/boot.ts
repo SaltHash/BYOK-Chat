@@ -90,7 +90,9 @@ export async function hydrateDurable(patch: (p: Record<string, unknown>) => void
       restoredBlobs = await restoreAttachmentBytes(dChats as Parameters<typeof restoreAttachmentBytes>[0]).catch(() => 0)
       const p: Record<string, unknown> = {}
       p.chats = dChats
-      if (dWs) p.workspaces = dWs
+      // An empty durable map must not wipe the workspaces that localStorage
+      // still holds (the durable copy can be empty after a quota prune).
+      if (dWs && Object.keys(dWs).length) p.workspaces = dWs
       if (Object.keys(p).length) patch(p)
     } else if (dChats) {
       restoredBlobs = await restoreAttachmentBytes(dChats as Parameters<typeof restoreAttachmentBytes>[0]).catch(() => 0)

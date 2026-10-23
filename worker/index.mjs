@@ -12,6 +12,7 @@
  *   BRIGHTDATA_API_KEY, SEARCH_API_KEY, SEARCH_API_ZONE, DATABASE_URL
  */
 import { apiRoute } from '../server/api.mjs'
+import { proxyRoute } from '../server/proxy.mjs'
 import { jsonResult } from '../server/http.mjs'
 
 function toResponse(result) {
@@ -31,6 +32,11 @@ function pathExtension(pathname) {
 export default {
   async fetch(request, env) {
     try {
+      // Provider relay first: it answers with a streaming Response rather than
+      // the JSON result descriptor apiRoute returns. Same-origin from the
+      // browser's point of view, so no provider CORS headers are needed.
+      const proxied = await proxyRoute(request, env)
+      if (proxied) return proxied
       const result = await apiRoute(request, env)
       if (result) return toResponse(result)
     } catch (error) {

@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { handleSyncPush, handleSyncPull, parseToken } from './sync.mjs'
-import { memStore, sha256Hex, syncBackend, redact } from './syncStore.mjs'
+import { memStore, sha256Hex, syncBackend, redact, neonSyncEnabled } from './syncStore.mjs'
 
 const req = (body, query = '') => {
   const text = typeof body === 'string' ? body : JSON.stringify(body ?? {})
@@ -90,9 +90,20 @@ test('syncBackend uses memory without DATABASE_URL and surfaces query failures',
   assert.equal((await syncBackend({})).kind, 'memory')
   // A configured database is never silently replaced by the in-memory store:
   // failures reaching the store's own methods must propagate to the caller.
-  const backend = await syncBackend({ DATABASE_URL: 'postgres://user:pw@127.0.0.1:1/db' })
+  const backend = await syncBackend({ DATABASE_URL: 'postgres://user:pw@127.0.0.1:1/db', SYNC_BACKEND: 'neon' })
   assert.equal(backend.kind, 'neon')
   await assert.rejects(() => backend.get('anything'))
+})
+
+test('Neon sync is switched off unless it is switched on again', async () => {
+  // The database is not contacted while Neon is off, even with a URL set.
+  assert.equal(neonSyncEnabled({}), false)
+  assert.equal(neonSyncEnabled({ DATABASE_URL: 'postgres://user:pw@127.0.0.1:1/db' }), false)
+  assert.equal((await syncBackend({ DATABASE_URL: 'postgres://user:pw@127.0.0.1:1/db' })).kind, 'memory')
+  // The switch that brings it back: SYNC_BACKEND=neon.
+  assert.equal(neonSyncEnabled({ SYNC_BACKEND: 'neon' }), true)
+  assert.equal(neonSyncEnabled({ SYNC_BACKEND: 'NEON' }), true)
+  assert.equal(neonSyncEnabled({ SYNC_BACKEND: 'memory' }), false)
 })
 
 test('connection strings are redacted before they can reach logs', () => {

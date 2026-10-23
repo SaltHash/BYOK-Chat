@@ -3,8 +3,11 @@
 
 export const WORKSPACE_TOOL = 'workspace_upsert'
 export const WORKSPACE_MAX_CONTENT = 50000
-export const WORKSPACE_MAX_FILES = 16
 export const WORKSPACE_MAX_PATH = 200
+/** How many file paths a tool result lists back to the model. The workspace
+ *  itself is uncapped; only this manifest is shortened, so a long project
+ *  cannot flood the context on every call. */
+export const WORKSPACE_RESULT_FILES = 40
 export const WORKSPACE_TRUNC_MARKER = '\n\n[truncated: content exceeded 50,000 characters]'
 
 /** Coerce any model-supplied path to a safe relative zip entry. Never throws. */
@@ -33,7 +36,7 @@ export function truncateWorkspaceContent(content: string, max = WORKSPACE_MAX_CO
   return { text: content, truncated: false }
 }
 
-export type WorkspaceArgs = { action?: string; path?: string; language?: string; content?: string; label?: string; template?: string; files?: { path?: string; language?: string; content?: string; action?: string }[] }
+export type WorkspaceArgs = { action?: string; path?: string; language?: string; content?: string; label?: string; template?: string }
 
 /** Best-effort unescape of a JSON string fragment (tolerates a cut-off tail). */
 function unescapeFragment(s: string): string {
@@ -54,19 +57,6 @@ export function parseWorkspaceArgsPartial(raw: string): WorkspaceArgs {
       const out: WorkspaceArgs = {}
       for (const k of ['action', 'path', 'language', 'content', 'label', 'template'] as const) {
         if (typeof (v as Record<string, unknown>)[k] === 'string') out[k] = (v as Record<string, string>)[k]
-      }
-      // Batch file lists only parse from complete JSON (they stream poorly).
-      const files = (v as Record<string, unknown>).files
-      if (Array.isArray(files)) {
-        out.files = files
-          .filter((f) => f && typeof f === 'object' && !Array.isArray(f))
-          .map((f) => {
-            const r = f as Record<string, unknown>
-            const e: { path?: string; language?: string; content?: string; action?: string } = {}
-            for (const k of ['path', 'language', 'content', 'action'] as const) if (typeof r[k] === 'string') e[k] = r[k] as string
-            return e
-          })
-          .filter((f) => f.path != null)
       }
       return out
     }
@@ -95,8 +85,10 @@ export function parseWorkspaceArgsPartial(raw: string): WorkspaceArgs {
 export type WorkspaceCallLike = { id: string; name: string; arguments: string }
 export type WorkspaceVersion = { action: string; path: string; language: string; content: string; label?: string; callId: string }
 
-/** Group workspace calls by sanitized path in message order. Caps distinct files. */
-export function groupWorkspaceVersions(calls: WorkspaceCallLike[], limit = WORKSPACE_MAX_FILES): { path: string; versions: WorkspaceVersion[] }[] {
+/* Group workspace calls by sanitized path in message order. There is no cap on
+   the number of files a workspace may hold: the model writes one file per
+   call, and a large project is a normal outcome. */
+export function groupWorkspaceVersions(calls: WorkspaceCallLike[], limit = Number.POSITIVE_INFINITY): { path: string; versions: WorkspaceVersion[] }[] {
   const order: string[] = []
   const map = new Map<string, WorkspaceVersion[]>()
   for (const c of calls) {
@@ -105,8 +97,7 @@ export function groupWorkspaceVersions(calls: WorkspaceCallLike[], limit = WORKS
     // Skip calls that have not streamed a real file target yet: an empty path
     // is not a file named "file.txt", it is just arguments still arriving.
     const hasPath = typeof a.path === 'string' && a.path.trim().length > 0
-    const hasFiles = Array.isArray(a.files) && a.files.length > 0
-    if (!hasPath && !hasFiles) continue
+    if (!hasPath) continue
     const path = sanitizePath(a.path ?? '')
     const v: WorkspaceVersion = {
       action: typeof a.action === 'string' && a.action ? a.action : 'create',
@@ -289,6 +280,60 @@ export function migrateLegacyCanvasGroups(chats: { msgs: any[] }[]): { workspace
   }
 
   return { workspaces, selectedRevision }
+}
+
+/* ---- Which workspace does a workspace_upsert call target? ----------------
+ * The model often omits the workspace id (it is not in its context between
+ * replies) or repeats createNew for what is really the same project. Both
+ * used to spawn a second, nearly empty workspace, so the files the user was
+ * looking at appeared to vanish. The active workspace of the chat is the
+ * fallback. */
+
+export type WorkspaceTargetInput = { workspaceId?: string; createNew?: boolean; workspaceName?: string }
+
+export type WorkspaceTarget = {
+  workspaceId?: string
+  createNew?: boolean
+  workspaceName?: string
+  /** Set when the call was redirected away from what the model asked for. */
+  fallback?: 'active' | 'new'
+}
+
+/** The workspace a chat is working in: the last one touched by any message. */
+export function activeWorkspaceId(msgs: { workspaceIds?: string[] }[]): string | undefined {
+  for (let i = msgs.length - 1; i >= 0; i--) {
+    const ids = msgs[i]?.workspaceIds
+    if (ids?.length) return ids[ids.length - 1]
+  }
+  return undefined
+}
+
+/**
+ * Decide which workspace a workspace_upsert call targets.
+ * - A known workspaceId wins.
+ * - An unknown workspaceId (stale or hallucinated) falls back to the chat's
+ *   active workspace so the files land where the user is looking.
+ * - With no id at all the active workspace is used; a new workspace is only
+ *   created when the chat has none yet.
+ * - createNew:true starts a new workspace, unless the name matches the
+ *   active one (the model re-creating "the same project").
+ */
+export function resolveWorkspaceTarget(
+  input: WorkspaceTargetInput,
+  ctx: { workspaces: Record<string, Workspace>; activeId?: string },
+): WorkspaceTarget {
+  const name = String(input.workspaceName ?? '').trim().slice(0, 80)
+  const active = ctx.activeId ? ctx.workspaces[ctx.activeId] : undefined
+  if (input.createNew) {
+    if (active && name && name.toLowerCase() === String(active.name ?? '').trim().toLowerCase()) {
+      return { workspaceId: active.id, fallback: 'active' }
+    }
+    return { createNew: true, workspaceName: name || 'Workspace' }
+  }
+  const wanted = String(input.workspaceId ?? '').trim()
+  if (wanted && ctx.workspaces[wanted]) return { workspaceId: wanted }
+  if (active) return { workspaceId: active.id, fallback: 'active' }
+  return { createNew: true, workspaceName: name || 'Workspace', fallback: 'new' }
 }
 
 /* ============================================================================
@@ -709,8 +754,8 @@ export const templateById = (id: string): WorkspaceTemplate | null => {
 }
 
 /* ---- Stateful workspace application (pure — the store is a thin wrapper).
- *  Applies one workspace_upsert call (single op + optional files[] batch +
- *  optional template scaffold) and returns the next workspaces map, the
+ *  Applies one workspace_upsert call (a single file operation + optional
+ *  template scaffold) and returns the next workspaces map, the
  *  selected revision id, and the tool result payload. Throws on any invalid
  *  input; callers surface the message. Same-message calls fold into one
  *  revision; otherwise a new revision is appended. */
@@ -726,7 +771,6 @@ export type WorkspaceCallInput = {
   path: string
   language?: string
   content?: string
-  files?: { path?: string; language?: string; content?: string; action?: string }[]
   template?: string
 }
 
@@ -737,6 +781,9 @@ export type WorkspaceCallResult = {
   revisionName: string
   changes: string[]
   scaffolded?: number
+  /** The paths the workspace holds after this call, so the model can see what
+   *  already exists before it writes the next file. */
+  files: string[]
 }
 
 const WORKSPACE_ACTIONS = ['create', 'update', 'delete', 'continue', 'patch']
@@ -785,21 +832,6 @@ export function applyWorkspaceCall(
   const now = ctx.now ?? Date.now()
   const safeName = String(input.revisionName ?? '').trim().slice(0, 200) || 'Revision'
   if (!WORKSPACE_ACTIONS.includes(String(input.action))) throw Error('action must be create, update, delete, continue, or patch')
-  const batch = Array.isArray(input.files) ? input.files : []
-  if (batch.length > WORKSPACE_MAX_FILES) throw Error(`files holds at most ${WORKSPACE_MAX_FILES} entries per call`)
-  // Distinct source paths can sanitize to the same file (spaces/control chars);
-  // applying both silently merged them, so reject the batch instead.
-  const batchPaths = new Set<string>()
-  for (const e of batch) {
-    if (!e || typeof e !== 'object' || typeof e.path !== 'string') throw Error('Each files entry needs a path string.')
-    if (!WORKSPACE_ACTIONS.includes(e.action ?? 'update')) throw Error(`Unsupported files entry action: ${e.action ?? 'update'}`)
-    if ((e.action ?? 'update') !== 'delete') {
-      const sp = sanitizePath(e.path)
-      if (batchPaths.has(sp)) throw Error(`files has two entries that resolve to the same path (${sp}). Use distinct paths.`)
-      batchPaths.add(sp)
-    }
-  }
-
   let next = { ...workspaces }
   let targetId = input.workspaceId
   let scaffolded = 0
@@ -838,12 +870,6 @@ export function applyWorkspaceCall(
     files = r.files
     notes.push(r.note)
   }
-  for (const e of batch) {
-    const r = applyOneFileOp(files, { action: e.action ?? 'update', path: e.path as string, language: e.language, content: e.content })
-    files = r.files
-    notes.push(r.note)
-  }
-  if (files.length > WORKSPACE_MAX_FILES * 2) throw Error(`Workspace holds too many files (cap ${WORKSPACE_MAX_FILES * 2}). Delete some first.`)
 
   let revision: WorkspaceRevision
   let revisions: WorkspaceRevision[]
@@ -865,6 +891,7 @@ export function applyWorkspaceCall(
       revisionName: safeName,
       changes: notes,
       ...(scaffolded ? { scaffolded } : {}),
+      files: files.map((f) => f.path),
     },
   }
 }

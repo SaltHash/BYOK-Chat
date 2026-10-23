@@ -124,8 +124,8 @@ export const Field = ({ label, hint, children }: { label: string; hint?: string;
 export const Input = ({ value, set, ...p }: { value: string | number; set: (v: string) => void } & Omit<InputHTMLAttributes<HTMLInputElement>, 'value' | 'onChange'>) => (
   <input {...p} value={value} onChange={(e) => set(e.target.value)} className={IN} />
 )
-export const Area = ({ value, set, rows = 4, ...p }: { value: string; set: (v: string) => void; rows?: number } & Omit<TextareaHTMLAttributes<HTMLTextAreaElement>, 'value' | 'onChange'>) => (
-  <textarea {...p} rows={rows} value={value} onChange={(e) => set(e.target.value)} className={cx(IN, 'resize-y')} />
+export const Area = ({ value, set, rows = 4, className, ...p }: { value: string; set: (v: string) => void; rows?: number; className?: string } & Omit<TextareaHTMLAttributes<HTMLTextAreaElement>, 'value' | 'onChange'>) => (
+  <textarea {...p} rows={rows} value={value} onChange={(e) => set(e.target.value)} className={cx(IN, 'resize-y', className)} />
 )
 export const Sel = ({ value, set, opts, placeholder }: { value: string; set: (v: string) => void; opts: [string, string][]; placeholder?: string }) => (
   <SearchSelect value={value} set={set} opts={opts} {...(placeholder ? { placeholder } : {})} />

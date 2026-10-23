@@ -64,6 +64,46 @@ export async function readBodyText(req, max = 16_384) {
   return Buffer.concat(chunks).toString('utf8')
 }
 
+/* Reads a request body as raw bytes from either an async-iterable Node stream
+ * or a Fetch API Request, capping it at `max` bytes. Returns null when the
+ * body exceeds the cap so callers can answer with 413. Used by the request
+ * proxy, where the payload is JSON (chat bodies can be large with inline
+ * images) and must be forwarded byte-for-byte. */
+export async function readBodyBytes(req, max = 16_384) {
+  const declared = Number(headerValue(req, 'content-length'))
+  if (Number.isFinite(declared) && declared > max) return null
+  if (typeof req?.arrayBuffer === 'function') {
+    const buf = new Uint8Array(await req.arrayBuffer())
+    return buf.length > max ? null : buf
+  }
+  const chunks = []
+  let size = 0
+  for await (const chunk of req) {
+    const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
+    size += buf.length
+    if (size > max) return null
+    chunks.push(buf)
+  }
+  return Buffer.concat(chunks)
+}
+
+/* Request headers as a Fetch API Headers object, whichever shape the host
+ * handed us (Node lowercases into a plain object, Workers use Headers). */
+export function requestHeaders(req) {
+  const headers = req?.headers
+  const out = new Headers()
+  if (!headers) return out
+  if (typeof headers.entries === 'function') {
+    for (const [name, value] of headers.entries()) out.set(name, value)
+    return out
+  }
+  for (const [name, value] of Object.entries(headers)) {
+    if (value == null) continue
+    out.set(name, Array.isArray(value) ? value.join(', ') : String(value))
+  }
+  return out
+}
+
 /* Best-effort client identifier for rate limiting. Proxy headers decide the
  * address only where they cannot be spoofed: Cloudflare always rewrites
  * `cf-connecting-ip` (and Worker requests have no socket), while a Node

@@ -18,7 +18,7 @@ export function detectAvailableCategories(j: Record<string, unknown>, themes: Re
     appearance: (typeof j.themeMode === 'string' && (j.themeMode === 'dark' || j.themeMode === 'light'))
       || (typeof j.themeDark === 'string' && (j.themeDark as string) in themes)
       || (typeof j.themeLight === 'string' && (j.themeLight as string) in themes)
-      || o(j.customDarkColors) || o(j.customLightColors)
+      || o(j.customDarkColors) || o(j.customLightColors) || o(j.customDarkTheme) || o(j.customLightTheme)
       || (typeof j.theme === 'string' && (j.theme as string) in themes) || o(j.customColors) || o(j.prefs),
     features: o(j.features) || Array.isArray(j.featureOrder) || o(j.libraryShow) || o(j.advanced),
     tools: o(j.tools) || o(j.search) || Array.isArray(j.mcps) || o(j.imageGen) || o(j.codeRun),
@@ -32,6 +32,7 @@ export function detectAvailableCategories(j: Record<string, unknown>, themes: Re
 type ExportState = {
   themeMode: unknown; themeDark: unknown; themeLight: unknown
   customDarkColors: unknown; customLightColors: unknown; prefs: unknown
+  customDarkTheme?: unknown; customLightTheme?: unknown
   keys: unknown; eps: { key: string }[] & Array<Record<string, unknown>>; sel: unknown
   prompts: unknown; pr: unknown; globalPrompt: unknown
   pls: unknown; cmds: unknown; skills: unknown
@@ -52,7 +53,7 @@ export function buildExportPayload(
   normSearch: (v: unknown) => { keys: Record<string, string> } & Record<string, unknown>,
 ): Record<string, unknown> {
   const data: Record<string, unknown> = { v: 4 }
-  if (exports.appearance) { data.themeMode = s.themeMode; data.themeDark = s.themeDark; data.themeLight = s.themeLight; data.customDarkColors = s.customDarkColors; data.customLightColors = s.customLightColors; data.prefs = s.prefs }
+  if (exports.appearance) { data.themeMode = s.themeMode; data.themeDark = s.themeDark; data.themeLight = s.themeLight; data.customDarkColors = s.customDarkColors; data.customLightColors = s.customLightColors; data.customDarkTheme = s.customDarkTheme; data.customLightTheme = s.customLightTheme; data.prefs = s.prefs }
   if (exports.keys) data.keys = s.keys
   if (exports.eps) { data.eps = (s.eps as Record<string, unknown>[]).map((e) => ({ ...e, key: withKeys ? (e as { key: unknown }).key : '' })); data.sel = s.sel }
   if (exports.prompts) { data.prompts = s.prompts; data.pr = s.pr; data.globalPrompt = s.globalPrompt }

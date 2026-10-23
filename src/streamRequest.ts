@@ -2,6 +2,7 @@ import type { Ep } from './store'
 import type { Wire } from './engine'
 import { withCode } from './errors'
 import { hasUnresolvedPlaceholder, providerBaseUrl, providerHeaders, resolveProvider } from './providerRegistry'
+import { endpointAuthHeaders, endpointHeaders } from './endpointAuth'
 
 export type StreamOptions = { cap?: number; max?: number; temp?: number; topp?: number; effort?: string }
 
@@ -27,7 +28,7 @@ export function buildStreamRequest(
   let body: Record<string, unknown>
   if (an) {
     u = b + '/messages'
-    h['x-api-key'] = e.key
+    Object.assign(h, endpointAuthHeaders(e, 'x-api-key'))
     h['anthropic-version'] = '2023-06-01'
     h['anthropic-dangerous-direct-browser-access'] = 'true'
     body = { model: e.model, max_tokens: o.max ?? o.cap ?? 4096, stream: true, messages: ms }
@@ -41,7 +42,7 @@ export function buildStreamRequest(
   } else {
     u = base + (provider?.chatPath ?? '/chat/completions')
     if (provider) Object.assign(h, providerHeaders(provider, e))
-    else if (e.key) h.authorization = 'Bearer ' + e.key
+    else Object.assign(h, endpointAuthHeaders(e))
     body = { model: e.model, stream: true, messages: sys ? [{ role: 'system', content: sys }, ...ms] : ms }
     // Ask providers to include token usage (and, for OpenRouter, cost) in
     // the final streamed chunk. Without this most OpenAI-compatible APIs
@@ -66,7 +67,7 @@ export function buildStreamRequest(
   }
   return {
     url: u,
-    headers: h,
+    headers: endpointHeaders(e, h),
     body,
     isAnthropic: an,
     ...(provider?.followRedirects ? { redirect: 'follow' as RequestRedirect } : {}),

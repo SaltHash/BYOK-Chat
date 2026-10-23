@@ -1,6 +1,6 @@
 # BYOK Chat
 
-A highly customizable, browser-based chat client supporting custom endpoints. Model provider keys are saved in the browser and sent directly to the configured provider. The included Node service (or the Cloudflare Worker) handles web search and does not store model credentials.
+A highly customizable, browser-based chat client supporting custom endpoints. Model provider keys are saved in the browser and sent to the configured provider. The included Node service (or the Cloudflare Worker) handles web search and does not store model credentials; when a provider refuses browser (CORS) requests, the same service can relay them without storing anything.
 
 ## Run locally
 
@@ -15,11 +15,35 @@ npm run dev
 
 There are no committed environment files. Search tuning lives in the app under Settings → Tools → Web search and grounding (results per search, request timeout, text per result, total text per search, retries, retry delay) and is sent with each search request; the server only enforces hard caps (10 results, 3000 characters per result, 24000 total characters per search, 1–30s timeout, 0–4 retries). The page reader has its own API, key, timeout, text limit, retries and retry delay under the Page reader tool, next to the reader settings they belong to.
 
-Every settings page is grouped into labelled sections (for example Chats → Replies, Temporary chats, Behavior, Documents), so related settings sit together. In Settings → Tools the tool list is ordered by relevance, and enabled tools are pinned to the top of the list while keeping that order. Turning a tool on asks for permission first; tick **Do not ask again** in that popup to allow the tool for good (the card then shows *Always allowed*, and the choice can be undone there).
+Every settings page is grouped into labelled sections (for example Chats → Replies, Temporary chats, Behavior, Documents), so related settings sit together. In Settings → Tools the tool list is ordered by relevance, and enabled tools are pinned to the top of the list while keeping that order. Turning a tool on takes effect right away — there is no permission popup — and the card shows *Allowed*. The per-tool **Do not ask again** toggle (a "?" hover tip explains it) is kept for the tools that were allowed for good earlier.
 
 ## Inference providers per model
 
 For OpenRouter endpoints each model row under Settings → Endpoints has a low-key **Provider** button. It opens a modal listing the providers currently serving that model, fetched live from OpenRouter's `/api/v1/models/{id}/endpoints` API (Amazon Bedrock, Anthropic, Google Vertex, region/variant endpoints, …). Picking one pins every request for that model to it — the body carries `provider: { order: [tag], allow_fallbacks: false }` — while **Automatic** keeps OpenRouter's default price-load-balanced routing. A provider slug can also be typed by hand when a model is not listed. Non-OpenRouter endpoints never show the button, and the choice is stored per model and travels with config exports.
+
+## Adding any provider from cURL
+
+Settings → Endpoints shows **OpenAI-compatible**, **Anthropic-compatible**, and **Add provider from cURL** at the top of the endpoint list and again below it, so a new provider does not require scrolling through the existing cards. The cURL importer reads the URL, `Authorization`/`x-api-key` header, JSON body, and `model` locally, previews the base URL and API format, and lets you correct the name or switch between OpenAI-compatible and Anthropic Messages before adding it. Nothing from the pasted command is sent during parsing.
+
+After a provider is added, the app probes common catalog locations such as `/models`, `/v1/models`, `/api/models`, `/api/v1/models`, and Ollama's `/api/tags`. The first URL that returns models is remembered, as are permanent failures (404/405/400/501 and empty catalogs), so later **Load available models** requests skip dead locations instead of repeating them. The cache is keyed by base URL plus a non-reversible fingerprint of the API key; changing the key clears cached auth-sensitive attempts, and network/5xx failures are retried rather than cached. **Retry model-list checks** in the model picker clears that endpoint's cached URLs and probes them again.
+
+The importer understands Bearer, Basic (including `-u user:password`), `api-key`, `x-api-key`, and `x-goog-api-key` auth, keeps other headers such as `HTTP-Referer`, `X-Title`, or `anthropic-beta`, and preserves an unusual authorization scheme as a custom header. The same controls live under an endpoint's **Credentials**: custom endpoints can choose the auth method, every endpoint can add extra `Name: value` headers, and **Test connection** in the cURL preview sends one tiny optional request before creating the endpoint.
+
+## Providers that block browser requests (CORS)
+
+Some inference APIs never send `Access-Control-Allow-Origin` — Cloudflare Workers AI, llmtech.eu, and many self-hosted gateways — so a browser cannot call them directly, from localhost or from production. Those requests are relayed through this app's own origin instead: `/api/proxy?url=<encoded absolute URL>`, implemented once in `server/proxy.mjs` and shared by the Node server and the Cloudflare Worker.
+
+Settings → Endpoints → Advanced connection settings → **Request routing**:
+
+- **Auto** (default): call the provider directly and relay only when the browser blocks it. Nothing changes for providers that already allow browser access.
+- **Always relay**: send every provider request through this server.
+- **Direct only**: never relay; providers without CORS headers stay unreachable.
+
+The relay is a true pass-through: same URL, same headers (`Authorization`, `x-api-key`, custom headers), same bytes, and SSE replies stream through unbuffered. Keys are forwarded per request and never stored or logged, but in relay mode they do transit your server. Model discovery, image generation and MCP servers all use the same transport (`src/net.ts`), so they benefit without further setup.
+
+Safeguards: absolute http(s) targets only, no URLs with embedded credentials, same-origin required for state-changing calls, 120 requests/minute per client, a 32 MB body cap, private-address/metadata blocking, and connect-time DNS pinning on the Node host. Private targets are allowed when the app itself is served from localhost (so local Bifrost/LiteLLM gateways work) or with `PROXY_ALLOW_PRIVATE=1`; `PROXY_ALLOWED_HOSTS=api.example.com,*.example.org` switches the relay to a strict allowlist.
+
+A static-only deployment (for example `dist/` on a plain CDN) has no `/api` backend, so the relay is unavailable there and providers must allow browser requests; run `server.mjs` or the Worker to get it.
 
 ## AIHubMix
 
@@ -89,9 +113,23 @@ Skills are reusable instruction packs the model loads itself. Each skill has an 
 
 Default system prompts are `General` (general assistant behavior: follow instructions, be clear and accurate, reason when needed), `Creativity` (original, expressive, experimental ideas without fabricating facts), and `Concise`. Pick one from the prompt menu under the chat box.
 
+### Prompt variables and the current date
+
+Every user-facing system prompt (the global prompt, a chat prompt, a playlist prompt, a command prompt) may use `{variable}` placeholders. They are resolved in UTC when the request is built (`src/promptVars.ts`), and only these names are replaced — anything else in braces is left alone:
+
+- `{date}` — `2026-10-21`
+- `{time}` — `14:03:11 UTC`
+- `{datetime}` — `2026-10-21 14:03:11 UTC`
+- `{weekday}` — `Wednesday`
+- `{iso}` — `2026-10-21T14:03:11Z`
+
+Settings → Prompts offers the variables as buttons that append the placeholder to the prompt you are editing. Independently of the prompt, every request also carries one line of context with the current UTC date and time, so the model never has to guess which day it is.
+
+The stats tab splits **Tokens sent** into what you wrote (explicitly sent) and everything that travelled with it (history + tool calls: the system prompt, earlier messages, and any tool calls and their results).
+
 ## MCP servers (external tools)
 
-The app can connect to any Model Context Protocol server over Streamable HTTP (Settings → MCP servers). Add a server, paste an optional `Authorization: Bearer ...` header block, press **Test connection & load tools**, and every tool the server lists joins the normal tool loop on the next message. Requests go straight from the browser to the server, so the server must allow this origin (CORS); headers are stored in this browser only and are never sent to this app's backend. Tool names are namespaced as `mcp_<server>_<tool>` (slugged, 64 characters max) and share the ordinary tool-round budget. Each server has its own switch, and the whole feature has a kill switch under Features; a disabled server or feature contributes no tools and cannot be called. Turning the Tools feature off disables MCP entirely. Tools are listed and called through `src/mcp.ts`; the connection is re-established per operation and nothing is cached server-side.
+The app can connect to any Model Context Protocol server over Streamable HTTP (Settings → MCP servers). Add a server, paste an optional `Authorization: Bearer ...` header block, press **Test connection & load tools**, and every tool the server lists joins the normal tool loop on the next message. Requests go from the browser to the server, normally directly; when the server refuses this origin (CORS) the call is retried through the app relay described above. Headers are stored in this browser only and are never persisted by this app's backend. Tool names are namespaced as `mcp_<server>_<tool>` (slugged, 64 characters max) and share the ordinary tool-round budget. Each server has its own switch, and the whole feature has a kill switch under Features; a disabled server or feature contributes no tools and cannot be called. Turning the Tools feature off disables MCP entirely. Tools are listed and called through `src/mcp.ts`; the connection is re-established per operation and nothing is cached server-side.
 
 ## Image generation
 
@@ -170,9 +208,11 @@ Token sync links two devices with one super-long token (`byok1-<id>-<secret>`, `
 
 - `POST /api/sync/push` `{ token, payload }` → `{ ok, updatedAt, backend }`
 - `GET /api/sync/pull` with `Authorization: Bearer <token>` (or `POST` with `{ token }`) → `{ payload, storeVersion, exportVersion, updatedAt }`
-- `GET /api/sync/status` → `{ backend: 'neon' | 'memory' | 'unavailable', configured }`
+- `GET /api/sync/status` → `{ backend: 'neon' | 'memory' | 'unavailable', configured, neonConfigured, shared }`
 
 Tokens are read from the `Authorization` header or the POST body only; a token in the query string is refused so it can never reach access logs. State-changing sync calls are same-origin only, and `/api/search`, `/api/extract`, `/api/reader` and `/api/sync/*` are each limited to 30 requests per minute per client address (Cloudflare's `cf-connecting-ip`, or the socket address on Node — set `TRUST_PROXY=1` on a Node host behind a trusted reverse proxy to use `cf-connecting-ip`/`x-forwarded-for`).
+
+**Neon is switched off for now.** The sync slot lives in the server's memory instead of the database, so a deployment does not talk to Neon at all. Everything else is untouched: the token format, the device-side encryption, the merge rules, the API and the background runtime all work exactly as before — only the place the encrypted envelope is stored changed. Set `SYNC_BACKEND=neon` (with `DATABASE_URL`) to switch the database back on; `server/syncStore.mjs` keeps the Neon client, the schema handling and the "the database is unreachable" 503 exactly as they were. While the slot is in memory it is not shared between devices and a server restart clears it, and Settings → Data controls says so. Share snapshots are a separate feature and still use Neon when `DATABASE_URL` is set.
 
 Set `DATABASE_URL` to a Neon Postgres URL for persistence (applying `server/neon-schema.sql` is recommended; RLS is deny-by-default so only the API service role touches `sync_states`, and share snapshots use `shared_chats`, which the API also creates on first use). Without it the server uses in-memory storage for dev (bounded to the 200 most recent slots). If `DATABASE_URL` is set but the database cannot be reached, sync fails with a 503 `sync_unavailable` instead of silently writing to memory, so devices can never diverge unnoticed. Sync payloads are encrypted on the device before upload (see above), so the server never sees plaintext; the optional password field in the Export data modal encrypts the whole file with AES-GCM-256 + PBKDF2 (`src/storage/backupCrypto.ts`), and importing an encrypted file asks for that password before it can be read. Background push/pull is best-effort and never blocks the UI. The sync payload is capped at 8 MB (the client refuses to encrypt more than ~5.7 MB of JSON, since base64 inflates it by about a third).
 
@@ -194,7 +234,12 @@ Every grounded reply shows a **Sources** button below the workspaces and above t
 
 ### Page summaries (reader subagent)
 
-Settings → Tools → Page reader can send every fetched page to a **second model** before the main model sees it. Pick the exact summary model (endpoint **and** model id) and a summary length; the subagent returns a clean, self-contained summary of the page, and only that summary is added to the main context, so a 40,000-character article no longer crowds out the conversation. The summary model is told to keep concrete facts, numbers, dates and short quotes, to ignore any instructions found inside the page, and to invent nothing. A failed or unconfigured summary falls back to the raw excerpt, and the process log records the summary call, its token use and its cost.
+Settings → Tools → Page reader can send every fetched page to a **second model** before the main model sees it. Pick how the summary model is chosen and a summary length; the subagent returns a clean, self-contained summary of the page, and only that summary is added to the main context, so a 40,000-character article no longer crowds out the conversation. The summary model is told to keep concrete facts, numbers, dates and short quotes, to ignore any instructions found inside the page, and to invent nothing. A failed or unconfigured summary falls back to the raw excerpt, and the process log records the summary call, its token use and its cost.
+
+Two ways to pick the summary model:
+
+- **One picked model** — the exact endpoint and model id. There is no silent fallback: a failed summary uses the raw excerpt.
+- **Endpoint model flow** — the endpoint's default model first, then the rest of its model list in order, until one works. A model that fails is remembered for the rest of the assistant response, so the next page read skips it instead of paying for the same failure again. If every model in the flow fails, the raw page text is used.
 
 ## Documents: PDFs, Office, archives, transcripts, OCR
 
@@ -204,9 +249,9 @@ Image text extraction is opt-in (Settings → Chats → Documents): Auto transcr
 
 ## Workspaces: previews, diffs, patches, templates
 
-The model writes file artifacts with `workspace_upsert`, now with cheaper operations: `patch` applies a small unified diff (fuzzy context matching, precise rejection errors), `files[]` batches several changes into one revision, and `template` (`static-site`, `python-script`, `markdown-notes`) scaffolds a starter project with `createNew` — all validated locally before anything is stored (`src/workspace.ts`, no external compute). Up to 16 files per workspace.
+The model writes file artifacts with `workspace_upsert`, with cheaper operations: `patch` applies a small unified diff (fuzzy context matching, precise rejection errors) and `template` (`static-site`, `python-script`, `markdown-notes`) scaffolds a starter project with `createNew` — all validated locally before anything is stored (`src/workspace.ts`, no external compute). One call changes one file: the tool schema has no batch argument at all, so the model writes a project one file per call instead of guessing a `files[]` list. A workspace holds as many files as the project needs (there is no file cap); only the file list echoed back to the model is shortened, so a long project cannot flood the context. The tool result lists the paths the workspace holds, so the model can tell an existing file (update or patch it) from a missing one (create it), and the system prompt names the workspace the chat is working in so every further file lands in the same project.
 
-The side panel adds Code / Preview / Diff tabs per file: sandboxed HTML previews (scripts, frames, and event handlers stripped, iframe fully sandboxed), rendered Markdown, SVG images, and CSV tables. The Diff tab compares against the previous version or any older revision, with a changed-files summary to jump between. Tiles show `+added −removed` line stats, workspaces rename inline, and you can edit or delete files yourself (saved as Local edit revisions the model keeps building on), ask about a file in chat, or share a revision as a GitHub Gist with your own optional token (Settings → Workspace; saved with your settings and included in the encrypted sync payload when device sync is on). Project templates are catalogued in Settings → Workspace with one-click scaffold prompts.
+The side panel adds Code / Preview / Diff tabs per file: sandboxed HTML previews (scripts, frames, and event handlers stripped, iframe fully sandboxed), rendered Markdown, SVG images, and CSV tables. The Diff tab compares against the previous version or any older revision, with a changed-files summary to jump between. Tiles show `+added −removed` line stats, workspaces rename inline, and you can edit or delete files yourself (saved as Local edit revisions the model keeps building on), ask about a file in chat, or share a revision as a GitHub Gist with your own optional token (Settings → Workspace; saved with your settings and included in the encrypted sync payload when device sync is on). Project templates are catalogued in Settings → Workspace with one-click scaffold prompts. The panel follows the file the AI writes (Settings → Workspace → Auto-follow file) and keeps your own choice until the next write, so it never jumps back to the first file of the project.
 
 ## Recall, search, and smart routing
 

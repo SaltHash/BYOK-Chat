@@ -1,8 +1,10 @@
 import { createServer } from 'node:http'
 import { readFile, stat } from 'node:fs/promises'
 import { extname, resolve, sep } from 'node:path'
+import { Readable } from 'node:stream'
 import { brotliCompressSync, gzipSync } from 'node:zlib'
 import { apiRoute } from './server/api.mjs'
+import { proxyRoute } from './server/proxy.mjs'
 import { jsonResult } from './server/http.mjs'
 import { pinnedFetch } from './server/pinnedFetch.mjs'
 
@@ -23,6 +25,22 @@ const mime = {
 function sendResult(res, result) {
   res.writeHead(result.status, result.headers)
   res.end(result.body === null ? undefined : JSON.stringify(result.body))
+}
+
+/* Stream a Fetch API Response (used by the /api/proxy relay) onto a Node
+ * response. Its body is passed through chunk by chunk so SSE chat replies
+ * arrive as they are produced instead of after the upstream finishes. */
+function sendWebResponse(res, response, method = 'GET') {
+  const headers = {}
+  for (const [name, value] of response.headers) headers[name] = value
+  // Stop intermediaries (nginx, Caddy) from buffering the stream.
+  headers['x-accel-buffering'] = 'no'
+  res.writeHead(response.status, headers)
+  if (!response.body || method === 'HEAD') return res.end()
+  const stream = Readable.fromWeb(response.body)
+  stream.on('error', () => res.destroy())
+  res.on('close', () => stream.destroy())
+  stream.pipe(res)
 }
 
 /* Static responses: hashed build chunks are immutable, the HTML shell always
@@ -75,6 +93,11 @@ const server = createServer(async (req, res) => {
     // /api/* is handled by the shared core in server/api.mjs — the same module
     // the Cloudflare Worker (worker/index.mjs) runs — so both hosts behave
     // identically. Everything else falls through to static file serving.
+    // Provider relay: same-origin so browser CORS never applies. Answers with
+    // a Fetch API Response (streaming), so it is adapted separately. Must run
+    // before apiRoute, whose catch-all would 404 unknown /api/* paths.
+    const proxied = await proxyRoute(req, process.env, { fetchFn: pinnedFetch })
+    if (proxied) return sendWebResponse(res, proxied, req.method)
     const result = await apiRoute(req, process.env, { fetchFn: pinnedFetch })
     if (result) return sendResult(res, result)
   } catch (error) {

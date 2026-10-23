@@ -17,11 +17,12 @@ export function SyncBox() {
   const [auto, setAuto] = useState(getAutoSync())
   const [status, setStatus] = useState('')
   const [backend, setBackend] = useState('…')
+  const [shared, setShared] = useState(true)
   const [copied, setCopied] = useState(false)
   const [busy, setBusy] = useState(false)
   // A pasted token whose remote data is fetched and awaiting a merge choice.
   const [linked, setLinked] = useState<{ token: string; data: SyncData; updatedAt: number } | null>(null)
-  useEffect(() => { void syncStatus().then((s) => setBackend(`${s.backend}${s.configured ? ' (Neon)' : ' (memory)'}`)).catch(() => setBackend('unreachable')) }, [])
+  useEffect(() => { void syncStatus().then((s) => { setBackend(s.configured ? 'Neon' : s.backend); setShared(s.shared !== false) }).catch(() => { setBackend('unreachable'); setShared(false) }) }, [])
   useEffect(() => { setAutoSync(auto) }, [auto])
   const last = getLastSync()
 
@@ -83,6 +84,9 @@ export function SyncBox() {
   return (
     <div className="space-y-3 rounded-xl bg-surf p-4">
       <div className="flex items-center gap-2 text-sm font-medium"><Link2 size={16} className="text-ac" /> Device sync <span className="text-xs font-normal text-mu">server: {backend}{last ? ` · last sync ${new Date(last).toLocaleTimeString()}` : ''}</span></div>
+      {!shared && (
+        <p className="text-xs text-mu">The sync slot is held in this server&rsquo;s memory, so it is not shared between devices and a restart clears it. Everything else (token, encryption, merge) works as usual.</p>
+      )}
       <p className="text-xs text-mu">Generate one super-long token on device A, link it on device B. Sync then runs automatically: this device pulls and smart-merges when it opens, when you return to the tab, and every few minutes, and pushes your changes. Only someone with the token can read or change the synced data, so keep it private.</p>
       {!token ? (
         <div className="flex flex-wrap gap-2">

@@ -1,18 +1,22 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { X, Plus, Trash2, ArrowUp, ArrowDown, CornerDownRight, ChevronRight, Eye, EyeOff, Play, ShieldCheck, Shield, Download, Upload, Check, CircleCheck, CircleX, Cpu, Route, GripVertical, Server, ListMusic, ScrollText, Terminal, Wrench, Palette, FolderOpen, FileText, PanelRight, TrendingUp, Keyboard, Search, Brain, Pencil, Sparkles, RotateCcw, SlidersHorizontal, FlaskConical, Library, Database, Lock, LockOpen, LayoutTemplate, Share2, Plug, Image as ImageIcon, Volume2, AudioLines, Code2 } from 'lucide-react'
-import { useS, useSConfig, PRE, THEMES, DARK_THEMES, LIGHT_THEMES, THEME_COLOR_KEYS, THEME_COLOR_LABELS, SEARCH_PROVIDERS, READER_PROVIDERS, FEATURES, LIBRARY_ITEMS, FEATURE_TABS, FEATURE_WIDGETS, DEFAULT_LIBRARY_SHOW, DEFAULT_ADVANCED, featOn, normSearch, normResearch, normAdvanced, normDocs, usable, modelsOf, modelNameOf, helperRef, splitHelperRef, effortClassifierOf, TOOL_ROUNDS_DEFAULT, TOOL_ROUNDS_MIN, TOOL_ROUNDS_BASE_MAX, TOOL_ROUNDS_MAX, toolRoundLimitOf, isToolRoundsUnlimited, GENERAL_PROMPT_TEXT, STARTUP_MODES, normStartup, type Kind, type FeatureId, type DocPrefs, type ModelPrice } from '../store'
+import { useS, useSConfig, PRE, BLANK, THEMES, DARK_THEMES, LIGHT_THEMES, BASE_THEMES, THEME_COLOR_KEYS, THEME_COLOR_LABELS, THEME_COLORS, defaultCustomTheme, customThemeColors, normCustomTheme, accentHue, SEARCH_PROVIDERS, READER_PROVIDERS, FEATURES, LIBRARY_ITEMS, FEATURE_TABS, FEATURE_WIDGETS, DEFAULT_LIBRARY_SHOW, DEFAULT_ADVANCED, featOn, normSearch, normResearch, normAdvanced, normDocs, usable, modelsOf, modelNameOf, helperRef, splitHelperRef, effortClassifierOf, TOOL_ROUNDS_DEFAULT, TOOL_ROUNDS_MIN, TOOL_ROUNDS_BASE_MAX, TOOL_ROUNDS_MAX, toolRoundLimitOf, isToolRoundsUnlimited, GENERAL_PROMPT_TEXT, STARTUP_MODES, normStartup, type Kind, type FeatureId, type DocPrefs, type ModelPrice } from '../store'
 import { RESEARCH_TIERS, type ResearchTierId } from '../research'
 import { normSkills, resolveSkill, validateCustomSkill, enabledSkills, BUILTIN_SKILLS, SKILL_TOOL_NAME, type SkillState } from '../skills'
 import { findDuplicatePairs, mergeMemory } from '../recall'
-import { TOOL_REGISTRY, can } from '../engine'
+import { TOOL_REGISTRY, can, stream } from '../engine'
 import { CI, TOOLS, WIDGETS, KEYS, orderTools } from '../meta'
 import { SETTINGS_TABS, splitSettingTarget, settingDomId } from '../settingsCatalog'
 import { PROMPT_QUALITIES, type GlobalPrompt } from '../flair'
+import { PROMPT_VARS } from '../promptVars'
 import { DataTab, StatsTab, KeysTab, TestRow, TestAllEndpoints } from './Extra'
 import { Btn, Field, Input, Area, Sel, Toggle, Seg, RangeSlider, Checkbox, HelpTip, Modal, Surface, Chip, cx, type Ic } from './ui'
 import { SortableList, type SortHandleProps, type SortItemApi } from './dnd'
-import { fetchModelCatalog, fetchModelProviders, filterCatalogByEndpoint, prioritizeProviderRows, type CatalogEntry, type CatalogProvider, type CatalogSource } from '../catalog'
+import { fetchModelCatalog, fetchModelProviders, filterCatalogByEndpoint, prioritizeProviderRows, discoverEndpointModels, clearModelDiscoveryCache, type CatalogEntry, type CatalogProvider, type CatalogSource } from '../catalog'
 import { resolveProvider } from '../providerRegistry'
+import { parseCurlCommand, type CurlProvider } from '../curlImport'
+import { ENDPOINT_AUTH_OPTIONS, endpointAuthOf, headerBlockOf, type EndpointAuth } from '../endpointAuth'
+import { providerFetch } from '../net'
 import { WORKSPACE_TEMPLATES } from '../workspace'
 import { probeMcpServer, mcpToolName, type McpServer } from '../mcp'
 import { BLANK_IMAGE_GEN, IMAGE_SIZES, normImageGen } from '../imagegen'
@@ -395,7 +399,8 @@ function ModelsEditor({ e, update }: { e: any; update: (p: object) => void }) {
     <button onClick={() => { setPicker(true); setSelectedModels([]); void loadCatalog() }} className="flex w-full items-center justify-center gap-2 rounded-lg border border-dashed border-bor py-2 text-sm text-mu hover:text-tx"><Plus size={14} />Add model</button>
     {picker && <Modal close={() => setPicker(false)} keyboard={false}><div className="modal-panel flex max-h-[80dvh] w-full max-w-xl flex-col gap-3 rounded-2xl bg-bg p-5 shadow-2xl">
       <div className="flex items-center justify-between"><div><h3 className="font-semibold">Choose a model</h3><p className="mt-0.5 text-xs text-mu">{e.name}{endpointId ? ` · ${endpointId}` : ''}</p></div><button onClick={() => setPicker(false)} className="grid size-8 place-items-center rounded-lg text-mu hover:bg-hov hover:text-tx" aria-label="Close model picker"><X size={16}/></button></div>
-      <button onClick={loadCatalog} className="self-start rounded-lg bg-hov px-3 py-2 text-xs text-tx">{catalog.length ? 'Refresh model catalog' : 'Load available models'}</button>
+      <div className="flex flex-wrap gap-2"><button onClick={loadCatalog} className="rounded-lg bg-hov px-3 py-2 text-xs text-tx">{catalog.length ? 'Refresh model catalog' : 'Load available models'}</button>
+      <button onClick={() => { clearModelDiscoveryCache(e.url); void loadCatalog() }} title="Clear cached working and failed model-list URLs for this endpoint, then probe them again." className="rounded-lg px-3 py-2 text-xs text-mu hover:bg-hov hover:text-tx">Retry model-list checks</button></div>
       <p className="text-xs text-mu">{catalogState || 'Loads this endpoint’s own model list when the provider offers one, then public catalogs when unavailable.'} Catalog entries may not be enabled on your endpoint.</p>
       <input value={query} onChange={ev => setQuery(ev.target.value)} placeholder="Search available models" className="w-full rounded-lg bg-surf px-3 py-2 text-sm outline-none"/>
       <div className="min-h-0 flex-1 space-y-1 overflow-auto">{[...catalog].sort((a,b) => modelIdCompare(storedId(a.id).replace(/^~+/, ''), storedId(b.id).replace(/^~+/, ''))).filter(x => `${x.name.replace(/^~+/, '')} ${storedId(x.id).replace(/^~+/, '')}`.toLowerCase().includes(query.toLowerCase()) && !models.includes(storedId(x.id))).slice(0,250).map(x => { const id = storedId(x.id), visibleId = id.replace(/^~+/, ''), checked = selectedModels.includes(id); return <button key={x.id} onClick={() => setSelectedModels(checked ? selectedModels.filter(m => m !== id) : [...selectedModels, id])} className="flex w-full items-center gap-3 rounded-md px-2 py-2 text-left text-sm hover:bg-hov"><span className={cx('grid size-4 shrink-0 place-items-center rounded border', checked ? 'border-ac bg-ac text-acx' : 'border-mu/60')}>{checked && <Check size={12}/>}</span><span className="min-w-0 flex-1"><span className="block truncate">{visibleId}</span>{(x.context || x.inputPrice !== undefined || x.outputPrice !== undefined) && <span className="block text-xs text-mu">{[x.context ? `${contextLabel(x.context)} context` : '', x.inputPrice !== undefined ? `$${x.inputPrice.toFixed(2)}/M in` : '', x.outputPrice !== undefined ? `$${x.outputPrice.toFixed(2)}/M out` : ''].filter(Boolean).join(' · ')}</span>}</span></button>})}
@@ -550,17 +555,167 @@ function HelperModels() {
   )
 }
 
+/* Paste a copied cURL command, inspect what was understood, then create the
+ * endpoint. Discovery runs after the endpoint exists, so a slow or blocked
+ * model list never prevents the provider from being added. */
+function CurlImportModal({ close, importProvider }: { close: () => void; importProvider: (provider: CurlProvider) => Promise<string> }) {
+  const [text, setText] = useState('')
+  const [name, setName] = useState('')
+  const [format, setFormat] = useState<'openai' | 'anthropic'>('openai')
+  const [auth, setAuth] = useState<EndpointAuth>('bearer')
+  const [busy, setBusy] = useState(false)
+  const [testing, setTesting] = useState(false)
+  const [testResult, setTestResult] = useState<{ ok: boolean; text: string } | null>(null)
+  const [done, setDone] = useState('')
+  const parsed = useMemo(() => parseCurlCommand(text), [text])
+  const parsedKey = parsed.ok ? [parsed.provider.baseUrl, parsed.provider.type, parsed.provider.auth, parsed.provider.key, parsed.provider.model].join('\n') : ''
+  useEffect(() => {
+    if (!parsed.ok) return
+    setName(parsed.provider.name)
+    setFormat(parsed.provider.type)
+    setAuth(parsed.provider.auth)
+  }, [parsedKey])
+  useEffect(() => { setTestResult(null) }, [text])
+  const draftEndpoint = () => {
+    if (!parsed.ok) return null
+    return {
+      ...BLANK.eps(),
+      name: name.trim() || parsed.provider.name,
+      type: format,
+      url: parsed.provider.baseUrl,
+      key: parsed.provider.key,
+      auth,
+      headers: headerBlockOf(parsed.provider.headers),
+      model: parsed.provider.model,
+    }
+  }
+  const testIt = async () => {
+    if (!parsed.ok || busy || testing) return
+    const endpoint = draftEndpoint()
+    if (!endpoint || !endpoint.model) {
+      setTestResult({ ok: false, text: 'Add a model id before testing the connection.' })
+      return
+    }
+    setTesting(true)
+    setTestResult(null)
+    const ac = new AbortController()
+    const timer = setTimeout(() => ac.abort(), 20_000)
+    try {
+      const out = await stream(endpoint, '', [{ role: 'user', content: 'Reply with exactly: OK' }], () => {}, ac, { cap: 24, temp: 0 })
+      setTestResult({ ok: true, text: out.text.trim().slice(0, 300) || '(connected, but the reply was empty)' })
+    } catch (err: any) {
+      setTestResult({ ok: false, text: err?.message || 'The connection test failed.' })
+    } finally {
+      clearTimeout(timer)
+      setTesting(false)
+    }
+  }
+  const importIt = async () => {
+    if (!parsed.ok || busy) return
+    setBusy(true)
+    try {
+      const message = await importProvider({ ...parsed.provider, name: name.trim() || parsed.provider.name, type: format, auth })
+      setDone(message)
+    } catch (err: any) {
+      setDone(`Could not add the provider: ${err?.message ?? 'unknown error'}`)
+    } finally { setBusy(false) }
+  }
+  const mask = (key: string) => !key ? 'No key found' : `••••${key.slice(-4)}`
+  return <Modal close={close}>
+    <div className="modal-panel flex max-h-[88dvh] w-full max-w-2xl flex-col gap-4 overflow-y-auto rounded-2xl bg-bg p-5 shadow-2xl">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h3 className="flex items-center gap-2 font-semibold"><Terminal size={18} className="text-ac" />Add provider from cURL</h3>
+          <p className="mt-1 text-xs text-mu">Paste a cURL command from the provider's docs. The URL, key, API format, and model are read locally; nothing is sent until you add the provider.</p>
+        </div>
+        <button onClick={close} className="grid size-8 shrink-0 place-items-center rounded-lg text-mu hover:bg-hov hover:text-tx" aria-label="Close cURL importer"><X size={16} /></button>
+      </div>
+      {done ? <div className="space-y-3">
+        <div className="flex items-start gap-2 rounded-xl bg-surf p-3 text-sm"><CircleCheck size={18} className="mt-0.5 shrink-0 text-ac" /><span>{done}</span></div>
+        <div className="flex justify-end gap-2"><Btn v="soft" onClick={() => { setDone(''); setText(''); setName('') }}>Add another</Btn><Btn v="solid" onClick={close}>Close</Btn></div>
+      </div> : <>
+        <Area rows={8} value={text} set={setText} spellCheck={false} placeholder={`curl https://api.example.com/v1/chat/completions \\\n  -H "Authorization: Bearer sk-..." \\\n  -H "Content-Type: application/json" \\\n  -d '{"model":"example-model","messages":[{"role":"user","content":"Hi"}]}'`} className="w-full resize-y rounded-lg bg-surf px-3 py-2 font-mono text-xs outline-none focus:ring-2 focus:ring-ac/40" />
+        {text.trim() && !parsed.ok && <p className="rounded-lg bg-er/10 p-2.5 text-sm text-er">{parsed.error}</p>}
+        {parsed.ok && <div className="space-y-3 rounded-xl bg-surf p-3">
+          <div className="grid gap-2 text-sm sm:grid-cols-2">
+            <label className="space-y-1 text-xs text-mu">Provider name<input value={name} onChange={(ev) => setName(ev.target.value)} className="w-full rounded-lg bg-bg px-2.5 py-2 text-sm text-tx outline-none focus:ring-2 focus:ring-ac/40" /></label>
+            <div className="space-y-1 text-xs text-mu">API format<Seg v={format} set={setFormat} opts={[['openai', 'OpenAI'], ['anthropic', 'Anthropic']]} /></div>
+            <div className="space-y-1 text-xs text-mu sm:col-span-2">Base URL<div className="truncate rounded-lg bg-bg px-2.5 py-2 font-mono text-xs text-tx">{parsed.provider.baseUrl}</div></div>
+            <div className="space-y-1 text-xs text-mu">API key<div className="rounded-lg bg-bg px-2.5 py-2 font-mono text-xs text-tx">{mask(parsed.provider.key)}</div></div>
+            <div className="space-y-1 text-xs text-mu">Model<div className="truncate rounded-lg bg-bg px-2.5 py-2 font-mono text-xs text-tx">{parsed.provider.model || 'Not set'}</div></div>
+            <div className="space-y-1 text-xs text-mu">Auth<Sel value={auth} set={(v) => setAuth(v as EndpointAuth)} opts={ENDPOINT_AUTH_OPTIONS} placeholder="Choose auth" /></div>
+            <div className="space-y-1 text-xs text-mu">Extra headers<div className="rounded-lg bg-bg px-2.5 py-2 text-sm text-tx">{Object.keys(parsed.provider.headers).length ? `${Object.keys(parsed.provider.headers).length} custom header${Object.keys(parsed.provider.headers).length === 1 ? '' : 's'}` : 'None'}</div></div>
+          </div>
+          {!!parsed.provider.warnings.length && <ul className="space-y-1 text-xs text-mu">{parsed.provider.warnings.map((warning, i) => <li key={i} className="flex gap-1.5"><span className="text-c3">•</span><span>{warning}</span></li>)}</ul>}
+          {testResult && <div className={cx('flex items-start gap-2 rounded-lg p-2.5 text-sm', testResult.ok ? 'bg-ac/10 text-ac' : 'bg-er/10 text-er')}>{testResult.ok ? <CircleCheck size={16} className="mt-0.5 shrink-0" /> : <CircleX size={16} className="mt-0.5 shrink-0" />}<span className="min-w-0 break-words">{testResult.ok ? `Connected. Reply: ${testResult.text}` : testResult.text}</span></div>}
+          <p className="text-xs text-mu">After adding, common model-list locations are checked once. Working and failed URLs are remembered so later catalog loads do not repeat dead requests.</p>
+        </div>}
+        <div className="flex flex-wrap justify-end gap-2"><Btn v="soft" onClick={close}>Cancel</Btn><Btn v="soft" icon={Play} disabled={!parsed.ok || busy || testing || !parsed.provider.model} onClick={testIt}>{testing ? 'Testing…' : 'Test connection'}</Btn><Btn v="solid" icon={Plus} disabled={!parsed.ok || busy || testing} onClick={importIt}>{busy ? 'Adding…' : 'Add provider'}</Btn></div>
+      </>}
+    </div>
+  </Modal>
+}
+
 function Eps() {
   const { eps, upd } = useSConfig()
   const s = useSConfig()
   const [show, setShow] = useState('')
   const [editingName, setEditingName] = useState('')
   const [advanced, setAdvanced] = useState<string[]>([])
+  const [curlOpen, setCurlOpen] = useState(false)
   const catalogPrefs = (endpointId: string) => Object.values(PRE).find((x) => x[2] && x[2] === endpointId)?.[3] ?? 'author'
   const selectPreset = (id: string, name: string) => {
     const [type, url, endpointId, endpointFilter] = PRE[name]
     upd('eps', id, { preset: name, type, url, name, endpointId, endpointFilter })
   }
+  const addCompatible = (type: 'openai' | 'anthropic') => {
+    const endpoint = {
+      ...BLANK.eps(),
+      name: type === 'anthropic' ? 'Anthropic-compatible' : 'OpenAI-compatible',
+      type,
+      preset: type === 'anthropic' ? 'Other Anthropic-compatible' : 'Other OpenAI-compatible',
+    }
+    // New quick-adds land at the top so the new card is visible immediately.
+    const state = useS.getState()
+    state.patch({ eps: [endpoint, ...state.eps] })
+  }
+  const importCurl = async (provider: CurlProvider): Promise<string> => {
+    const endpoint = {
+      ...BLANK.eps(),
+      name: provider.name,
+      type: provider.type,
+      url: provider.baseUrl,
+      key: provider.key,
+      auth: provider.auth,
+      headers: headerBlockOf(provider.headers),
+      model: provider.model,
+      models: provider.model ? [provider.model] : [''],
+      preset: provider.type === 'anthropic' ? 'Other Anthropic-compatible' : 'Other OpenAI-compatible',
+    }
+    const state = useS.getState()
+    state.patch({ eps: [endpoint, ...state.eps] })
+    const found = await discoverEndpointModels(endpoint, providerFetch)
+    const live = useS.getState().eps.find((x) => x.id === endpoint.id)
+    if (!live) return 'The endpoint was added, then removed before discovery finished.'
+    const ids = found.entries.map((x) => x.id).filter(Boolean)
+    if (provider.model && !ids.includes(provider.model)) ids.unshift(provider.model)
+    const models = ids.length ? [...new Set(ids)] : (provider.model ? [provider.model] : [''])
+    const names = Object.fromEntries(found.entries.filter((x) => x.name).map((x) => [x.id, x.name]))
+    const contexts = Object.fromEntries(found.entries.filter((x) => x.context && x.context > 0).map((x) => [x.id, x.context!]))
+    s.upd('eps', endpoint.id, {
+      models,
+      model: provider.model || models[0] || '',
+      ...(Object.keys(names).length ? { modelNames: { ...live.modelNames, ...names } } : {}),
+      ...(Object.keys(contexts).length ? { modelContext: { ...live.modelContext, ...contexts } } : {}),
+    })
+    if (found.entries.length) return `Added ${provider.name}. Found ${found.entries.length} model${found.entries.length === 1 ? '' : 's'} at ${found.workingUrl}.`
+    return `Added ${provider.name}. ${found.error || 'No model list was found.'} The model from the cURL command is still ready to use, and failed model-list URLs are cached so they are not retried.`
+  }
+  const quickActions = <div className="flex flex-wrap gap-2">
+    <Btn v="soft" icon={Plus} onClick={() => addCompatible('openai')}>OpenAI-compatible</Btn>
+    <Btn v="soft" icon={Plus} onClick={() => addCompatible('anthropic')}>Anthropic-compatible</Btn>
+    <Btn v="soft" icon={Terminal} onClick={() => setCurlOpen(true)}>Add provider from cURL</Btn>
+  </div>
   return (
     <Panel id="eps" k="eps" n={eps.length} add="Add endpoint">
       <Section title="Helper models" desc="The models that do the small jobs behind the scenes.">
@@ -573,6 +728,7 @@ function Eps() {
       </Anchor>
       </Section>
       <Section title="Endpoints" desc="The model APIs you connect with your own key.">
+      {quickActions}
       <SortableCards k="eps" ids={eps.map((x) => x.id)} label="Endpoint" renderCard={(eid, handle) => {
         const e = eps.find((x) => x.id === eid)
         if (!e) return null
@@ -600,6 +756,12 @@ function Eps() {
                   <button onClick={() => setShow(show === e.id ? '' : e.id)} title="Show or hide key" className="absolute right-2 top-1/2 -translate-y-1/2 text-mu hover:text-tx">{show === e.id ? <EyeOff size={16} /> : <Eye size={16} />}</button>
                 </div>
               </Field>
+              {!provider && <Field label="Auth method" hint="How the key is sent. Custom endpoints use this; named presets keep their own auth scheme.">
+                <Sel value={endpointAuthOf(e)} set={(v) => u({ auth: v as EndpointAuth })} opts={ENDPOINT_AUTH_OPTIONS} placeholder="Choose auth" />
+              </Field>}
+              <Field label="Extra headers" hint="Optional. One Name: value per line. Sent with chat and model-list requests. Auth headers here override the auth method.">
+                <Area rows={3} value={e.headers ?? ''} set={(v) => u({ headers: v })} placeholder={'HTTP-Referer: https://example.com\nX-Title: BYOK Chat'} className="font-mono text-xs" spellCheck={false} />
+              </Field>
               </section></Anchor>
               <Anchor id="advanced-connection"><details open={advanced.includes(e.id)} onToggle={(ev) => { const isOpen = ev.currentTarget.open; setAdvanced(current => isOpen ? [...new Set([...current, e.id])] : current.filter(id => id !== e.id)) }} className="rounded-xl bg-bg px-3"><summary className="flex cursor-pointer list-none items-center gap-2 py-3 text-sm font-medium text-mu"><span>Advanced connection settings</span><ChevronRight size={16} aria-hidden="true" className={cx('transition-transform', advanced.includes(e.id) && 'rotate-90')} /></summary><div className="space-y-3 pb-3">
                 <Field label="Base URL" hint="The app adds the API path to this URL automatically."><Input value={e.url} set={(v) => { const match = presetForUrl(v); u({ url: v, ...(match ? { preset: match[0], endpointId: match[1][2], endpointFilter: match[1][3] } : { preset: '', endpointId: '', endpointFilter: 'author' }) }) }} placeholder="https://…/v1" /></Field>
@@ -607,7 +769,10 @@ function Eps() {
                 <Field label="Endpoint ID" hint="Used to limit OpenRouter catalog suggestions to this brand or hosting provider."><Input value={e.endpointId ?? presetForUrl(e.url)?.[1][2] ?? ''} set={(endpointId) => u({ endpointId, endpointFilter: catalogPrefs(endpointId) })} placeholder="e.g. anthropic" /></Field>
                 {provider?.accountScoped && <Field label="Account ID" hint="Cloudflare account-scoped APIs put this in the base URL. Find it in the Cloudflare dashboard; it is stored in this browser with the key."><Input value={e.accountId ?? ''} set={(accountId) => u({ accountId })} placeholder="Cloudflare account ID" /></Field>}
                 {provider?.gatewayHeader && <Field label={provider.gatewayHeader.label} hint={`Sent as the ${provider.gatewayHeader.header} header. Workers AI models (${provider.gatewayHeader.modelPrefix ?? '@cf/'}) require an AI Gateway.`}><Input value={e.gatewayId ?? ''} set={(gatewayId) => u({ gatewayId })} placeholder="Optional AI Gateway id" /></Field>}
-                {provider && <p className="text-xs text-mu">Browser access to {provider.name}: <span className={provider.cors === 'blocked' ? 'text-er' : provider.cors === 'confirmed' ? 'text-ac' : 'text-mu'}>{provider.cors}</span>. {provider.corsNote}</p>}
+                {provider && <p className="text-xs text-mu">Browser access to {provider.name}: <span className={provider.cors === 'blocked' ? 'text-er' : provider.cors === 'confirmed' ? 'text-ac' : 'text-mu'}>{provider.cors}</span>. {provider.corsNote} Providers that block browser requests still work through the relay below.</p>}
+                <Field label="Request routing" hint="Auto tries the provider directly and relays through this app's server only when the browser blocks it (CORS). Always relay sends every provider request through this server — it works for any provider, but the server sees the key in transit (it is never stored or logged). Direct only never relays.">
+                  <Seg v={(s.prefs.proxyMode ?? 'auto') as 'auto' | 'always' | 'off'} set={(v) => s.patch({ prefs: { ...s.prefs, proxyMode: v } })} opts={[['auto', 'Auto'], ['always', 'Always relay'], ['off', 'Direct only']]} />
+                </Field>
               </div></details></Anchor>
             </div>
             {useS.getState().prefs.showModelPricing && modelsOf(e).length > 0 && <Anchor id="model-pricing"><div className="space-y-3 rounded-xl bg-bg p-3">
@@ -617,7 +782,7 @@ function Eps() {
                 const detect = async () => {
                   try {
                     const base = e.url.trim().replace(/\/+$/, '')
-                    const res = await fetch(`${base}/models`, { headers: e.key ? { authorization: `Bearer ${e.key}` } : {} })
+                    const res = await providerFetch(`${base}/models`, { headers: e.key ? { authorization: `Bearer ${e.key}` } : {} })
                     if (!res.ok) throw Error(`Catalog request failed (HTTP ${res.status})`)
                     const body = await res.json()
                     const item = body.data?.find((x: any) => x.id === model)
@@ -664,8 +829,35 @@ function Eps() {
       }} />
       <Anchor id="add-endpoint"><span className="block text-xs text-mu">Use Add endpoint above to connect a provider, then test each model here.</span></Anchor>
       {!!eps.length && <TestAllEndpoints eps={eps} />}
+      <div className="space-y-2 rounded-xl border border-dashed border-bor p-3">
+        <div className="text-sm font-medium">Add another endpoint</div>
+        <div className="text-xs text-mu">Start with a compatibility preset or import a provider from a cURL command. The new endpoint appears at the top of the list.</div>
+        {quickActions}
+      </div>
       </Section>
+      {curlOpen && <CurlImportModal close={() => setCurlOpen(false)} importProvider={importCurl} />}
     </Panel>
+  )
+}
+
+/* Prompt variable chips: the {variable} placeholders a system prompt can
+ * use. Clicking one appends it to the prompt text. */
+function PromptVarChips({ insert }: { insert: (token: string) => void }) {
+  return (
+    <div className="flex flex-wrap items-center gap-1.5">
+      <span className="text-xs text-mu">Insert a variable:</span>
+      {PROMPT_VARS.map((v) => (
+        <button
+          key={v.id}
+          type="button"
+          title={`${v.desc} — appends {${v.id}} to the prompt`}
+          onClick={() => insert(`{${v.id}}`)}
+          className="rounded-md border border-bor bg-bg px-2 py-0.5 font-mono text-[11px] text-tx transition-colors hover:bg-hov"
+        >
+          {`{${v.id}}`}
+        </button>
+      ))}
+    </div>
   )
 }
 
@@ -694,7 +886,8 @@ function Prompts() {
             </button>
           })}</div>
         </Field>
-        <Field label="Global system prompt" hint="This is the base. Write one from scratch, or copy an existing prompt above."><Area rows={6} value={g.text} set={(v) => setG({ text: v })} /></Field>
+        <Field label="Global system prompt" hint="This is the base. Write one from scratch, or copy an existing prompt above. You can use {variable} placeholders such as {date} — they are replaced with the current values when the request is sent."><Area rows={6} value={g.text} set={(v) => setG({ text: v })} /></Field>
+        <PromptVarChips insert={(token) => setG({ text: `${g.text}${g.text && !/\s$/.test(g.text) ? ' ' : ''}${token}` })} />
         <div className="flex justify-end"><Btn v="soft" icon={CornerDownRight} onClick={() => setG({ on: true, text: GENERAL_PROMPT_TEXT, qualities: [] })}>Revert to default</Btn></div>
       </Card></Anchor>
       </Section>
@@ -707,7 +900,8 @@ function Prompts() {
         <Anchor key={pid} id={`prompt-${p.id}`}>
         <Card handle={handle} icon={ScrollText} title={p.name} sub={p.text.slice(0, 70)}>
           <Field label="Name"><Input value={p.name} set={(v) => upd('prompts', p.id, { name: v })} /></Field>
-          <Field label="System prompt"><Area rows={6} value={p.text} set={(v) => upd('prompts', p.id, { text: v })} /></Field>
+          <Field label="System prompt" hint="Sent as the system prompt when this prompt is selected. {variable} placeholders such as {date} are replaced when the request is sent."><Area rows={6} value={p.text} set={(v) => upd('prompts', p.id, { text: v })} /></Field>
+          <PromptVarChips insert={(token) => upd('prompts', p.id, { text: `${p.text}${p.text && !/\s$/.test(p.text) ? ' ' : ''}${token}` })} />
           <Acts k="prompts" id={p.id} />
         </Card>
         </Anchor>
@@ -758,7 +952,8 @@ function Pls() {
           <Anchor key={plid} id={`playlist-${p.id}`}>
           <Card handle={handle} icon={ListMusic} title={p.name} sub={`${p.e.length} entries${p.cls ? ' · classifier' : ''}`}>
             <Field label="Name"><Input value={p.name} set={(v) => u({ name: v })} /></Field>
-            <Field label="System prompt" hint="Optional. Used when this playlist is selected and no prompt override is chosen."><Area value={p.sys} set={(v) => u({ sys: v })} /></Field>
+            <Field label="System prompt" hint="Optional. Used when this playlist is selected and no prompt override is chosen. {variable} placeholders such as {date} are replaced when the request is sent."><Area value={p.sys} set={(v) => u({ sys: v })} /></Field>
+            <PromptVarChips insert={(token) => u({ sys: `${p.sys}${p.sys && !/\s$/.test(p.sys) ? ' ' : ''}${token}` })} />
             <Field label="Models" hint="Each entry is one model from an endpoint. Tried top to bottom until one responds without error.">
               <div className="space-y-1.5">
                 <SortableList
@@ -822,7 +1017,8 @@ function Cmds() {
               <Field label="Description"><Input value={c.desc} set={(v) => u({ desc: v })} /></Field>
             </div>
             <Field label="Input type"><Seg v={c.in} set={(v) => u({ in: v })} opts={[['text', 'Text', CI.text], ['image', 'Image', CI.image], ['image+text', 'Image + text', CI['image+text']], ['doc', 'Document', CI.doc]]} /></Field>
-            <Field label="System prompt"><Area value={c.sys} set={(v) => u({ sys: v })} /></Field>
+            <Field label="System prompt" hint="Sent as the system prompt when the command runs. {variable} placeholders such as {date} are replaced when the request is sent."><Area value={c.sys} set={(v) => u({ sys: v })} /></Field>
+            <PromptVarChips insert={(token) => u({ sys: `${c.sys}${c.sys && !/\s$/.test(c.sys) ? ' ' : ''}${token}` })} />
             <Field label="Message template" hint="{{input}} is replaced by the text typed after the command."><Area rows={3} value={c.tpl} set={(v) => u({ tpl: v })} /></Field>
             <Field label="Run on" hint="The first endpoint that accepts the input type is used; the rest are fallbacks.">
               <Sel value={c.pl} set={(v) => u({ pl: v })} opts={[['', 'Any enabled endpoint, in list order'], ...pls.map((p) => [p.id, 'Playlist: ' + p.name] as [string, string])]} />
@@ -997,16 +1193,14 @@ function CodeRunCard() {
 
 function Tools() {
   const s = useSConfig()
-  const [ask, setAsk] = useState<string | null>(null)
-  const [askAlways, setAskAlways] = useState(false)
   const [showSearchKey, setShowSearchKey] = useState(false)
   const [showReaderKey, setShowReaderKey] = useState(false)
   const [health, setHealth] = useState<{ searchConfigured?: boolean; apiProviders?: Record<string, { label: string; configured: boolean; needsZone?: boolean; optionalKey?: boolean }> } | null>(null)
   useEffect(() => {
     fetch('/api/health').then((r) => r.json()).then((x) => setHealth(x)).catch(() => setHealth({ searchConfigured: false }))
   }, [])
-  const t = TOOLS.find((x) => x[0] === ask)
-  /* Tools the user allowed for good: enabling one of these skips the popup. */
+  /* Tools the user allowed for good: enabling a tool never shows a popup, so
+   * this only records the per-tool choice. */
   const consent = s.toolConsent ?? {}
   const search = normSearch(s.search)
   const setSearch = (p: Partial<typeof search>) => s.patch({ search: { ...search, ...p } })
@@ -1023,17 +1217,15 @@ function Tools() {
     const i = ref.indexOf('::')
     setSearch({ readerSummaryEp: i < 0 ? '' : ref.slice(0, i), readerSummaryModel: i < 0 ? '' : ref.slice(i + 2) })
   }
-  /* Enabling a tool asks first, unless the user already said not to ask. */
-  const allow = (k: string, always: boolean) => {
-    s.patch({ tools: { ...s.tools, [k]: true }, ...(always ? { toolConsent: { ...consent, [k]: true } } : {}) })
-    setAsk(null)
-    setAskAlways(false)
-  }
-  const askFor = (k: string) => { setAsk(k); setAskAlways(false) }
+  /* The model-flow mode picks an endpoint, not a model: the endpoint's
+   * default model and the rest of its model list form the flow. */
+  const summaryEpOpts: [string, string][] = [
+    ['', 'None (send the raw page)'],
+    ...s.eps.filter(usable).map((e) => [e.id, `${e.name} · ${e.model}`] as [string, string]),
+  ]
+  /* Tools toggle straight on: no trust popup, no confirmation step. */
   const toggleTool = (k: string, v: boolean) => {
-    if (!v) { s.patch({ tools: { ...s.tools, [k]: false } }); return }
-    if (consent[k]) allow(k, false)
-    else askFor(k)
+    s.patch({ tools: { ...s.tools, [k]: v } })
   }
   /* Enabled tools first, then everything else; both groups keep relevance order. */
   const listed = orderTools(s.tools)
@@ -1060,13 +1252,13 @@ function Tools() {
         <Anchor key={k} id={`tool-${k}`}>
         <Card icon={I} title={n} sub={u} muted={!s.tools[k]} right={
           <>
-            <span className="hidden items-center gap-1.5 text-xs text-mu sm:flex">{s.tools[k] ? <ShieldCheck size={14} className="text-ac" /> : <Shield size={14} />}{s.tools[k] ? (consent[k] ? 'Always allowed' : 'Allowed') : 'Off'}</span>
+            <span className="hidden items-center gap-1.5 text-xs text-mu sm:flex">{s.tools[k] ? <ShieldCheck size={14} className="text-ac" /> : <Shield size={14} />}{s.tools[k] ? 'Allowed' : 'Off'}</span>
             <Toggle on={!!s.tools[k]} set={(v) => toggleTool(k, v)} />
           </>
         }>
           <p className="text-sm">{d}</p>
           <p className="text-sm text-mu">Permission: {p}</p>
-          {consent[k] && <div className="flex items-center justify-between gap-3 rounded-xl bg-bg p-3"><div><div className="text-sm font-medium">Do not ask again</div><div className="text-xs text-mu">Enabling this tool no longer shows the allow popup. The permission above still applies.</div></div><Toggle on={!!consent[k]} set={(v) => s.patch({ toolConsent: { ...consent, [k]: v } })} label="Do not ask again" /></div>}
+          <div className="flex items-center justify-between gap-3 rounded-xl bg-bg p-3"><div className="flex items-center gap-1.5 text-sm font-medium">Do not ask again<HelpTip text="Enabling this tool never shows the allow popup. The permission above still applies." label="Help: Do not ask again" /></div><Toggle on={!!consent[k]} set={(v) => s.patch({ toolConsent: { ...consent, [k]: v } })} label="Do not ask again" /></div>
           {k === 'workspace_upsert' && <Anchor id="workspace-view"><div className="space-y-3 rounded-xl bg-bg p-3">
             <div className="flex items-center justify-between gap-3"><div><div className="text-sm font-medium">Default view for workspace tiles</div><div className="text-xs text-mu">Pinned shows the revision created by each message. Latest shows the most recent revision with a dropdown to go back.</div></div><Seg v={s.workspacePrefs?.defaultView ?? 'pinned'} set={(defaultView) => s.patch({ workspacePrefs: { ...s.workspacePrefs, defaultView } })} opts={[['pinned', 'Pinned'], ['latest', 'Latest']]} /></div>
             <div className="flex items-center justify-between gap-3"><div><div className="text-sm font-medium">Auto-open workspace panel</div><div className="text-xs text-mu">Automatically open the side panel when the AI starts writing files.</div></div><Toggle on={s.workspacePrefs?.autoOpen ?? true} set={(autoOpen) => s.patch({ workspacePrefs: { ...s.workspacePrefs, autoOpen } })} /></div>
@@ -1165,11 +1357,24 @@ function Tools() {
             <div className="flex items-center justify-between gap-3"><div><div className="text-sm font-medium">Summarize pages with another model</div><div className="text-xs text-mu">Send the page to a second model that returns a clean summary. The main model then gets the summary instead of the whole page, which keeps long articles from filling up the context.</div></div><Toggle on={search.readerSummary} set={(readerSummary) => setSearch({ readerSummary })} /></div>
             </Anchor>
             {search.readerSummary && <>
-              <Anchor id="reader-summary-model">
-              <Field label="Summary model" hint="The exact model that writes the summary. Pick the endpoint and the model id; there is no silent fallback, and a failed summary uses the raw page instead.">
-                <Sel value={summaryRef} set={setSummaryRef} opts={summaryOpts} />
+              <Anchor id="reader-summary-mode">
+              <Field label="Summary model" hint="Use one exact model, or the endpoint's default model flow: the endpoint's default model first, then the rest of its models in order, until one works.">
+                <Seg v={search.readerSummaryFlow ? 'flow' : 'picked'} set={(v) => setSearch({ readerSummaryFlow: v === 'flow' })} opts={[['picked', 'Picked model'], ['flow', 'Model flow']]} />
               </Field>
               </Anchor>
+              {search.readerSummaryFlow ? (
+                <Anchor id="reader-summary-endpoint">
+                <Field label="Summary endpoint" hint="The summary uses this endpoint's default model first, then the rest of its model list in order. A model that fails is skipped for the rest of the reply; if every model fails, the raw page text is used.">
+                  <Sel value={search.readerSummaryEp} set={(id) => setSearch({ readerSummaryEp: id, readerSummaryModel: '' })} opts={summaryEpOpts} />
+                </Field>
+                </Anchor>
+              ) : (
+                <Anchor id="reader-summary-model">
+                <Field label="Summary model" hint="The exact model that writes the summary. Pick the endpoint and the model id; there is no silent fallback, and a failed summary uses the raw page instead.">
+                  <Sel value={summaryRef} set={setSummaryRef} opts={summaryOpts} />
+                </Field>
+                </Anchor>
+              )}
               <Anchor id="reader-summary-length">
               <Field label={`Summary length · ${search.readerSummaryChars.toLocaleString()} characters`} hint="Roughly how long a page summary may be. Shorter keeps the context small, longer keeps more detail.">
                 <RangeSlider label="Summary length" min={400} max={8000} step={200} value={search.readerSummaryChars} valueText={`${search.readerSummaryChars.toLocaleString()} characters`} set={(readerSummaryChars) => setSearch({ readerSummaryChars: Math.round(readerSummaryChars) })} className="w-full" />
@@ -1234,22 +1439,6 @@ function Tools() {
         </Card>
         </Anchor>
         </Section>
-      )}
-      {t && (
-        <Modal close={() => setAsk(null)}>
-          <div className="modal-panel w-full max-w-sm space-y-4 rounded-2xl bg-bg p-5">
-            <div className="flex items-center gap-2 font-semibold"><ShieldCheck size={18} className="text-ac" />Allow {t[1]}?</div>
-            <p className="text-sm text-mu">{t[5]}</p>
-            <label className="flex items-start gap-3 rounded-xl bg-surf p-3 text-sm">
-              <input type="checkbox" checked={askAlways} onChange={(ev) => setAskAlways(ev.target.checked)} className="mt-0.5 size-4 accent-[var(--accent)]" />
-              <span><span className="font-medium">Do not ask again</span><span className="mt-0.5 block text-xs text-mu">Allow this tool for good. You can undo this later in the tool's card.</span></span>
-            </label>
-            <div className="flex justify-end gap-2">
-              <Btn v="soft" onClick={() => setAsk(null)}>Cancel</Btn>
-              <Btn v="solid" icon={Check} onClick={() => allow(t[0], askAlways)}>{askAlways ? 'Allow and never ask' : 'Allow'}</Btn>
-            </div>
-          </div>
-        </Modal>
       )}
     </Panel>
   )
@@ -1389,7 +1578,7 @@ function McpTab() {
       <Section title="Servers" desc="External tool servers whose tools join the normal tool loop.">
       <div className="space-y-2 rounded-xl bg-surf p-4 text-sm">
         <p>Servers speak MCP over Streamable HTTP. Press Test connection to run the handshake and load the tools; from then on every enabled server&rsquo;s tools are sent to the model with the rest of the tool list.</p>
-        <p className="text-xs text-mu">Requests go straight from this browser to the server, so the server must allow browser origins (CORS). URLs, headers, and tokens stay here and are never stored by this app&rsquo;s backend. Custom headers use one <code>Name: value</code> pair per line, for example <code>Authorization: Bearer …</code>.</p>
+        <p className="text-xs text-mu">Requests normally go straight from this browser to the server; if the server refuses browser origins (CORS), they are retried through this app&rsquo;s relay (Settings → Endpoints → Request routing). URLs, headers, and tokens stay in this browser and are never stored by this app&rsquo;s backend. Custom headers use one <code>Name: value</code> pair per line, for example <code>Authorization: Bearer …</code>.</p>
         {!toolsOn && <p role="status" className="rounded-lg bg-er/10 px-3 py-2 text-xs text-er">The Tools feature is off, so no MCP tool can be called. Turn on Tools in Settings &rarr; Features.</p>}
       </div>
       {mcps.map((m) => {
@@ -1649,16 +1838,56 @@ function Look() {
       </div>
       </Anchor>
       {((s.themeMode === 'light' ? s.themeLight : s.themeDark) === 'custom') && (() => {
-        const custom = s.themeMode === 'light' ? s.customLightColors : s.customDarkColors
-        const setCustom = (next: typeof custom) => s.patch(s.themeMode === 'light' ? { customLightColors: next } : { customDarkColors: next })
-        return <Anchor id="custom-colors"><div className="rounded-xl bg-surf p-3 space-y-3">
-        <div><div className="text-sm font-medium">Custom theme colors ({s.themeMode === 'light' ? 'light' : 'dark'})</div><div className="text-xs text-mu">Saved separately for {s.themeMode === 'light' ? 'light' : 'dark'} mode — switching modes keeps each custom palette.</div></div>
-        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">{THEME_COLOR_KEYS.map((key) => <div key={key} className="relative flex items-center gap-2 rounded-lg bg-bg p-2 text-sm">
-          <button type="button" aria-label={`Choose ${THEME_COLOR_LABELS[key]} color`} aria-expanded={colorPicker === key} onClick={() => setColorPicker(colorPicker === key ? null : key)} className="size-9 shrink-0 rounded-lg border border-white/30 shadow-sm" style={{ backgroundColor: custom[key] }} />
+        const mode = s.themeMode === 'light' ? 'light' : 'dark'
+        const custom = s.themeMode === 'light' ? s.customLightTheme : s.customDarkTheme
+        const colors = s.themeMode === 'light' ? s.customLightColors : s.customDarkColors
+        const setCustomTheme = (next: typeof custom) => {
+          const norm = normCustomTheme(next, defaultCustomTheme(custom.base))
+          const setColors = customThemeColors(norm)
+          s.patch(mode === 'light' ? { customLightTheme: norm, customLightColors: setColors } : { customDarkTheme: norm, customDarkColors: setColors })
+        }
+        const base = custom.base
+        const isDarkBase = (DARK_THEMES as readonly string[]).includes(base)
+        const hue = custom.hue
+        const sat = custom.sat
+        const bright = custom.bright
+        return <Anchor id="custom-colors"><div className="rounded-xl bg-surf p-3 space-y-4">
+        <div><div className="text-sm font-medium">Custom theme</div><div className="text-xs text-mu">Start from a base theme (Plum by default), then dial in Hue, Saturation and Brightness. Hue starts at the base accent's hue and sweeps the full color wheel, shifting everything except syntax highlighting. Saturation (0x–2x) scales color intensity everywhere but syntax. Brightness (0x–3x) scales every surface and accent but never syntax or text.</div></div>
+        <div className="space-y-2">
+          <div className="text-xs text-mu">Base theme (default: Plum)</div>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+            {BASE_THEMES.map((k) => {
+              const active = k === base
+              return (
+                <button key={k} type="button" onClick={() => setCustomTheme({ ...custom, base: k, hue: accentHue(THEME_COLORS[k]) })} className={cx('flex items-center gap-2 rounded-lg bg-bg p-2 text-left text-sm', active && 'ring-2 ring-ac')}>
+                  <span className="size-6 rounded-md border border-bor" style={{ background: THEME_COLORS[k].ac }} />
+                  <span className="flex-1">{THEMES[k as keyof typeof THEMES]}</span>
+                  {active && <Check size={14} className="text-ac" />}
+                </button>
+              )
+            })}
+          </div>
+          <div className="text-[11px] text-mu">{isDarkBase ? 'Dark base' : 'Light base'} · Base accent hue {Math.round(accentHue(THEME_COLORS[base]))}°</div>
+        </div>
+        <div className="space-y-3">
+          <Field label={`Hue · ${hue}°`} hint="Rotates colours except syntax highlighting. Starts at the base accent hue."><RangeSlider label="Hue" min={0} max={360} step={1} value={hue} set={(v) => setCustomTheme({ ...custom, hue: Math.round(v) })} className="w-full" /></Field>
+          <Field label={`Saturation · ${sat.toFixed(2)}x`} hint="Scales colour intensity across everything except syntax highlighting."><RangeSlider label="Saturation" min={0} max={2} step={0.01} value={sat} set={(v) => setCustomTheme({ ...custom, sat: Math.round(v * 100) / 100 })} className="w-full" /></Field>
+          <Field label={`Brightness · ${bright.toFixed(2)}x`} hint="Scales brightness across everything except syntax highlighting and text."><RangeSlider label="Brightness" min={0} max={3} step={0.01} value={bright} set={(v) => setCustomTheme({ ...custom, bright: Math.round(v * 100) / 100 })} className="w-full" /></Field>
+          <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-mu">
+            <span>Syntax colours (c2–c5) never change. Text (tx/mu/acx) is never dimmed by brightness.</span>
+            <Btn v="ghost" className="px-2 py-1" onClick={() => setCustomTheme(defaultCustomTheme(base))}>Reset to base defaults</Btn>
+          </div>
+        </div>
+        <div className="space-y-2"><div className="text-sm font-medium">Live preview</div><div className="flex h-14 overflow-hidden rounded-lg border border-bor"><div className="w-1/4" style={{ background: colors.side }} /><div className="flex-1 flex items-center gap-2 p-2" style={{ background: colors.bg }}><div className="h-2 w-10 rounded" style={{ background: colors.ac }} /><span className="text-xs" style={{ color: colors.tx }}>Text</span><span className="text-xs" style={{ color: colors.mu }}>Muted</span></div><div className="w-1/4" style={{ background: colors.surf }} /></div></div>
+        <details className="rounded-lg bg-bg p-2"><summary className="cursor-pointer text-xs text-mu">Advanced: edit hex colours directly</summary>
+        <p className="mt-1 text-[11px] text-mu">Hand-tuned here stays until a slider or base theme is changed — those rebuild the palette from the base theme.</p>
+        <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">{THEME_COLOR_KEYS.map((key) => <div key={key} className="relative flex items-center gap-2 rounded-lg bg-surf p-2 text-sm">
+          <button type="button" aria-label={`Choose ${THEME_COLOR_LABELS[key]} color`} aria-expanded={colorPicker === key} onClick={() => setColorPicker(colorPicker === key ? null : key)} className="size-9 shrink-0 rounded-lg border border-white/30 shadow-sm" style={{ backgroundColor: colors[key] }} />
           <span className="min-w-0 flex-1 leading-tight">{THEME_COLOR_LABELS[key]}</span>
-          <input aria-label={`${THEME_COLOR_LABELS[key]} hex color`} value={custom[key]} onChange={(e) => { const value = e.target.value; if (/^#[\da-f]{0,6}$/i.test(value)) setCustom({ ...custom, [key]: value }) }} onBlur={() => { if (!/^#[\da-f]{6}$/i.test(custom[key])) setCustom({ ...custom, [key]: '#000000' }) }} className="w-20 rounded-md border border-white/20 bg-transparent px-1.5 py-1 font-mono text-xs uppercase" />
-          {colorPicker === key && <div className="settings-dropdown absolute left-2 top-full z-30 mt-1 w-56 rounded-xl bg-bg p-3"><label className="flex items-center justify-between gap-3 text-xs text-mu">Choose color<input type="color" aria-label={`Choose ${THEME_COLOR_LABELS[key]} color`} value={custom[key]} onChange={(e) => setCustom({ ...custom, [key]: e.target.value })} className="h-9 w-12 cursor-pointer rounded-md border border-bor bg-transparent p-1" /></label></div>}
+          <input aria-label={`${THEME_COLOR_LABELS[key]} hex color`} value={colors[key]} onChange={(e) => { const value = e.target.value; if (/^#[\da-f]{0,6}$/i.test(value)) { const next = { ...colors, [key]: value }; s.patch(mode === 'light' ? { customLightColors: next } : { customDarkColors: next }) } }} onBlur={() => { if (!/^#[\da-f]{6}$/i.test(colors[key])) { const next = { ...colors, [key]: '#000000' }; s.patch(mode === 'light' ? { customLightColors: next } : { customDarkColors: next }) } }} className="w-20 rounded-md border border-white/20 bg-transparent px-1.5 py-1 font-mono text-xs uppercase" />
+          {colorPicker === key && <div className="settings-dropdown absolute left-2 top-full z-30 mt-1 w-56 rounded-xl bg-bg p-3"><label className="flex items-center justify-between gap-3 text-xs text-mu">Choose color<input type="color" aria-label={`Choose ${THEME_COLOR_LABELS[key]} color`} value={colors[key]} onChange={(e) => { const next = { ...colors, [key]: e.target.value }; s.patch(mode === 'light' ? { customLightColors: next } : { customDarkColors: next }) }} className="h-9 w-12 cursor-pointer rounded-md border border-bor bg-transparent p-1" /></label></div>}
         </div>)}</div>
+        </details>
       </div>
       </Anchor>
       })()}

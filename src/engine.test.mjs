@@ -287,17 +287,29 @@ test('workspace_upsert executes locally, coerces bad paths, and truncates oversi
   assert.match((await executeTool({ id: 'ws-7', name: 'workspace_upsert', arguments: '{}' }, {})).result, /disabled/)
 })
 
-test('workspace_upsert validates patch, batch and template arguments locally', async () => {
+test('workspace_upsert validates patch and template arguments locally, and refuses batches', async () => {
   const base = { action: 'patch', workspaceId: 'ws-1', revisionName: 'Fix', path: 'a.py', content: '@@ -1,1 +1,1 @@\n-x\n+y\n' }
   const patch = await executeTool({ id: 'ws-p', name: 'workspace_upsert', arguments: JSON.stringify(base) }, enabled)
   assert.match(patch.result, /"status":"ready"/)
   assert.match(patch.result, /"action":"patch"/)
+  // One file per call: a batch list is refused with a message that says so.
   const batch = await executeTool({ id: 'ws-b', name: 'workspace_upsert', arguments: JSON.stringify({ ...base, action: 'update', files: [{ path: 'b.py', content: 'x' }, { path: 'c.py', action: 'delete' }] }) }, enabled)
-  assert.match(batch.result, /"status":"ready"/)
-  assert.match((await executeTool({ id: 'ws-bad', name: 'workspace_upsert', arguments: JSON.stringify({ ...base, files: [{ path: 'b.py', action: 'explode' }] }) }, enabled)).result, /unsupported files entry action/)
-  assert.match((await executeTool({ id: 'ws-many', name: 'workspace_upsert', arguments: JSON.stringify({ ...base, files: Array.from({ length: 17 }, (_, i) => ({ path: `f${i}.py` })) }) }, enabled)).result, /at most 16 entries/)
+  assert.equal(batch.error, true)
+  assert.match(batch.result, /one file per call/i)
+  assert.match(batch.result, /workspace_upsert call per file/i)
   const tpl = await executeTool({ id: 'ws-t', name: 'workspace_upsert', arguments: JSON.stringify({ action: 'create', createNew: true, workspaceName: 'W', revisionName: 'Scaffold', path: 'README.md', template: 'static-site' }) }, enabled)
   assert.match(tpl.result, /"status":"ready"/)
+})
+
+test('the workspace tool schema offers no batch argument', async () => {
+  const { TOOL_REGISTRY } = await import('./engine.ts')
+  const spec = TOOL_REGISTRY.workspace_upsert
+  const props = spec.parameters.properties
+  assert.equal(props.files, undefined)
+  assert.equal(props.path.type, 'string')
+  // The description has to say one file per call, or the model batches anyway.
+  assert.match(spec.description, /one file per call/i)
+  assert.match(spec.description, /one call per file/i)
 })
 
 test('streaming tool deltas fire per chunk with the accumulated workspace arguments', async () => {
@@ -400,6 +412,22 @@ test('page-reader preferences keep a separate API, key and summary model', () =>
   const opts = fetchOptsOf(normSearch({ readerProvider: 'custom', readerUrl: 'https://reader.example/r?url={url}' }))
   assert.equal(opts.provider, 'custom')
   assert.equal(opts.baseUrl, 'https://reader.example/r?url={url}')
+})
+
+test('the page-summary model flow starts at the endpoint default model and walks the list', async () => {
+  const { readerSummaryModelsOf } = await import('./store.ts')
+  const ep = { id: 'e1', name: 'E', type: 'openai', url: 'https://p.example/v1', key: 'k', model: 'm-default', models: ['m-default', 'm2', 'm3'], on: true }
+  const s = { eps: [ep] }
+  // Picked model: exactly the model the user chose, no fallback.
+  assert.deepEqual(readerSummaryModelsOf(s, { readerSummaryEp: 'e1', readerSummaryModel: '', readerSummaryFlow: false }).map((e) => e.model), ['m-default'])
+  assert.deepEqual(readerSummaryModelsOf(s, { readerSummaryEp: 'e1', readerSummaryModel: 'm2', readerSummaryFlow: false }).map((e) => e.model), ['m2'])
+  // Flow: the default model first, then the rest of the endpoint's models.
+  assert.deepEqual(readerSummaryModelsOf(s, { readerSummaryEp: 'e1', readerSummaryModel: '', readerSummaryFlow: true }).map((e) => e.model), ['m-default', 'm2', 'm3'])
+  // A disabled endpoint is not usable, and an unset endpoint has no flow.
+  assert.deepEqual(readerSummaryModelsOf({ eps: [{ ...ep, on: false }] }, { readerSummaryEp: 'e1', readerSummaryModel: '', readerSummaryFlow: true }), [])
+  assert.deepEqual(readerSummaryModelsOf(s, { readerSummaryEp: '', readerSummaryModel: '', readerSummaryFlow: true }), [])
+  assert.equal(normSearch({ readerSummaryFlow: true }).readerSummaryFlow, true)
+  assert.equal(normSearch({}).readerSummaryFlow, false)
 })
 
 test('inline citations default to pills but honour an explicit off', () => {

@@ -3,6 +3,7 @@ import { can } from './engine'
 import { enabledSkills, normSkills, composeSystemPrompt } from './skills'
 import { modelsOf, usable } from './models'
 import { qualityPrompt, type GlobalPrompt } from './flair'
+import { applyPromptVars, dateContext } from './promptVars'
 import type { Ep, Pl, Cmd, Msg, Notice, FeatureId } from './store'
 
 export const splitEntry = (ref: string) => {
@@ -58,11 +59,15 @@ export function planRequest(s: PlanState, um: Msg, defaultFeatures: Record<Featu
   const cand = ready.filter((e) => need.every((n) => n !== 'media' && can(e, n))).flatMap((e) => modelsOf(e)
     .filter((model) => !(s.sel?.k === 'ep' && s.sel.id === e.id && s.sel.model) || s.sel?.model === model)
     .map((model) => ({ ...e, model })))
-  const scoped = F.prompts ? cmd?.sys || s.prompts.find((x) => x.id === s.pr)?.text || (pl && !cmd ? pl.sys : '') || '' : ''
+  // User-facing prompt text may use {variable} placeholders (e.g. {date});
+  // they are resolved here, once, right before the request is built.
+  const scoped = F.prompts ? applyPromptVars(cmd?.sys || s.prompts.find((x) => x.id === s.pr)?.text || (pl && !cmd ? pl.sys : '') || '') : ''
   const globalSys = F.prompts && s.globalPrompt?.on
-    ? [s.globalPrompt.text.trim(), qualityPrompt(s.globalPrompt.qualities)].filter(Boolean).join('\n\n')
+    ? [applyPromptVars(s.globalPrompt.text.trim()), qualityPrompt(s.globalPrompt.qualities)].filter(Boolean).join('\n\n')
     : ''
-  const baseSys = [globalSys, scoped].filter(Boolean).join('\n\n')
+  // The date context rides along with every prompt so the model always knows
+  // which day it is, even when the user wrote no prompt at all.
+  const baseSys = [dateContext(), globalSys, scoped].filter(Boolean).join('\n\n')
   const enabledTools = F.tools ? TOOLS.filter(([name]) => s.tools[name] === true).map(([name]) => name) : []
   const widgetTools = enabledTools.some((name) => name === 'prompt_chip' || name === 'inline_poll')
   const widgetSys = widgetTools ? 'Follow-up chips and choice cards are rendered by the interface after your reply. Never mention them in your prose, never say that you added follow-up options, and never tell the user to click or fill them.' : ''

@@ -5,6 +5,7 @@
  * the model: binary results are written to durable local storage and referenced
  * by id, so a generated image never bloats the chat or the context window. */
 import type { Ep } from './store'
+import { providerFetch } from './net'
 
 export type ImageGenPrefs = {
   on: boolean
@@ -92,7 +93,7 @@ export async function generateImages(
   model: string,
   prompt: string,
   opts: GenerateOpts = {},
-  fetchFn: typeof fetch = fetch,
+  fetchFn: typeof fetch = providerFetch,
 ): Promise<GeneratedImage[]> {
   if (ep.type !== 'openai') throw Error('Image generation needs an OpenAI-compatible endpoint: the Anthropic Messages API has no image model.')
   const p = String(prompt ?? '').trim().slice(0, 4000)

@@ -47,14 +47,19 @@ function adaptResponse(res, signal) {
   res.on('end', () => { ended = true; settle() })
   res.on('close', () => { ended = true; settle() })
   res.on('error', (error) => { failure = normalizeError(error, signal); ended = true; settle() })
+  const headerPairs = () => Object.entries(res.headers)
+    .map(([name, value]) => [name, Array.isArray(value) ? value.join(', ') : String(value ?? '')])
   return {
     ok: status >= 200 && status < 300,
     status,
+    statusText: res.statusMessage || '',
     headers: {
       get: (name) => {
         const value = res.headers[String(name).toLowerCase()]
         return Array.isArray(value) ? value.join(', ') : (value ?? null)
       },
+      entries: () => headerPairs()[Symbol.iterator](),
+      forEach: (fn) => { for (const [name, value] of headerPairs()) fn(value, name) },
     },
     body: {
       cancel: async () => { res.destroy() },
@@ -89,9 +94,14 @@ export function pinnedFetch(url, init = {}) {
     let u
     try { u = new URL(url) } catch { return reject(Object.assign(Error('Invalid URL.'), { code: 'bad_url' })) }
     const badUrl = () => Object.assign(Error('The page resolved to a non-public address.'), { code: 'bad_url' })
+    // The request proxy may legitimately target a private address when the
+    // deployment says so (local self-hosted gateways) or when the host passed
+    // an explicit allowlist entry. The address is still pinned below; only the
+    // public-address requirement is waived.
+    const allowPrivate = init.allowPrivate === true
     // The socket layer skips `lookup` for IP literals, so check those here.
     const literal = u.hostname.replace(/^\[|\]$/g, '')
-    if ((/^\d+\.\d+\.\d+\.\d+$/.test(literal) || literal.includes(':')) && !isPublicIpAddress(literal)) {
+    if (!allowPrivate && (/^\d+\.\d+\.\d+\.\d+$/.test(literal) || literal.includes(':')) && !isPublicIpAddress(literal)) {
       return reject(badUrl())
     }
     const requestFn = u.protocol === 'https:' ? httpsRequest : httpRequest
@@ -104,7 +114,8 @@ export function pinnedFetch(url, init = {}) {
       if (pinned) return respond(pinned.address, pinned.family)
       dnsLookup(hostname, { all: true }, (error, addresses) => {
         if (error) return cb(error)
-        const ok = (addresses || []).find((a) => isPublicIpAddress(a.address))
+        const list = addresses || []
+        const ok = allowPrivate ? list[0] : list.find((a) => isPublicIpAddress(a.address))
         if (!ok) return cb(Object.assign(Error('The page resolved to a non-public address.'), { code: 'bad_url' }))
         pinned = { address: ok.address, family: ok.family }
         respond(ok.address, ok.family)
@@ -121,6 +132,10 @@ export function pinnedFetch(url, init = {}) {
       lookup,
     }, (res) => resolve(adaptResponse(res, init.signal)))
     req.on('error', (error) => reject(normalizeError(error, init.signal)))
-    req.end()
+    // The page reader only issues GETs, but the request proxy posts JSON
+    // bodies, so accept strings and byte arrays here as well. Bodies are
+    // already size-capped by the caller.
+    const body = init.body == null ? undefined : (typeof init.body === 'string' ? Buffer.from(init.body) : Buffer.from(init.body))
+    req.end(body)
   })
 }

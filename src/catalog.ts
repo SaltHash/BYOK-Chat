@@ -1,6 +1,8 @@
 /* Pure model-catalog helpers (no React). Fetch orchestration stays thin in Settings. */
 import { stripVendorPrefix } from './models'
 import { discoverProviderModels, resolveProvider } from './providerAdapter'
+import { endpointAuthHeaders, endpointHeaders, type EndpointAuth } from './endpointAuth'
+import { providerFetch } from './net'
 
 export type CatalogEntry = {
   id: string
@@ -20,7 +22,7 @@ export type CatalogEntry = {
  *  `base`, and (for branded endpoints) `openrouter` are already scoped. */
 export type CatalogSource = 'provider' | 'openrouter' | 'litellm' | 'base'
 
-export type CatalogEndpoint = { url?: string; key?: string; preset?: string; name?: string; endpointId?: string; endpointFilter?: string; accountId?: string; gatewayId?: string }
+export type CatalogEndpoint = { url?: string; key?: string; type?: 'openai' | 'anthropic'; auth?: EndpointAuth; headers?: string; preset?: string; name?: string; endpointId?: string; endpointFilter?: string; accountId?: string; gatewayId?: string }
 
 /** Unit used by a provider's pricing fields, normalized to USD per 1M tokens. */
 type PriceUnit = 'perToken' | 'perMillion' | 'centsPer100M' | 'none'
@@ -161,14 +163,14 @@ const baseModelId = (id: string) => id.replace(/^~+/, '').replace(/:(free|nitro|
  *  clear message instead of a silent empty list. */
 export async function fetchModelProviders(
   model: string,
-  e: { url?: string; key?: string },
-  fetchFn: typeof fetch = fetch,
+  e: CatalogEndpoint,
+  fetchFn: typeof fetch = providerFetch,
 ): Promise<{ providers: CatalogProvider[]; error?: string }> {
   const base = String(e.url || '').trim().replace(/\/+$/, '')
   if (!/openrouter\.ai/i.test(base)) return { providers: [], error: 'Provider selection needs an OpenRouter endpoint.' }
   const id = baseModelId(model)
   if (!id) return { providers: [], error: 'Enter a model ID first.' }
-  const headers: Record<string, string> = e.key ? { authorization: `Bearer ${e.key}` } : {}
+  const headers = endpointHeaders(e, e.key ? { authorization: `Bearer ${e.key}` } : {})
   try {
     const r = await fetchFn(`https://openrouter.ai/api/v1/models/${id}/endpoints`, { headers })
     if (!r.ok) throw Error(`OpenRouter provider lookup HTTP ${r.status}`)
@@ -176,6 +178,197 @@ export async function fetchModelProviders(
   } catch (err: unknown) {
     return { providers: [], error: (err as Error)?.message || 'Provider lookup failed.' }
   }
+}
+
+/* ------------------------------------------------------------------------ *
+ * Generic model-list discovery
+ *
+ * Custom OpenAI-compatible servers do not advertise where their catalog lives.
+ * Probe the handful of common locations once, remember which URL worked, and
+ * remember permanent failures so later catalog loads skip them instead of
+ * repeating the same dead requests. The cache is local to this browser and
+ * keyed by base URL + a non-reversible fingerprint of the API key.
+ * ------------------------------------------------------------------------ */
+
+export type DiscoveryCandidate = { url: string; auth: 'bearer' | 'anthropic' }
+export type DiscoveryAttempt = { url: string; ok: boolean; status: number; at: number; error?: string; skipped?: boolean }
+export type DiscoveryResult = {
+  entries: CatalogEntry[]
+  workingUrl?: string
+  error?: string
+  checked: DiscoveryAttempt[]
+}
+
+type DiscoveryMemo = {
+  base: string
+  keyTag: string
+  workingUrl?: string
+  attempts: Record<string, { ok: boolean; status: number; at: number; error?: string }>
+}
+
+const DISCOVERY_STORE = 'byok:model-discovery:v1'
+const DISCOVERY_FAILURE_TTL = 30 * 24 * 60 * 60 * 1000
+let discoveryMemos: Record<string, DiscoveryMemo> | null = null
+
+const discoveryStore = (): Record<string, DiscoveryMemo> => {
+  if (discoveryMemos) return discoveryMemos
+  discoveryMemos = {}
+  try {
+    const raw = typeof localStorage !== 'undefined' ? localStorage.getItem(DISCOVERY_STORE) : ''
+    if (!raw) return discoveryMemos
+    const parsed = JSON.parse(raw) as Record<string, DiscoveryMemo>
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) discoveryMemos = parsed
+  } catch { /* malformed or unavailable storage starts fresh */ }
+  return discoveryMemos
+}
+
+const saveDiscoveryStore = (): void => {
+  try {
+    if (typeof localStorage !== 'undefined') localStorage.setItem(DISCOVERY_STORE, JSON.stringify(discoveryStore()))
+  } catch { /* quota or privacy mode: the in-memory copy still works */ }
+}
+
+/** FNV-1a fingerprint: lets a changed key start a fresh set of probes without
+ *  storing the key itself in the discovery cache. */
+const keyFingerprint = (key: string): string => {
+  let hash = 0x811c9dc5
+  const value = String(key ?? '')
+  for (let i = 0; i < value.length; i++) {
+    hash ^= value.charCodeAt(i)
+    hash = Math.imul(hash, 0x01000193)
+  }
+  return (hash >>> 0).toString(36)
+}
+
+const memoFor = (base: string, key: string): DiscoveryMemo => {
+  const store = discoveryStore()
+  const memo = store[base] ?? (store[base] = { base, keyTag: '', attempts: {} })
+  const tag = keyFingerprint(key)
+  if (memo.keyTag !== tag) {
+    memo.keyTag = tag
+    memo.attempts = {}
+  }
+  return memo
+}
+
+const attemptFresh = (attempt: { ok: boolean; at: number } | undefined): boolean =>
+  !!attempt && !attempt.ok && Date.now() - attempt.at < DISCOVERY_FAILURE_TTL
+
+/** Common catalog locations, most likely first. Order is stable so cached
+ *  failures and successes survive reloads. */
+export function modelDiscoveryCandidates(url: string, type: 'openai' | 'anthropic' = 'openai'): DiscoveryCandidate[] {
+  const base = trimBase(url)
+  if (!base) return []
+  let parsed: URL
+  try { parsed = new URL(base) } catch { return [] }
+  const origin = parsed.origin
+  const path = parsed.pathname.replace(/\/+$/, '')
+  const urls: string[] = []
+  const add = (value: string) => {
+    const clean = value.replace(/\/+$/, '')
+    if (clean && !urls.includes(clean)) urls.push(clean)
+  }
+  add(`${base}/models`)
+  if (/\/openai$/i.test(path)) add(`${base.replace(/\/openai$/i, '')}/models`)
+  if (!/\/v\d+[a-z]*\d*$/i.test(path)) add(`${base}/v1/models`)
+  add(`${origin}/v1/models`)
+  add(`${origin}/models`)
+  add(`${base}/api/models`)
+  add(`${origin}/api/v1/models`)
+  add(`${origin}/api/tags`)
+  return urls.map((candidate) => ({ url: candidate, auth: type === 'anthropic' ? 'anthropic' : 'bearer' }))
+}
+
+const discoveryHeaders = (e: CatalogEndpoint, auth: DiscoveryCandidate['auth']): Record<string, string> => {
+  const base: Record<string, string> = {
+    accept: 'application/json',
+    ...endpointAuthHeaders(e, auth === 'anthropic' ? 'x-api-key' : 'bearer'),
+  }
+  if (auth === 'anthropic') {
+    base['anthropic-version'] = '2023-06-01'
+    base['anthropic-dangerous-direct-browser-access'] = 'true'
+  }
+  return endpointHeaders(e, base)
+}
+
+const isPermanentDiscoveryFailure = (status: number): boolean =>
+  status === 400 || status === 401 || status === 403 || status === 404 || status === 405 || status === 410 || status === 501
+
+/** Probe this endpoint's likely catalog URLs, skipping failures recorded by an
+ *  earlier load. `force` rechecks everything and replaces the memo. */
+export async function discoverEndpointModels(
+  e: CatalogEndpoint,
+  fetchFn: typeof fetch = providerFetch,
+  opts: { force?: boolean } = {},
+): Promise<DiscoveryResult> {
+  const base = trimBase(e.url)
+  if (!base) return { entries: [], checked: [], error: 'This endpoint needs a base URL before models can be listed.' }
+  const memo = opts.force ? { base, keyTag: keyFingerprint(String(e.key ?? '')), attempts: {} } as DiscoveryMemo : memoFor(base, String(e.key ?? ''))
+  const candidates = modelDiscoveryCandidates(base, e.type ?? 'openai')
+  if (memo.workingUrl) {
+    const index = candidates.findIndex((x) => x.url === memo.workingUrl)
+    if (index > 0) candidates.unshift(candidates.splice(index, 1)[0])
+    else if (index < 0) candidates.unshift({ url: memo.workingUrl, auth: e.type === 'anthropic' ? 'anthropic' : 'bearer' })
+  }
+  const checked: DiscoveryAttempt[] = []
+  let lastError = ''
+  for (const candidate of candidates) {
+    const known = memo.attempts[candidate.url]
+    if (!opts.force && attemptFresh(known)) {
+      checked.push({ url: candidate.url, ok: false, status: known.status, at: known.at, error: known.error, skipped: true })
+      continue
+    }
+    try {
+      const res = await fetchFn(candidate.url, { headers: discoveryHeaders(e, candidate.auth) })
+      if (!res.ok) {
+        const detail = `HTTP ${res.status}`
+        const attempt = { url: candidate.url, ok: false, status: res.status, at: Date.now(), error: detail }
+        checked.push(attempt)
+        lastError = `${candidate.url}: ${detail}`
+        // Cache permanent "this is not a model list" answers. Auth and
+        // transient failures are retried after the endpoint/key changes or on
+        // the next load, so fixing a key never leaves a permanent dead end.
+        if (isPermanentDiscoveryFailure(res.status) && res.status !== 401 && res.status !== 403) {
+          memo.attempts[candidate.url] = attempt
+        }
+        continue
+      }
+      const body = await res.json().catch(() => null)
+      const entries = parseCatalogModels(body, { endpointName: e.name, priceUnit: 'none' })
+      if (!entries.length) {
+        const attempt = { url: candidate.url, ok: false, status: res.status, at: Date.now(), error: 'No models in the response' }
+        checked.push(attempt)
+        memo.attempts[candidate.url] = attempt
+        lastError = `${candidate.url}: no models`
+        continue
+      }
+      const attempt = { url: candidate.url, ok: true, status: res.status, at: Date.now() }
+      checked.push(attempt)
+      memo.workingUrl = candidate.url
+      memo.attempts[candidate.url] = attempt
+      discoveryStore()[base] = memo
+      saveDiscoveryStore()
+      return { entries, workingUrl: candidate.url, checked }
+    } catch (err: unknown) {
+      const detail = (err as Error)?.message || 'Network error'
+      checked.push({ url: candidate.url, ok: false, status: 0, at: Date.now(), error: detail })
+      lastError = `${candidate.url}: ${detail}`
+      // Network errors are transient; do not poison the cache with them.
+    }
+  }
+  discoveryStore()[base] = memo
+  saveDiscoveryStore()
+  const skipped = checked.filter((x) => x.skipped).length
+  const suffix = skipped ? ` ${skipped} previously failed URL${skipped === 1 ? ' was' : 's were'} skipped.` : ''
+  return { entries: [], checked, error: lastError ? `No model list was found. Last error: ${lastError}.${suffix}` : `No model list was found.${suffix}` }
+}
+
+/** Forget cached discovery results. Omit the URL to clear every endpoint. */
+export function clearModelDiscoveryCache(url?: string): void {
+  const store = discoveryStore()
+  if (url) delete store[trimBase(url)]
+  else discoveryMemos = {}
+  saveDiscoveryStore()
 }
 
 /* ------------------------------------------------------------------------ *
@@ -246,7 +439,8 @@ export function catalogProviderOf(e: CatalogEndpoint): DirectProvider | null {
   return 'generic'
 }
 
-const bearerHeaders = (e: CatalogEndpoint): Record<string, string> => e.key ? { authorization: `Bearer ${e.key}` } : {}
+const bearerHeaders = (e: CatalogEndpoint): Record<string, string> =>
+  endpointHeaders(e, e.key ? { authorization: `Bearer ${e.key}` } : {})
 
 async function fetchOpenAiStyle(provider: DirectProvider, e: CatalogEndpoint, fetchFn: typeof fetch): Promise<DirectResult> {
   const base = trimBase(e.url)
@@ -272,15 +466,16 @@ async function fetchAnthropicModels(e: CatalogEndpoint, fetchFn: typeof fetch): 
   const base = trimBase(e.url)
   if (!base) return { entries: [], error: 'Anthropic needs a base URL.' }
   const headers: Record<string, string> = {
+    ...endpointAuthHeaders(e, 'x-api-key'),
     'anthropic-version': '2023-06-01',
     'anthropic-dangerous-direct-browser-access': 'true',
   }
-  if (e.key) headers['x-api-key'] = e.key
+  const requestHeaders = endpointHeaders(e, headers)
   const entries: CatalogEntry[] = []
   let after = ''
   for (let page = 0; page < 20; page++) {
     const url = `${base}/models?limit=1000${after ? `&after_id=${encodeURIComponent(after)}` : ''}`
-    const r = await fetchFn(url, { headers })
+    const r = await fetchFn(url, { headers: requestHeaders })
     if (!r.ok) throw Error(`Anthropic model list HTTP ${r.status}`)
     const body = await r.json() as { data?: unknown; has_more?: boolean; last_id?: string }
     entries.push(...parseCatalogModels(body, { endpointId: e.endpointId, endpointName: e.name, priceUnit: 'none' }))
@@ -322,7 +517,7 @@ function parseGoogleModels(body: unknown, opts: CatalogParseOptions = {}): Catal
 async function fetchGoogleModels(e: CatalogEndpoint, fetchFn: typeof fetch): Promise<DirectResult> {
   const root = googleModelsUrl(e.url)
   if (!root) return { entries: [], error: 'Google needs a base URL.' }
-  const headers: Record<string, string> = e.key ? { 'x-goog-api-key': e.key } : {}
+  const headers = endpointHeaders(e, e.key ? { 'x-goog-api-key': e.key } : {})
   const entries: CatalogEntry[] = []
   let token = ''
   for (let page = 0; page < 20; page++) {
@@ -403,7 +598,7 @@ async function fetchDirect(provider: DirectProvider, e: CatalogEndpoint, fetchFn
  *  4. a generic `${base}/models` for unknown OpenAI-compatible servers. */
 export async function fetchModelCatalog(
   e: CatalogEndpoint,
-  fetchFn: typeof fetch = fetch,
+  fetchFn: typeof fetch = providerFetch,
 ): Promise<{ entries: CatalogEntry[]; error?: string; source?: CatalogSource; stale?: boolean }> {
   const base = trimBase(e.url)
   const endpointId = e.endpointId ?? ''
@@ -438,17 +633,23 @@ export async function fetchModelCatalog(
   }
 
   if (provider && base) {
-    const direct = await fetchDirect(provider, e, fetchFn)
-    if (direct.entries.length) return { entries: direct.entries, source: provider === 'openrouter' ? 'openrouter' : 'provider' }
-    if (direct.error) errors.push(direct.error)
-    if (provider === 'ollama' && direct.error) errors.push('Ollama blocks requests from other origins unless OLLAMA_ORIGINS includes this app.')
+    if (provider === 'generic') {
+      const generic = await discoverEndpointModels(e, fetchFn)
+      if (generic.entries.length) return { entries: generic.entries, source: 'provider' }
+      if (generic.error) errors.push(generic.error)
+    } else {
+      const direct = await fetchDirect(provider, e, fetchFn)
+      if (direct.entries.length) return { entries: direct.entries, source: provider === 'openrouter' ? 'openrouter' : 'provider' }
+      if (direct.error) errors.push(direct.error)
+      if (provider === 'ollama' && direct.error) errors.push('Ollama blocks requests from other origins unless OLLAMA_ORIGINS includes this app.')
+    }
   }
 
   // The direct OpenRouter attempt already queried this catalog; do not retry.
   if (provider !== 'openrouter' || !base) {
     try {
       const q = endpointId ? `?${endpointFilter === 'provider' ? 'providers' : 'model_authors'}=${encodeURIComponent(endpointId)}` : ''
-      const headers: Record<string, string> = /openrouter\.ai/i.test(base) && e.key ? { authorization: `Bearer ${e.key}` } : {}
+      const headers = endpointHeaders(e, /openrouter\.ai/i.test(base) && e.key ? { authorization: `Bearer ${e.key}` } : {})
       const r = await fetchFn(`https://openrouter.ai/api/v1/models${q}`, { headers })
       if (!r.ok) throw Error(`OpenRouter catalog HTTP ${r.status}`)
       const entries = parseCatalogModels(await r.json(), { endpointId, endpointName: e.name })

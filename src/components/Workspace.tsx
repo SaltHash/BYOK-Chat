@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Archive, Check, Copy, ChevronRight, Download, FileCode, FileJson, FileText, FileType, Globe, Image, Music, Video, Braces, Terminal, Database, Cog, Hash, PenTool, LayoutTemplate, Sparkles, File, Files, Folder, FolderOpen, Pencil, X, Diff as DiffIcon, Trash2, Send, Share2, Save, type LucideIcon } from 'lucide-react'
 import { strToU8, zipSync } from 'fflate'
 import { useS, uid, type Msg } from '../store'
@@ -6,7 +6,7 @@ import { clampWorkspaceSplit } from '../layout'
 import type { ToolCall } from '../engine'
 import { Md } from './Md'
 import { Btn, Confirm, Field, Input, Toggle, cx } from './ui'
-import { WORKSPACE_MAX_FILES, buildZipEntries, workspaceLines, workspaceSize, buildFolderTree, expandedFoldersForPath, extractWorkspaceIds, findWritingPath, groupWorkspaceVersions, countWorkspaceFiles, sanitizePath, zipFilename, diffLines, diffStat, changedFilesBetween, sanitizeHtmlPreview, previewKindFor, highlightLanguageFor, parseCsvPreview, type Workspace, type WorkspaceRevision } from '../workspace'
+import { buildZipEntries, workspaceLines, workspaceSize, buildFolderTree, expandedFoldersForPath, extractWorkspaceIds, findWritingPath, groupWorkspaceVersions, countWorkspaceFiles, sanitizePath, zipFilename, diffLines, diffStat, changedFilesBetween, sanitizeHtmlPreview, previewKindFor, highlightLanguageFor, parseCsvPreview, type Workspace, type WorkspaceRevision } from '../workspace'
 
 const fence = (lang: string, code: string) => {
   const runs = code.match(/`{3,}/g)
@@ -53,8 +53,6 @@ export function useWorkspaceFiles(msg: Msg, live?: ToolCall[], workspace?: Works
     const pending = liveCalls.filter((c) => !c.id || !done.has(c.id))
     return groupWorkspaceVersions([...finalCalls, ...pending.map((c) => ({ ...c }))])
   }, [finalCalls, liveCalls])
-  // Uncapped count: `groups` is capped at WORKSPACE_MAX_FILES, so its length
-  // could never trigger the "(showing first N)" hint.
   const total = useMemo(() => {
     const done = new Set(finalCalls.map((c) => c.id))
     const pending = liveCalls.filter((c) => !c.id || !done.has(c.id))
@@ -300,7 +298,6 @@ export function WorkspaceTile({ msg, live, workspace, selectedRevisionId, onOpen
             <span className="truncate">Writing {writingPath}…</span>
           </span>
         )}
-        {total > WORKSPACE_MAX_FILES && <span className="shrink-0 text-xs text-mu">(showing first {WORKSPACE_MAX_FILES})</span>}
       </div>
       <div className="max-h-200 overflow-y-auto space-y-1 border-t border-bor pt-2 mt-1">
         <WorkspaceFileTree
@@ -366,9 +363,9 @@ function WorkspaceRevisionPicker({ workspace, selectedId, onSelect, className }:
 }
 
 /* Full file viewer rendered in the resizable splitscreen on the right. */
-export function WorkspacePanel({ msg, live, workspace, selectedRevisionId, setSelectedRevisionId, onClose, initialFilePath }: {
+export function WorkspacePanel({ msg, live, workspace, selectedRevisionId, setSelectedRevisionId, onClose, initialFilePath, focus = 0 }: {
   msg: Msg; live?: ToolCall[]; workspace: Workspace; selectedRevisionId: string | null;
-  setSelectedRevisionId: (id: string) => void; onClose: () => void; initialFilePath?: string
+  setSelectedRevisionId: (id: string) => void; onClose: () => void; initialFilePath?: string; focus?: number
 }) {
   const send = useS((s) => s.send)
   const busy = useS((s) => s.busy)
@@ -377,7 +374,11 @@ export function WorkspacePanel({ msg, live, workspace, selectedRevisionId, setSe
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState('')
   const [confirmDelete, setConfirmDelete] = useState(false)
-  const [selectedFilePath, setSelectedFilePath] = useState<string | null>(null)
+  /* Which file the panel shows. `user` is an explicit choice (the tree or a
+     file opened from the tile), `follow` is the file the AI is writing. The
+     two are kept apart so following a new write never resets the panel to
+     the first file of the revision. */
+  const [sel, setSel] = useState<{ path: string; source: 'user' | 'follow' } | null>(null)
   const [expandedFolders, setExpandedFolders] = useState<Record<string, boolean>>({})
   const [view, setView] = useState<'code' | 'preview' | 'diff'>('code')
   const [diffBaseId, setDiffBaseId] = useState<string | null>(null)
@@ -392,7 +393,9 @@ export function WorkspacePanel({ msg, live, workspace, selectedRevisionId, setSe
     st.patch({ prefs: { ...st.prefs, workspaceSplit: Math.round(clampWorkspaceSplit(v) * 1000) / 1000 } })
   }
 
-  const revision = workspace.revisions.find(r => r.id === selectedRevisionId) ?? workspace.revisions[workspace.revisions.length - 1]
+  const revision = workspace.revisions.find(r => r.id === selectedRevisionId)
+    ?? workspace.revisions[workspace.revisions.length - 1]
+    ?? { id: '', name: '', msgId: msg.id, files: [], createdAt: 0 }
   const revIdx = workspace.revisions.findIndex(r => r.id === revision.id)
   const { total } = useWorkspaceFiles(msg, live)
 
@@ -402,39 +405,58 @@ export function WorkspacePanel({ msg, live, workspace, selectedRevisionId, setSe
   // Exit edit mode whenever the revision changes.
   useEffect(() => { setEditing(false); setDiffBaseId(null) }, [revision.id])
 
-  // Select the file requested from the inline tile (or auto-open). Runs on
-  // mount and whenever the requested path changes while the panel is open.
+  /* Write generation: bumps every time the AI starts writing a different
+     file. A file the user picked during the current write wins over the
+     auto-follow until the next write starts. */
+  const writeGenRef = useRef(0)
+  const userGenRef = useRef(-1)
+  const lastWriteRef = useRef<string | null>(null)
   useEffect(() => {
-    if (initialFilePath) {
-      setSelectedFilePath(initialFilePath)
-      // Ensure the folder containing this file is expanded
-      setExpandedFolders((prev) => ({ ...prev, ...expandedFoldersForPath(initialFilePath) }))
+    if (writingPath && writingPath !== lastWriteRef.current) {
+      lastWriteRef.current = writingPath
+      writeGenRef.current++
     }
-  }, [initialFilePath])
+  }, [writingPath])
 
-  // Auto-follow: when AI starts writing a new file, switch to it
+  // Auto-follow: show the file the AI writes. The file is only selected once
+  // it exists in the shown revision, so the panel keeps the file the user was
+  // looking at instead of falling back to the first file of the revision.
   useEffect(() => {
-    if (workspacePrefs.autoFollow && writingPath && writingPath !== selectedFilePath) {
-      setSelectedFilePath(writingPath)
-      // Ensure the folder containing this file is expanded
-      setExpandedFolders((prev) => ({ ...prev, ...expandedFoldersForPath(writingPath) }))
-    }
-  }, [writingPath, workspacePrefs.autoFollow, selectedFilePath])
+    if (!workspacePrefs.autoFollow) return
+    const target = writingPath ?? lastWriteRef.current
+    if (!target) return
+    if (userGenRef.current >= writeGenRef.current) return
+    if (!revision.files.some((f) => f.path === target)) return
+    setSel({ path: target, source: 'follow' })
+    setExpandedFolders((prev) => ({ ...prev, ...expandedFoldersForPath(target) }))
+  }, [writingPath, workspacePrefs.autoFollow, revision.files])
 
-  // Initialize selected file to first file in revision (only if no file selected yet and no initial path)
+  // A file opened from the inline tile (or picked in the tree) is an explicit
+  // request and wins over the auto-follow. `focus` changes when the same file
+  // is requested again.
+  const pickFile = (path: string) => {
+    userGenRef.current = writeGenRef.current
+    setSel({ path, source: 'user' })
+    setExpandedFolders((prev) => ({ ...prev, ...expandedFoldersForPath(path) }))
+  }
   useEffect(() => {
-    if (revision.files.length > 0 && !selectedFilePath && !writingPath && !initialFilePath) {
-      setSelectedFilePath(revision.files[0].path)
-    }
-  }, [revision.id, revision.files, selectedFilePath, writingPath, initialFilePath])
+    if (!initialFilePath) return
+    pickFile(initialFilePath)
+  }, [initialFilePath, focus])
 
   const files = revision.files
+  // The shown file: the chosen one when the revision still has it, else the
+  // file being written, else the first file of the revision.
+  const selectedFile = (sel && files.find(f => f.path === sel.path))
+    ?? files.find(f => f.path === writingPath)
+    ?? files[0]
+  const selectedFilePath = selectedFile?.path ?? null
   const copy = (s: string) => { navigator.clipboard?.writeText(s) }
   const downloadOne = (p: string, content: string) => saveBlob(base(p), new Blob([content], { type: 'text/plain;charset=utf-8' }))
 
   const restore = () => {
     if (busy) return
-    const file = revision.files.find(f => f.path === selectedFilePath) ?? revision.files[0]
+    const file = selectedFile
     if (file) {
       void send(`Please restore file "${file.path}" to the selected revision. Call workspace_upsert with action "update", the same path, and that version's exact content.`, [])
     }
@@ -443,7 +465,7 @@ export function WorkspacePanel({ msg, live, workspace, selectedRevisionId, setSe
   const saveLocalEdit = () => {
     const st = useS.getState()
     const ws = st.workspaces[workspace.id]
-    const file = revision.files.find(f => f.path === selectedFilePath) ?? revision.files[0]
+    const file = selectedFile
     if (!ws || !file) return
     const latest = ws.revisions[ws.revisions.length - 1]
     const next: WorkspaceRevision = {
@@ -482,7 +504,8 @@ export function WorkspacePanel({ msg, live, workspace, selectedRevisionId, setSe
       selectedRevision: { ...st.selectedRevision, [ws.id]: next.id },
     })
     setSelectedRevisionId(next.id)
-    setSelectedFilePath(next.files[0]?.path ?? null)
+    if (next.files[0]) pickFile(next.files[0].path)
+    else setSel(null)
     setConfirmDelete(false)
   }
 
@@ -502,7 +525,6 @@ export function WorkspacePanel({ msg, live, workspace, selectedRevisionId, setSe
   // Build folder tree for expandable folders
   const folderTree = useMemo(() => buildFolderTree(files), [files])
 
-  const selectedFile = files.find(f => f.path === selectedFilePath) ?? files[0]
   const kind = selectedFile ? previewKindFor(selectedFile.path, selectedFile.language) : 'code'
   const canPreview = kind !== 'code'
   const highlightLang = selectedFile ? highlightLanguageFor(selectedFile.path, selectedFile.language) : 'plaintext'
@@ -538,7 +560,7 @@ export function WorkspacePanel({ msg, live, workspace, selectedRevisionId, setSe
           className="w-32 shrink-0 sm:w-64"
         />
         <Btn sm icon={Share2} title="Share via GitHub Gist (optional token)" onClick={() => setGistOpen(true)} />
-        <Btn sm icon={X} title="Close workspace panel" onClick={() => { setSelectedFilePath(null); onClose(); }} />
+        <Btn sm icon={X} title="Close workspace panel" onClick={() => { setSel(null); onClose(); }} />
       </div>
       <div role="tree" aria-label="Workspace files" className="min-h-0 overflow-y-auto border-b border-bor px-2 py-2" style={{ flex: `0 0 ${split * 100}%` }}>
         <WorkspaceFileTree
@@ -546,7 +568,7 @@ export function WorkspacePanel({ msg, live, workspace, selectedRevisionId, setSe
           expanded={expandedFolders}
           selectedPath={selectedFilePath}
           onToggle={(p) => setExpandedFolders((prev) => ({ ...prev, [p]: !prev[p] }))}
-          onSelect={(p) => setSelectedFilePath(p)}
+          onSelect={(p) => pickFile(p)}
           variant="panel"
         />
       </div>
@@ -604,7 +626,7 @@ export function WorkspacePanel({ msg, live, workspace, selectedRevisionId, setSe
                     {revChanges.slice(0, 8).map((c) => (
                       <button
                         key={c.path}
-                        onClick={() => { setSelectedFilePath(c.path); setExpandedFolders((prev) => ({ ...prev, ...expandedFoldersForPath(c.path) })) }}
+                        onClick={() => pickFile(c.path)}
                         title={`${c.path} · ${c.status}`}
                         className={cx('rounded px-1.5 py-0.5 font-mono', c.path === selectedFile.path ? 'bg-ac/20 text-tx' : 'bg-codeh hover:text-tx', c.status === 'added' && 'text-ac', c.status === 'removed' && 'text-er')}
                       >

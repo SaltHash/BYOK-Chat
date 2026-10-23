@@ -16,7 +16,7 @@ export async function syncPull(token: string): Promise<{ payload: SyncPayload | 
   return data
 }
 
-export async function syncStatus(): Promise<{ backend: string; configured: boolean }> {
+export async function syncStatus(): Promise<{ backend: string; configured: boolean; shared?: boolean }> {
   const r = await fetch('/api/sync/status')
-  return r.json().catch(() => ({ backend: 'memory', configured: false }))
+  return r.json().catch(() => ({ backend: 'memory', configured: false, shared: false }))
 }

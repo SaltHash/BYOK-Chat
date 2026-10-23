@@ -60,6 +60,21 @@ test('health rejects non-GET methods with 405 and Allow', async () => {
   isJson(res)
 })
 
+test('proxy relays through the Worker for providers without CORS', async () => {
+  const target = `${mockOrigin}/search-ok`
+  const res = await call(`/api/proxy?url=${encodeURIComponent(target)}`, {}, { PROXY_ALLOWED_HOSTS: '127.0.0.1' })
+  assert.equal(res.status, 200)
+  assert.equal((await res.json()).results[0].title, 'Mock result')
+  assert.equal(lastProviderRequest.url, '/search-ok')
+})
+
+test('proxy refuses a target outside its allowlist', async () => {
+  const target = `${mockOrigin}/search-ok`
+  const res = await call(`/api/proxy?url=${encodeURIComponent(target)}`, {}, { PROXY_ALLOWED_HOSTS: 'openrouter.ai' })
+  assert.equal(res.status, 403)
+  assert.equal((await res.json()).code, 'target_not_allowed')
+})
+
 test('unknown API paths return JSON 404, never the SPA HTML', async () => {
   for (const init of [{}, { method: 'POST' }]) {
     const res = await call('/api/definitely-not-real', init)
@@ -217,7 +232,7 @@ test('sync reports the memory backend without DATABASE_URL and 404s unknown rout
   const status = await call('/api/sync/status')
   assert.equal(status.status, 200)
   const data = await status.json()
-  assert.deepEqual(data, { ok: true, backend: 'memory', configured: false })
+  assert.deepEqual(data, { ok: true, backend: 'memory', configured: false, neonConfigured: false, shared: false })
   const unknown = await call('/api/sync/not-a-route')
   assert.equal(unknown.status, 404)
   isJson(unknown)

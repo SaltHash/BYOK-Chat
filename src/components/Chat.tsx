@@ -47,8 +47,10 @@ function toolStep(name: string, rawArgs: string, result?: string) {
     const path = typeof args.path === 'string' ? args.path : 'file'
     const workspaceId = typeof args.workspaceId === 'string' ? args.workspaceId : ''
     const wsLabel = workspaceId ? ` (ws:${workspaceId.slice(0, 8)})` : ''
+    // One file per call: a tool call that still carries a list is shown as
+    // such, because the tool refuses it.
     const batch = Array.isArray(args.files) ? args.files.length : 0
-    const what = batch ? `batch: ${action} ${clip(path, 60)} + ${batch} more` : `${action}: ${clip(path, 80)}`
+    const what = batch ? `batch of ${batch} refused: ${action} ${clip(path, 60)}` : `${action}: ${clip(path, 80)}`
     return `Workspace file · ${what}${wsLabel}`
   }
   if (name === 'search') {
@@ -556,8 +558,13 @@ export function Chat({ side, toggle, cfg, pal }: { side: boolean; toggle: () => 
     if (featOn(s, 'voice') && normVoice(voicePrefs).autoRead) speak(last.toolFinal ?? last.t, normVoice(voicePrefs))
   }, [busy, c?.msgs, s.features, voicePrefs])
   const workspacePrefs = useS((st) => st.workspacePrefs ?? { defaultView: 'latest', autoOpen: true, autoFollow: true })
-  const [workspacePanel, setWorkspacePanel] = useState<{ mid: string; workspaceId: string; initialFilePath?: string } | null>(null)
+  /* `focus` counts explicit file requests so the panel can re-apply the same
+     path when the user asks for it twice. */
+  const [workspacePanel, setWorkspacePanel] = useState<{ mid: string; workspaceId: string; initialFilePath?: string; focus?: number } | null>(null)
   const prevBusy = useRef(busy)
+  /* The user closed the panel: it must stay closed while the current reply
+     runs, and open again with the next one. */
+  const panelClosed = useRef(false)
 
   useEffect(() => { stick.current = !useS.getState().flashMsg }, [s.chat])
   /* Follow-the-bottom scrolling is coalesced to at most one write per frame:
@@ -575,37 +582,44 @@ export function Chat({ side, toggle, cfg, pal }: { side: boolean; toggle: () => 
     if (stick.current || last?.r === 'user') followBottom.call()
   }, [c?.msgs, s.chat, followBottom])
 
-  // Auto-open workspace panel when AI writes files; follow the file being written.
+  // Auto-open the workspace panel while the AI writes files, and keep it
+  // pointed at the workspace the files land in. The panel itself follows the
+  // file being written, so the panel state only carries the workspace.
   useEffect(() => {
     if (!c || !workspacePrefs.autoOpen) return
+    // A new reply may open the panel again; until then a panel the user
+    // closed stays closed.
+    if (busy && !prevBusy.current) panelClosed.current = false
+    if (panelClosed.current) { prevBusy.current = busy; return }
     if (busy) {
       for (let i = c.msgs.length - 1; i >= 0; i--) {
         const m = c.msgs[i]
         if (m.r !== 'assistant') continue
-        const writingPath = findWritingPath(liveTools[m.id], m.toolRounds)
-        if (!writingPath) continue
-        // Find workspace ID and active file path from live arguments
-        const liveCalls = (liveTools[m.id] ?? []) as { name: string; arguments: string; result?: string }[]
-        const liveWsIds = extractWorkspaceIds(liveCalls)
-        const wsId = (m.workspaceIds ?? [])[0] ?? liveWsIds[0] ?? (m.workspaceIds ?? [])[0]
-        const initialPath: string | undefined = writingPath
-        if (wsId || initialPath) {
-          setWorkspacePanel((prev) => {
-            if (!prev || prev.mid !== m.id || prev.workspaceId !== wsId || prev.initialFilePath !== initialPath) {
-              return { mid: m.id, workspaceId: wsId || prev?.workspaceId || '', initialFilePath: initialPath || prev?.initialFilePath }
-            }
-            return prev
-          })
-          break
-        }
+        const live = (liveTools[m.id] ?? []) as WorkspaceCallLike[]
+        const writingPath = findWritingPath(live, m.toolRounds)
+        const ids = m.workspaceIds ?? []
+        // The message records the workspace as soon as the first file lands,
+        // so the id is known while the reply is still streaming.
+        const wsId = ids[ids.length - 1] ?? extractWorkspaceIds(live)[0]
+        if (!wsId && !writingPath) continue
+        setWorkspacePanel((prev) => {
+          // Keep the previous workspace when the new id is not known yet: an
+          // unknown id made the panel unmount, and the workspace the user
+          // was working in appeared to vanish.
+          const nextId = wsId || prev?.workspaceId || ''
+          if (!nextId) return prev
+          if (prev && prev.mid === m.id && prev.workspaceId === nextId) return prev
+          return { mid: m.id, workspaceId: nextId, initialFilePath: undefined, focus: prev?.focus ?? 0 }
+        })
+        break
       }
     }
-    // Auto-close when reply completes (optional - controlled by user closing panel)
-    if (prevBusy.current && !busy && workspacePanel) {
-      // Keep panel open until user closes it
-    }
     prevBusy.current = busy
-  }, [busy, liveTools, c, workspacePrefs.autoOpen, workspacePanel])
+  }, [busy, liveTools, c, workspacePrefs.autoOpen])
+
+  // The panel belongs to a chat: switching chats closes it instead of
+  // leaving it pointing at a message that is no longer on screen.
+  useEffect(() => { panelClosed.current = false; setWorkspacePanel(null) }, [s.chat])
 
   const rowRef = useRef<HTMLDivElement>(null)
   // The composer floats over the message list; track its height so the list can
@@ -633,12 +647,19 @@ export function Chat({ side, toggle, cfg, pal }: { side: boolean; toggle: () => 
 
   // Stable callback identities so memoized message rows do not re-render when
   // the list re-renders for an unrelated (streamed) chunk.
-  const openWorkspace = useCallback((mid: string, wsId: string, filePath?: string) => setWorkspacePanel({ mid, workspaceId: wsId, initialFilePath: filePath }), [])
+  const openWorkspace = useCallback((mid: string, wsId: string, filePath?: string) => setWorkspacePanel((prev) => ({ mid, workspaceId: wsId, initialFilePath: filePath, focus: (prev?.focus ?? 0) + 1 })), [])
   const openResearch = useCallback((mid: string) => { useS.getState().patch({ researchPanel: { mid } }) }, [])
 
   const workspaceMsg = workspacePanel ? c?.msgs.find((m) => m.id === workspacePanel.mid) : undefined
-  const workspace = workspaceMsg && workspacePanel ? s.workspaces[workspacePanel.workspaceId] : undefined
-  const selectedRevId = workspacePanel ? s.selectedRevision[workspacePanel.workspaceId] : null
+  /* The panel id can be a workspace that does not exist yet (a brand new
+     project, or one whose id the model never sent). Fall back to the
+     workspace the message itself points at, so the panel keeps showing the
+     project instead of disappearing mid-write. */
+  const msgWsIds = workspaceMsg?.workspaceIds ?? []
+  const panelWsId = workspacePanel?.workspaceId ?? ''
+  const workspaceId = panelWsId && s.workspaces[panelWsId] ? panelWsId : (msgWsIds[msgWsIds.length - 1] ?? '')
+  const workspace = workspaceMsg && workspacePanel ? s.workspaces[workspaceId] : undefined
+  const selectedRevId = workspacePanel ? s.selectedRevision[workspaceId] : null
   const workspaceFrac = clampWorkspaceFrac(s.prefs.workspaceWidth)
   const researchMid = useS((st) => st.researchPanel?.mid ?? null)
   const researchMsg = researchMid ? c?.msgs.find((m) => m.id === researchMid && m.research) : undefined
@@ -698,7 +719,7 @@ export function Chat({ side, toggle, cfg, pal }: { side: boolean; toggle: () => 
           <>
             <div role="separator" aria-orientation="vertical" aria-label="Resize workspace panel" onPointerDown={startResize} className="hidden w-1.5 shrink-0 cursor-col-resize bg-transparent hover:bg-ac/50 sm:block" />
             <aside aria-label="Workspace side panel" style={wide ? { flex: `0 0 ${workspaceFrac * 100}%`, maxWidth: '70%', minWidth: '15%' } : { height: '45dvh', width: '100%' }} className="flex min-h-0 shrink-0 flex-col border-t border-bor bg-surf/40 sm:border-l sm:border-t-0">
-              <WorkspacePanel key={`${workspaceMsg.id}:${workspaceMsg.ai ?? 0}:${workspacePanel.workspaceId}:${workspacePanel.initialFilePath ?? ''}`} msg={workspaceMsg} live={liveTools[workspaceMsg.id]} workspace={workspace} selectedRevisionId={selectedRevId ?? workspace.revisions[workspace.revisions.length - 1].id} setSelectedRevisionId={(id) => s.patch({ selectedRevision: { ...s.selectedRevision, [workspacePanel.workspaceId]: id } })} onClose={() => setWorkspacePanel(null)} initialFilePath={workspacePanel.initialFilePath} />
+              <WorkspacePanel key={`${workspaceMsg.id}:${workspaceMsg.ai ?? 0}:${workspaceId}`} msg={workspaceMsg} live={liveTools[workspaceMsg.id]} workspace={workspace} selectedRevisionId={selectedRevId ?? workspace.revisions[workspace.revisions.length - 1]?.id ?? null} setSelectedRevisionId={(id) => s.patch({ selectedRevision: { ...s.selectedRevision, [workspaceId]: id } })} onClose={() => { panelClosed.current = true; setWorkspacePanel(null) }} initialFilePath={workspacePanel.initialFilePath} focus={workspacePanel.focus ?? 0} />
             </aside>
           </>
         )}

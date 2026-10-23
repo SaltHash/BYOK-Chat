@@ -4,6 +4,7 @@
  * from configuration. */
 
 import { withCode, type CodedError, type ErrorCode } from './errors'
+import { providerFetch } from './net'
 import {
   hasUnresolvedPlaceholder,
   providerBaseUrl,
@@ -229,7 +230,7 @@ export function mapNetworkError(provider: ProviderConfig, url: string): MappedPr
   let host = url
   try { host = new URL(url).host || url } catch { /* keep raw */ }
   const cors = provider.cors === 'blocked'
-    ? ' This provider did not send browser CORS headers in testing; a same-origin proxy is required for browser use.'
+    ? ' This provider does not send browser CORS headers, so its requests have to travel through this app\'s server relay (Settings → Endpoints → Request routing).'
     : provider.cors === 'unverified'
       ? ' Browser CORS for this provider is unverified.'
       : ''
@@ -302,7 +303,7 @@ const assertResponse = async (provider: ProviderConfig, res: Response, key?: str
 }
 
 /** Non-streaming chat completion. */
-export async function chatCompletion(provider: ProviderConfig, opts: ChatRequestOptions, fetchFn: typeof fetch = fetch): Promise<Record<string, any>> {
+export async function chatCompletion(provider: ProviderConfig, opts: ChatRequestOptions, fetchFn: typeof fetch = providerFetch): Promise<Record<string, any>> {
   const { url, init } = buildChatRequest(provider, { ...opts, stream: false })
   const res = await fetchFn(url, init)
   await assertResponse(provider, res, opts.endpoint?.key)
@@ -415,7 +416,7 @@ export async function streamChatCompletion(
   provider: ProviderConfig,
   opts: ChatRequestOptions,
   onText: (text: string) => void = () => {},
-  fetchFn: typeof fetch = fetch,
+  fetchFn: typeof fetch = providerFetch,
 ): Promise<StreamedChat> {
   const { url, init } = buildChatRequest(provider, { ...opts, stream: true })
   let res: Response
@@ -556,7 +557,7 @@ const cacheKey = (provider: ProviderConfig, endpoint: ProviderEndpoint): string 
 export async function discoverProviderModels(
   provider: ProviderConfig,
   endpoint: ProviderEndpoint = {},
-  fetchFn: typeof fetch = fetch,
+  fetchFn: typeof fetch = providerFetch,
 ): Promise<DiscoveryResult> {
   if (!provider.discovery) {
     return { entries: [], error: `${provider.name}: model discovery is not available for this provider. Enter a model id manually.` }

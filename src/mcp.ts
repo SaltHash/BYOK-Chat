@@ -1,13 +1,15 @@
 /* Model Context Protocol client over Streamable HTTP.
  *
- * The app has no backend bridge for MCP, so servers are reached directly from
- * the browser. That keeps credentials (user-provided headers, usually an
- * Authorization bearer) on the device, exactly like model keys. The tradeoff
- * is CORS: a remote MCP server must allow this origin, which most hosted
- * servers do and some self-hosted ones do not. Tools are listed and called
- * with the normal Streamable HTTP transport (JSON-RPC 2.0 over POST, with
- * JSON or SSE responses). Nothing is stored on a server.
+ * Servers are normally reached directly from the browser, which keeps
+ * credentials (user-provided headers, usually an Authorization bearer) on the
+ * device, exactly like model keys. When a server blocks browser origins the
+ * call is retried through this app's same-origin relay (see net.ts); the
+ * headers are forwarded per request and never stored. Tools are listed and
+ * called with the normal Streamable HTTP transport (JSON-RPC 2.0 over POST,
+ * with JSON or SSE responses).
  */
+
+import { providerFetch } from './net'
 
 export type McpTool = {
   name: string
@@ -176,6 +178,10 @@ export function formatMcpContent(result: any): string {
 
 type FetchLike = typeof fetch
 
+/** Provider-style transport: direct when the server allows this origin, via
+ *  this app's relay when the browser blocks it. */
+const mcpFetch: FetchLike = providerFetch
+
 /** One Streamable HTTP MCP session. A fresh client is created per operation;
  *  the session header is kept only for the lifetime of that operation. */
 export class McpClient {
@@ -188,7 +194,7 @@ export class McpClient {
   constructor(
     private readonly url: string,
     private readonly headers: Record<string, string> = {},
-    fetchFn: FetchLike = fetch,
+    fetchFn: FetchLike = mcpFetch,
     private readonly timeoutMs = 20_000,
   ) {
     // `fetch` is a window method: calling it as `this.fetchFn(...)` rebinds
@@ -306,7 +312,7 @@ export class McpClient {
 }
 
 /** List a server's tools. Used by the Test button in Settings. */
-export async function probeMcpServer(url: string, headerBlock: string, fetchFn: FetchLike = fetch) {
+export async function probeMcpServer(url: string, headerBlock: string, fetchFn: FetchLike = mcpFetch) {
   if (!isMcpUrl(url)) throw Error('Enter an http(s) URL for the MCP server.')
   const client = new McpClient(url.trim(), parseHeaders(headerBlock), fetchFn)
   const tools = await client.listTools()
