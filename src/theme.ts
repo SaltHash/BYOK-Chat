@@ -6,6 +6,9 @@ export type ThemeAdjustment = { hue: number; sat: number; bright: number }
 
 /** Syntax colours stay fixed: hue, saturation and brightness never touch them. */
 export const SYNTAX_COLOR_KEYS = ['c2', 'c3', 'c4', 'c5'] as const
+/** Error keeps its original colour: hue rotation must not repaint the failure cue,
+ * and saturation/brightness must not gray it out or dim it off-screen. */
+export const UNADJUSTED_KEYS = [...SYNTAX_COLOR_KEYS, 'er'] as const
 /** Brightness must not wash out text, including the label colour on accents. */
 export const TEXT_COLOR_KEYS = ['tx', 'mu', 'acx'] as const
 
@@ -65,8 +68,8 @@ export function accentHue(colors: Record<string, string>): number {
 /** Apply a hue rotation, saturation multiplier and brightness multiplier.
  *
  * `hue` is the target hue; the rotation is relative to `baseHue` so a freshly
- * selected base theme sits at 0° of adjustment. Syntax colours are untouched,
- * and text keeps its lightness so brightness cannot make it unreadable. */
+ * selected base theme sits at 0° of adjustment. Syntax and error colours are
+ * untouched entirely, and text keeps its lightness so brightness cannot make it unreadable. */
 export function adjustThemeColors(
   colors: Record<string, string>,
   opts: { baseHue: number; hue: number; sat: number; bright: number },
@@ -76,7 +79,7 @@ export function adjustThemeColors(
   const bright = clamp(opts.bright, 0, 3)
   const out: Record<string, string> = {}
   for (const [key, value] of Object.entries(colors)) {
-    if ((SYNTAX_COLOR_KEYS as readonly string[]).includes(key) || !/^#[0-9a-f]{3}([0-9a-f]{3})?$/i.test(value)) {
+    if ((UNADJUSTED_KEYS as readonly string[]).includes(key) || !/^#[0-9a-f]{3}([0-9a-f]{3})?$/i.test(value)) {
       out[key] = value
       continue
     }

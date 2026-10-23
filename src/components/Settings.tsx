@@ -840,26 +840,11 @@ function Eps() {
   )
 }
 
-/* Prompt variable chips: the {variable} placeholders a system prompt can
- * use. Clicking one appends it to the prompt text. */
-function PromptVarChips({ insert }: { insert: (token: string) => void }) {
-  return (
-    <div className="flex flex-wrap items-center gap-1.5">
-      <span className="text-xs text-mu">Insert a variable:</span>
-      {PROMPT_VARS.map((v) => (
-        <button
-          key={v.id}
-          type="button"
-          title={`${v.desc} — appends {${v.id}} to the prompt`}
-          onClick={() => insert(`{${v.id}}`)}
-          className="rounded-md border border-bor bg-bg px-2 py-0.5 font-mono text-[11px] text-tx transition-colors hover:bg-hov"
-        >
-          {`{${v.id}}`}
-        </button>
-      ))}
-    </div>
-  )
-}
+
+
+/* The {variable} placeholders a system prompt can use, described in the
+ * help tooltip instead of insert buttons. */
+const PROMPT_VAR_HINT = `${PROMPT_VARS.map((v) => `{${v.id}} — ${v.desc}`).join(' · ')}`
 
 function Prompts() {
   const { prompts, upd, patch, globalPrompt } = useSConfig()
@@ -886,8 +871,7 @@ function Prompts() {
             </button>
           })}</div>
         </Field>
-        <Field label="Global system prompt" hint="This is the base. Write one from scratch, or copy an existing prompt above. You can use {variable} placeholders such as {date} — they are replaced with the current values when the request is sent."><Area rows={6} value={g.text} set={(v) => setG({ text: v })} /></Field>
-        <PromptVarChips insert={(token) => setG({ text: `${g.text}${g.text && !/\s$/.test(g.text) ? ' ' : ''}${token}` })} />
+        <Field label="Global system prompt" hint={`This is the base. Write one from scratch, or copy an existing prompt above. You can use {variable} placeholders, replaced with the current UTC values when the request is sent: ${PROMPT_VAR_HINT}`}><Area rows={6} value={g.text} set={(v) => setG({ text: v })} /></Field>
         <div className="flex justify-end"><Btn v="soft" icon={CornerDownRight} onClick={() => setG({ on: true, text: GENERAL_PROMPT_TEXT, qualities: [] })}>Revert to default</Btn></div>
       </Card></Anchor>
       </Section>
@@ -900,8 +884,7 @@ function Prompts() {
         <Anchor key={pid} id={`prompt-${p.id}`}>
         <Card handle={handle} icon={ScrollText} title={p.name} sub={p.text.slice(0, 70)}>
           <Field label="Name"><Input value={p.name} set={(v) => upd('prompts', p.id, { name: v })} /></Field>
-          <Field label="System prompt" hint="Sent as the system prompt when this prompt is selected. {variable} placeholders such as {date} are replaced when the request is sent."><Area rows={6} value={p.text} set={(v) => upd('prompts', p.id, { text: v })} /></Field>
-          <PromptVarChips insert={(token) => upd('prompts', p.id, { text: `${p.text}${p.text && !/\s$/.test(p.text) ? ' ' : ''}${token}` })} />
+          <Field label="System prompt" hint={`Sent as the system prompt when this prompt is selected. {variable} placeholders are replaced with the current UTC values when the request is sent: ${PROMPT_VAR_HINT}`}><Area rows={6} value={p.text} set={(v) => upd('prompts', p.id, { text: v })} /></Field>
           <Acts k="prompts" id={p.id} />
         </Card>
         </Anchor>
@@ -952,8 +935,7 @@ function Pls() {
           <Anchor key={plid} id={`playlist-${p.id}`}>
           <Card handle={handle} icon={ListMusic} title={p.name} sub={`${p.e.length} entries${p.cls ? ' · classifier' : ''}`}>
             <Field label="Name"><Input value={p.name} set={(v) => u({ name: v })} /></Field>
-            <Field label="System prompt" hint="Optional. Used when this playlist is selected and no prompt override is chosen. {variable} placeholders such as {date} are replaced when the request is sent."><Area value={p.sys} set={(v) => u({ sys: v })} /></Field>
-            <PromptVarChips insert={(token) => u({ sys: `${p.sys}${p.sys && !/\s$/.test(p.sys) ? ' ' : ''}${token}` })} />
+            <Field label="System prompt" hint={`Optional. Used when this playlist is selected and no prompt override is chosen. {variable} placeholders are replaced with the current UTC values when the request is sent: ${PROMPT_VAR_HINT}`}><Area value={p.sys} set={(v) => u({ sys: v })} /></Field>
             <Field label="Models" hint="Each entry is one model from an endpoint. Tried top to bottom until one responds without error.">
               <div className="space-y-1.5">
                 <SortableList
@@ -1017,8 +999,7 @@ function Cmds() {
               <Field label="Description"><Input value={c.desc} set={(v) => u({ desc: v })} /></Field>
             </div>
             <Field label="Input type"><Seg v={c.in} set={(v) => u({ in: v })} opts={[['text', 'Text', CI.text], ['image', 'Image', CI.image], ['image+text', 'Image + text', CI['image+text']], ['doc', 'Document', CI.doc]]} /></Field>
-            <Field label="System prompt" hint="Sent as the system prompt when the command runs. {variable} placeholders such as {date} are replaced when the request is sent."><Area value={c.sys} set={(v) => u({ sys: v })} /></Field>
-            <PromptVarChips insert={(token) => u({ sys: `${c.sys}${c.sys && !/\s$/.test(c.sys) ? ' ' : ''}${token}` })} />
+            <Field label="System prompt" hint={`Sent as the system prompt when the command runs. {variable} placeholders are replaced with the current UTC values when the request is sent: ${PROMPT_VAR_HINT}`}><Area value={c.sys} set={(v) => u({ sys: v })} /></Field>
             <Field label="Message template" hint="{{input}} is replaced by the text typed after the command."><Area rows={3} value={c.tpl} set={(v) => u({ tpl: v })} /></Field>
             <Field label="Run on" hint="The first endpoint that accepts the input type is used; the rest are fallbacks.">
               <Sel value={c.pl} set={(v) => u({ pl: v })} opts={[['', 'Any enabled endpoint, in list order'], ...pls.map((p) => [p.id, 'Playlist: ' + p.name] as [string, string])]} />
@@ -1852,7 +1833,7 @@ function Look() {
         const sat = custom.sat
         const bright = custom.bright
         return <Anchor id="custom-colors"><div className="rounded-xl bg-surf p-3 space-y-4">
-        <div><div className="text-sm font-medium">Custom theme</div><div className="text-xs text-mu">Start from a base theme (Plum by default), then dial in Hue, Saturation and Brightness. Hue starts at the base accent's hue and sweeps the full color wheel, shifting everything except syntax highlighting. Saturation (0x–2x) scales color intensity everywhere but syntax. Brightness (0x–3x) scales every surface and accent but never syntax or text.</div></div>
+        <div><div className="text-sm font-medium">Custom theme</div><div className="text-xs text-mu">Start from a base theme (Plum by default), then dial in Hue, Saturation and Brightness. Hue starts at the base accent's hue and sweeps the full color wheel, shifting everything except syntax highlighting and the error colour. Saturation (0x–2x) scales color intensity everywhere but syntax and error. Brightness (0x–3x) scales every surface and accent but never syntax, error or text.</div></div>
         <div className="space-y-2">
           <div className="text-xs text-mu">Base theme (default: Plum)</div>
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
@@ -1871,10 +1852,10 @@ function Look() {
         </div>
         <div className="space-y-3">
           <Field label={`Hue · ${hue}°`} hint="Rotates colours except syntax highlighting. Starts at the base accent hue."><RangeSlider label="Hue" min={0} max={360} step={1} value={hue} set={(v) => setCustomTheme({ ...custom, hue: Math.round(v) })} className="w-full" /></Field>
-          <Field label={`Saturation · ${sat.toFixed(2)}x`} hint="Scales colour intensity across everything except syntax highlighting."><RangeSlider label="Saturation" min={0} max={2} step={0.01} value={sat} set={(v) => setCustomTheme({ ...custom, sat: Math.round(v * 100) / 100 })} className="w-full" /></Field>
-          <Field label={`Brightness · ${bright.toFixed(2)}x`} hint="Scales brightness across everything except syntax highlighting and text."><RangeSlider label="Brightness" min={0} max={3} step={0.01} value={bright} set={(v) => setCustomTheme({ ...custom, bright: Math.round(v * 100) / 100 })} className="w-full" /></Field>
+          <Field label={`Saturation · ${sat.toFixed(2)}x`} hint="Scales colour intensity across everything except syntax highlighting and the error colour."><RangeSlider label="Saturation" min={0} max={2} step={0.01} value={sat} set={(v) => setCustomTheme({ ...custom, sat: Math.round(v * 100) / 100 })} className="w-full" /></Field>
+          <Field label={`Brightness · ${bright.toFixed(2)}x`} hint="Scales brightness across everything except syntax highlighting, the error colour, and text."><RangeSlider label="Brightness" min={0} max={3} step={0.01} value={bright} set={(v) => setCustomTheme({ ...custom, bright: Math.round(v * 100) / 100 })} className="w-full" /></Field>
           <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-mu">
-            <span>Syntax colours (c2–c5) never change. Text (tx/mu/acx) is never dimmed by brightness.</span>
+            <span>Syntax colours and the error colour never change. Text colours are never dimmed by brightness.</span>
             <Btn v="ghost" className="px-2 py-1" onClick={() => setCustomTheme(defaultCustomTheme(base))}>Reset to base defaults</Btn>
           </div>
         </div>
