@@ -8,7 +8,7 @@ export const CI = { text: Type, image: Image, 'image+text': ImagePlus, doc: File
 // memory, then reply widgets, then niche developer utilities last.
 export const TOOLS: [string, string, typeof Clock, string, string, string][] = [
   ['search', 'Web search and grounding', Search, '@search(query)', 'Searches the web and adds linked sources to your message context.', 'Sends your query to the configured server search provider. Search results are sent to the selected model.'],
-  ['fetch_page', 'Page reader', FileText, '@fetch_page(url)', 'Reads the full text of a search result page for deeper quotes.', 'Fetches the page through the configured reader API and sends an excerpt to the selected model. With page summaries on, a second model summarizes the page first.'],
+  ['fetch_page', 'Page reader', FileText, '@fetch_page(url, info?)', 'Reads the full text of a search result page for deeper quotes.', 'Fetches the page through the configured reader API and sends an excerpt to the selected model. With page summaries on, a second model summarizes the page first; the reading model can say what it wants from the page via info, and the summary answers that while keeping other important information.'],
   ['calc', 'Calculator', Calculator, '@calc(2*(3+4))', 'Evaluates arithmetic locally and inserts the result.', 'Runs a restricted arithmetic evaluator inside the page.'],
   ['date', 'Date', Clock, '@date', 'Inserts the current local date.', 'Reads the device clock.'],
   ['time', 'Date and time', Clock, '@time', 'Inserts the device date, time and time zone.', 'Reads the device clock.'],

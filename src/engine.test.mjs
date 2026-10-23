@@ -430,6 +430,20 @@ test('the page-summary model flow starts at the endpoint default model and walks
   assert.equal(normSearch({}).readerSummaryFlow, false)
 })
 
+test('the page-summary model flow can be a whole playlist', async () => {
+  const { readerSummaryModelsOf } = await import('./store.ts')
+  const epa = { id: 'e1', name: 'A', type: 'openai', url: 'https://p.example/v1', key: 'k', model: 'a1', models: ['a1', 'a2'], on: true }
+  const epb = { id: 'e2', name: 'B', type: 'openai', url: 'https://q.example/v1', key: 'k', model: 'b1', models: ['b1'], on: true }
+  const pl = { id: 'p1', name: 'P', sys: '', e: ['e1::a2', 'e2'], cls: '', rule: '' }
+  const s = { eps: [epa, epb], pls: [pl] }
+  // Playlist flow: every playlist entry in order, each pinned to its model.
+  assert.deepEqual(readerSummaryModelsOf(s, { readerSummaryEp: '', readerSummaryFlow: true, readerSummaryPl: 'p1' }).map((e) => `${e.id}|${e.model}`), ['e1|a2', 'e2|b1'])
+  // Without flow, the playlist is not consulted (picked mode uses the endpoint).
+  assert.deepEqual(readerSummaryModelsOf(s, { readerSummaryEp: 'e1', readerSummaryModel: '', readerSummaryFlow: false, readerSummaryPl: 'p1' }).map((e) => e.model), ['a1'])
+  // An unknown playlist has no candidates.
+  assert.deepEqual(readerSummaryModelsOf(s, { readerSummaryEp: '', readerSummaryFlow: true, readerSummaryPl: 'nope' }), [])
+})
+
 test('inline citations default to pills but honour an explicit off', () => {
   assert.equal(normSearch({}).citeStyle, 'pills')
   assert.equal(normSearch({ citeStyle: 'off' }).citeStyle, 'off')

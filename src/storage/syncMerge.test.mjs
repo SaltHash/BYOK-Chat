@@ -19,8 +19,8 @@ test('a malformed or short token is returned untouched', () => {
   assert.equal(maskSyncToken('byok1-ab'), 'byok1-ab')
 })
 
-const chat = (id, at, folder, msgs = 1) => ({
-  id, title: `chat ${id}`, folder,
+const chat = (id, at, project, msgs = 1) => ({
+  id, title: `chat ${id}`, project,
   msgs: Array.from({ length: msgs }, (_, i) => ({ id: `${id}-m${i}`, r: 'user', t: 'hi', at })),
 })
 const empty = (local = {}) => ({ settings: {}, chats: [], workspaces: {}, selectedRevision: {}, ...local })
@@ -42,21 +42,32 @@ test('identical chats under different ids collapse, empty chats never do', () =>
   assert.equal(empties.chats.length, 2)
 })
 
-test('same-named folders merge and their chats are repointed at one folder', () => {
+test('same-named projects merge and their chats are repointed at one project', () => {
   const local = empty({
-    settings: { folders: [{ id: 'lf', name: 'Work', open: false }] },
+    settings: { projects: [{ id: 'lf', name: 'Work', open: false }] },
     chats: [chat('a', 100, 'lf')],
   })
   const remote = empty({
-    settings: { folders: [{ id: 'rf', name: 'work', open: true }] },
+    settings: { projects: [{ id: 'rf', name: 'work', open: true }] },
     chats: [chat('b', 100, 'rf')],
   })
   const out = mergeSyncData(local, remote)
-  const folders = out.settings.folders
-  assert.equal(folders.length, 1)
-  assert.equal(folders[0].id, 'lf')
-  assert.equal(folders[0].open, true)
-  for (const c of out.chats) assert.equal(c.folder, 'lf')
+  const projects = out.settings.projects
+  assert.equal(projects.length, 1)
+  assert.equal(projects[0].id, 'lf')
+  assert.equal(projects[0].open, true)
+  for (const c of out.chats) assert.equal(c.project, 'lf')
+  // Legacy alias stays in lockstep for older clients.
+  assert.equal(out.settings.folders, projects)
+})
+
+test('legacy folder payloads merge through the project path', () => {
+  const local = empty({ settings: { folders: [{ id: 'lf', name: 'Work', open: false }] }, chats: [chat('a', 100, 'lf')] })
+  const remote = empty({ settings: { projects: [{ id: 'rf', name: 'work', open: true }] }, chats: [chat('b', 100, 'rf')] })
+  const out = mergeSyncData(local, remote)
+  assert.equal(out.settings.projects.length, 1)
+  assert.equal(out.settings.projects[0].id, 'lf')
+  for (const c of out.chats) assert.equal(c.project, 'lf')
 })
 
 test('id-keyed collections, maps and strings union without losing either side', () => {
@@ -77,8 +88,8 @@ test('workspaces union by id and their revisions union by id in time order', () 
 })
 
 test('remote and local modes take one side while merge keeps both', () => {
-  const local = empty({ chats: [chat('a', 1)], settings: { folders: [] } })
-  const remote = empty({ chats: [chat('b', 1)], settings: { folders: [] } })
+  const local = empty({ chats: [chat('a', 1)], settings: { projects: [] } })
+  const remote = empty({ chats: [chat('b', 1)], settings: { projects: [] } })
   assert.deepEqual(mergeSyncData(local, remote, 'remote').chats.map((c) => c.id), ['b'])
   assert.deepEqual(mergeSyncData(local, remote, 'local').chats.map((c) => c.id), ['a'])
   assert.deepEqual(mergeSyncData(local, remote).chats.map((c) => c.id), ['a', 'b'])

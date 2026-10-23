@@ -2,7 +2,7 @@
  * imports so the colour math can be tested on its own. */
 
 export type Hsl = { h: number; s: number; l: number }
-export type ThemeAdjustment = { hue: number; sat: number; bright: number }
+export type ThemeAdjustment = { hue: number; sat: number; bright: number; contrast: number }
 
 /** Syntax colours stay fixed: hue, saturation and brightness never touch them. */
 export const SYNTAX_COLOR_KEYS = ['c2', 'c3', 'c4', 'c5'] as const
@@ -72,11 +72,12 @@ export function accentHue(colors: Record<string, string>): number {
  * untouched entirely, and text keeps its lightness so brightness cannot make it unreadable. */
 export function adjustThemeColors(
   colors: Record<string, string>,
-  opts: { baseHue: number; hue: number; sat: number; bright: number },
+  opts: { baseHue: number; hue: number; sat: number; bright: number; contrast?: number },
 ): Record<string, string> {
   const delta = ((opts.hue - opts.baseHue) % 360 + 360) % 360
   const sat = clamp(opts.sat, 0, 2)
   const bright = clamp(opts.bright, 0, 3)
+  const contrast = Number.isFinite(opts.contrast) ? clamp(opts.contrast as number, 1, 2) : 1
   const out: Record<string, string> = {}
   for (const [key, value] of Object.entries(colors)) {
     if ((UNADJUSTED_KEYS as readonly string[]).includes(key) || !/^#[0-9a-f]{3}([0-9a-f]{3})?$/i.test(value)) {
@@ -88,7 +89,9 @@ export function adjustThemeColors(
     out[key] = hslToHex({
       h: hsl.h + delta,
       s: hsl.s * sat,
-      l: text ? hsl.l : hsl.l * bright,
+      // Contrast spreads every non-text surface around mid brightness after
+      // the brightness scale: lights get brighter, darks get darker.
+      l: text ? hsl.l : clamp(0.5 + (hsl.l * bright - 0.5) * contrast, 0, 1),
     })
   }
   return out

@@ -140,9 +140,9 @@ export function SearchSelect({ value, set, opts, ariaLabel = 'Choose an option',
   const choose = (item: [string, string]) => { set(item[0]); setOpen(false); setQuery('') }
   return <div ref={root} className="relative">
     <button type="button" aria-label={ariaLabel} aria-haspopup="listbox" aria-expanded={open} onClick={() => setOpen(!open)} onKeyDown={(e) => { if (e.key === 'ArrowDown' || e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setOpen(true) } }} className={cx(IN, 'flex items-center justify-between text-left')}><span className="truncate">{opts.find(([k]) => k === value)?.[1] ?? value}</span><ChevronRight size={14} aria-hidden="true" className={cx('ml-2 shrink-0 text-mu transition-transform', open && 'rotate-90')} /></button>
-    {open && <div className="absolute z-40 mt-1 w-full"><Menu className="settings-dropdown max-h-56 overflow-y-auto">
+    {open && <div className="absolute z-40 mt-1 w-full"><Menu className="settings-dropdown">
       <input ref={search} value={query} onChange={(e) => { setQuery(e.target.value); setActive(0) }} onKeyDown={(e) => { if (e.key === 'ArrowDown') { e.preventDefault(); setActive((n) => Math.min(n + 1, filtered.length - 1)) } else if (e.key === 'ArrowUp') { e.preventDefault(); setActive((n) => Math.max(n - 1, 0)) } else if (e.key === 'Enter' && filtered[active]) { e.preventDefault(); choose(filtered[active]) } else if (e.key === 'Escape') { setOpen(false); setQuery('') } }} placeholder={placeholder} aria-label="Search options" className="mb-1 w-full rounded-lg bg-surf px-2.5 py-2 text-sm outline-none focus:ring-2 focus:ring-ac/40" />
-      <div role="listbox" aria-label={ariaLabel} className="max-h-56 overflow-y-auto">{filtered.map((item, i) => <button type="button" role="option" aria-selected={item[0] === value} key={item[0]} onMouseEnter={() => setActive(i)} onClick={() => choose(item)} className={cx('block w-full rounded-lg px-2.5 py-2 text-left text-sm', active === i ? 'bg-hov text-tx' : 'text-mu')}>{item[1]}</button>)}{!filtered.length && <div className="px-2.5 py-2 text-sm text-mu">No matches</div>}</div>
+      <div role="listbox" aria-label={ariaLabel} className="dd-list max-h-56 overflow-y-auto overscroll-contain">{filtered.map((item, i) => <button type="button" role="option" aria-selected={item[0] === value} key={item[0]} onMouseEnter={() => setActive(i)} onClick={() => choose(item)} className={cx('block w-full rounded-lg px-2.5 py-2 text-left text-sm', active === i ? 'bg-hov text-tx' : 'text-mu')}>{item[1]}</button>)}{!filtered.length && <div className="px-2.5 py-2 text-sm text-mu">No matches</div>}</div>
     </Menu></div>}
   </div>
 }
@@ -170,19 +170,20 @@ export function RangeSlider({ value, set, min, max, step = 1, label, valueText, 
   </div>
 }
 
-export function Pop({ trigger, children, up, right, w = 'w-72', scroll = true }: { trigger: (o: boolean) => ReactNode; children: (close: () => void) => ReactNode; up?: boolean; right?: boolean; w?: string; scroll?: boolean }) {
+export function Pop({ trigger, children, up, right, w = 'w-72', scroll = true, onOpenChange }: { trigger: (o: boolean) => ReactNode; children: (close: () => void) => ReactNode; up?: boolean; right?: boolean; w?: string; scroll?: boolean; onOpenChange?: (o: boolean) => void }) {
   const [o, setO] = useState(false)
   const r = useRef<HTMLDivElement>(null)
+  const flip = (v: boolean) => { setO(v); onOpenChange?.(v) }
   useEffect(() => {
     if (!o) return
-    const f = (e: MouseEvent) => { if (!r.current?.contains(e.target as Node)) setO(false) }
+    const f = (e: MouseEvent) => { if (!r.current?.contains(e.target as Node)) flip(false) }
     addEventListener('mousedown', f)
     return () => removeEventListener('mousedown', f)
   }, [o])
   return (
     <div ref={r} className="relative">
-      <div onClick={() => setO((v) => !v)}>{trigger(o)}</div>
-      {o && <div className={cx('absolute z-30 max-w-[calc(100vw-1rem)]', scroll && 'max-h-96 overflow-y-auto', !scroll && 'overflow-hidden', w, up ? 'bottom-full mb-2' : 'top-full mt-2', right ? 'right-0' : 'left-0')}><Menu>{children(() => setO(false))}</Menu></div>}
+      <div onClick={() => flip(!o)}>{trigger(o)}</div>
+      {o && <div className={cx('absolute z-30 max-w-[calc(100vw-1rem)]', scroll && 'max-h-96 overflow-y-auto', !scroll && 'overflow-hidden', w, up ? 'bottom-full mb-2' : 'top-full mt-2', right ? 'right-0' : 'left-0')}><Menu>{children(() => flip(false))}</Menu></div>}
     </div>
   )
 }

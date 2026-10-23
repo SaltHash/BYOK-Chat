@@ -29,7 +29,7 @@ function ParamsBody({ p, set }: { p: Params; set: (x: Partial<Params>) => void }
 }
 
 /** Playful but unmistakable marker for a chat that will disappear. Clicking it
- *  opens the Chats tab at the temporary-retention controls. */
+ *  scrolls settings to the top of the temporary-chats section. */
 function TemporaryFlair({ cfg, expiresAt, tempHours }: { cfg: (t: string) => void; expiresAt?: number; tempHours: number }) {
   const left = expiresAt != null ? Math.max(0, expiresAt - Date.now()) : null
   const detail = tempHours === 0
@@ -40,7 +40,7 @@ function TemporaryFlair({ cfg, expiresAt, tempHours }: { cfg: (t: string) => voi
   return (
     <button
       type="button"
-      onClick={() => cfg('chats#temp-retention')}
+      onClick={() => cfg('chats#temporary-chats')}
       title={`Temporary chat · ${detail}. Open temporary chat settings`}
       aria-label={`Temporary chat, ${detail}. Open temporary chat settings`}
       className="temp-flair group inline-flex min-h-8 shrink-0 items-center gap-1.5 rounded-full border border-dashed px-2.5 py-1 text-xs font-medium text-tx transition-colors"
@@ -60,7 +60,7 @@ export function Header({ side, toggle, cfg, pal, title }: { side: boolean; toggl
   // Narrow boolean slices: the header re-renders only when these flip, not on
   // every streamed chunk of the open chat.
   const hasChat = useS((s) => s.chats.some((c) => c.id === s.chat))
-  const curTemporary = useS((s) => { const c = s.chats.find((x) => x.id === s.chat); return c?.temporary === true })
+  const curTemporary = useS((s) => { const c = s.chats.find((x) => x.id === s.chat); return c?.temporary === true || (s.chat === '' && s.newChatPending === 'temporary') })
   const tempExpiresAt = useS((s) => { const c = s.chats.find((x) => x.id === s.chat); return c?.temporary ? c.expiresAt : undefined })
   const tempHours = useS((s) => s.prefs.tempHours)
   const [shareChat, setShareChat] = useState<string | null>(null)

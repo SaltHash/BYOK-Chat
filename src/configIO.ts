@@ -25,7 +25,7 @@ export function detectAvailableCategories(j: Record<string, unknown>, themes: Re
     tuning: o(j.params) || o(j.effort) || o(j.workspacePrefs) || o(j.docPrefs) || o(j.voicePrefs),
     widgets: o(j.widgets) || o(j.widgetPrefs),
     stats: o(j.stats) || o(j.routeStats),
-    chats: Array.isArray(j.chats) || Array.isArray(j.todos) || Array.isArray(j.snips) || typeof j.pad === 'string',
+    chats: Array.isArray(j.chats) || Array.isArray(j.todos) || Array.isArray(j.snips) || Array.isArray(j.projects) || Array.isArray(j.folders) || typeof j.pad === 'string',
   }
 }
 
@@ -41,7 +41,7 @@ type ExportState = {
   tools: unknown; search: { keys: Record<string, string> }; mcps: unknown; imageGen: unknown; codeRun: unknown
   params: unknown; effort: unknown; workspacePrefs: unknown; docPrefs: unknown; voicePrefs: unknown
   widgets: unknown; widgetPrefs: unknown; stats: unknown; routeStats: unknown
-  chats: unknown; folders: unknown; chat: unknown; todos: unknown; snips: unknown; pad: unknown
+  chats: unknown; projects: unknown; chat: unknown; todos: unknown; snips: unknown; pad: unknown
 }
 
 /** Build the JSON payload for `dl('chat-config.json', …)` (pure). */
@@ -79,6 +79,6 @@ export function buildExportPayload(
   if (exports.widgets) { data.widgets = s.widgets; data.widgetPrefs = s.widgetPrefs }
   if (exports.stats) data.stats = s.stats
   if (exports.stats) data.routeStats = s.routeStats
-  if (exports.chats) { data.chats = s.chats; data.folders = s.folders; data.chat = s.chat; data.todos = s.todos; data.snips = s.snips; data.pad = s.pad }
+  if (exports.chats) { data.chats = s.chats; data.projects = s.projects; data.chat = s.chat; data.todos = s.todos; data.snips = s.snips; data.pad = s.pad }
   return data
 }

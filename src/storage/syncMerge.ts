@@ -8,8 +8,8 @@
  * The merge below never duplicates data:
  *   - chats union by id (the richer copy wins on a collision) and identical
  *     conversations under different ids collapse into one;
- *   - folders with the same name (case-insensitive) become a single folder and
- *     every chat that pointed at either id is repointed at the survivor;
+ *   - projects with the same name (case-insensitive) become a single project
+ *     and every chat that pointed at either id is repointed at the survivor;
  *   - workspaces union by id, their revision lists union by revision id;
  *   - id-keyed collections (endpoints, playlists, prompts, commands, skills,
  *     memories, todos) union by id;
@@ -87,16 +87,19 @@ function mergeChats(localChats: unknown[], remoteChats: unknown[]): unknown[] {
   return out
 }
 
-/* ---- folders ---- */
+/* ---- projects ---- */
 
-/** Union folders by id (local order and value win), then collapse folders that
- *  share a name onto one survivor, returning a remap from every dropped id to
- *  the survivor so chats can be repointed. Unnamed folders are kept as-is. */
-function mergeFolders(localFolders: unknown[], remoteFolders: unknown[]): { folders: Obj[]; remap: Map<string, string> } {
+/** Union projects by id (local order and value win), then collapse projects
+ *  that share a name onto one survivor, returning a remap from every dropped
+ *  id to the survivor so chats can be repointed. Unnamed projects are kept
+ *  as-is. On a name collision the survivors' context file lists union by id
+ *  (local copy wins on a duplicate id). Legacy `folders` payloads are read
+ *  through the same path. */
+function mergeProjects(localProjects: unknown[], remoteProjects: unknown[]): { projects: Obj[]; remap: Map<string, string> } {
   const norm = (n: unknown) => String(n ?? '').trim().toLowerCase()
   const union: Obj[] = []
   const seenId = new Set<string>()
-  for (const f of [...localFolders, ...remoteFolders]) {
+  for (const f of [...localProjects, ...remoteProjects]) {
     if (!isObj(f) || typeof f.id !== 'string' || seenId.has(f.id)) continue
     seenId.add(f.id)
     union.push({ ...f })
@@ -111,19 +114,33 @@ function mergeFolders(localFolders: unknown[], remoteFolders: unknown[]): { fold
       remap.set(String(f.id), String(existing.id))
       if (typeof existing.open !== 'boolean') existing.open = f.open
       else if (f.open === true) existing.open = true
+      // Context files union by id so both devices keep what they added.
+      if (Array.isArray(f.context) || Array.isArray(existing.context)) {
+        const seen = new Set<string>()
+        const merged: Obj[] = []
+        for (const file of [...asArr(existing.context), ...asArr(f.context)]) {
+          if (!isObj(file) || typeof file.id !== 'string' || seen.has(file.id)) continue
+          seen.add(file.id)
+          merged.push(file)
+        }
+        existing.context = merged
+      }
     } else {
       byName.set(key, f)
     }
   }
-  return { folders: [...byName.values()], remap }
+  return { projects: [...byName.values()], remap }
 }
 
-const remapChatFolders = (chats: unknown[], remap: Map<string, string>): unknown[] => {
+const remapChatProjects = (chats: unknown[], remap: Map<string, string>): unknown[] => {
   if (!remap.size) return chats
   return chats.map((c) => {
-    if (!isObj(c) || typeof c.folder !== 'string') return c
-    const next = remap.get(c.folder)
-    return next && next !== c.folder ? { ...c, folder: next } : c
+    if (!isObj(c)) return c
+    const key = typeof c.project === 'string' ? c.project : typeof c.folder === 'string' ? c.folder : null
+    if (key == null) return c
+    const next = remap.get(key)
+    // `folder` is kept in lockstep so older clients still sync cleanly.
+    return next && next !== key ? { ...c, project: next, folder: next } : c
   })
 }
 
@@ -178,7 +195,7 @@ const ID_COLLECTIONS = ['eps', 'pls', 'prompts', 'cmds', 'skills', 'todos', 'mem
 /** Flat record maps whose keys should union so neither device loses an entry. */
 const MAP_FIELDS = ['keys', 'widgets', 'features', 'libraryShow', 'effort', 'routeStats'] as const
 
-function mergeSettings(local: Obj, remote: Obj, folders: Obj[]): Obj {
+function mergeSettings(local: Obj, remote: Obj, projects: Obj[]): Obj {
   const out: Obj = { ...local, ...remote }
   // Recurse one level into plain objects both sides own (prefs, params,
   // widgetPrefs, search, custom colors, …) so a key set on one device is not
@@ -211,7 +228,10 @@ function mergeSettings(local: Obj, remote: Obj, folders: Obj[]): Obj {
     if (isObj(local[k]) || isObj(remote[k])) out[k] = { ...asObj(local[k]), ...asObj(remote[k]) }
   }
   if ('snips' in local || 'snips' in remote) out.snips = [...new Set([...asStrArr(local.snips), ...asStrArr(remote.snips)])]
-  out.folders = folders
+  out.projects = projects
+  // Older clients only know `folders`; keep the key in lockstep so mixed
+  // versions still sync the grouping.
+  out.folders = projects
   return out
 }
 
@@ -245,11 +265,16 @@ export function mergeSyncData(local: SyncData, remote: SyncData, mode: SyncMerge
   if (mode === 'local') {
     return { settings: { ...remote.settings, ...local.settings }, chats: local.chats, workspaces: { ...asObj(local.workspaces) }, selectedRevision: { ...asObj(local.selectedRevision) } }
   }
-  const { folders, remap } = mergeFolders(asArr(local.settings.folders), asArr(remote.settings.folders))
-  const chats = mergeChats(remapChatFolders(local.chats, remap), remapChatFolders(remote.chats, remap))
+  // Projects were renamed from folders; accept either key from a remote or
+  // local snapshot and always emit the new one (plus the legacy alias).
+  const { projects, remap } = mergeProjects(
+    asArr(local.settings.projects ?? local.settings.folders),
+    asArr(remote.settings.projects ?? remote.settings.folders),
+  )
+  const chats = mergeChats(remapChatProjects(local.chats, remap), remapChatProjects(remote.chats, remap))
   const workspaces = mergeWorkspaces(local.workspaces, remote.workspaces)
-  const settings = mergeSettings(local.settings, remote.settings, folders)
-  // Keep the "open chat" pointer valid after chats and folders are merged.
+  const settings = mergeSettings(local.settings, remote.settings, projects)
+  // Keep the "open chat" pointer valid after chats and projects are merged.
   // Prefer the local open chat when it survived the merge: the app may have
   // opened to it moments ago (startup, a brand-new chat) and a remote snapshot
   // must not yank the view onto a different chat. Fall back to repair only when

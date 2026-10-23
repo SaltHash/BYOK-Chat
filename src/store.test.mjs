@@ -30,3 +30,28 @@ test('the draft of a deleted chat is dropped with it', () => {
   assert.equal(s().drafts.a, undefined)
   assert.equal(s().draft, '')
 })
+
+/* Project workspace sharing: a chat with no workspace of its own picks up the
+ * latest workspace from the project's other chats when sharing is on, and
+ * stays untouched when it is off. Projects never read each other's work. */
+test('project workspace sharing resolves across chats and can be turned off', async () => {
+  const { activeWorkspaceForChat } = await import('./store.ts')
+  const base = {
+    chats: [
+      { id: 'a', title: 'A', project: 'p1', msgs: [] },
+      { id: 'b', title: 'B', project: 'p1', msgs: [{ id: 'm1', r: 'assistant', t: 'x', workspaceIds: ['ws1'] }] },
+      { id: 'c', title: 'C', project: 'p2', msgs: [{ id: 'm2', r: 'assistant', t: 'x', workspaceIds: ['ws2'] }] },
+    ],
+    projects: [{ id: 'p1', name: 'One', open: true }, { id: 'p2', name: 'Two', open: true }],
+  }
+  // No workspace in chat a yet, sharing on by default -> the project's other chat lends its workspace.
+  assert.deepEqual({ id: activeWorkspaceForChat(base, 'a').id, shared: activeWorkspaceForChat(base, 'a').shared }, { id: 'ws1', shared: true })
+  // Sharing off falls back to nothing.
+  const off = { ...base, projects: [{ id: 'p1', name: 'One', open: true, shareWorkspaces: false }, base.projects[1]] }
+  assert.deepEqual(activeWorkspaceForChat(off, 'a'), {})
+  // A chat with its own workspace never borrows.
+  const own = { ...base, chats: [...base.chats, { id: 'd', title: 'D', project: 'p1', msgs: [{ id: 'm3', r: 'assistant', t: 'x', workspaceIds: ['ws9'] }] }] }
+  assert.deepEqual(activeWorkspaceForChat(own, 'd'), { id: 'ws9' })
+  // Workspaces stay separate between projects.
+  assert.notEqual(activeWorkspaceForChat(base, 'c').id, 'ws1')
+})

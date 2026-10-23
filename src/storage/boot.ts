@@ -89,7 +89,9 @@ export async function hydrateDurable(patch: (p: Record<string, unknown>) => void
     if (dChats && Array.isArray(dChats) && (migrated || durableMsgs >= localMsgs)) {
       restoredBlobs = await restoreAttachmentBytes(dChats as Parameters<typeof restoreAttachmentBytes>[0]).catch(() => 0)
       const p: Record<string, unknown> = {}
-      p.chats = dChats
+      // Empty chats are not store entries anymore: strip leftovers from both
+      // storage tiers so a durable copy cannot resurrect them.
+      p.chats = dChats.filter((c) => Array.isArray((c as { msgs?: unknown[] })?.msgs) && (c as { msgs: unknown[] }).msgs.length > 0)
       // An empty durable map must not wipe the workspaces that localStorage
       // still holds (the durable copy can be empty after a quota prune).
       if (dWs && Object.keys(dWs).length) p.workspaces = dWs

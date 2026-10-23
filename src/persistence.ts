@@ -6,7 +6,7 @@ export const QUOTA_FLAG = 'byok.v1:quota-full'
 
 /** Persist payload version — single source for the zustand persist wrapper,
  *  durable migration metadata, and sync payloads. */
-export const STORE_VERSION = 20
+export const STORE_VERSION = 21
 
 export const isQuotaError = (x: unknown) =>
   !!x && ((x as { name?: unknown }).name === 'QuotaExceededError' || (x as { code?: unknown }).code === 22 || /quota/i.test(String((x as { message?: unknown })?.message ?? '')))

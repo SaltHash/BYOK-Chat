@@ -363,9 +363,9 @@ function WorkspaceRevisionPicker({ workspace, selectedId, onSelect, className }:
 }
 
 /* Full file viewer rendered in the resizable splitscreen on the right. */
-export function WorkspacePanel({ msg, live, workspace, selectedRevisionId, setSelectedRevisionId, onClose, initialFilePath, focus = 0 }: {
+export function WorkspacePanel({ msg, live, workspace, selectedRevisionId, setSelectedRevisionId, onClose, initialFilePath, focus = 0, sharedOf }: {
   msg: Msg; live?: ToolCall[]; workspace: Workspace; selectedRevisionId: string | null;
-  setSelectedRevisionId: (id: string) => void; onClose: () => void; initialFilePath?: string; focus?: number
+  setSelectedRevisionId: (id: string) => void; onClose: () => void; initialFilePath?: string; focus?: number; sharedOf?: string
 }) {
   const send = useS((s) => s.send)
   const busy = useS((s) => s.busy)
@@ -551,6 +551,7 @@ export function WorkspacePanel({ msg, live, workspace, selectedRevisionId, setSe
           <>
             <span className="min-w-0 flex-1 truncate text-sm font-medium">{workspace.name} · {total} file{total === 1 ? '' : 's'}</span>
             <Btn sm icon={Pencil} title="Rename workspace" onClick={() => { setNameDraft(workspace.name); setRenaming(true) }} />
+        {sharedOf != null && <span title={`Shared across the chats of the project "${sharedOf}"`} className="hidden shrink-0 rounded-full border border-dashed border-bor px-2 py-0.5 text-xs text-mu sm:inline">Shared project</span>}
           </>
         )}
         <WorkspaceRevisionPicker

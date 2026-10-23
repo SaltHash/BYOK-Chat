@@ -384,9 +384,12 @@ export function DataTab() {
         const importedChats = Array.isArray(j.chats) ? j.chats
           .filter((c: any) => c && typeof c.id === 'string' && typeof c.title === 'string' && Array.isArray(c.msgs))
           .map((c: any) => ({ ...c, msgs: c.msgs.filter((m: any) => m && typeof m.id === 'string' && typeof m.t === 'string') })) : []
-        const importedFolders = Array.isArray(j.folders) ? j.folders.filter((f: any) => f && typeof f.id === 'string' && typeof f.name === 'string') : []
+        // Projects were renamed from folders; legacy config exports still
+        // carry `folders`, so accept both keys here.
+        const importedProjects = (Array.isArray(j.projects) ? j.projects : Array.isArray(j.folders) ? j.folders : []).filter((f: any) => f && typeof f.id === 'string' && typeof f.name === 'string')
+
+        const projects = !imports.chats ? st.projects : merge ? [...st.projects.filter((f) => !importedProjects.some((x: any) => x.id === f.id)), ...importedProjects] : importedProjects
         const chats = !imports.chats ? st.chats : merge ? [...st.chats.filter((c) => !importedChats.some((x: any) => x.id === c.id)), ...importedChats] : importedChats
-        const folders = !imports.chats ? st.folders : merge ? [...st.folders.filter((f) => !importedFolders.some((x: any) => x.id === f.id)), ...importedFolders] : importedFolders
         const validSel = j.sel && typeof j.sel === 'object' && (j.sel.k === 'ep' || j.sel.k === 'pl') && typeof j.sel.id === 'string'
           ? { k: j.sel.k, id: j.sel.id, ...(typeof j.sel.model === 'string' && j.sel.model ? { model: j.sel.model } : {}) } : null
         const validMemories = Array.isArray(j.memories) ? j.memories.filter((x: any) => x && typeof x.id === 'string' && typeof x.text === 'string').map((x: any) => ({ id: x.id, text: String(x.text).slice(0, 500), category: typeof x.category === 'string' ? x.category.slice(0, 60) || 'General' : 'General', createdAt: typeof x.createdAt === 'number' ? x.createdAt : Date.now(), updatedAt: typeof x.updatedAt === 'number' ? x.updatedAt : Date.now() })) : []
@@ -411,7 +414,7 @@ export function DataTab() {
         ...(imports.widgets ? { widgets: merge ? { ...st.widgets, ...cleanBools(j.widgets) } : cleanBools(j.widgets), widgetPrefs: j.widgetPrefs ? { ...(merge ? st.widgetPrefs : { ...DEFAULT_WIDGET_PREFS, widgetOrder: [...DEFAULT_WIDGET_PREFS.widgetOrder], shortcuts: [...DEFAULT_WIDGET_PREFS.shortcuts] }), ...cleanWidgetPrefs(j.widgetPrefs) } : st.widgetPrefs } : {}),
         ...(imports.stats && j.stats && typeof j.stats === 'object' ? { stats: merge ? { ...st.stats, ...j.stats } : j.stats } : {}),
         ...(imports.stats && j.routeStats && typeof j.routeStats === 'object' && !Array.isArray(j.routeStats) ? { routeStats: merge ? { ...st.routeStats, ...j.routeStats } : j.routeStats } : {}),
-        ...(imports.chats ? { chats, folders, chat: chats.some((c) => c.id === st.chat) ? st.chat : chats[0]?.id ?? '', ...(Array.isArray(j.todos) ? { todos: merge ? [...st.todos.filter((x) => !validTodos.some((y: any) => y.id === x.id)), ...validTodos] : validTodos } : {}), ...(Array.isArray(j.snips) ? { snips: merge ? [...st.snips, ...j.snips.filter((x: any) => typeof x === 'string')] : j.snips.filter((x: any) => typeof x === 'string') } : {}), ...(typeof j.pad === 'string' ? { pad: merge && st.pad ? st.pad : j.pad } : {}) } : {}),
+        ...(imports.chats ? { chats, projects, chat: chats.some((c) => c.id === st.chat) ? st.chat : chats[0]?.id ?? '', ...(Array.isArray(j.todos) ? { todos: merge ? [...st.todos.filter((x) => !validTodos.some((y: any) => y.id === x.id)), ...validTodos] : validTodos } : {}), ...(Array.isArray(j.snips) ? { snips: merge ? [...st.snips, ...j.snips.filter((x: any) => typeof x === 'string')] : j.snips.filter((x: any) => typeof x === 'string') } : {}), ...(typeof j.pad === 'string' ? { pad: merge && st.pad ? st.pad : j.pad } : {}) } : {}),
       }})
       setFileData(null)
       setMsg(merge ? 'Imported the selected data and merged it with existing settings.' : 'Imported the selected data and replaced those settings.')

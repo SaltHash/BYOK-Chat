@@ -1,13 +1,14 @@
 import { memo, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
-import { GitBranch, ChevronLeft, ChevronRight, ChevronDown, Sparkles, Clock, Server, Cpu, Copy, Check, RefreshCw, Trash2, ListOrdered, CircleCheck, CircleX, TriangleAlert, Paperclip, Download, ExternalLink, Volume2 } from 'lucide-react'
-import { useS, useLive, usable, featOn, previewSysFor, type Msg } from '../store'
+import { GitBranch, ChevronLeft, ChevronRight, ChevronDown, Server, Cpu, Copy, Check, RefreshCw, Trash2, ListOrdered, CircleCheck, CircleX, TriangleAlert, Paperclip, Download, ExternalLink, Volume2 } from 'lucide-react'
+import { useS, useLive, usable, featOn, previewSysFor, activeWorkspaceForChat, type Msg } from '../store'
 import { clampWorkspaceFrac, roundFrac, CHAT_WIDTH } from '../layout'
 import { startPointerDrag } from '../hooks'
 import { createFrameThrottle } from '../throttle'
 import { CI, fmtDuration } from '../meta'
 import { Btn, Chip, cx, type Ic } from './ui'
 import { Composer } from './Composer'
+import { ProjectOverview } from './ProjectOverview'
 import { Header } from './Header'
 import { MessageActions } from './ReplyActions'
 import { Tutorial } from './Extra'
@@ -529,9 +530,36 @@ export function Chat({ side, toggle, cfg, pal }: { side: boolean; toggle: () => 
      todos, snippets or other unrelated panel state. */
   const s = useS(useShallow((st) => ({
     chats: st.chats, chat: st.chat, cmds: st.cmds, prefs: st.prefs, workspaces: st.workspaces,
-    selectedRevision: st.selectedRevision, eps: st.eps, features: st.features, patch: st.patch,
+    selectedRevision: st.selectedRevision, eps: st.eps, features: st.features, patch: st.patch, newChatPending: st.newChatPending,
+    projects: st.projects, activeProject: st.activeProject,
   })))
   const c = s.chats.find((x) => x.id === s.chat)
+  // Project overview mode: a project opened from the sidebar fills the main
+  // area until a chat is opened. A chat always wins over the overview, so
+  // opening one clears the stale pointer.
+  const project = s.activeProject && !c ? s.projects.find((p) => p.id === s.activeProject) : undefined
+  useEffect(() => {
+    if (s.chat && useS.getState().activeProject) useS.getState().patch({ activeProject: '' })
+  }, [s.chat])
+  // A pending new chat (no store entry yet) resolves its mode until send.
+  const pendingTemp = !c && s.chat === '' && s.newChatPending === 'temporary'
+  const isTemp = c?.temporary === true || pendingTemp
+  // Before any message is sent the chat is a blank slate: the composer floats
+  // centered, and the welcome content sits just above it.
+  const empty = !(c && c.msgs.length)
+  const glowI = Math.max(0, Math.min(2, s.prefs.tempGlow ?? 1))
+  const newChatPending = useS((st) => st.newChatPending)
+  // Starting a fresh chat moves focus straight into the composer so typing
+  // needs no click. Runs for the pending descriptor and again whenever the
+  // pending mode changes (e.g. switching "new" ↔ "new temporary").
+  useEffect(() => {
+    if (s.chat !== '') return
+    const id = requestAnimationFrame(() => {
+      if (document.activeElement !== document.body || document.querySelector('[role="dialog"]')) return
+      ;(document.getElementById('composer') as HTMLElement | null)?.focus({ preventScroll: true })
+    })
+    return () => cancelAnimationFrame(id)
+  }, [s.chat, newChatPending])
   const tiles = featOn(s, 'commands') ? s.cmds.filter((k) => k.on).slice(0, 4) : []
   const box = useRef<HTMLDivElement>(null), stick = useRef(true)
   // Mirrors `stick` into state so a jump-to-latest pill can appear while the
@@ -650,8 +678,7 @@ export function Chat({ side, toggle, cfg, pal }: { side: boolean; toggle: () => 
   const openWorkspace = useCallback((mid: string, wsId: string, filePath?: string) => setWorkspacePanel((prev) => ({ mid, workspaceId: wsId, initialFilePath: filePath, focus: (prev?.focus ?? 0) + 1 })), [])
   const openResearch = useCallback((mid: string) => { useS.getState().patch({ researchPanel: { mid } }) }, [])
 
-  const workspaceMsg = workspacePanel ? c?.msgs.find((m) => m.id === workspacePanel.mid) : undefined
-  /* The panel id can be a workspace that does not exist yet (a brand new
+  const workspaceMsg = workspacePanel ? c?.msgs.find((m) => m.id === workspacePanel.mid) : undefined  /* The panel id can be a workspace that does not exist yet (a brand new
      project, or one whose id the model never sent). Fall back to the
      workspace the message itself points at, so the panel keeps showing the
      project instead of disappearing mid-write. */
@@ -660,6 +687,14 @@ export function Chat({ side, toggle, cfg, pal }: { side: boolean; toggle: () => 
   const workspaceId = panelWsId && s.workspaces[panelWsId] ? panelWsId : (msgWsIds[msgWsIds.length - 1] ?? '')
   const workspace = workspaceMsg && workspacePanel ? s.workspaces[workspaceId] : undefined
   const selectedRevId = workspacePanel ? s.selectedRevision[workspaceId] : null
+  // Indicator: the panel is showing a workspace lent by the project's other
+  // chats because this chat has not used one yet and the project shares.
+  const sharedWorkspaceOf = useMemo(() => {
+    const proj = s.projects.find((p) => p.id === c?.project)
+    if (!workspacePanel || !c || !proj || proj.shareWorkspaces === false) return undefined
+    if (c.msgs.some((m) => m.workspaceIds?.includes(workspaceId))) return undefined
+    return activeWorkspaceForChat(s, s.chat).shared ? proj.name : undefined
+  }, [workspacePanel, c, s.projects, workspaceId, s])
   const workspaceFrac = clampWorkspaceFrac(s.prefs.workspaceWidth)
   const researchMid = useS((st) => st.researchPanel?.mid ?? null)
   const researchMsg = researchMid ? c?.msgs.find((m) => m.id === researchMid && m.research) : undefined
@@ -678,10 +713,14 @@ export function Chat({ side, toggle, cfg, pal }: { side: boolean; toggle: () => 
 
   return (
     <section className="flex min-h-0 min-w-0 flex-1 flex-col bg-bg">
-      <Header side={side} toggle={toggle} cfg={cfg} pal={pal} title={c?.title ?? 'New chat'} />
+      <Header side={side} toggle={toggle} cfg={cfg} pal={pal} title={c?.title ?? (project ? project.name : pendingTemp ? 'Temporary chat' : 'New chat')} />
       <div ref={rowRef} className="flex min-h-0 flex-1 flex-col sm:flex-row">
+        {project ? (
+          <ProjectOverview project={project} cfg={cfg} />
+        ) : (
+        <>
         <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
-          <div ref={box} onScroll={onScrollBox} className="absolute inset-0 overflow-y-auto" style={glass ? { paddingBottom: composerH } : { paddingBottom: composerH, WebkitMaskImage: `linear-gradient(to bottom, black calc(100% - ${composerH + 32}px), rgba(0,0,0,0.1) calc(100% - ${composerH}px))`, maskImage: `linear-gradient(to bottom, black calc(100% - ${composerH + 32}px), rgba(0,0,0,0.1) calc(100% - ${composerH}px))` }}>
+          <div ref={box} onScroll={onScrollBox} className="absolute inset-0 overflow-y-auto" style={glass ? { paddingBottom: composerH + (empty ? 32 : 0) } : { paddingBottom: composerH + (empty ? 32 : 0), WebkitMaskImage: `linear-gradient(to bottom, black calc(100% - ${composerH + 32}px), rgba(0,0,0,0.1) calc(100% - ${composerH}px))`, maskImage: `linear-gradient(to bottom, black calc(100% - ${composerH + 32}px), rgba(0,0,0,0.1) calc(100% - ${composerH}px))` }}>
             {c && c.msgs.length ? (
               <div className="mx-auto space-y-8 px-4 py-6" style={{ maxWidth: CHAT_WIDTH[s.prefs.chatWidth] }}>
                 {c.msgs.map((m, i) => <M key={m.id} m={m} cfg={cfg} last={i === c.msgs.length - 1} onOpenWorkspace={openWorkspace} onOpenResearch={openResearch} selectedWorkspaceId={workspacePanel?.mid === m.id ? selectedRevId : null} />)}
@@ -697,8 +736,7 @@ export function Chat({ side, toggle, cfg, pal }: { side: boolean; toggle: () => 
               <Tutorial cfg={cfg} />
             ) : (
               <div className="mx-auto flex h-full max-w-xl flex-col items-center justify-center gap-6 px-4 text-center">
-                <span className="grid size-12 place-items-center rounded-2xl bg-surf text-ac">{c?.temporary === true ? <Clock size={22} /> : <Sparkles size={22} />}</span>
-                <h2 className="text-xl font-semibold">{flairLine(new Date(), { temporary: c?.temporary === true, seasonal: s.prefs.seasonal, seed: s.chats.length })}</h2>
+                <h2 className="text-xl font-semibold">{flairLine(new Date(), { temporary: isTemp, seasonal: s.prefs.seasonal, seed: s.chats.length })}</h2>
                 <div className="grid w-full gap-2 sm:grid-cols-2">
                   {!s.eps.length && <Tile icon={Server} t="Add an endpoint" d="Connect a model with your own key" on={() => cfg('eps')} />}
                   {tiles.map((k) => <Tile key={k.id} icon={CI[k.in]} t={'/' + k.name} d={k.desc} on={() => s.patch({ draft: '/' + k.name + ' ' })} />)}
@@ -706,7 +744,7 @@ export function Chat({ side, toggle, cfg, pal }: { side: boolean; toggle: () => 
               </div>
             )}
           </div>
-          <div ref={composerRef} className="absolute inset-x-0 bottom-0 z-10 flex flex-col">
+          <div ref={composerRef} className={cx('absolute inset-x-0 z-10 flex flex-col', empty ? 'top-1/2 -translate-y-1/2' : 'bottom-0')}>
             {!atEnd && c && c.msgs.length > 0 && (
               <button type="button" onClick={() => { stick.current = true; setAtEnd(true); followBottom.call() }} className="absolute bottom-full left-1/2 z-10 mb-2 inline-flex min-h-8 -translate-x-1/2 items-center gap-1.5 rounded-full border border-bor bg-surf px-3 py-1 text-xs text-tx shadow-md transition-colors hover:bg-hov focus-visible:ring-2 focus-visible:ring-ac">
                 <ChevronDown size={13} className="text-ac" />Jump to latest
@@ -719,7 +757,7 @@ export function Chat({ side, toggle, cfg, pal }: { side: boolean; toggle: () => 
           <>
             <div role="separator" aria-orientation="vertical" aria-label="Resize workspace panel" onPointerDown={startResize} className="hidden w-1.5 shrink-0 cursor-col-resize bg-transparent hover:bg-ac/50 sm:block" />
             <aside aria-label="Workspace side panel" style={wide ? { flex: `0 0 ${workspaceFrac * 100}%`, maxWidth: '70%', minWidth: '15%' } : { height: '45dvh', width: '100%' }} className="flex min-h-0 shrink-0 flex-col border-t border-bor bg-surf/40 sm:border-l sm:border-t-0">
-              <WorkspacePanel key={`${workspaceMsg.id}:${workspaceMsg.ai ?? 0}:${workspaceId}`} msg={workspaceMsg} live={liveTools[workspaceMsg.id]} workspace={workspace} selectedRevisionId={selectedRevId ?? workspace.revisions[workspace.revisions.length - 1]?.id ?? null} setSelectedRevisionId={(id) => s.patch({ selectedRevision: { ...s.selectedRevision, [workspaceId]: id } })} onClose={() => { panelClosed.current = true; setWorkspacePanel(null) }} initialFilePath={workspacePanel.initialFilePath} focus={workspacePanel.focus ?? 0} />
+              <WorkspacePanel key={`${workspaceMsg.id}:${workspaceMsg.ai ?? 0}:${workspaceId}`} msg={workspaceMsg} live={liveTools[workspaceMsg.id]} workspace={workspace} selectedRevisionId={selectedRevId ?? workspace.revisions[workspace.revisions.length - 1]?.id ?? null} setSelectedRevisionId={(id) => s.patch({ selectedRevision: { ...s.selectedRevision, [workspaceId]: id } })} onClose={() => { panelClosed.current = true; setWorkspacePanel(null) }} initialFilePath={workspacePanel.initialFilePath} focus={workspacePanel.focus ?? 0} sharedOf={sharedWorkspaceOf} />
             </aside>
           </>
         )}
@@ -731,7 +769,15 @@ export function Chat({ side, toggle, cfg, pal }: { side: boolean; toggle: () => 
             </aside>
           </>
         )}
+        </>
+        )}
       </div>
+      {(isTemp || project) && <div className="px-4 pb-2 text-center text-xs text-mu">{project ? 'Temporary chats are unavailable in projects.' : 'Some providers may retain temporary chats for safety or model training.'}</div>}
+      {/* Temporary-chat frame: one soft accent glow hugging the viewport edges.
+         It breathes while the chat is still empty and settles to a faint,
+         static rim after the first message — the "this conversation will not
+         stick" tell that stays legible without shouting. */}
+      {isTemp && !project && glowI > 0 && <div aria-hidden="true" className="temp-glow" data-sent={c?.msgs.length ? '' : undefined} style={{ ['--temp-glow-i' as never]: glowI, ['--temp-glow-sent' as never]: Math.max(0, Math.min(2, s.prefs.tempGlowSent ?? 0.5)) }} />}
     </section>
   )
 }

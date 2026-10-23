@@ -712,9 +712,9 @@ function Eps() {
     return `Added ${provider.name}. ${found.error || 'No model list was found.'} The model from the cURL command is still ready to use, and failed model-list URLs are cached so they are not retried.`
   }
   const quickActions = <div className="flex flex-wrap gap-2">
-    <Btn v="soft" icon={Plus} onClick={() => addCompatible('openai')}>OpenAI-compatible</Btn>
-    <Btn v="soft" icon={Plus} onClick={() => addCompatible('anthropic')}>Anthropic-compatible</Btn>
-    <Btn v="soft" icon={Terminal} onClick={() => setCurlOpen(true)}>Add provider from cURL</Btn>
+    <Btn v="solid" icon={Plus} onClick={() => addCompatible('openai')}>OpenAI-compatible</Btn>
+    <Btn v="solid" icon={Plus} onClick={() => addCompatible('anthropic')}>Anthropic-compatible</Btn>
+    <Btn v="solid" icon={Terminal} onClick={() => setCurlOpen(true)}>Add provider from cURL</Btn>
   </div>
   return (
     <Panel id="eps" k="eps" n={eps.length} add="Add endpoint">
@@ -737,10 +737,10 @@ function Eps() {
         return (
           <Anchor key={eid} id={`ep-${e.id}`}>
           <Card handle={handle} icon={Server} title={editingName === e.id
-            ? <input autoFocus value={e.name} onChange={(ev) => u({ name: ev.target.value })} onBlur={() => setEditingName('')} onKeyDown={(ev) => { if (ev.key === 'Enter' || ev.key === 'Escape') setEditingName('') }} onClick={(ev) => ev.stopPropagation()} aria-label="Endpoint name" className="w-full min-w-0 rounded-md bg-bg px-2 py-1 font-medium outline-none focus:ring-2 focus:ring-ac/40" />
+            ? <input autoFocus value={e.name} onChange={(ev) => u({ name: ev.target.value })} onBlur={() => setEditingName('')} onKeyDown={(ev) => { ev.stopPropagation(); if (ev.key === 'Enter' || ev.key === 'Escape') { ev.preventDefault(); setEditingName('') } }} onClick={(ev) => ev.stopPropagation()} aria-label="Endpoint name" className="w-full min-w-0 rounded-md bg-bg px-2 py-1 font-medium outline-none focus:ring-2 focus:ring-ac/40" />
             : <span className="inline-flex min-w-0 items-center gap-1.5"><span className="truncate">{e.name}</span><button type="button" title="Rename endpoint" aria-label="Rename endpoint" onClick={(ev) => { ev.stopPropagation(); setEditingName(e.id) }} className="grid size-6 shrink-0 place-items-center rounded text-mu hover:bg-hov hover:text-tx"><Pencil size={13}/></button></span>} sub={e.model || 'No model id'} open0={!e.model && !e.key} muted={!e.on} right={<Toggle on={e.on} set={(v) => u({ on: v })} />}>
             <div className="space-y-3">
-              <Anchor id="models"><section className="space-y-3 rounded-xl bg-bg p-3"><div className="text-sm font-medium">Models</div>
+              <Anchor id="models"><section className="space-y-3 rounded-xl bg-bg p-3">
               <Field label="Preset"><Sel value={e.preset ?? presetForUrl(e.url)?.[0] ?? ''} set={(v) => v ? selectPreset(e.id, v) : u({ preset: '', endpointId: '', endpointFilter: 'author' })} opts={[[ '', 'Choose a preset'], ...Object.keys(PRE).map((k) => [k, k] as [string, string])]} placeholder="Search endpoints" /></Field>
               <Field label="Models" hint="Press Enter to add the next row. Every row uses this endpoint and API key.">
                 <ModelsEditor e={e} update={u} />
@@ -829,11 +829,6 @@ function Eps() {
       }} />
       <Anchor id="add-endpoint"><span className="block text-xs text-mu">Use Add endpoint above to connect a provider, then test each model here.</span></Anchor>
       {!!eps.length && <TestAllEndpoints eps={eps} />}
-      <div className="space-y-2 rounded-xl border border-dashed border-bor p-3">
-        <div className="text-sm font-medium">Add another endpoint</div>
-        <div className="text-xs text-mu">Start with a compatibility preset or import a provider from a cURL command. The new endpoint appears at the top of the list.</div>
-        {quickActions}
-      </div>
       </Section>
       {curlOpen && <CurlImportModal close={() => setCurlOpen(false)} importProvider={importCurl} />}
     </Panel>
@@ -1198,12 +1193,20 @@ function Tools() {
     const i = ref.indexOf('::')
     setSearch({ readerSummaryEp: i < 0 ? '' : ref.slice(0, i), readerSummaryModel: i < 0 ? '' : ref.slice(i + 2) })
   }
-  /* The model-flow mode picks an endpoint, not a model: the endpoint's
-   * default model and the rest of its model list form the flow. */
+  /* The model-flow mode picks a source, not a model: an endpoint's default
+   * model and the rest of its model list, or a whole playlist's entries,
+   * form the flow in order. Playlist values are prefixed with `pl:` so one
+   * dropdown can hold both kinds of source. */
+  const summaryFlowRef = search.readerSummaryPl ? `pl:${search.readerSummaryPl}` : search.readerSummaryEp
   const summaryEpOpts: [string, string][] = [
     ['', 'None (send the raw page)'],
     ...s.eps.filter(usable).map((e) => [e.id, `${e.name} · ${e.model}`] as [string, string]),
+    ...(featOn(s, 'playlists') ? s.pls.map((p) => [`pl:${p.id}`, `Playlist: ${p.name} (${p.e.length} entries)`] as [string, string]) : []),
   ]
+  const setSummaryFlowRef = (ref: string) => {
+    if (ref.startsWith('pl:')) setSearch({ readerSummaryPl: ref.slice(3), readerSummaryEp: '', readerSummaryModel: '' })
+    else setSearch({ readerSummaryEp: ref, readerSummaryPl: '', readerSummaryModel: '' })
+  }
   /* Tools toggle straight on: no trust popup, no confirmation step. */
   const toggleTool = (k: string, v: boolean) => {
     s.patch({ tools: { ...s.tools, [k]: v } })
@@ -1339,14 +1342,14 @@ function Tools() {
             </Anchor>
             {search.readerSummary && <>
               <Anchor id="reader-summary-mode">
-              <Field label="Summary model" hint="Use one exact model, or the endpoint's default model flow: the endpoint's default model first, then the rest of its models in order, until one works.">
+              <Field label="Summary model" hint="Use one exact model, or a model flow: an endpoint's models in order, or an entire playlist, until one works.">
                 <Seg v={search.readerSummaryFlow ? 'flow' : 'picked'} set={(v) => setSearch({ readerSummaryFlow: v === 'flow' })} opts={[['picked', 'Picked model'], ['flow', 'Model flow']]} />
               </Field>
               </Anchor>
               {search.readerSummaryFlow ? (
                 <Anchor id="reader-summary-endpoint">
-                <Field label="Summary endpoint" hint="The summary uses this endpoint's default model first, then the rest of its model list in order. A model that fails is skipped for the rest of the reply; if every model fails, the raw page text is used.">
-                  <Sel value={search.readerSummaryEp} set={(id) => setSearch({ readerSummaryEp: id, readerSummaryModel: '' })} opts={summaryEpOpts} />
+                <Field label="Summary flow source" hint="The flow tries every model in this source in order: an endpoint's default model first, then the rest of its models — or every entry of a playlist. A model that fails is skipped for the rest of the reply; if every model fails, the raw page text is used.">
+                  <Sel value={summaryFlowRef} set={setSummaryFlowRef} opts={summaryEpOpts} />
                 </Field>
                 </Anchor>
               ) : (
@@ -1762,7 +1765,7 @@ function FontPicker({ value, set, options }: { value: string; set: (v: string) =
       if (e.key === 'Enter') { e.preventDefault(); const q = query.trim(); if (q) { const exact = options.find(([font, label]) => font.toLowerCase() === q.toLowerCase() || label.toLowerCase() === q.toLowerCase()); choose(exact?.[0] ?? q) } }
       if (e.key === 'Escape') setOpen(false)
     }} className="w-full rounded-lg bg-bg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ac/40" />
-    {open && <div className="settings-dropdown absolute inset-x-0 top-full z-20 mt-1 max-h-44 overflow-y-auto rounded-xl bg-hov p-1.5 shadow-md">
+    {open && <div className="settings-dropdown dd-list absolute inset-x-0 top-full z-20 mt-1 max-h-44 overflow-y-auto rounded-xl bg-hov p-1.5 shadow-md">
       {matches.map(([font, label]) => <button type="button" key={font} onMouseDown={(e) => e.preventDefault()} onClick={() => choose(font)} className="block w-full rounded-lg px-2.5 py-2 text-left text-sm hover:bg-surf">{label}</button>)}
       {!matches.length && query.trim() && <p className="px-2.5 py-2 text-xs text-mu">Press Enter to use “{query.trim()}”.</p>}
     </div>}
@@ -1832,8 +1835,9 @@ function Look() {
         const hue = custom.hue
         const sat = custom.sat
         const bright = custom.bright
+        const contrast = custom.contrast
         return <Anchor id="custom-colors"><div className="rounded-xl bg-surf p-3 space-y-4">
-        <div><div className="text-sm font-medium">Custom theme</div><div className="text-xs text-mu">Start from a base theme (Plum by default), then dial in Hue, Saturation and Brightness. Hue starts at the base accent's hue and sweeps the full color wheel, shifting everything except syntax highlighting and the error colour. Saturation (0x–2x) scales color intensity everywhere but syntax and error. Brightness (0x–3x) scales every surface and accent but never syntax, error or text.</div></div>
+        <div><div className="text-sm font-medium">Custom theme</div><div className="text-xs text-mu">Pick a base theme (Plum by default), then fine-tune hue, saturation, brightness, and contrast. Syntax colours, the error colour, and text are always left alone.</div></div>
         <div className="space-y-2">
           <div className="text-xs text-mu">Base theme (default: Plum)</div>
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
@@ -1854,6 +1858,7 @@ function Look() {
           <Field label={`Hue · ${hue}°`} hint="Rotates colours except syntax highlighting. Starts at the base accent hue."><RangeSlider label="Hue" min={0} max={360} step={1} value={hue} set={(v) => setCustomTheme({ ...custom, hue: Math.round(v) })} className="w-full" /></Field>
           <Field label={`Saturation · ${sat.toFixed(2)}x`} hint="Scales colour intensity across everything except syntax highlighting and the error colour."><RangeSlider label="Saturation" min={0} max={2} step={0.01} value={sat} set={(v) => setCustomTheme({ ...custom, sat: Math.round(v * 100) / 100 })} className="w-full" /></Field>
           <Field label={`Brightness · ${bright.toFixed(2)}x`} hint="Scales brightness across everything except syntax highlighting, the error colour, and text."><RangeSlider label="Brightness" min={0} max={3} step={0.01} value={bright} set={(v) => setCustomTheme({ ...custom, bright: Math.round(v * 100) / 100 })} className="w-full" /></Field>
+          <Field label={`Contrast · ${contrast.toFixed(2)}x`} hint="Increases the brightness contrast: lights get brighter and darks get darker around mid-brightness. Never touches syntax, error or text colours."><RangeSlider label="Contrast" min={1} max={2} step={0.01} value={contrast} set={(v) => setCustomTheme({ ...custom, contrast: Math.round(v * 100) / 100 })} className="w-full" /></Field>
           <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-mu">
             <span>Syntax colours and the error colour never change. Text colours are never dimmed by brightness.</span>
             <Btn v="ghost" className="px-2 py-1" onClick={() => setCustomTheme(defaultCustomTheme(base))}>Reset to base defaults</Btn>
@@ -1874,6 +1879,26 @@ function Look() {
       })()}
       {row('seasonal', 'seasonal', 'Seasonal touches', 'Show a festive greeting on holidays. Turn off to keep the greeting plain.')}
       {row('completion-cues', 'cues', 'Completion cues', 'A soft chime and a little confetti when deep research or a workspace update finishes.')}
+      <Anchor id="temp-glow">
+      <div className="rounded-xl bg-surf p-3 space-y-2">
+        <div className="text-sm font-medium">Temporary chat glow</div>
+        <div className="text-xs text-mu">Edge glow while a temporary chat is still empty. 0x turns it off.</div>
+        <div className="flex items-center gap-3">
+          <RangeSlider label="Temporary chat glow intensity" min={0} max={2} step={0.05} value={s.prefs.tempGlow ?? 1} set={(tempGlow) => s.patch({ prefs: { ...s.prefs, tempGlow: Math.round(tempGlow * 100) / 100 } })} className="flex-1" />
+          <span className="w-20 text-right text-sm">{(s.prefs.tempGlow ?? 1) === 0 ? 'Off' : `${(s.prefs.tempGlow ?? 1).toFixed(2)}x`}</span>
+        </div>
+      </div>
+      </Anchor>
+      <Anchor id="temp-glow-sent">
+      <div className="rounded-xl bg-surf p-3 space-y-2">
+        <div className="text-sm font-medium">Glow after a message is sent</div>
+        <div className="text-xs text-mu">How much glow remains once the chat has messages, as a share of the empty-chat glow. 0x turns it off.</div>
+        <div className="flex items-center gap-3">
+          <RangeSlider label="Temporary chat glow sent intensity (relative)" min={0} max={2} step={0.05} value={s.prefs.tempGlowSent ?? 0.5} set={(tempGlowSent) => s.patch({ prefs: { ...s.prefs, tempGlowSent: Math.round(tempGlowSent * 100) / 100 } })} className="flex-1" />
+          <span className="w-20 text-right text-sm">{(s.prefs.tempGlowSent ?? 0.5) === 0 ? 'Off' : `${(s.prefs.tempGlowSent ?? 0.5).toFixed(2)}x`}</span>
+        </div>
+      </div>
+      </Anchor>
       </Section>
       <Section title="Model picker" desc="What the model menu shows and how tall it may grow.">
       <Anchor id="model-picker-labels">
@@ -2054,6 +2079,7 @@ function Chats() {
       </div>
       </Anchor>
       </Section>
+      <Anchor id="temporary-chats">
       <Section title="Temporary chats" desc="Chats that are removed automatically after a while.">
       {row('temporary-default', 'temporaryByDefault', 'New chats are temporary by default', 'New chats are deleted after the retention period, or when you leave if retention is set to Immediate.')}
       <Anchor id="temp-retention">
@@ -2073,7 +2099,9 @@ function Chats() {
         </div>
       </div>
       </Anchor>
+      <div className="pt-1"><Btn v="soft" icon={Sparkles} onClick={() => goSetting('look#temp-glow')}>Open glow settings</Btn></div>
       </Section>
+      </Anchor>
       <Section title="Behavior" desc="How the app handles sending messages and opening chats.">
       {row('enter-sends', 'enterSends', 'Enter sends the message', 'Turn off to send with the button and use Enter for new lines.')}
       {row('auto-title', 'autoTitle', 'Auto-generate chat names', 'Automatically generate a concise title after the first reply.')}
@@ -2082,6 +2110,13 @@ function Chats() {
         <div className="text-sm font-medium">Open on load</div>
         <div className="text-xs text-mu">Which conversation the app shows when you open it. Most recent permanent chats never pick a temporary one.</div>
         <Sel value={normStartup(s.prefs.startup)} set={(startup) => s.patch({ prefs: { ...s.prefs, startup: normStartup(startup) } })} opts={STARTUP_MODES as [string, string][]} />
+      </div>
+      </Anchor>
+      <Anchor id="draft-survival">
+      <div className="rounded-xl bg-surf p-3 space-y-2">
+        <div className="text-sm font-medium">Drafts across reloads</div>
+        <div className="text-xs text-mu">Keep half-typed messages when you close or reload the page. New chat screen covers a chat you have not sent to yet; existing chats covers everything already named.</div>
+        <Seg v={(s.prefs.draftSurvive ?? 'both') as 'off' | 'new' | 'chats' | 'both'} set={(draftSurvive) => s.patch({ prefs: { ...s.prefs, draftSurvive } })} opts={[['off', 'Never'], ['new', 'New chat screen'], ['chats', 'Existing chats'], ['both', 'Both']]} />
       </div>
       </Anchor>
       </Section>

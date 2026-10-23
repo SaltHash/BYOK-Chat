@@ -5,6 +5,7 @@ import { useS, chatMd, dl, THEMES, DARK_THEMES, LIGHT_THEMES, themeKeyOf, DEFAUL
 import { searchChats } from '../recall'
 import { clampSidebarWidth } from '../layout'
 import { Btn, Confirm, cx } from './ui'
+import { ProjectModal } from './ProjectModal'
 import { DndPlaceholder, DndLiveRegion, showDragOverlay, moveDragOverlay, hideDragOverlay, measureBox, DND_ACTIVATION_PX, useFlipAnimate, restDocTop, pointerDocY, edgeScroll } from './dnd'
 import { stepInsertion } from '../dndShared'
 
@@ -34,10 +35,10 @@ function RowBody({ c, mv, del, dnd, container, index }: RowProps) {
   const h = dnd.handle(c, container, index)
   return (
     <div ref={dnd.register(c.id)} data-chat-row={c.id}
-      {...h} title="Drag to move to a folder"
+      {...h} title="Drag to move to a project"
       className={cx('dnd-handle group flex cursor-grab items-center rounded-lg pr-1 text-sm', selected ? 'bg-hov' : 'hover:bg-surf', dragging && 'opacity-25')}>
       {ed ? <Name v={c.title} save={(t) => useS.getState().rename(c.id, t)} done={() => setEd(false)} /> : (
-        <button onDoubleClick={() => setEd(true)} onClick={() => useS.getState().patch({ chat: c.id })} className="flex min-w-0 flex-1 items-center gap-2.5 px-2.5 py-2 text-left">
+        <button onDoubleClick={() => setEd(true)} onClick={() => useS.getState().patch({ chat: c.id, activeProject: '' })} className="flex min-w-0 flex-1 items-center gap-2.5 px-2.5 py-2 text-left">
           {c.pin ? <Pin size={15} className="shrink-0 text-ac" /> : c.temporary ? <Clock size={15} className="shrink-0 text-mu" /> : <MessageSquare size={15} className="shrink-0 text-mu" />}
           <span className="truncate">{c.title}{c.temporary ? ' · temporary' : ''}</span>
         </button>
@@ -51,7 +52,7 @@ function RowBody({ c, mv, del, dnd, container, index }: RowProps) {
           dl(`${base}.md`, chatMd(chat), 'text/markdown')
           dl(`${base}.json`, JSON.stringify({ v: 4, chats: [chat] }, null, 1), 'application/json')
         }} className={act}><Download size={14} /></button>
-        <button title="Move to folder" onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); mv(c.id, r.left, r.bottom + 4) }} className={act}><Folder size={14} /></button>
+        <button title="Move to project" onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); mv(c.id, r.left, r.bottom + 4) }} className={act}><Folder size={14} /></button>
         <button title={c.pin ? 'Unpin' : 'Pin'} onClick={() => useS.getState().chatOp(c.id, 'pin')} className={act}><Pin size={14} /></button>
         <button title="Delete chat (hold Shift to skip confirmation)" onClick={(e) => del(c.id, e.shiftKey)} className={cx(act, 'hover:text-er')}><Trash2 size={14} /></button>
       </span>
@@ -64,22 +65,23 @@ const Row = memo(RowBody, (a, b) =>
   && a.c.id === b.c.id && a.c.title === b.c.title && a.c.pin === b.c.pin && a.c.temporary === b.c.temporary)
 
 export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; toggle: () => void; cfg: (t: string) => void; width?: number }) {
-  /* Narrow slice: the sidebar shows chat metadata, folder names and library
+  /* Narrow slice: the sidebar shows chat metadata, project names and library
      counts. Composer keystrokes, streaming text and widget state no longer
      re-render the whole list. Actions are stable, so subscribing to them is
      free and keeps the call sites unchanged. */
   const s = useS(useShallow((st) => ({
-    chats: st.chats, chat: st.chat, folders: st.folders, prefs: st.prefs,
+    chats: st.chats, chat: st.chat, projects: st.projects, activeProject: st.activeProject, prefs: st.prefs,
     themeMode: st.themeMode, themeLight: st.themeLight, themeDark: st.themeDark, libraryShow: st.libraryShow,
     eps: st.eps, pls: st.pls, prompts: st.prompts, cmds: st.cmds, tools: st.tools, memories: st.memories, widgets: st.widgets, features: st.features,
-    patch: st.patch, newChat: st.newChat, renameFolder: st.renameFolder, toggleFolder: st.toggleFolder, delFolder: st.delFolder, addFolder: st.addFolder, moveChat: st.moveChat, promoteChat: st.promoteChat,
+    patch: st.patch, newChat: st.newChat, renameProject: st.renameProject, delProject: st.delProject, openProject: st.openProject, moveChat: st.moveChat, promoteChat: st.promoteChat,
   })))
   const [clock, setClock] = useState(Date.now())
   const [q, setQ] = useState('')
   const [fe, setFe] = useState('')
   const [menu, setMenu] = useState<{ id: string; x: number; y: number } | null>(null)
   const [deleteId, setDeleteId] = useState('')
-  const [folderId, setFolderId] = useState('')
+  const [projectId, setProjectId] = useState('')
+  const [newModal, setNewModal] = useState(false)
   // The temporary section shows only `prefs.tempShow` chats by default and is
   // capped at a fraction of the sidebar's height, past which it scrolls.
   const [tempOpen, setTempOpen] = useState(false)
@@ -87,9 +89,9 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
   const asideRef = useRef<HTMLElement>(null)
   // Pointer-based cross-container drag state (replaces HTML5 DnD): the dragged
   // chat follows the pointer in an overlay while a wireframe placeholder marks
-  // the live insertion point inside the hovered folder (or Recent).
+  // the live insertion point inside the hovered project (or Recent).
   const [dragId, setDragId] = useState<string | null>(null)
-  const [target, setTarget] = useState<{ folder: string; at: number } | null>(null)
+  const [target, setTarget] = useState<{ project: string; at: number } | null>(null)
   const [box, setBox] = useState<{ w: number; h: number; radius: string } | null>(null)
   const [dndMsg, setDndMsg] = useState('')
   const rowEls = useRef(new Map<string, HTMLDivElement>())
@@ -97,7 +99,7 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
   const navRef = useRef<HTMLElement>(null)
   const pending = useRef<{ id: string; startX: number; startY: number; dx: number; dy: number } | null>(null)
   const dragRef = useRef<{ id: string; dx: number; dy: number; lastY: number; raf: number } | null>(null)
-  const dragState = useRef({ dragId: null as string | null, target: null as { folder: string; at: number } | null })
+  const dragState = useRef({ dragId: null as string | null, target: null as { project: string; at: number } | null })
   dragState.current = { dragId, target }
   useEffect(() => { const timer = setInterval(() => setClock(Date.now()), 30000); return () => clearInterval(timer) }, [])
   // Track the sidebar's height so the temporary section can be capped relative
@@ -129,7 +131,7 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
     for (const c of L) {
       if (c.temporary) out.temporary.push(c)
       else if (c.pin) out.pinned.push(c)
-      else if (!c.folder) out.free.push(c)
+      else if (!c.project) out.free.push(c)
     }
     // Order temporary chats by how much time they have left, not by when they
     // were created: the ones expiring soonest sink to the bottom. Chats with no
@@ -139,19 +141,19 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
     out.temporary.sort((a, b) => (b.expiresAt ?? 0) - (a.expiresAt ?? 0))
     return out
   }, [L])
-  const folderCounts = useMemo(() => {
+  const projectCounts = useMemo(() => {
     const m = new Map<string, number>()
-    // Count only what the folder actually lists: pinned and temporary chats
+    // Count only what the project actually lists: pinned and temporary chats
     // are rendered in their own sections, so counting them here made the
     // badge disagree with the visible rows.
-    for (const c of s.chats) if (c.folder && !c.pin && !c.temporary) m.set(c.folder, (m.get(c.folder) ?? 0) + 1)
+    for (const c of s.chats) if (c.project && !c.pin && !c.temporary) m.set(c.project, (m.get(c.project) ?? 0) + 1)
     return m
   }, [s.chats])
   // Ranked message search (BM25): one hit per chat with a text snippet.
   // Jump-to-message sets flashMsg, which Chat highlights and scrolls to.
   const hits = useMemo(() => (k ? searchChats(s.chats, q, 30) : []), [s.chats, q, k])
   const jump = (chatId: string, msgId: string | null) => {
-    s.patch({ chat: chatId, flashMsg: msgId })
+    s.patch({ chat: chatId, flashMsg: msgId, activeProject: '' })
     if (typeof window !== 'undefined' && window.innerWidth < 768) toggle()
   }
   const th = s.themeMode === 'light' ? [...LIGHT_THEMES, 'custom'] : [...DARK_THEMES, 'custom']
@@ -178,16 +180,16 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
     if (el) zoneEls.current.set(key, el)
     else zoneEls.current.delete(key)
   }, [])
-  const zoneKeys = useMemo(() => ['', ...s.folders.map((f) => f.id)], [s.folders])
+  const zoneKeys = useMemo(() => ['', ...s.projects.map((f) => f.id)], [s.projects])
   // Live snapshot for window-level listeners (attached once; always current).
-  const live = useRef({ L, zoneKeys, folders: s.folders })
-  live.current = { L, zoneKeys, folders: s.folders }
+  const live = useRef({ L, zoneKeys, projects: s.projects })
+  live.current = { L, zoneKeys, projects: s.projects }
   // Stable, ref-reading: the drag listeners and the memoized rows call these,
   // so they must not be rebuilt when the list re-renders.
-  const liveMembers = useCallback((folder: string, exclude?: string | null) =>
-    live.current.L.filter((c) => !c.temporary && !c.pin && (folder ? c.folder === folder : !c.folder) && c.id !== exclude), [])
+  const liveMembers = useCallback((project: string, exclude?: string | null) =>
+    live.current.L.filter((c) => !c.temporary && !c.pin && (project ? c.project === project : !c.project) && c.id !== exclude), [])
 
-  const computeTarget = (clientY: number): { folder: string; at: number } | null => {
+  const computeTarget = (clientY: number): { project: string; at: number } | null => {
     const d = dragRef.current
     const exclude = d?.id ?? dragState.current.dragId
     for (const [key, el] of zoneEls.current) {
@@ -203,15 +205,15 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
         mids.push(restDocTop(row) + row.getBoundingClientRect().height / 2)
       }
       const prev = dragState.current.target
-      const current = prev && prev.folder === key ? prev.at : rows.length
-      return { folder: key, at: stepInsertion(mids, pointerDocY(clientY, el), current) }
+      const current = prev && prev.project === key ? prev.at : rows.length
+      return { project: key, at: stepInsertion(mids, pointerDocY(clientY, el), current) }
     }
     return null
   }
 
   // Stable: reads the drag state through refs, so it can be a dependency of the
   // once-attached window listeners and of the memoized row handlers.
-  const endDrag = useCallback((commit: boolean, override?: { folder: string; at: number } | null) => {
+  const endDrag = useCallback((commit: boolean, override?: { project: string; at: number } | null) => {
     const d = dragRef.current
     const st = dragState.current
     const id = d?.id ?? st.dragId
@@ -230,9 +232,9 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
       const cur = all.findIndex((c) => c.id === id)
       if (cur >= 0) {
         const [chat] = all.splice(cur, 1)
-        const updated: Chat = { ...chat, folder: t.folder || undefined, ...(chat.pin ? { pin: false } : null) }
+        const updated: Chat = { ...chat, project: t.project || undefined, ...(chat.pin ? { pin: false } : null) }
         // Exclude the dragged chat so `t.at` (computed without it) indexes the same list.
-        const list = liveMembers(t.folder, id)
+        const list = liveMembers(t.project, id)
         const before = list[Math.min(t.at, list.length)]
         let idx = all.length
         if (before) {
@@ -241,12 +243,12 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
         } else {
           for (let i = all.length - 1; i >= 0; i--) {
             const c = all[i]
-            if (!c.temporary && !c.pin && (t.folder ? c.folder === t.folder : !c.folder)) { idx = i + 1; break }
+            if (!c.temporary && !c.pin && (t.project ? c.project === t.project : !c.project)) { idx = i + 1; break }
           }
         }
         all.splice(idx, 0, updated)
         store.patch({ chats: all })
-        const label = t.folder ? (live.current.folders.find((f) => f.id === t.folder)?.name ?? 'folder') : 'Recent'
+        const label = t.project ? (live.current.projects.find((f) => f.id === t.project)?.name ?? 'project') : 'Recent'
         setDndMsg(`${chat.title} moved to ${label} at position ${Math.min(t.at, list.length) + 1}.`)
       }
     } else {
@@ -267,7 +269,7 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
           moveDragOverlay(clientX, clientY, d.dx, d.dy)
           const t = computeTarget(clientY)
           const cur = dragState.current.target
-          if ((t?.folder !== cur?.folder || t?.at !== cur?.at) && !(t == null && cur == null)) setTarget(t)
+          if ((t?.project !== cur?.project || t?.at !== cur?.at) && !(t == null && cur == null)) setTarget(t)
           edgeScroll(clientY, [navRef.current])
         })
         return
@@ -284,11 +286,11 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
         setDragId(p.id)
         const src = live.current.L.find((c) => c.id === p.id)
         if (!src) return
-        const srcKey = !src.temporary && !src.pin ? (src.folder ?? '') : ''
+        const srcKey = !src.temporary && !src.pin ? (src.project ?? '') : ''
         const list = liveMembers(srcKey, p.id)
-        const srcIdx = live.current.L.filter((c) => !c.temporary && (src.pin ? c.pin : !c.pin && (srcKey ? c.folder === srcKey : !c.folder))).findIndex((c) => c.id === p.id)
-        setTarget({ folder: live.current.zoneKeys.includes(srcKey) ? srcKey : '', at: src.pin ? list.length : Math.max(0, srcIdx) })
-        setDndMsg(`${src.title} lifted. Move to choose a folder and position, release to drop, Escape to cancel.`)
+        const srcIdx = live.current.L.filter((c) => !c.temporary && (src.pin ? c.pin : !c.pin && (srcKey ? c.project === srcKey : !c.project))).findIndex((c) => c.id === p.id)
+        setTarget({ project: live.current.zoneKeys.includes(srcKey) ? srcKey : '', at: src.pin ? list.length : Math.max(0, srcIdx) })
+        setDndMsg(`${src.title} lifted. Move to choose a project and position, release to drop, Escape to cancel.`)
       }
     }
     // A release over a row button makes the browser dispatch a click on it. That
@@ -337,7 +339,7 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
   // Animate rows around the live placeholder; keyed on the visible row order so
   // unrelated re-renders (e.g. the clock tick) never disturb in-flight motion.
   const reducedMotion = typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
-  const flipKey = `${L.map((c) => c.id).join(',')}|${dragId ?? ''}|${target ? `${target.folder}:${target.at}` : ''}`
+  const flipKey = `${L.map((c) => c.id).join(',')}|${dragId ?? ''}|${target ? `${target.project}:${target.at}` : ''}`
   useFlipAnimate(rowEls, !!reducedMotion, flipKey)
 
   // Stable row handlers: depend only on refs and setState, so memoized rows
@@ -347,7 +349,7 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
     className: 'dnd-handle',
     tabIndex: 0,
     role: 'button' as const,
-    'aria-label': `${chat.title}. Press Space to lift and move between folders.`,
+    'aria-label': `${chat.title}. Press Space to lift and move between projects.`,
     'aria-pressed': dragState.current.dragId === chat.id,
     onPointerDown: (e: React.PointerEvent) => {
       if (e.pointerType === 'mouse' && e.button !== 0) return
@@ -370,38 +372,38 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
           setBox(b)
           setDragId(chat.id)
           if (container === 'pinned' || container === 'temporary') {
-            setTarget({ folder: '', at: liveMembers('', chat.id).length })
+            setTarget({ project: '', at: liveMembers('', chat.id).length })
           } else {
-            setTarget({ folder: container, at: index })
+            setTarget({ project: container, at: index })
           }
-          setDndMsg(`${chat.title} lifted. Arrow keys choose position, Left and Right switch folders, Space drops, Escape cancels.`)
+          setDndMsg(`${chat.title} lifted. Arrow keys choose position, Left and Right switch projects, Space drops, Escape cancels.`)
         }
         return
       }
-      const t = dragState.current.target ?? { folder: '', at: 0 }
-      const list = liveMembers(t.folder, chat.id)
+      const t = dragState.current.target ?? { project: '', at: 0 }
+      const list = liveMembers(t.project, chat.id)
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
         e.preventDefault()
         const d = e.key === 'ArrowDown' ? 1 : -1
-        setTarget({ folder: t.folder, at: Math.max(0, Math.min(list.length, t.at + d)) })
+        setTarget({ project: t.project, at: Math.max(0, Math.min(list.length, t.at + d)) })
         setDndMsg(`Destination position ${Math.max(0, Math.min(list.length, t.at + d)) + 1} of ${list.length + 1}.`)
       } else if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
         e.preventDefault()
         const keys = live.current.zoneKeys
-        const i = keys.indexOf(t.folder)
+        const i = keys.indexOf(t.project)
         const next = keys[(i + (e.key === 'ArrowRight' ? 1 : keys.length - 1)) % keys.length]
         const nl = liveMembers(next, chat.id)
-        setTarget({ folder: next, at: nl.length })
-        setDndMsg(`Destination folder ${next ? (live.current.folders.find((f) => f.id === next)?.name ?? 'folder') : 'Recent'}. Position ${nl.length + 1}.`)
+        setTarget({ project: next, at: nl.length })
+        setDndMsg(`Destination project ${next ? (live.current.projects.find((f) => f.id === next)?.name ?? 'project') : 'Recent'}. Position ${nl.length + 1}.`)
       } else if (e.key === ' ' || e.key === 'Enter') {
         e.preventDefault()
         endDrag(true)
       } else if (e.key === 'Home') {
         e.preventDefault()
-        setTarget({ folder: t.folder, at: 0 })
+        setTarget({ project: t.project, at: 0 })
       } else if (e.key === 'End') {
         e.preventDefault()
-        setTarget({ folder: t.folder, at: list.length })
+        setTarget({ project: t.project, at: list.length })
       }
     },
   }), [endDrag, liveMembers])
@@ -418,7 +420,7 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
     // source index is carried through the pass instead of searched per row.
     const shown: { c: Chat; index: number }[] = []
     l.forEach((c, index) => { if (c.id !== dragId) shown.push({ c, index }) })
-    const drop = dragId && target && container !== 'pinned' && container !== 'temporary' && container === target.folder
+    const drop = dragId && target && container !== 'pinned' && container !== 'temporary' && container === target.project
       ? Math.max(0, Math.min(target.at, shown.length))
       : -1
     const items: ReactNode[] = []
@@ -436,7 +438,7 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
     return mins >= 60 ? `${Math.floor(mins / 60)}h left` : `${mins}m left`
   }
   // Cap the temporary section at 30% of the sidebar so it can never crowd out
-  // folders and Recent; beyond the cap the chat list scrolls within the frame.
+  // projects and Recent; beyond the cap the chat list scrolls within the frame.
   const tempMaxH = sideH ? Math.floor(sideH * 0.3) : undefined
   // How many temporary chats show before the section needs expanding. 0 means
   // "only the one I am reading" (none when a temporary chat is not open), 6
@@ -485,7 +487,7 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
           <div className="shrink-0 px-2.5 pb-1 text-xs font-medium text-mu">Temporary chats</div>
           <div className="min-h-0 overflow-y-auto">
             {tempVisible.map((c) => <div key={c.id} className={cx('group flex items-center rounded-lg pr-2 text-sm', s.chat === c.id ? 'bg-hov' : 'hover:bg-surf')}>
-              <button onClick={() => s.patch({ chat: c.id })} className="flex min-w-0 flex-1 items-center gap-2.5 rounded-lg px-2.5 py-2 text-left">
+              <button onClick={() => s.patch({ chat: c.id, activeProject: '' })} className="flex min-w-0 flex-1 items-center gap-2.5 rounded-lg px-2.5 py-2 text-left">
                 <Clock size={15} className="shrink-0 text-mu" /><span className="truncate">{c.title}</span>
               </button>
               <span title={c.expiresAt ? `Deletes in ${timeLeft(c)}` : 'Deletes when you leave'} className="shrink-0 text-xs text-mu">{timeLeft(c)}</span>
@@ -501,28 +503,31 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
           )}
         </div>
         <div className="flex items-center justify-between px-2.5 text-xs font-medium text-mu">
-          <span>Folders</span>
-          <button title="New folder" onClick={() => setFe(s.addFolder())} className="grid size-6 place-items-center rounded-md hover:text-tx"><FolderPlus size={14} /></button>
+          <span>Projects</span>
+          <button title="New project" onClick={() => setNewModal(true)} className="grid size-6 place-items-center rounded-md hover:text-tx"><FolderPlus size={14} /></button>
         </div>
-        {s.folders.map((f) => {
-          const l = L.filter((c) => c.folder === f.id && !c.pin)
+        {s.projects.map((f) => {
+          const l = L.filter((c) => c.project === f.id && !c.pin)
           if (k && !l.length) return null
           const o = f.open || !!k
+          const active = s.activeProject === f.id
           return (
             <div key={f.id} ref={registerZone(f.id)} className="rounded-lg">
-              <div className="group flex items-center rounded-lg pr-1 text-sm hover:bg-surf">
-                {fe === f.id ? <Name v={f.name} save={(t) => s.renameFolder(f.id, t)} done={() => setFe('')} /> : (
-                  <button onClick={() => s.toggleFolder(f.id)} onDoubleClick={() => setFe(f.id)} className="flex min-w-0 flex-1 items-center gap-2 px-2.5 py-2 text-left">
+              <div className={cx('group flex items-center rounded-lg pr-1 text-sm hover:bg-surf', active && 'bg-hov')}>
+                {fe === f.id ? <Name v={f.name} save={(t) => s.renameProject(f.id, t)} done={() => setFe('')} /> : (
+                  <button onClick={() => s.openProject(f.id)} onDoubleClick={() => setFe(f.id)}
+                    title="Open the project overview"
+                    aria-expanded={o} className="flex min-w-0 flex-1 items-center gap-2 px-2.5 py-2 text-left">
                     <span className="relative grid shrink-0 place-items-center" aria-hidden="true">
-                      <Folder size={20} className="text-mu" />
-                      <span className="absolute inset-0 flex items-center justify-center pt-[3px] text-[9px] font-semibold leading-none text-mu">{folderCounts.get(f.id) ?? 0}</span>
-                    </span><span className="min-w-0 truncate">{f.name}<span className="sr-only"> ({folderCounts.get(f.id) ?? 0} chats)</span></span>
+                      <Folder size={20} className={active ? 'text-ac' : 'text-mu'} />
+                      <span className={cx('absolute inset-0 flex items-center justify-center pt-[3px] text-[9px] font-semibold leading-none', active ? 'text-ac' : 'text-mu')}>{projectCounts.get(f.id) ?? 0}</span>
+                    </span><span className="min-w-0 truncate">{f.name}<span className="sr-only"> ({projectCounts.get(f.id) ?? 0} chats)</span></span>
                     <ChevronRight size={14} className={cx('shrink-0 text-mu transition-transform', o && 'rotate-90')} />
                   </button>
                 )}
                 <span className="hidden shrink-0 max-md:flex md:group-hover:flex">
-                  <button title="Rename folder" onClick={() => setFe(f.id)} className={act}><Pencil size={14} /></button>
-                  <button title="Delete folder (its chats are kept)" onClick={() => setFolderId(f.id)} className={cx(act, 'hover:text-er')}><Trash2 size={14} /></button>
+                  <button title="Rename project" onClick={() => setFe(f.id)} className={act}><Pencil size={14} /></button>
+                  <button title="Delete project (its chats are kept)" onClick={() => setProjectId(f.id)} className={cx(act, 'hover:text-er')}><Trash2 size={14} /></button>
                 </span>
               </div>
               {o && <div className="ml-3">{rows(l, f.id)}{!l.length && !dragId && <p className="px-2.5 py-1 text-xs text-mu">Drop chats here.</p>}</div>}
@@ -552,14 +557,15 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
         <Btn icon={Palette} title={`Theme: ${THEMES[themeKeyOf(s)]}`} onClick={() => s.patch(s.themeMode === 'light' ? { themeLight: thNext as typeof s.themeLight } : { themeDark: thNext as typeof s.themeDark })} />
       </div>
       {menu && (
-        <div onMouseDown={(e) => e.stopPropagation()} style={{ left: Math.min(menu.x, Math.max(8, (typeof window !== 'undefined' ? window.innerWidth : 0) - 216)), top: Math.min(menu.y, Math.max(8, (typeof window !== 'undefined' ? window.innerHeight : 0) - (60 + (s.folders.length + 1) * 36))) }} className="fixed z-40 w-52 rounded-xl bg-hov p-1.5">
-          <button onClick={() => { s.moveChat(menu.id, ''); setMenu(null) }} className={item}><FolderMinus size={16} className="text-mu" />No folder</button>
-          {s.folders.map((f) => <button key={f.id} onClick={() => { s.moveChat(menu.id, f.id); setMenu(null) }} className={item}><Folder size={16} className="text-mu" /><span className="truncate">{f.name}</span></button>)}
-          {!s.folders.length && <p className="px-2.5 py-2 text-xs text-mu">Create a folder first with the folder button.</p>}
+        <div onMouseDown={(e) => e.stopPropagation()} style={{ left: Math.min(menu.x, Math.max(8, (typeof window !== 'undefined' ? window.innerWidth : 0) - 216)), top: Math.min(menu.y, Math.max(8, (typeof window !== 'undefined' ? window.innerHeight : 0) - (60 + (s.projects.length + 1) * 36))) }} className="fixed z-40 w-52 rounded-xl bg-hov p-1.5">
+          <button onClick={() => { s.moveChat(menu.id, ''); setMenu(null) }} className={item}><FolderMinus size={16} className="text-mu" />No project</button>
+          {s.projects.map((f) => <button key={f.id} onClick={() => { s.moveChat(menu.id, f.id); setMenu(null) }} className={item}><Folder size={16} className="text-mu" /><span className="truncate">{f.name}</span></button>)}
+          {!s.projects.length && <p className="px-2.5 py-2 text-xs text-mu">Create a project first with the project button.</p>}
         </div>
       )}
       {deleteId && <Confirm title="Delete this chat?" text="This chat and its messages will be permanently removed." ok="Delete" close={() => setDeleteId('')} run={() => useS.getState().chatOp(deleteId, 'del')} />}
-      {folderId && <Confirm title="Delete this folder?" text="The folder is removed; its chats are kept and move back to Recent." ok="Delete folder" close={() => setFolderId('')} run={() => s.delFolder(folderId)} />}
+      {projectId && <Confirm title="Delete this project?" text="The project is removed; its chats are kept and move back to Recent." ok="Delete project" close={() => setProjectId('')} run={() => s.delProject(projectId)} />}
+      {newModal && <ProjectModal close={() => setNewModal(false)} />}
       <DndLiveRegion message={dndMsg} />
     </aside>
   )

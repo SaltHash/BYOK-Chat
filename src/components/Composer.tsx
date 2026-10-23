@@ -4,7 +4,7 @@ import { Plus, FileUp, FileText, Image as ImageIcon, ArrowUp, Square, CornerDown
 import { useS, usable, modelsOf, modelNameOf, featOn, normDocs, normSearch, fetchOptsOf, effortClassifierOf, type Att, type Ep } from '../store'
 import { CI, orderTools } from '../meta'
 import { composerWidth } from '../layout'
-import { can, fmt, readAtts, ocrImage, fetchPage } from '../engine'
+import { can, readAtts, ocrImage, fetchPage } from '../engine'
 import { fitDoc } from '../docs'
 import { bannerOf, armMention, isPill, mentionsOf, stripMention, tokenizeMentions, type Mention, type Seg as MentionSeg } from '../mentions'
 import { Btn, Item, Pop, Seg, RangeSlider, Toggle, cx, type Ic } from './ui'
@@ -168,12 +168,12 @@ function ModelMenu({ close, cfg }: { close: () => void; cfg: (t: string) => void
   const activeEp = t === 'ep' && s.sel?.k === 'ep' && s.sel.model ? s.eps.find((x) => x.id === s.sel?.id) : undefined
   const activeModel = activeEp && s.sel?.model
   const efforts: string[] = activeModel ? activeEp?.modelEfforts?.[activeModel] ?? [] : []
-  const effortRank: Record<string, number> = { none: 0, minimal: 1, low: 2, medium: 3, high: 4, xhigh: 5, max: 6 }
+  const effortRank: Record<string, number> = { none: 0, minimal: 1, low: 2, medium: 3, high: 4, xhigh: 5, max: 6, auto: -1 }
   const effortLevels = [...efforts].sort((a, b) => (effortRank[a.toLowerCase()] ?? 50) - (effortRank[b.toLowerCase()] ?? 50))
   const autoOn = !!effortClassifierOf(s)
-  const effortChoices = autoOn && effortLevels.length ? ['auto', ...effortLevels] : effortLevels
+  const effortChoices = [...(autoOn ? ['auto'] : []), 'none', ...effortLevels]
   const storedEffort = activeModel ? s.effort[activeModel] : undefined
-  const effortValue = storedEffort && effortChoices.includes(storedEffort) ? storedEffort : effortLevels[0] ?? effortChoices[0]
+  const effortValue = storedEffort && effortChoices.includes(storedEffort) ? storedEffort : (effortLevels[0] ?? (autoOn ? 'auto' : 'none'))
   const effortIndex = Math.max(0, effortChoices.indexOf(effortValue))
   const activeEffort = effortChoices[effortIndex]
   return (
@@ -238,6 +238,9 @@ export function Composer({ cfg }: { cfg: (t: string) => void }) {
     return () => cancelAnimationFrame(id)
   }, [])
   const [menuOff, setMenuOff] = useState(false)
+  // Any composer menu (+ attach, model, prompt) or dictation keeps the frame
+  // lit even after the pointer leaves it.
+  const [menusOpen, setMenusOpen] = useState(false)
   // Escape hides the slash/@ popup until the draft changes again.
   useEffect(() => { setMenuOff(false) }, [v])
   const [ime, setIme] = useState(false)
@@ -414,6 +417,20 @@ export function Composer({ cfg }: { cfg: (t: string) => void }) {
     const el = ta.current
     if (!el) return
     const next = textOf(el)
+    // After Ctrl+A + Backspace the browser often leaves structural leftovers
+    // (<div><br></div> or a lone <br>) that serialize into newline-only text
+    // and would keep a phantom blank line alive. Newline-only text is never a
+    // meaningful draft, so collapse it back to an empty composer.
+    if (/^\n*$/.test(next)) {
+      el.replaceChildren()
+      pending.current = null
+      if (document.activeElement === el) setCaret(el, 0)
+      if (s.draft === '') return
+      setActive(null)
+      s.patch({ draft: '' })
+      setHi(0)
+      return
+    }
     ensureTrailingBreak(el)
     if (next === s.draft) return
     setActive(null)
@@ -478,7 +495,7 @@ export function Composer({ cfg }: { cfg: (t: string) => void }) {
     <div className="w-full self-center">
       <div className="mx-auto w-full px-4" style={{ maxWidth: composerWidth(s.prefs.chatWidth) }}>
       <Notice cfg={cfg} />
-      <div ref={box} className={cx('relative rounded-2xl p-3 transition-colors', s.prefs.glassComposer !== false ? 'glass-composer border border-hov hover:border-bor focus-within:border-bor shadow-lg shadow-black/10' : 'edge-border bg-surf hover:border-bor focus-within:border-bor')} onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); add(e.dataTransfer.files) }}>
+      <div ref={box} className={cx('composer-shell relative rounded-2xl p-3 transition-colors', s.prefs.glassComposer !== false ? 'glass-composer border border-hov hover:border-bor focus-within:border-bor shadow-lg shadow-black/10' : 'edge-border bg-surf hover:border-bor focus-within:border-bor')} data-lit={menusOpen || listening ? '1' : undefined} onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); add(e.dataTransfer.files) }}>
         {banner && <MentionBanner kind={banner} onDismiss={dismissBanner} warning={banner === 'search' && !searchEnabled ? 'Web search is off.' : undefined} onEnable={banner === 'search' && !searchEnabled ? () => { s.patch({ features: { ...s.features, tools: true }, tools: { ...s.tools, search: true } }) } : undefined} />}
         {menu && !menuOff && (
           <div className="edge-border absolute inset-x-0 bottom-full mb-2 rounded-xl bg-hov p-1.5">
@@ -566,7 +583,7 @@ export function Composer({ cfg }: { cfg: (t: string) => void }) {
         )}
         <input ref={fi} type="file" multiple hidden onChange={(e) => { add(e.target.files); e.target.value = '' }} />
         <div className="mt-2 flex items-center gap-1">
-          <Pop up w="w-64" trigger={() => <Btn icon={Plus} title="Attach files or manage tools" className="rounded-full" />}>
+          <Pop up w="w-64" onOpenChange={setMenusOpen} trigger={() => <Btn icon={Plus} title="Attach files or manage tools" className="rounded-full" />}>
             {(close) => {
               const row = 'flex w-full items-center gap-1 rounded-lg px-1 hover:bg-surf'
               const main = 'flex min-w-0 flex-1 items-center gap-2.5 rounded-lg px-1.5 py-2 text-left text-sm'
@@ -596,14 +613,27 @@ export function Composer({ cfg }: { cfg: (t: string) => void }) {
               )
             }}
           </Pop>
-          <Pop up w="w-80" scroll={false} trigger={(o) => (
+          <Pop up w="w-80" scroll={false} onOpenChange={setMenusOpen} trigger={(o) => {
+            const activeEp = s.sel?.k === 'ep' && s.sel?.id ? s.eps.find((e) => e.id === s.sel!.id) : undefined
+            const activeModel = s.sel?.k === 'ep' && s.sel.model ? s.sel.model : undefined
+            const effortsArr = activeModel ? activeEp?.modelEfforts?.[activeModel] ?? [] : []
+            const autoOn = !!effortClassifierOf(s)
+            const effortRank: Record<string, number> = { none: 0, minimal: 1, low: 2, medium: 3, high: 4, xhigh: 5, max: 6, auto: -1 }
+            const effortLevels = [...effortsArr].sort((a, b) => (effortRank[a.toLowerCase()] ?? 50) - (effortRank[b.toLowerCase()] ?? 50))
+            const allChoices = [...(autoOn ? ['auto'] : []), 'none', ...effortLevels]
+            const stored = activeModel ? s.effort[activeModel] : undefined
+            const currentEffort = stored && allChoices.includes(stored) ? stored : (effortLevels[0] ?? (autoOn ? 'auto' : 'none'))
+            return (
             <button className={chip}>
               {s.sel?.k === 'pl' && featOn(s, 'playlists') ? <ListMusic size={16} /> : <Cpu size={16} />}
-              <span className="max-w-24 truncate sm:max-w-40">{sel ? (s.sel?.model && s.sel.k === 'ep' ? modelNameOf(sel as any, s.sel.model) : sel.name) : 'All endpoints'}</span><ChevronRight size={14} className={cx('transition-transform', o && 'rotate-90')} />
+              <span className="max-w-24 truncate sm:max-w-40">{sel ? (s.sel?.model && s.sel.k === 'ep' ? modelNameOf(sel as any, s.sel.model) : sel.name) : 'All endpoints'}</span>
+              {activeModel ? <span className="ml-1 shrink-0 text-sm text-mu capitalize leading-none opacity-60">{currentEffort}</span> : null}
+              <ChevronRight size={14} className={cx('transition-transform', o && 'rotate-90')} />
             </button>
-          )}>{(close) => <ModelMenu close={close} cfg={cfg} />}</Pop>
-          {featOn(s, 'prompts') && <Pop up trigger={(o) => (
-            <button className={chip}><ScrollText size={16} /><span className="max-w-20 truncate sm:max-w-32">{pr ? pr.name : 'No prompt'}</span>{s.globalPrompt?.on && <span className="size-1.5 shrink-0 rounded-full bg-ac" title="Global system prompt on" />}<ChevronRight size={14} className={cx('transition-transform', o && 'rotate-90')} /></button>
+            )
+          }}>{(close) => <ModelMenu close={close} cfg={cfg} />}</Pop>
+          {featOn(s, 'prompts') && <Pop up onOpenChange={setMenusOpen} trigger={(o) => (
+            <button className={chip}><ScrollText size={16} /><span className="max-w-20 truncate sm:max-w-32">{pr ? pr.name : 'No prompt'}</span><ChevronRight size={14} className={cx('transition-transform', o && 'rotate-90')} /></button>
           )}>
             {(close) => {
               const g = s.globalPrompt ?? { on: false, text: '', qualities: [] }
@@ -643,9 +673,7 @@ export function Composer({ cfg }: { cfg: (t: string) => void }) {
       </div>
       </div>
       {/* Solid strip from the bottom of the composer to the bottom of the screen. */}
-      <div className="bg-bg px-4 pb-4">
-        <p className="mx-auto pt-2 text-center text-xs text-mu" style={{ maxWidth: composerWidth(s.prefs.chatWidth) }}>{`${s.prefs.enterSends ? 'Enter to send · Shift+Enter for a new line' : 'Enter adds a new line · send with the button'} · ${fmt(s.keys.palette ?? 'Mod+K')} for the palette`}</p>
-      </div>
+      <div className="bg-bg px-4 pb-4" />
     </div>
   )
 }

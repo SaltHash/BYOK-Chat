@@ -1,4 +1,4 @@
-/* Pure drag-and-drop math shared by SortableList and the Sidebar's cross-folder
+/* Pure drag-and-drop math shared by SortableList and the Sidebar's cross-project
  * drag. Nothing here touches the DOM, so every rule is unit-tested in isolation.
  */
 

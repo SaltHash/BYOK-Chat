@@ -120,12 +120,12 @@ export function SyncBox() {
           <section role="dialog" aria-modal="true" aria-labelledby="merge-title" className="w-full max-w-lg space-y-4 rounded-2xl border border-bor bg-bg p-5 shadow-2xl">
             <div>
               <h2 id="merge-title" className="text-lg font-semibold">You are linking a device</h2>
-              <p className="mt-1 text-sm text-mu">Both devices already hold data. How should this device combine them? Chats and workspaces are de-duplicated either way, and folders with the same name become one folder.</p>
+              <p className="mt-1 text-sm text-mu">Both devices already hold data. How should this device combine them? Chats and workspaces are de-duplicated either way, and projects with the same name become one project.</p>
             </div>
             <div className="space-y-2">
               <button type="button" disabled={busy} onClick={() => applyMode('merge')} className="flex w-full items-start gap-3 rounded-xl bg-surf p-3 text-left hover:opacity-90 disabled:opacity-40">
                 <GitMerge size={18} className="mt-0.5 shrink-0 text-ac" />
-                <span><span className="block text-sm font-medium">Merge both devices <span className="text-xs font-normal text-ac">recommended</span></span><span className="block text-xs text-mu">Keep everything from both, remove duplicates, and combine same-named folders and workspaces.</span></span>
+                <span><span className="block text-sm font-medium">Merge both devices <span className="text-xs font-normal text-ac">recommended</span></span><span className="block text-xs text-mu">Keep everything from both, remove duplicates, and combine same-named projects and workspaces.</span></span>
               </button>
               <button type="button" disabled={busy} onClick={() => applyMode('remote')} className="flex w-full items-start gap-3 rounded-xl bg-surf p-3 text-left hover:opacity-90 disabled:opacity-40">
                 <CloudDownload size={18} className="mt-0.5 shrink-0 text-ac" />
