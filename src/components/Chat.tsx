@@ -870,7 +870,7 @@ export function Chat({ side, toggle, cfg, pal }: { side: boolean; toggle: () => 
   // Dense transcripts get sampled down to a readable rail instead of 400
   // overlapping dots; every dot still jumps to a real message.
   const railDots = useMemo(() => {
-    const msgs = c?.msgs ?? []
+    const msgs = (c?.msgs ?? []).filter((m) => m.r === 'assistant')
     const max = 160
     if (msgs.length <= max) return msgs
     const step = Math.ceil(msgs.length / max)
@@ -917,10 +917,10 @@ export function Chat({ side, toggle, cfg, pal }: { side: boolean; toggle: () => 
             </div>
           )}
           {c && c.msgs.length > 1 && (
-            <nav aria-label="Message rail" className="absolute inset-y-6 left-0 z-20 hidden w-4 md:block">
-              <div className="relative h-full w-full">
-                {railDots.map((m, i) => (
-                  <button key={m.id} type="button" aria-label={`Jump to ${m.r === 'user' ? 'your message' : 'reply'}: ${(m.r === 'assistant' ? (m.toolFinal ?? m.t) : m.t).replace(/\s+/g, ' ').slice(0, 60)}`} title={`${m.r === 'user' ? 'You' : (m.by || 'Assistant')}: ${(m.r === 'assistant' ? (m.toolFinal ?? m.t) : m.t).replace(/\s+/g, ' ').slice(0, 120)}`} onClick={() => reveal(m.id)} style={{ top: `${railDots.length === 1 ? 50 : (i / (railDots.length - 1)) * 100}%` }} className={cx('absolute left-1/2 size-[5px] -translate-x-1/2 -translate-y-1/2 rounded-full transition-[background-color,transform] hover:scale-150 hover:bg-tx focus-visible:scale-150 focus-visible:bg-tx focus-visible:outline-none', m.r === 'user' ? 'bg-mu/55' : 'bg-mu/35')} />
+            <nav aria-label="Message rail" className="absolute inset-y-6 right-2 z-20 hidden w-4 md:block">
+              <div className="relative h-full w-full flex flex-col items-center justify-center gap-[6px] overflow-y-auto">
+                {railDots.map((m) => (
+                  <button key={m.id} type="button" aria-label={`Jump to ${m.r === 'user' ? 'your message' : 'reply'}: ${(m.r === 'assistant' ? (m.toolFinal ?? m.t) : m.t).replace(/\s+/g, ' ').slice(0, 60)}`} title={`${m.r === 'user' ? 'You' : (m.by || 'Assistant')}: ${(m.r === 'assistant' ? (m.toolFinal ?? m.t) : m.t).replace(/\s+/g, ' ').slice(0, 120)}`} onClick={() => reveal(m.id)} className={cx('shrink-0 size-[10px] rounded-full transition-[background-color,transform] hover:scale-[1.4] hover:bg-tx focus-visible:bg-tx focus-visible:outline-none', m.r === 'user' ? 'bg-mu/55' : 'bg-mu/35')} />
                 ))}
               </div>
             </nav>
