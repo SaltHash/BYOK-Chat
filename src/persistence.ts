@@ -6,7 +6,7 @@ export const QUOTA_FLAG = 'byok.v1:quota-full'
 
 /** Persist payload version — single source for the zustand persist wrapper,
  *  durable migration metadata, and sync payloads. */
-export const STORE_VERSION = 21
+export const STORE_VERSION = 22
 
 export const isQuotaError = (x: unknown) =>
   !!x && ((x as { name?: unknown }).name === 'QuotaExceededError' || (x as { code?: unknown }).code === 22 || /quota/i.test(String((x as { message?: unknown })?.message ?? '')))
@@ -164,27 +164,147 @@ export const withoutExpiredTemps = <C extends { temporary?: boolean; expiresAt?:
     ? chats.filter((c) => !(c.temporary && c.expiresAt != null && c.expiresAt <= now))
     : chats
 
-/* ---- zustand storage ----
- * Writes are coalesced (see storage/coalesce.ts): the payload is held by
- * reference and serialized/written at most once per window, so streamed
- * chunks no longer stringify and store the whole app on every token.
- * pagehide/visibilitychange flush the last window so nothing is lost. */
+/* ---- sharded localStorage ----
+ * The persisted payload used to be one giant `byok.v1` value, so every streamed
+ * chunk rewrote (and quota-pruned) the entire chat history. Chats now live in
+ * one shard per chat (`byok.v1:chat:<id>`); only the chat that changed is
+ * serialized/written, while `byok.v1` keeps settings and an id index. Writes
+ * are still coalesced (see storage/coalesce.ts), and reads reassemble the same
+ * shape zustand expects. This is the local delta format: unchanged chats are
+ * never written again. */
+
+export const CHAT_SHARD_PREFIX = 'byok.v1:chat:'
+const SHARD_MARKER = '__byokSharded'
+const SHARD_IDS = '__byokChatIds'
+
+/** Shards we last wrote, keyed by storage key. Kept in memory (not storage) so * a reload simply rewrites each chat once, then returns to delta writes. */
+const writtenShards = new Map<string, string>()
+
+export type ShardPlan = {
+  main: string
+  writes: { key: string; value: string; chat: unknown }[]
+  deletes: string[]
+  index: string[]
+  extraChats: unknown[]
+}
+
+/** Split a serialized persist payload into a small main value plus only the
+ *  chat shards that differ from `previous`. Pure; returns null when the input
+ *  is not a persist payload. */
+export function planPersistShards(raw: string, previous: Map<string, string> = writtenShards): ShardPlan | null {
+  let parsed: any
+  try { parsed = JSON.parse(raw) } catch { return null }
+  if (!parsed || typeof parsed !== 'object') return null
+  const envelope = parsed.state && typeof parsed.state === 'object'
+  const state: Record<string, any> = envelope ? parsed.state : parsed
+  const chats: unknown[] = Array.isArray(state.chats) ? state.chats : []
+  const index: string[] = []
+  const extraChats: unknown[] = []
+  const writes: ShardPlan['writes'] = []
+  for (const chat of chats) {
+    const id = chat && typeof chat === 'object' ? (chat as { id?: unknown }).id : undefined
+    if (typeof id !== 'string' || !id) { extraChats.push(chat); continue }
+    index.push(id)
+    const value = JSON.stringify(chat)
+    const key = CHAT_SHARD_PREFIX + id
+    if (previous.get(key) !== value) writes.push({ key, value, chat })
+  }
+  const deletes: string[] = []
+  for (const key of previous.keys()) {
+    if (!key.startsWith(CHAT_SHARD_PREFIX)) continue
+    if (!index.includes(key.slice(CHAT_SHARD_PREFIX.length))) deletes.push(key)
+  }
+  const mainState: Record<string, unknown> = { ...state, chats: extraChats, [SHARD_MARKER]: true, [SHARD_IDS]: index }
+  const main = JSON.stringify(envelope ? { ...parsed, state: mainState } : mainState)
+  return { main, writes, deletes, index, extraChats }
+}
+
+/** Rebuild a persist payload from the main value and its chat shards. Returns
+ *  null when `mainRaw` is not a sharded payload, so callers can fall back to
+ *  the legacy single-value format. */
+export function joinPersistShards(mainRaw: string, read: (key: string) => string | null): string | null {
+  let parsed: any
+  try { parsed = JSON.parse(mainRaw) } catch { return null }
+  const envelope = parsed?.state && typeof parsed.state === 'object'
+  const state: Record<string, any> = envelope ? parsed.state : parsed
+  if (!state || state[SHARD_MARKER] !== true) return null
+  const ids: string[] = Array.isArray(state[SHARD_IDS]) ? state[SHARD_IDS].filter((x: unknown): x is string => typeof x === 'string') : []
+  const chats: unknown[] = []
+  for (const id of ids) {
+    const raw = read(CHAT_SHARD_PREFIX + id)
+    if (!raw) continue
+    try { chats.push(JSON.parse(raw)) } catch { /* skip a truncated shard rather than lose every chat */ }
+  }
+  chats.push(...(Array.isArray(state.chats) ? state.chats : []))
+  const outState: Record<string, unknown> = { ...state, chats }
+  delete outState[SHARD_MARKER]
+  delete outState[SHARD_IDS]
+  return JSON.stringify(envelope ? { ...parsed, state: outState } : outState)
+}
+
+/** A last-resort compact copy for a single chat when localStorage is full: the
+ *  newest messages and their visible fields survive; regenerable tool results
+ *  and reasoning do not. The durable mirror still holds the full copy. */
+export function compactChatForQuota(chat: unknown, keep = 80): unknown {
+  if (!chat || typeof chat !== 'object') return chat
+  const c = chat as { msgs?: unknown[] }
+  if (!Array.isArray(c.msgs)) return chat
+  return {
+    ...c,
+    msgs: c.msgs.slice(-keep).map((m) => {
+      if (!m || typeof m !== 'object') return m
+      const x = m as Record<string, unknown>
+      const { toolRounds, reasoning, log, full, sys, ...keepMsg } = x
+      return keepMsg
+    }),
+  }
+}
 
 const rawStorage: StateStorage = {
-  getItem: (k: string) => { try { localStorage.removeItem(QUOTA_FLAG); return localStorage.getItem(k) } catch { return null } },
-  setItem: (k: string, v: string) => {
-    try { localStorage.setItem(k, v); localStorage.removeItem(QUOTA_FLAG) }
-    catch (x) {
-      const pruned = prunePersisted(v)
-      if (pruned && pruned.length < v.length) {
-        try { localStorage.setItem(k, pruned); localStorage.removeItem(QUOTA_FLAG); return }
-        catch { /* fall through to flag */ }
-      }
-      if (isQuotaError(x)) { try { localStorage.setItem(QUOTA_FLAG, String(Date.now())) } catch { /* ignore */ } }
-      else throw x
-    }
+  getItem: (k: string) => {
+    try {
+      localStorage.removeItem(QUOTA_FLAG)
+      const raw = localStorage.getItem(k)
+      if (raw == null) return null
+      const joined = joinPersistShards(raw, (key) => { try { return localStorage.getItem(key) } catch { return null } })
+      return joined ?? raw
+    } catch { return null }
   },
-  removeItem: (k: string) => { try { localStorage.removeItem(k); localStorage.removeItem(QUOTA_FLAG) } catch { /* ignore */ } },
+  setItem: (k: string, v: string) => {
+    // Other keys (not the persisted store) keep the simple path.
+    if (k !== 'byok.v1') { try { localStorage.setItem(k, v) } catch (x) { if (!isQuotaError(x)) throw x } return }
+    const plan = planPersistShards(v)
+    if (!plan) { try { localStorage.setItem(k, v); localStorage.removeItem(QUOTA_FLAG) } catch { /* leave the old copy */ } return }
+    let quota = false
+    for (const write of plan.writes) {
+      try { localStorage.setItem(write.key, write.value); writtenShards.set(write.key, write.value) }
+      catch (x) {
+        if (!isQuotaError(x)) throw x
+        quota = true
+        const smaller = JSON.stringify(compactChatForQuota(write.chat))
+        try { localStorage.setItem(write.key, smaller); writtenShards.set(write.key, smaller) }
+        catch { /* keep the previous shard; durable has the full copy */ }
+      }
+    }
+    for (const key of plan.deletes) { try { localStorage.removeItem(key) } catch { /* ignore */ } writtenShards.delete(key) }
+    try { localStorage.setItem(k, plan.main); localStorage.removeItem(QUOTA_FLAG) }
+    catch (x) {
+      if (!isQuotaError(x)) throw x
+      quota = true
+    }
+    if (quota) { try { localStorage.setItem(QUOTA_FLAG, String(Date.now())) } catch { /* ignore */ } }
+  },
+  removeItem: (k: string) => {
+    try {
+      localStorage.removeItem(k)
+      for (let i = localStorage.length - 1; i >= 0; i--) {
+        const key = localStorage.key(i)
+        if (!key) continue
+        if (key.startsWith(CHAT_SHARD_PREFIX)) { localStorage.removeItem(key); writtenShards.delete(key) }
+      }
+      localStorage.removeItem(QUOTA_FLAG)
+    } catch { /* ignore */ }
+  },
 }
 
 /** How long a persist write may be deferred. Bounds how often the whole app

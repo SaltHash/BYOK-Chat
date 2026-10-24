@@ -142,20 +142,33 @@ const link = 'text-ac underline decoration-ac/40 underline-offset-2 hover:decora
 
 function Code({ lang, code, children, bare }: { lang: string; code: string; children: ReactNode; bare?: boolean }) {
   const [ok, setOk] = useState(false)
+  const lineNumbers = useS((s) => s.prefs.codeLines === true)
+  const maxHeight = useS((s) => s.prefs.codeMaxHeight ?? 0)
   if (bare) {
     return (
       <pre className="overflow-x-auto px-6 py-5 font-mono text-sm leading-6">{children}</pre>
     )
   }
+  // The line-number gutter and the code share one scroll container, so they
+  // never drift apart; the height cap applies to that container. A very long
+  // block keeps its own scrollbar instead of stretching the whole transcript.
+  const lines = lineNumbers ? code.split('\n') : null
   return (
     <div className="my-4 overflow-hidden rounded-xl bg-code">
-      <div className="flex items-center justify-between bg-codeh px-4 py-2 text-xs">
+      <div className="code-head flex items-center justify-between bg-codeh px-4 py-2 text-xs">
         <span className="font-medium text-mu">{lang || 'text'}</span>
         <button onClick={() => { const p = navigator.clipboard?.writeText(code); if (!p) return; void p.then(() => { setOk(true); setTimeout(() => setOk(false), 1200) }).catch(() => {}) }} className="inline-flex items-center gap-1.5 text-mu hover:text-tx">
           {ok ? <Check size={13} /> : <Copy size={13} />}{ok ? 'Copied' : 'Copy'}
         </button>
       </div>
-      <pre className="overflow-x-auto px-4 py-3 font-mono text-sm leading-6">{children}</pre>
+      <div className="flex overflow-y-auto" style={maxHeight > 0 ? { maxHeight } : undefined}>
+        {lines && (
+          <pre aria-hidden="true" className="shrink-0 select-none border-r border-bor/60 px-2 py-3 text-right font-mono text-sm leading-6 text-mu/60">
+            {lines.map((_, i) => i + 1).join('\n')}
+          </pre>
+        )}
+        <pre className="min-w-0 flex-1 overflow-x-auto px-4 py-3 font-mono text-sm leading-6">{children}</pre>
+      </div>
     </div>
   )
 }
@@ -213,8 +226,13 @@ const makeC = (bare: boolean, cites?: CiteMap): any => ({
           return (
             <button
               type="button"
-              onClick={() => cites.onCite?.(hit.citeId)}
-              title={`${hit.title} — ${hit.host}. Jump to source.`}
+              onClick={(e) => {
+                // Ctrl/Cmd-click keeps the in-app Sources list out of the way
+                // and opens the actual source page in a new tab, like a link.
+                if (e.ctrlKey || e.metaKey) { e.preventDefault(); window.open(hit.url, '_blank', 'noopener,noreferrer'); return }
+                cites.onCite?.(hit.citeId)
+              }}
+              title={`${hit.title} — ${hit.host}. Jump to source, or Ctrl/Cmd-click to open the page.`}
               aria-label={`Jump to source ${hit.citeId}: ${hit.title}`}
               className="mx-0.5 inline-block min-h-6 min-w-6 whitespace-nowrap rounded-md bg-ac/15 px-1.5 text-center align-baseline font-mono text-xs font-semibold leading-6 text-ac underline decoration-ac/40 underline-offset-2 hover:bg-ac/25"
             >

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ButtonHTMLAttributes, type InputHTMLAttributes, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type TextareaHTMLAttributes } from 'react'
-import { Check, ChevronRight, CircleHelp, TriangleAlert, type LucideIcon } from 'lucide-react'
+import { Check, ChevronRight, CircleHelp, Star, TriangleAlert, type LucideIcon } from 'lucide-react'
 
 export type Ic = LucideIcon
 export const cx = (...a: unknown[]) => a.filter(Boolean).join(' ')
@@ -188,11 +188,20 @@ export function Pop({ trigger, children, up, right, w = 'w-72', scroll = true, o
   )
 }
 
-export const Item = ({ icon: I, children, sub, on, off, ...p }: { icon?: Ic; sub?: string; on?: boolean; off?: boolean } & ButtonHTMLAttributes<HTMLButtonElement>) => (
-  <button {...p} className={cx('flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm hover:bg-surf', off && 'opacity-50')}>
+export const Item = ({ icon: I, children, sub, on, off, star, ...p }: { icon?: Ic; sub?: string; on?: boolean; off?: boolean; star?: { on: boolean; set: (on: boolean) => void } } & ButtonHTMLAttributes<HTMLButtonElement>) => (
+  <button {...p} className={cx('group flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm hover:bg-surf', off && 'opacity-50')}>
     {I && <I size={16} className="shrink-0 text-mu" />}
     <span className="min-w-0 flex-1 truncate">{children}</span>
     {sub && <span className="max-w-32 truncate text-xs text-mu">{sub}</span>}
+    {star && <span
+      role="button"
+      tabIndex={-1}
+      aria-label={star.on ? 'Remove from favorites' : 'Add to favorites'}
+      aria-pressed={star.on}
+      title={star.on ? 'Remove from favorites' : 'Add to favorites'}
+      onClick={(e) => { e.preventDefault(); e.stopPropagation(); star.set(!star.on) }}
+      className={cx('grid size-7 shrink-0 place-items-center rounded-md hover:bg-hov hover:text-tx', star.on ? 'text-ac' : 'text-mu opacity-0 group-hover:opacity-100')}
+    ><Star size={15} fill={star.on ? 'currentColor' : 'none'} /></span>}
     {on && <Check size={16} className="shrink-0 text-ac" />}
   </button>
 )

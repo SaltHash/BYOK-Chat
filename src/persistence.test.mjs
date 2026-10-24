@@ -1,7 +1,46 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-const { pruneChatForPersist, createPersistMapper } = await import('./persistence.ts')
+const { pruneChatForPersist, createPersistMapper, planPersistShards, joinPersistShards, compactChatForQuota, CHAT_SHARD_PREFIX } = await import('./persistence.ts')
+
+const chat = (id, t) => ({ id, title: id, msgs: [{ id: `${id}-1`, r: 'user', t }] })
+const persist = (chats) => JSON.stringify({ version: 22, state: { prefs: { showBy: true }, chats } })
+
+test('persisted chats are split into per-chat shards and only changed chats are rewritten', () => {
+  const prev = new Map()
+  const first = planPersistShards(persist([chat('a', 'one'), chat('b', 'two')]), prev)
+  assert.equal(first.writes.length, 2)
+  for (const w of first.writes) prev.set(w.key, w.value)
+  assert.ok(prev.has(`${CHAT_SHARD_PREFIX}a`))
+  assert.equal(JSON.parse(first.main).state.chats.length, 0)
+  assert.deepEqual(JSON.parse(first.main).state.__byokChatIds, ['a', 'b'])
+
+  const second = planPersistShards(persist([chat('a', 'one'), chat('b', 'two changed')]), prev)
+  assert.deepEqual(second.writes.map((w) => w.key), [`${CHAT_SHARD_PREFIX}b`])
+})
+
+test('sharded persistence reassembles the exact state and deletes removed chats', () => {
+  const prev = new Map()
+  const plan = planPersistShards(persist([chat('a', 'one'), chat('b', 'two')]), prev)
+  for (const w of plan.writes) prev.set(w.key, w.value)
+  const read = (k) => prev.get(k) ?? null
+  const joined = JSON.parse(joinPersistShards(plan.main, read))
+  assert.deepEqual(joined.state.chats.map((c) => c.id), ['a', 'b'])
+  assert.equal(joined.state.prefs.showBy, true)
+  assert.equal(joined.version, 22)
+
+  const removed = planPersistShards(persist([chat('a', 'one')]), prev)
+  assert.deepEqual(removed.deletes, [`${CHAT_SHARD_PREFIX}b`])
+})
+
+test('quota compaction keeps the newest visible messages and drops regenerable payloads', () => {
+  const c = { id: 'a', msgs: Array.from({ length: 120 }, (_, i) => ({ id: `m${i}`, r: 'user', t: `t${i}`, toolRounds: [{ calls: [] }], reasoning: 'x' })) }
+  const small = compactChatForQuota(c, 80)
+  assert.equal(small.msgs.length, 80)
+  assert.equal(small.msgs[0].t, 't40')
+  assert.equal('toolRounds' in small.msgs[0], false)
+  assert.equal('reasoning' in small.msgs[0], false)
+})
 
 test('pruneChatForPersist drops empty assistant placeholders and keeps real messages', () => {
   const chat = {

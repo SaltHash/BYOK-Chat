@@ -25,7 +25,7 @@ function LinkRow({ rec, current, onCopied }: { rec: ShareRecord; current?: boole
         <Btn sm icon={ExternalLink} title="Open link in a new tab" onClick={() => window.open(rec.url, '_blank', 'noopener')} />
       </div>
       <div className="flex flex-wrap items-center gap-2 text-xs text-mu">
-        {current && <span className="rounded bg-ac/15 px-1.5 py-0.5 font-medium text-ac">Current</span>}
+        {current && <span className="rounded-sm bg-ac/15 px-1.5 py-0.5 font-medium text-ac">Current</span>}
         {rec.private && <span className="inline-flex items-center gap-1 text-ac"><Lock size={11} />Private</span>}
         {rec.auto && <span className="inline-flex items-center gap-1"><RefreshCw size={11} />Auto-updates</span>}
         <span className="ml-auto">{when(rec.at)}</span>

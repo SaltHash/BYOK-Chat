@@ -254,6 +254,156 @@ export function stripCitations(text: string): string {
   }).replace(/ {2,}/g, ' ').replace(/ \n/g, '\n')
 }
 
+/* ---- copying ----
+ * Replies are markdown, so a copy can either preserve their formatting (tables,
+ * code fences, and citation pills expanded to real links) or strip it down to
+ * plain prose. Both forms resolve bare [S1] markers; the plain form drops the
+ * markers entirely. */
+export function messageForCopy(text: string, sources: CiteSource[], markdown: boolean): string {
+  return markdown ? linkifyCitations(text, sources) : plainTextFromMarkdown(stripCitations(text))
+}
+
+/** Best-effort markdown to plain text for copying. Code block contents and
+ *  inline code survive verbatim; structural punctuation does not. */
+export function plainTextFromMarkdown(text: string): string {
+  const src = String(text ?? '')
+  if (!src) return ''
+  let out = src
+    // Fenced code: keep the code, drop the fence lines and language tag.
+    .replace(/^[ \t]*(```|~~~)[^\n]*\n?([\s\S]*?)^[ \t]*\1[ \t]*$/gm, (_m, _f, body: string) => body)
+    // Images become their alt text, links become "label (url)".
+    .replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_m, label: string, url: string) => (url && !/^#/.test(url) ? `${label} (${url})` : label))
+    // Headings, blockquotes, list markers, task boxes and horizontal rules.
+    .replace(/^[ \t]{0,3}#{1,6}[ \t]+/gm, '')
+    .replace(/^[ \t]{0,3}>[ \t]?/gm, '')
+    .replace(/^[ \t]*[-*+][ \t]+\[[ xX]\][ \t]+/gm, '- ')
+    .replace(/^[ \t]*([-*+]|[0-9]+[.)])[ \t]+/gm, '- ')
+    .replace(/^[ \t]{0,3}([-*_])(?:[ \t]*\1){2,}[ \t]*$/gm, '')
+    // Inline code: keep its contents, drop the ticks.
+    .replace(/`([^`\n]+)`/g, '$1')
+    // Emphasis and strikethrough markers.
+    .replace(/(\*\*|__)([^\n]+?)\1/g, '$2')
+    .replace(/(?<![*\w])\*([^*\n]+)\*(?!\w)/g, '$1')
+    .replace(/(?<![_\w])_([^_\n]+)_(?!\w)/g, '$1')
+    .replace(/~~([^~\n]+)~~/g, '$1')
+    // Tables: flatten the pipes into a readable separator.
+    .replace(/^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)+\|?\s*$/gm, '')
+    .replace(/^[ \t]*\|(.+)\|[ \t]*$/gm, (_m, row: string) => row.split('|').map((cell) => cell.trim()).filter(Boolean).join(' · '))
+  out = out.replace(/\n{3,}/g, '\n\n').replace(/[ \t]+$/gm, '').trim()
+  return out
+}
+
+/* ---- report/source highlighting ----
+ * A citation should point at the sentence it actually supports, not merely at
+ * the source row. The evidence available may be a full page read or only a
+ * search snippet, so the matcher works on whatever text there is and never
+ * requires the page to have been fetched. */
+const STOP_WORDS = new Set(['the', 'and', 'for', 'that', 'with', 'this', 'from', 'are', 'was', 'were', 'has', 'have', 'had', 'not', 'but', 'its', 'into', 'than', 'then', 'they', 'their', 'there', 'which', 'when', 'what', 'who', 'how', 'why', 'also', 'been', 'being', 'can', 'could', 'would', 'should', 'may', 'might', 'will', 'about', 'over', 'under', 'between', 'after', 'before', 'more', 'most', 'such', 'only', 'very', 'some', 'any', 'all', 'each', 'other', 'one', 'two', 'new', 'use', 'used', 'using', 'said', 'says'])
+const contentWords = (text: string): string[] =>
+  (String(text ?? '').toLowerCase().match(/[a-z0-9][a-z0-9'-]{2,}/g) ?? []).filter((w) => !STOP_WORDS.has(w))
+
+/** Split prose into candidate excerpts: sentences, then long sentences into
+ *  clauses, so one very long paragraph still yields a tight highlight. */
+export function excerptCandidates(text: string): string[] {
+  const clean = String(text ?? '').replace(/\s+/g, ' ').trim()
+  if (!clean) return []
+  const out: string[] = []
+  for (const sentence of clean.split(/(?<=[.!?])\s+(?=[A-Z0-9“"'(\[])/)) {
+    const s = sentence.trim()
+    if (!s) continue
+    if (s.length <= 320) { out.push(s); continue }
+    for (const clause of s.split(/(?<=[;:])\s+/)) {
+      const c = clause.trim()
+      if (c) out.push(c.length > 320 ? `${c.slice(0, 317)}…` : c)
+    }
+  }
+  return out
+}
+
+/** The excerpt of `sourceText` that best supports `claim`, with the matched
+ *  terms for highlighting. Works with a full page, a summary, or a short
+ *  search snippet; returns the first excerpt when nothing overlaps. */
+export function supportingExcerpt(sourceText: string, claim: string, maxChars = 700): { text: string; terms: string[]; score: number } {
+  const cleaned = String(sourceText ?? '').replace(/\s+/g, ' ').trim()
+  const clipped = cleaned.length > maxChars ? `${cleaned.slice(0, maxChars).trimEnd()}…` : cleaned
+  if (!clipped) return { text: '', terms: [], score: 0 }
+  const words = [...new Set(contentWords(claim))]
+  const candidates = excerptCandidates(clipped).length ? excerptCandidates(clipped) : [clipped]
+  let best = candidates[0]
+  let bestScore = -1
+  const lowerClaim = String(claim ?? '').toLowerCase()
+  for (const candidate of candidates) {
+    const lower = candidate.toLowerCase()
+    let score = 0
+    for (const w of words) if (lower.includes(w)) score += 1
+    // Contiguous claim fragments are a stronger signal than scattered terms.
+    const claimChunks = lowerClaim.split(/[^a-z0-9 ]+/).filter((c) => c.trim().split(' ').length >= 2)
+    for (const chunk of claimChunks) if (chunk.length >= 12 && lower.includes(chunk.trim())) score += 2
+    if (score > bestScore) { bestScore = score; best = candidate }
+  }
+  return { text: best, terms: words.filter((w) => best.toLowerCase().includes(w)).slice(0, 24), score: Math.max(0, bestScore) }
+}
+
+/** The sentence around a citation marker, used to show which claim a source is
+ *  supporting. Works on the raw markdown (before linkification) and on the
+ *  linked form, and falls back to the nearest paragraph. */
+export function claimForCitation(text: string, citeId: string): string {
+  const src = String(text ?? '')
+  const id = String(citeId ?? '').replace(/^s/i, 'S')
+  if (!src || !id) return ''
+  const at = src.toLowerCase().indexOf(`[${id.toLowerCase()}]`)
+  if (at < 0) return ''
+  const before = src.slice(0, at)
+  const after = src.slice(at)
+  const startBreak = Math.max(before.lastIndexOf('. '), before.lastIndexOf('! '), before.lastIndexOf('? '), before.lastIndexOf('\n\n'))
+  const endCandidates = ['. ', '! ', '? ', '\n\n'].map((m) => after.indexOf(m)).filter((i) => i >= 0)
+  const end = endCandidates.length ? Math.min(...endCandidates) + 1 : after.length
+  const raw = `${before.slice(startBreak >= 0 ? startBreak + (before[startBreak] === '\n' ? 2 : 2) : 0)}${after.slice(0, end)}`
+  return raw
+    .replace(/\[(?:Sources?\s+)?S\d+\](?:\([^)]*\))?/gi, '')
+    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/[*_`>#]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 600)
+}
+
+/* ---- citation export ---- */
+export type ExportSource = Pick<CiteSource, 'citeId' | 'title' | 'url' | 'host' | 'query' | 'searchedAt'>
+
+const bibEscape = (s: string): string => String(s ?? '').replace(/[{}]/g, (m) => `\\${m}`).replace(/\s+/g, ' ').trim()
+
+/** A small, valid BibTeX bibliography for a reply or research report. */
+export function sourcesToBibtex(sources: ExportSource[]): string {
+  const seen = new Set<string>()
+  const entries: string[] = []
+  for (const s of sources) {
+    if (!s?.url || seen.has(s.url)) continue
+    seen.add(s.url)
+    const key = (s.citeId || `S${entries.length + 1}`).replace(/[^A-Za-z0-9]/g, '') || `S${entries.length + 1}`
+    const fields = [
+      `  title = {${bibEscape(s.title || s.url)}}`,
+      `  howpublished = {\\url{${bibEscape(s.url)}}}`,
+      `  note = {${bibEscape(s.host || hostOf(s.url))}${s.searchedAt ? `, accessed ${bibEscape(s.searchedAt)}` : ''}${s.query ? `, query: ${bibEscape(s.query)}` : ''}}`,
+    ]
+    entries.push(`@misc{${key},\n${fields.join(',\n')}\n}`)
+  }
+  return entries.length ? `${entries.join('\n\n')}\n` : ''
+}
+
+/** A plain link list, one source per line, with its citation id. */
+export function sourcesToLinkList(sources: ExportSource[]): string {
+  const seen = new Set<string>()
+  const lines: string[] = []
+  for (const s of sources) {
+    if (!s?.url || seen.has(s.url)) continue
+    seen.add(s.url)
+    lines.push(`[${s.citeId || 'S?'}] ${s.title || s.host || s.url} — ${s.url}`)
+  }
+  return lines.length ? `${lines.join('\n')}\n` : ''
+}
+
 /* Coverage check for the strict-citations setting: which cited ids are
  * unknown, and whether evidence exists with zero citations. */
 export function citationCoverage(text: string, sources: CiteSource[]): { cited: string[]; unknown: string[]; uncited: boolean } {

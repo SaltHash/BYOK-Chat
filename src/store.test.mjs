@@ -55,3 +55,30 @@ test('project workspace sharing resolves across chats and can be turned off', as
   // Workspaces stay separate between projects.
   assert.notEqual(activeWorkspaceForChat(base, 'c').id, 'ws1')
 })
+
+/* Retrying a failed reply is deliberately narrow: it resends the request
+ * behind a trailing failure and never rewrites history that follows it. */
+test('retrying refuses to touch a failure older than the last message', () => {
+  const s = () => useS.getState()
+  const msgs = [
+    { id: 'u1', r: 'user', t: 'hi' },
+    { id: 'e1', r: 'assistant', t: 'boom', err: true },
+    { id: 'u2', r: 'user', t: 'again' },
+  ]
+  useS.setState({ chats: [{ id: 'a', title: 'A', msgs }], chat: 'a', busy: false, notice: null })
+  s().retryMsg('e1')
+  assert.match(s().notice?.t ?? '', /most recent reply/)
+  assert.deepEqual(s().chats[0].msgs.map((m) => m.id), ['u1', 'e1', 'u2'])
+})
+
+test('retrying a reply that did not fail is a no-op', () => {
+  const s = () => useS.getState()
+  const msgs = [
+    { id: 'u1', r: 'user', t: 'hi' },
+    { id: 'a1', r: 'assistant', t: 'fine' },
+  ]
+  useS.setState({ chats: [{ id: 'a', title: 'A', msgs }], chat: 'a', busy: false, notice: null })
+  s().retryMsg('a1')
+  assert.equal(s().notice, null)
+  assert.deepEqual(s().chats[0].msgs.map((m) => m.id), ['u1', 'a1'])
+})

@@ -264,7 +264,7 @@ export function Widgets({ width = 320 }: { width?: number }) {
   }, [])
 
   return (
-    <aside style={{ width: safeWidth, maxWidth: '90vw' }} className="z-20 flex min-w-0 shrink-0 flex-col gap-3 overflow-y-auto border-l border-bor bg-side p-3 max-lg:fixed max-lg:inset-y-0 max-lg:right-0">
+    <aside style={{ width: safeWidth, maxWidth: '90vw', padding: 'var(--ui-panel-pad)', gap: 'var(--ui-side-gap)' }} className="widgets-shell z-20 flex min-w-0 shrink-0 flex-col overflow-y-auto border-l border-bor bg-side max-lg:fixed max-lg:inset-y-0 max-lg:right-0">
       <div className="flex items-center justify-between px-1">
         <span className="text-sm font-medium">Widgets</span>
         <Btn sm icon={X} title="Close panel" onClick={() => patch({ rail: false })} />

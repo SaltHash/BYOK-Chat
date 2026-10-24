@@ -83,7 +83,7 @@ export function Header({ side, toggle, cfg, pal, title }: { side: boolean; toggl
   const adv = { ...DEFAULT_ADVANCED, ...advanced }
   const paramsOn = featOn({ features }, 'advanced') && adv.showModelParams
   return (
-    <header className="flex h-14 shrink-0 items-center gap-0.5 px-2 sm:gap-1 sm:px-3">
+    <header className="flex min-h-14 shrink-0 items-center gap-1" style={{ padding: 'var(--ui-header-pad-y) var(--ui-header-pad)' }}>
       {!side && <Btn icon={PanelLeft} title="Show sidebar" onClick={toggle} />}
       <h1 className="min-w-0 flex-1 truncate px-1 font-medium sm:px-2">{title}</h1>
       {curTemporary && <TemporaryFlair cfg={cfg} expiresAt={tempExpiresAt} tempHours={tempHours} />}

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { BookOpen, Check, Copy, Download, FileText, Globe, ListFilter, ListOrdered, Pencil, Play, RotateCcw, Sparkles, Square, X } from 'lucide-react'
 import { useS, useLive, type Msg } from '../store'
 import { PLAN_INTRO, RESEARCH_TIERS, dedupTrace, reasoningBlocks, tierOf, type ResearchPlan, type ResearchPlanStep, type ResearchTierId } from '../research'
-import { collectMessageSources, linkifyCitations, stripCitations } from '../citations'
+import { claimForCitation, collectMessageSources, linkifyCitations, stripCitations } from '../citations'
 import { Md } from './Md'
 import { SourcesPanel, scrollToSource } from './Sources'
 import { Btn, cx } from './ui'
@@ -193,7 +193,7 @@ export function ResearchTierPicker({ msg }: { msg: Msg }) {
             className={cx('rounded-lg border px-3 py-2.5 text-left transition-colors hover:bg-hov disabled:opacity-50', rs.tier === t.id ? 'border-ac bg-ac/10' : 'border-bor')}
             aria-pressed={rs.tier === t.id}
           >
-            <span className="flex items-center gap-1.5 text-sm font-medium">{t.label}{def === t.id && <span className="rounded bg-hov px-1.5 py-0.5 text-[10px] font-medium text-mu">default</span>}</span>
+            <span className="flex items-center gap-1.5 text-sm font-medium">{t.label}{def === t.id && <span className="rounded-sm bg-hov px-1.5 py-0.5 text-[10px] font-medium text-mu">default</span>}</span>
             <span className="mt-0.5 block text-xs text-mu">{t.blurb}</span>
           </button>
         ))}
@@ -347,6 +347,7 @@ export function ResearchPanel({ msg, onClose }: { msg: Msg; onClose: () => void 
   const [tab, setTab] = useState<'report' | 'sources' | 'reasoning'>('report')
   const [copied, setCopied] = useState(false)
   const [srcFlash, setSrcFlash] = useState<string | null>(null)
+  const [srcClaim, setSrcClaim] = useState<string | null>(null)
   const citeStyle = useS((s) => s.search?.citeStyle)
   const sources = useMemo(() => collectMessageSources(msg.toolRounds), [msg.toolRounds])
   const cited = useMemo(() => citeStyle === 'off' ? stripCitations(msg.toolFinal ?? msg.t) : linkifyCitations(msg.toolFinal ?? msg.t, sources), [msg.toolFinal, msg.t, sources, citeStyle])
@@ -355,6 +356,7 @@ export function ResearchPanel({ msg, onClose }: { msg: Msg; onClose: () => void 
     onCite: (citeId: string) => {
       setTab('sources')
       setSrcFlash(citeId.toUpperCase())
+      setSrcClaim(claimForCitation(msg.toolFinal ?? msg.t, citeId))
       window.setTimeout(() => scrollToSource(msg.id, citeId), 60)
       window.setTimeout(() => setSrcFlash((v) => (v === citeId.toUpperCase() ? null : v)), 1800)
     },
@@ -416,7 +418,7 @@ export function ResearchPanel({ msg, onClose }: { msg: Msg; onClose: () => void 
         {tab === 'report' ? (
           <article className="leading-7"><Md t={cited} cites={cites} /></article>
         ) : tab === 'sources' ? (
-          <SourcesPanel msgId={msg.id} text={msg.toolFinal ?? msg.t} sources={sources} defaultOpen strict={false} flash={srcFlash} />
+          <SourcesPanel msgId={msg.id} text={msg.toolFinal ?? msg.t} sources={sources} defaultOpen strict={false} flash={srcFlash} claim={srcClaim} />
         ) : (
           <div className="space-y-3">
             {msg.research?.plan && (

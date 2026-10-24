@@ -186,7 +186,7 @@ export function WorkspaceFileTree<T extends { path: string; content: string }>({
             <span className="flex-1 min-w-0 flex items-start gap-2">
               <span className="shrink-0">{isExpanded ? <FolderOpen size={14} className="text-mu" /> : <Folder size={14} className="text-mu" />}</span>
               <span className="font-mono text-xs text-mu text-left">{displayName}</span>
-              {variant === 'panel' && <span className="text-xs text-mu/70">{node.files.length} file{node.files.length === 1 ? '' : 's'}{node.folders.size > 0 ? `, ${node.folders.size} folder${node.folders.size === 1 ? '' : 's'}` : ''}</span>}
+              {variant === 'panel' && <span className="relative -top-px text-xs text-mu/70">{node.files.length} file{node.files.length === 1 ? '' : 's'}{node.folders.size > 0 ? `, ${node.folders.size} folder${node.folders.size === 1 ? '' : 's'}` : ''}</span>}
               <ChevronRight size={12} className={cx('shrink-0 text-mu transition-transform', isExpanded && 'rotate-90')} />
             </span>
             {variant === 'tile' && <span className="text-xs text-mu">{node.files.length} file{node.files.length === 1 ? '' : 's'}</span>}
@@ -278,7 +278,7 @@ export function WorkspaceTile({ msg, live, workspace, selectedRevisionId, onOpen
   }
 
   return (
-    <section aria-label="Workspace files" className="space-y-2 rounded-xl border border-bor bg-surf/50 p-3">
+    <section aria-label="Workspace files" style={{ padding: 'var(--ui-panel-pad)' }} className="space-y-2 rounded-xl border border-bor bg-surf/50">
       <div className="flex items-center gap-2 text-sm">
         <Files size={15} className="shrink-0 text-ac" />
         {renaming ? (
@@ -543,7 +543,7 @@ export function WorkspacePanel({ msg, live, workspace, selectedRevisionId, setSe
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex items-center gap-2 border-b border-bor px-3 py-2">
+      <div style={{ padding: 'calc(var(--ui-panel-pad) * 2 / 3) var(--ui-panel-pad)' }} className="flex items-center gap-2 border-b border-bor">
         <Files size={15} className="shrink-0 text-ac" />
         {renaming ? (
           <input autoFocus value={nameDraft} onChange={(e) => setNameDraft(e.target.value)} onBlur={saveName} onKeyDown={(e) => { if (e.key === 'Enter') saveName(); if (e.key === 'Escape') setRenaming(false) }} className="min-w-0 flex-1 rounded-md bg-bg px-2 py-1 text-sm outline-none focus:ring-2 focus:ring-ac/40" />
@@ -592,7 +592,7 @@ export function WorkspacePanel({ msg, live, workspace, selectedRevisionId, setSe
         {selectedFile && (
           <div className="flex min-h-0 flex-1 flex-col bg-code">
             <div className="flex flex-wrap items-center gap-1.5 px-4 pt-3">
-              <span className="rounded bg-codeh px-1.5 py-0.5 font-mono text-xs text-mu">{highlightLang}</span>
+              <span className="rounded-sm bg-codeh px-1.5 py-0.5 font-mono text-xs text-mu">{highlightLang}</span>
               <span className="text-xs text-mu">{workspaceLines(selectedFile.content)} lines · {workspaceSize(selectedFile.content)}</span>
               {selectedFile.path === writingPath && <span className="ml-auto inline-flex items-center gap-1.5 text-xs text-ac"><span className="size-1.5 animate-pulse rounded-full bg-ac" />Writing…</span>}
               <span className="flex-1" />

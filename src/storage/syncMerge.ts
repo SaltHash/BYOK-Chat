@@ -13,7 +13,7 @@
  *   - workspaces union by id, their revision lists union by revision id;
  *   - id-keyed collections (endpoints, playlists, prompts, commands, skills,
  *     memories, todos) union by id;
- *   - string lists (snips) and record maps (keys, widgets, prefs, params, …)
+ *   - string lists (snips, favorites) and record maps (keys, widgets, prefs, params, …)
  *     merge so neither device loses a value.
  * No DOM, no store imports. */
 
@@ -228,6 +228,8 @@ function mergeSettings(local: Obj, remote: Obj, projects: Obj[]): Obj {
     if (isObj(local[k]) || isObj(remote[k])) out[k] = { ...asObj(local[k]), ...asObj(remote[k]) }
   }
   if ('snips' in local || 'snips' in remote) out.snips = [...new Set([...asStrArr(local.snips), ...asStrArr(remote.snips)])]
+  // Favorites are additive, like snippets: a star on either device survives.
+  if ('favs' in local || 'favs' in remote) out.favs = [...new Set([...asStrArr(local.favs), ...asStrArr(remote.favs)])]
   out.projects = projects
   // Older clients only know `folders`; keep the key in lockstep so mixed
   // versions still sync the grouping.

@@ -1,6 +1,7 @@
 import type { Ep, Att, Msg } from './store'
 import { TOOLS } from './meta'
 import { BLANK_DOCS, expandArchives, extractOffThread, fitDoc, pairTranscripts } from './docs'
+import { attachmentManifest } from './attachments'
 import { WORKSPACE_MAX_CONTENT, WORKSPACE_TRUNC_MARKER, sanitizePath } from './workspace'
 import { withCode, type ErrorCode } from './errors'
 import { buildStreamRequest, splitSseBuffer } from './streamRequest'
@@ -632,6 +633,10 @@ export function wire(e: Ep, msgs: Msg[]): Wire[] {
       return out.length ? out : [{ role: 'assistant', content: x.t }]
     }
     let t = x.full || x.t || ' '
+    // Name every file (including images and PDFs sent as native blocks) so the
+    // model can refer to a specific upload by name in its answer.
+    const manifest = attachmentManifest(x.att)
+    if (manifest) t += `\n\n[${manifest}]`
     const c: any[] = []
     for (const a of x.att ?? []) {
       if (a.kind === 'txt') continue

@@ -11,6 +11,8 @@
 
 import { buildSyncPayload, checkSyncCompat, decryptSyncPayload, encryptSyncPayload, type SyncPayload } from './sync'
 import { mergeSyncData, type SyncData } from './syncMerge'
+import { detectChatConflicts, recordSyncConflicts } from './syncConflicts'
+import { shapeSyncData } from './syncShaping'
 import { syncPull, syncPush } from './syncClient'
 import { useS } from '../store'
 import { STORE_VERSION } from '../persistence'
@@ -112,7 +114,12 @@ export async function pullAndMerge(token = getSyncToken()): Promise<{ data: Sync
   const r = await syncPull(token)
   const payload = await decryptSyncPayload(r.payload, token)
   assertCompatible(payload, r.exportVersion, r.storeVersion)
-  const data = mergeSyncData(readLocalData(), toSyncData(payload), 'merge')
+  const local = readLocalData()
+  const remote = toSyncData(payload)
+  // Keep a visible record when both sides forked the same chat instead of
+  // silently preferring one of them.
+  recordSyncConflicts(detectChatConflicts(local.chats, remote.chats))
+  const data = mergeSyncData(local, remote, 'merge')
   applySyncData(data)
   setLastSync(r.updatedAt)
   return { data, updatedAt: r.updatedAt, backend: r.backend }
@@ -121,7 +128,13 @@ export async function pullAndMerge(token = getSyncToken()): Promise<{ data: Sync
 /** Encrypt and upload the current local state. */
 export async function pushNow(token = getSyncToken()): Promise<{ updatedAt: number; backend: string }> {
   if (!token) throw Error('No sync token on this device.')
-  const data = readLocalData()
+  // Pull-and-merge first: pushing the raw local snapshot over a slot another
+  // device updated would silently erase its newest work. A first push to an
+  // empty slot throws and is ignored; offline pushes still proceed.
+  await pullAndMerge(token).catch(() => {})
+  // Only user-facing content goes remote: no uploads, tool arguments/results,
+  // reasoning traces, process logs, or credentials.
+  const data = shapeSyncData(readLocalData())
   const payload = buildSyncPayload({ storeVersion: STORE_VERSION, settings: data.settings, chats: data.chats, workspaces: data.workspaces, selectedRevision: data.selectedRevision })
   const r = await syncPush(token, await encryptSyncPayload(payload, token), { storeVersion: payload.storeVersion, exportVersion: payload.v })
   setLastSync(r.updatedAt)
@@ -131,9 +144,12 @@ export async function pushNow(token = getSyncToken()): Promise<{ updatedAt: numb
 /** Apply a freshly linked remote snapshot using the chosen merge mode, then
  *  upload the result so the two devices agree. */
 export async function linkAndMerge(token: string, mode: 'merge' | 'remote' | 'local', remote: SyncData): Promise<{ updatedAt: number; backend: string }> {
-  const data = mergeSyncData(readLocalData(), remote, mode)
+  const local = readLocalData()
+  if (mode === 'merge') recordSyncConflicts(detectChatConflicts(local.chats, remote.chats))
+  const data = mergeSyncData(local, remote, mode)
   applySyncData(data)
-  const payload = buildSyncPayload({ storeVersion: STORE_VERSION, settings: data.settings, chats: data.chats, workspaces: data.workspaces, selectedRevision: data.selectedRevision })
+  const shaped = shapeSyncData(data)
+  const payload = buildSyncPayload({ storeVersion: STORE_VERSION, settings: shaped.settings, chats: shaped.chats, workspaces: shaped.workspaces, selectedRevision: shaped.selectedRevision })
   const r = await syncPush(token, await encryptSyncPayload(payload, token), { storeVersion: payload.storeVersion, exportVersion: payload.v })
   setLastSync(r.updatedAt)
   return r

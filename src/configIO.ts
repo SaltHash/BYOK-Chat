@@ -8,7 +8,7 @@ export type ExportCategory =
 export function detectAvailableCategories(j: Record<string, unknown>, themes: Record<string, unknown>): Record<ExportCategory, boolean> {
   const o = (v: unknown) => !!v && typeof v === 'object'
   return {
-    eps: Array.isArray(j.eps) || o(j.sel),
+    eps: Array.isArray(j.eps) || o(j.sel) || Array.isArray(j.favs),
     prompts: Array.isArray(j.prompts) || typeof j.pr === 'string' || o(j.globalPrompt),
     pls: Array.isArray(j.pls),
     cmds: Array.isArray(j.cmds),
@@ -33,7 +33,7 @@ type ExportState = {
   themeMode: unknown; themeDark: unknown; themeLight: unknown
   customDarkColors: unknown; customLightColors: unknown; prefs: unknown
   customDarkTheme?: unknown; customLightTheme?: unknown
-  keys: unknown; eps: { key: string }[] & Array<Record<string, unknown>>; sel: unknown
+  keys: unknown; eps: { key: string }[] & Array<Record<string, unknown>>; sel: unknown; favs?: unknown
   prompts: unknown; pr: unknown; globalPrompt: unknown
   pls: unknown; cmds: unknown; skills: unknown
   memories: unknown; memoryPrefs: unknown
@@ -42,6 +42,20 @@ type ExportState = {
   params: unknown; effort: unknown; workspacePrefs: unknown; docPrefs: unknown; voicePrefs: unknown
   widgets: unknown; widgetPrefs: unknown; stats: unknown; routeStats: unknown
   chats: unknown; projects: unknown; chat: unknown; todos: unknown; snips: unknown; pad: unknown
+}
+
+/** Filter chats to those active inside an optional local-date range. A chat is
+ *  active when any message timestamp falls in [from, to] (inclusive days). No
+ *  range means every chat, including ones with no timestamps. Pure. */
+export function chatsInDateRange<C extends { msgs?: { at?: unknown }[] }>(chats: C[], from?: string, to?: string): C[] {
+  const start = from ? new Date(`${from}T00:00:00`).getTime() : null
+  const end = to ? new Date(`${to}T23:59:59.999`).getTime() : null
+  if (start == null && end == null) return chats
+  return chats.filter((c) => (Array.isArray(c.msgs) ? c.msgs : []).some((m) => {
+    const at = typeof m?.at === 'number' ? m.at : null
+    if (at == null) return false
+    return (start == null || at >= start) && (end == null || at <= end)
+  }))
 }
 
 /** Build the JSON payload for `dl('chat-config.json', …)` (pure). */
@@ -55,7 +69,7 @@ export function buildExportPayload(
   const data: Record<string, unknown> = { v: 4 }
   if (exports.appearance) { data.themeMode = s.themeMode; data.themeDark = s.themeDark; data.themeLight = s.themeLight; data.customDarkColors = s.customDarkColors; data.customLightColors = s.customLightColors; data.customDarkTheme = s.customDarkTheme; data.customLightTheme = s.customLightTheme; data.prefs = s.prefs }
   if (exports.keys) data.keys = s.keys
-  if (exports.eps) { data.eps = (s.eps as Record<string, unknown>[]).map((e) => ({ ...e, key: withKeys ? (e as { key: unknown }).key : '' })); data.sel = s.sel }
+  if (exports.eps) { data.eps = (s.eps as Record<string, unknown>[]).map((e) => ({ ...e, key: withKeys ? (e as { key: unknown }).key : '' })); data.sel = s.sel; data.favs = Array.isArray(s.favs) ? s.favs : [] }
   if (exports.prompts) { data.prompts = s.prompts; data.pr = s.pr; data.globalPrompt = s.globalPrompt }
   if (exports.pls) data.pls = s.pls
   if (exports.cmds) data.cmds = s.cmds

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { X, Plus, Trash2, ArrowUp, ArrowDown, CornerDownRight, ChevronRight, Eye, EyeOff, Play, ShieldCheck, Shield, Download, Upload, Check, CircleCheck, CircleX, Cpu, Route, GripVertical, Server, ListMusic, ScrollText, Terminal, Wrench, Palette, FolderOpen, FileText, PanelRight, TrendingUp, Keyboard, Search, Brain, Pencil, Sparkles, RotateCcw, SlidersHorizontal, FlaskConical, Library, Database, Lock, LockOpen, LayoutTemplate, Share2, Plug, Image as ImageIcon, Volume2, AudioLines, Code2 } from 'lucide-react'
-import { useS, useSConfig, PRE, BLANK, THEMES, DARK_THEMES, LIGHT_THEMES, BASE_THEMES, THEME_COLOR_KEYS, THEME_COLOR_LABELS, THEME_COLORS, defaultCustomTheme, customThemeColors, normCustomTheme, accentHue, SEARCH_PROVIDERS, READER_PROVIDERS, FEATURES, LIBRARY_ITEMS, FEATURE_TABS, FEATURE_WIDGETS, DEFAULT_LIBRARY_SHOW, DEFAULT_ADVANCED, featOn, normSearch, normResearch, normAdvanced, normDocs, usable, modelsOf, modelNameOf, helperRef, splitHelperRef, effortClassifierOf, TOOL_ROUNDS_DEFAULT, TOOL_ROUNDS_MIN, TOOL_ROUNDS_BASE_MAX, TOOL_ROUNDS_MAX, toolRoundLimitOf, isToolRoundsUnlimited, GENERAL_PROMPT_TEXT, STARTUP_MODES, normStartup, type Kind, type FeatureId, type DocPrefs, type ModelPrice } from '../store'
+import { X, Plus, Trash2, ArrowUp, ArrowDown, CornerDownRight, ChevronDown, ChevronRight, Eye, EyeOff, Play, ShieldCheck, Shield, Download, Upload, Check, CircleCheck, CircleX, Cpu, Route, GripVertical, Server, ListMusic, ScrollText, Terminal, Wrench, Palette, FolderOpen, FileText, PanelRight, TrendingUp, Keyboard, Search, Brain, Pencil, Sparkles, RotateCcw, SlidersHorizontal, FlaskConical, Library, Database, Lock, LockOpen, LayoutTemplate, Share2, Plug, Image as ImageIcon, Volume2, AudioLines, Code2, Star } from 'lucide-react'
+import { useS, useSConfig, PRE, BLANK, THEMES, DARK_THEMES, LIGHT_THEMES, BASE_THEMES, THEME_COLOR_KEYS, THEME_COLOR_LABELS, THEME_COLORS, defaultCustomTheme, customThemeColors, normCustomTheme, accentHue, SEARCH_PROVIDERS, READER_PROVIDERS, FEATURES, LIBRARY_ITEMS, FEATURE_TABS, FEATURE_WIDGETS, DEFAULT_LIBRARY_SHOW, DEFAULT_ADVANCED, featOn, normSearch, normResearch, normAdvanced, normDocs, usable, modelsOf, modelNameOf, helperRef, splitHelperRef, favRef, toggleFavRef, effortClassifierOf, TOOL_ROUNDS_DEFAULT, TOOL_ROUNDS_MIN, TOOL_ROUNDS_BASE_MAX, TOOL_ROUNDS_MAX, toolRoundLimitOf, isToolRoundsUnlimited, GENERAL_PROMPT_TEXT, STARTUP_MODES, normStartup, PROMPT_RECALL_MODES, normPromptRecall, type PromptRecallMode, type Kind, type FeatureId, type DocPrefs, type ModelPrice } from '../store'
 import { RESEARCH_TIERS, type ResearchTierId } from '../research'
 import { normSkills, resolveSkill, validateCustomSkill, enabledSkills, BUILTIN_SKILLS, SKILL_TOOL_NAME, type SkillState } from '../skills'
 import { findDuplicatePairs, mergeMemory } from '../recall'
@@ -10,9 +10,9 @@ import { SETTINGS_TABS, splitSettingTarget, settingDomId } from '../settingsCata
 import { PROMPT_QUALITIES, type GlobalPrompt } from '../flair'
 import { PROMPT_VARS } from '../promptVars'
 import { DataTab, StatsTab, KeysTab, TestRow, TestAllEndpoints } from './Extra'
-import { Btn, Field, Input, Area, Sel, Toggle, Seg, RangeSlider, Checkbox, HelpTip, Modal, Surface, Chip, cx, type Ic } from './ui'
+import { Btn, Field, Input, Area, Sel, Toggle, Seg, RangeSlider, Checkbox, HelpTip, Modal, Surface, Chip, Item, cx, type Ic } from './ui'
 import { SortableList, type SortHandleProps, type SortItemApi } from './dnd'
-import { fetchModelCatalog, fetchModelProviders, filterCatalogByEndpoint, prioritizeProviderRows, discoverEndpointModels, clearModelDiscoveryCache, type CatalogEntry, type CatalogProvider, type CatalogSource } from '../catalog'
+import { fetchModelCatalogCached, clearCatalogCache, prefetchModelCatalog, fetchModelProviders, filterCatalogByEndpoint, prioritizeProviderRows, discoverEndpointModels, clearModelDiscoveryCache, type CatalogEntry, type CatalogProvider, type CatalogSource } from '../catalog'
 import { resolveProvider } from '../providerRegistry'
 import { parseCurlCommand, type CurlProvider } from '../curlImport'
 import { ENDPOINT_AUTH_OPTIONS, endpointAuthOf, headerBlockOf, type EndpointAuth } from '../endpointAuth'
@@ -22,6 +22,8 @@ import { probeMcpServer, mcpToolName, type McpServer } from '../mcp'
 import { BLANK_IMAGE_GEN, IMAGE_SIZES, normImageGen } from '../imagegen'
 import { BLANK_CODE_RUN, CODE_OUTPUT_MAX, CODE_TIMEOUT_MAX, CODE_TIMEOUT_MIN, normCodeRun, PYODIDE_DEFAULT_URL } from '../codesandbox'
 import { normVoice, VOICE_LANGS, speak, stopSpeaking, speechAvailable, dictationAvailable } from '../voice'
+import { DENSITIES, DENSITY_IDS, SPACING_LIMITS, STYLE_PRESETS, STYLE_PRESET_IDS, hasSpacingOverrides, resolveSpacing } from '../style'
+import { accentOnlyColors } from '../theme'
 
 const TABS = SETTINGS_TABS
 /** Tabs hidden while their owning feature is disabled. */
@@ -73,6 +75,44 @@ function HelperPointer({ anchor, title, desc, current }: { anchor: string; title
     </Anchor>
   )
 }
+/** The single quick-add control on the Endpoints tab. The main half creates
+ *  an OpenAI-compatible endpoint right away; the arrow half opens a menu that
+ *  can also create an Anthropic-compatible one. cURL import stays a separate
+ *  button beside it. */
+function AddEndpointSplit({ onAdd }: { onAdd: (type: 'openai' | 'anthropic') => void }) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!open) return
+    const f = (e: MouseEvent) => { if (!ref.current?.contains(e.target as Node)) setOpen(false) }
+    addEventListener('mousedown', f)
+    return () => removeEventListener('mousedown', f)
+  }, [open])
+  const pick = (t: 'openai' | 'anthropic') => { setOpen(false); onAdd(t) }
+  return (
+    <div ref={ref} className="relative inline-flex">
+      <Btn v="solid" icon={Plus} className="!rounded-r-none" onClick={() => pick('openai')}>Add endpoint</Btn>
+      <button
+        type="button"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label="Choose the API format"
+        title="Choose the API format"
+        onClick={() => setOpen((v) => !v)}
+        className="inline-flex w-7 items-center justify-center rounded-lg rounded-l-none border-l border-black/15 bg-ac text-acx transition-opacity hover:opacity-90"
+      >
+        <ChevronDown size={14} className={cx('transition-transform', open && 'rotate-180')} />
+      </button>
+      {open && (
+        <div role="menu" className="edge-border absolute left-0 top-full z-20 mt-1.5 w-64 rounded-xl bg-hov p-1.5">
+          <Item icon={Cpu} onClick={() => pick('openai')} sub="Most providers, local servers, OpenRouter">OpenAI-compatible</Item>
+          <Item icon={ScrollText} onClick={() => pick('anthropic')} sub="Anthropic Messages API shape">Anthropic-compatible</Item>
+        </div>
+      )}
+    </div>
+  )
+}
+
 const INFO: Record<string, string> = {
   features: 'Turn whole features on or off. A disabled feature is hidden everywhere and is never used by the AI or the app until you turn it back on.',
   library: 'Choose which shortcuts appear in the sidebar library.',
@@ -289,6 +329,7 @@ function ModelsEditor({ e, update }: { e: any; update: (p: object) => void }) {
   const [query, setQuery] = useState('')
   const [searchIdea, setSearchIdea] = useState<string | null>(null)
   const [selectedModels, setSelectedModels] = useState<string[]>([])
+  const favs = useS((st) => st.favs)
   const models: string[] = e.models ?? [e.model]
   const presetInfo = (e.preset && PRE[e.preset]) || presetForUrl(e.url)?.[1]
   const endpointId = e.endpointId ?? presetInfo?.[2] ?? ''
@@ -319,7 +360,7 @@ function ModelsEditor({ e, update }: { e: any; update: (p: object) => void }) {
   const loadCatalog = async () => {
     setPicker(true); setCatalogState('Loading documented models…')
     try {
-      const { entries, error, source = 'openrouter', stale } = await fetchModelCatalog(e)
+      const { entries, error, source = 'openrouter', stale } = await fetchModelCatalogCached(e)
       setCatalogSource(source)
       if (error && !entries.length) { setCatalogState(`${error} You can still enter a model ID below.`); return }
       // The request awaited: re-read the live endpoint so edits made meanwhile
@@ -380,13 +421,14 @@ function ModelsEditor({ e, update }: { e: any; update: (p: object) => void }) {
         if (i < 0) return null
         const model = models[i] ?? ''
         return <div className="rounded-xl bg-bg p-2">
-      <div className="grid grid-cols-[auto_auto_minmax(0,1fr)_minmax(0,1fr)_auto] items-center gap-2">
+      <div className="grid grid-cols-[auto_auto_minmax(0,1fr)_minmax(0,1fr)_auto_auto] items-center gap-2">
       <span {...api.handleProps(`Reorder model ${i + 1}`)} title="Drag to reorder" className="dnd-handle cursor-grab text-mu"><GripVertical size={16} /></span>
       <span className="grid size-7 shrink-0 place-items-center rounded-lg bg-hov text-xs text-mu">{i + 1}</span>
       <input ref={(el) => { refs.current[i] = el }} value={model} onChange={(ev) => { const next = [...models]; next[i] = ev.target.value; setModels(next) }} onKeyDown={(ev) => {
         if (ev.key === 'Enter') { ev.preventDefault(); if (i < models.length - 1) refs.current[i + 1]?.focus(); else if (model.trim()) { setModels([...models, '']); setTimeout(() => refs.current[i + 1]?.focus(), 0) } }
       }} placeholder="Model ID" aria-label={`Model ID ${i + 1}`} className="min-w-0 bg-transparent px-2 py-1 text-sm outline-none" />
       <input value={model ? modelNameOf(e, model).replace(/^~+/, '') : ''} onChange={(ev) => update({ modelNames: { ...e.modelNames, [model]: ev.target.value } })} placeholder="Model name" aria-label={`Model name ${i + 1}`} className="min-w-0 rounded-md bg-surf px-2 py-1 text-sm outline-none" />
+      <button type="button" title={favs.includes(favRef(e.id, model)) ? 'Remove from favorites' : 'Add to favorites'} aria-label={favs.includes(favRef(e.id, model)) ? 'Remove from favorites' : 'Add to favorites'} aria-pressed={favs.includes(favRef(e.id, model))} disabled={!model} onClick={() => { if (model) useS.getState().patch({ favs: toggleFavRef(favs, favRef(e.id, model)) }) }} className={cx('grid size-7 place-items-center rounded-md hover:bg-hov hover:text-tx disabled:opacity-0', favs.includes(favRef(e.id, model)) ? 'text-ac' : 'text-mu')}><Star size={14} fill={favs.includes(favRef(e.id, model)) ? 'currentColor' : 'none'} /></button>
       <button title="Remove model" onClick={() => setModels(models.filter((_, j) => j !== i))} className="grid size-7 place-items-center rounded-md text-mu hover:bg-hov hover:text-er"><Trash2 size={14} /></button>
       </div>
       {!!model && (isOpenRouter || e.modelEffortSource?.[model] !== 'auto') && <div className="ml-8 mt-1 flex flex-wrap items-center gap-3 text-xs text-mu">
@@ -400,7 +442,7 @@ function ModelsEditor({ e, update }: { e: any; update: (p: object) => void }) {
     {picker && <Modal close={() => setPicker(false)} keyboard={false}><div className="modal-panel flex max-h-[80dvh] w-full max-w-xl flex-col gap-3 rounded-2xl bg-bg p-5 shadow-2xl">
       <div className="flex items-center justify-between"><div><h3 className="font-semibold">Choose a model</h3><p className="mt-0.5 text-xs text-mu">{e.name}{endpointId ? ` · ${endpointId}` : ''}</p></div><button onClick={() => setPicker(false)} className="grid size-8 place-items-center rounded-lg text-mu hover:bg-hov hover:text-tx" aria-label="Close model picker"><X size={16}/></button></div>
       <div className="flex flex-wrap gap-2"><button onClick={loadCatalog} className="rounded-lg bg-hov px-3 py-2 text-xs text-tx">{catalog.length ? 'Refresh model catalog' : 'Load available models'}</button>
-      <button onClick={() => { clearModelDiscoveryCache(e.url); void loadCatalog() }} title="Clear cached working and failed model-list URLs for this endpoint, then probe them again." className="rounded-lg px-3 py-2 text-xs text-mu hover:bg-hov hover:text-tx">Retry model-list checks</button></div>
+      <button onClick={() => { clearModelDiscoveryCache(e.url); clearCatalogCache(e.id); void loadCatalog() }} title="Clear cached working and failed model-list URLs for this endpoint, then probe them again." className="rounded-lg px-3 py-2 text-xs text-mu hover:bg-hov hover:text-tx">Retry model-list checks</button></div>
       <p className="text-xs text-mu">{catalogState || 'Loads this endpoint’s own model list when the provider offers one, then public catalogs when unavailable.'} Catalog entries may not be enabled on your endpoint.</p>
       <input value={query} onChange={ev => setQuery(ev.target.value)} placeholder="Search available models" className="w-full rounded-lg bg-surf px-3 py-2 text-sm outline-none"/>
       <div className="min-h-0 flex-1 space-y-1 overflow-auto">{[...catalog].sort((a,b) => modelIdCompare(storedId(a.id).replace(/^~+/, ''), storedId(b.id).replace(/^~+/, ''))).filter(x => `${x.name.replace(/^~+/, '')} ${storedId(x.id).replace(/^~+/, '')}`.toLowerCase().includes(query.toLowerCase()) && !models.includes(storedId(x.id))).slice(0,250).map(x => { const id = storedId(x.id), visibleId = id.replace(/^~+/, ''), checked = selectedModels.includes(id); return <button key={x.id} onClick={() => setSelectedModels(checked ? selectedModels.filter(m => m !== id) : [...selectedModels, id])} className="flex w-full items-center gap-3 rounded-md px-2 py-2 text-left text-sm hover:bg-hov"><span className={cx('grid size-4 shrink-0 place-items-center rounded border', checked ? 'border-ac bg-ac text-acx' : 'border-mu/60')}>{checked && <Check size={12}/>}</span><span className="min-w-0 flex-1"><span className="block truncate">{visibleId}</span>{(x.context || x.inputPrice !== undefined || x.outputPrice !== undefined) && <span className="block text-xs text-mu">{[x.context ? `${contextLabel(x.context)} context` : '', x.inputPrice !== undefined ? `$${x.inputPrice.toFixed(2)}/M in` : '', x.outputPrice !== undefined ? `$${x.outputPrice.toFixed(2)}/M out` : ''].filter(Boolean).join(' · ')}</span>}</span></button>})}
@@ -659,6 +701,9 @@ function CurlImportModal({ close, importProvider }: { close: () => void; importP
 function Eps() {
   const { eps, upd } = useSConfig()
   const s = useSConfig()
+  // Warm every enabled endpoint's catalog while the tab is being read, so
+  // opening a model editor is instant instead of a fresh network wait.
+  useEffect(() => { for (const e of eps) if (e.on !== false && e.url) prefetchModelCatalog(e) }, [eps])
   const [show, setShow] = useState('')
   const [editingName, setEditingName] = useState('')
   const [advanced, setAdvanced] = useState<string[]>([])
@@ -712,12 +757,11 @@ function Eps() {
     return `Added ${provider.name}. ${found.error || 'No model list was found.'} The model from the cURL command is still ready to use, and failed model-list URLs are cached so they are not retried.`
   }
   const quickActions = <div className="flex flex-wrap gap-2">
-    <Btn v="solid" icon={Plus} onClick={() => addCompatible('openai')}>OpenAI-compatible</Btn>
-    <Btn v="solid" icon={Plus} onClick={() => addCompatible('anthropic')}>Anthropic-compatible</Btn>
+    <AddEndpointSplit onAdd={addCompatible} />
     <Btn v="solid" icon={Terminal} onClick={() => setCurlOpen(true)}>Add provider from cURL</Btn>
   </div>
   return (
-    <Panel id="eps" k="eps" n={eps.length} add="Add endpoint">
+    <Panel id="eps" n={eps.length}>
       <Section title="Helper models" desc="The models that do the small jobs behind the scenes.">
       <HelperModels />
       <Anchor id="model-pricing-toggle">
@@ -738,7 +782,7 @@ function Eps() {
           <Anchor key={eid} id={`ep-${e.id}`}>
           <Card handle={handle} icon={Server} title={editingName === e.id
             ? <input autoFocus value={e.name} onChange={(ev) => u({ name: ev.target.value })} onBlur={() => setEditingName('')} onKeyDown={(ev) => { ev.stopPropagation(); if (ev.key === 'Enter' || ev.key === 'Escape') { ev.preventDefault(); setEditingName('') } }} onClick={(ev) => ev.stopPropagation()} aria-label="Endpoint name" className="w-full min-w-0 rounded-md bg-bg px-2 py-1 font-medium outline-none focus:ring-2 focus:ring-ac/40" />
-            : <span className="inline-flex min-w-0 items-center gap-1.5"><span className="truncate">{e.name}</span><button type="button" title="Rename endpoint" aria-label="Rename endpoint" onClick={(ev) => { ev.stopPropagation(); setEditingName(e.id) }} className="grid size-6 shrink-0 place-items-center rounded text-mu hover:bg-hov hover:text-tx"><Pencil size={13}/></button></span>} sub={e.model || 'No model id'} open0={!e.model && !e.key} muted={!e.on} right={<Toggle on={e.on} set={(v) => u({ on: v })} />}>
+            : <span className="inline-flex min-w-0 items-center gap-1.5"><span className="truncate">{e.name}</span><button type="button" title="Rename endpoint" aria-label="Rename endpoint" onClick={(ev) => { ev.stopPropagation(); setEditingName(e.id) }} className="grid size-6 shrink-0 place-items-center rounded-sm text-mu hover:bg-hov hover:text-tx"><Pencil size={13}/></button></span>} sub={e.model || 'No model id'} open0={!e.model && !e.key} muted={!e.on} right={<Toggle on={e.on} set={(v) => u({ on: v })} />}>
             <div className="space-y-3">
               <Anchor id="models"><section className="space-y-3 rounded-xl bg-bg p-3">
               <Field label="Preset"><Sel value={e.preset ?? presetForUrl(e.url)?.[0] ?? ''} set={(v) => v ? selectPreset(e.id, v) : u({ preset: '', endpointId: '', endpointFilter: 'author' })} opts={[[ '', 'Choose a preset'], ...Object.keys(PRE).map((k) => [k, k] as [string, string])]} placeholder="Search endpoints" /></Field>
@@ -989,9 +1033,10 @@ function Cmds() {
         return (
           <Anchor key={cid} id={`command-${c.id}`}>
           <Card handle={handle} icon={CI[c.in]} title={'/' + c.name} sub={c.desc || c.in} muted={!c.on} right={<Toggle on={c.on} set={(v) => u({ on: v })} />}>
-            <div className="grid gap-4 sm:grid-cols-2">
+            <div className="grid gap-4 sm:grid-cols-3">
               <Field label="Name" hint="Typed after /"><Input value={c.name} set={(v) => u({ name: v.replace(/[^\w-]/g, '') })} /></Field>
               <Field label="Description"><Input value={c.desc} set={(v) => u({ desc: v })} /></Field>
+              <Field label="Argument hint" hint="Shown after the command name in the / menu, e.g. <topic> or [language]. This is guidance only; it is not sent to the model."><Input value={c.args ?? ''} set={(v) => u({ args: v })} placeholder="<topic>" /></Field>
             </div>
             <Field label="Input type"><Seg v={c.in} set={(v) => u({ in: v })} opts={[['text', 'Text', CI.text], ['image', 'Image', CI.image], ['image+text', 'Image + text', CI['image+text']], ['doc', 'Document', CI.doc]]} /></Field>
             <Field label="System prompt" hint={`Sent as the system prompt when the command runs. {variable} placeholders are replaced with the current UTC values when the request is sent: ${PROMPT_VAR_HINT}`}><Area value={c.sys} set={(v) => u({ sys: v })} /></Field>
@@ -1752,8 +1797,6 @@ function WidgetsTab() {
   )
 }
 
-const PAL: Record<string, string[]> = { plum: ['#120c16', '#17101c', '#dc8ad8'], claude: ['#121211', '#181817', '#d97757'], obsidian: ['#090c10', '#0f141c', '#2dd4bf'], graphite: ['#0a0a0a', '#0f0f0f', '#c0c0c0'], paper: ['#f1f1ec', '#fbfbf9', '#3b5bdb'], sage: ['#e6ece8', '#f4f7f5', '#0d9488'], frost: ['#eef2f6', '#f8fafc', '#2563eb'], sunset: ['#efe6dd', '#faf5f0', '#ea580c'] }
-
 function FontPicker({ value, set, options }: { value: string; set: (v: string) => void; options: [string, string][] }) {
   const [query, setQuery] = useState(value === 'system' ? '' : value)
   const [open, setOpen] = useState(false)
@@ -1772,7 +1815,7 @@ function FontPicker({ value, set, options }: { value: string; set: (v: string) =
   </div>
 }
 
-type PrefToggle = 'showBy' | 'showLog' | 'showTps' | 'enterSends' | 'autoTitle' | 'temporaryByDefault' | 'streamMd' | 'seasonal' | 'cues' | 'remoteImages'
+type PrefToggle = 'showBy' | 'showLog' | 'showTps' | 'enterSends' | 'autoTitle' | 'temporaryByDefault' | 'streamMd' | 'seasonal' | 'cues' | 'remoteImages' | 'showTimestamps' | 'alwaysShowActions' | 'codeWrap' | 'reduceTransparency'
 
 /** One boolean preference rendered as a labelled toggle row. */
 function prefRow(s: ReturnType<typeof useSConfig>, anchor: string, k: PrefToggle, t: string, d: string) {
@@ -1780,7 +1823,7 @@ function prefRow(s: ReturnType<typeof useSConfig>, anchor: string, k: PrefToggle
     <Anchor id={anchor}>
     <div className="flex items-center gap-3 rounded-xl bg-surf p-3">
       <div className="flex flex-1 items-center gap-2 text-sm font-medium">{t}<HelpTip text={d} label={`Help: ${t}`} /></div>
-      <Toggle on={k === 'seasonal' ? s.prefs[k] !== false : !!s.prefs[k]} set={(v) => s.patch({ prefs: { ...s.prefs, [k]: v } })} />
+      <Toggle on={k === 'seasonal' ? s.prefs[k] !== false : !!s.prefs[k]} set={(v) => s.patch({ prefs: { ...s.prefs, [k]: v } })} label={t} />
     </div>
     </Anchor>
   )
@@ -1810,10 +1853,16 @@ function Look() {
           const active = (s.themeMode === 'light' ? s.themeLight : s.themeDark) === k
           const custom = s.themeMode === 'light' ? s.customLightColors : s.customDarkColors
           return (
-          <button key={k} onClick={() => s.patch(s.themeMode === 'light' ? { themeLight: k as typeof s.themeLight } : { themeDark: k as typeof s.themeDark })} className={cx('space-y-2 rounded-xl bg-surf p-2 text-left text-sm', active && 'ring-2 ring-ac')}>
+          <button key={k} onClick={() => {
+            const before = s.themeMode === 'light' ? s.themeLight : s.themeDark
+            // Entering custom adopts the theme you were just on as its base,
+            // so the palette starts from where you left off instead of plum.
+            if (k === 'custom' && before !== 'custom') s.patch(s.themeMode === 'light' ? { themeLight: 'custom' as const, customLightTheme: { ...(s.themeMode === 'light' ? s.customLightTheme : s.customDarkTheme), base: before as typeof s.customDarkTheme.base, hue: accentHue(THEME_COLORS[before]) } } : { themeDark: 'custom' as const, customDarkTheme: { ...(s.themeMode === 'dark' ? s.customDarkTheme : s.customLightTheme), base: before as typeof s.customDarkTheme.base, hue: accentHue(THEME_COLORS[before]) } })
+            else s.patch(s.themeMode === 'light' ? { themeLight: k as typeof s.themeLight } : { themeDark: k as typeof s.themeDark })
+          }} className={cx('space-y-2 rounded-xl bg-surf p-2 text-left text-sm', active && 'ring-2 ring-ac')}>
             <div className="flex h-16 overflow-hidden rounded-lg">
-              <div className="w-1/4" style={{ background: k === 'custom' ? custom.side : PAL[k][0] }} />
-              <div className="flex-1 p-2" style={{ background: k === 'custom' ? custom.bg : PAL[k][1] }}><div className="h-2 w-2/3 rounded" style={{ background: k === 'custom' ? custom.ac : PAL[k][2] }} /></div>
+              <div className="w-1/4" style={{ background: k === 'custom' ? custom.side : THEME_COLORS[k].side }} />
+              <div className="flex-1 p-2" style={{ background: k === 'custom' ? custom.bg : THEME_COLORS[k].bg }}><div className="h-2 w-2/3 rounded-sm" style={{ background: k === 'custom' ? custom.ac : THEME_COLORS[k].ac }} /></div>
             </div>
             <span className="flex items-center justify-between px-1">{n}{active && <Check size={14} className="text-ac" />}</span>
           </button>
@@ -1837,9 +1886,9 @@ function Look() {
         const bright = custom.bright
         const contrast = custom.contrast
         return <Anchor id="custom-colors"><div className="rounded-xl bg-surf p-3 space-y-4">
-        <div><div className="text-sm font-medium">Custom theme</div><div className="text-xs text-mu">Pick a base theme (Plum by default), then fine-tune hue, saturation, brightness, and contrast. Syntax colours, the error colour, and text are always left alone.</div></div>
+        <div><div className="text-sm font-medium">Custom theme</div><div className="text-xs text-mu">Pick a base theme, then fine-tune hue, saturation, brightness, and contrast. Syntax colours, the error colour, and text are always left alone.</div></div>
         <div className="space-y-2">
-          <div className="text-xs text-mu">Base theme (default: Plum)</div>
+          <div className="text-xs text-mu">Base theme</div>
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
             {BASE_THEMES.map((k) => {
               const active = k === base
@@ -1854,6 +1903,18 @@ function Look() {
           </div>
           <div className="text-[11px] text-mu">{isDarkBase ? 'Dark base' : 'Light base'} · Base accent hue {Math.round(accentHue(THEME_COLORS[base]))}°</div>
         </div>
+        <div className="space-y-2 rounded-lg bg-bg p-2.5">
+          <div className="text-sm font-medium">Accent-only palette</div>
+          <div className="text-xs text-mu">Pick one colour and build the whole palette around it: surfaces get a restrained tint, the accent is used exactly as picked, and text on the accent flips for contrast. Replaces the sliders above until you adjust them.</div>
+          <div className="flex items-center gap-2">
+            <input type="color" aria-label="Accent colour" value={/^#[0-9a-f]{6}$/i.test(colors.ac) ? colors.ac : '#888888'} onChange={(e) => {
+              const next = accentOnlyColors(THEME_COLORS[base], e.target.value) as typeof colors
+              s.patch(mode === 'light' ? { customLightColors: next } : { customDarkColors: next })
+            }} className="h-9 w-12 cursor-pointer rounded-md border border-bor bg-transparent p-1" />
+            <span className="font-mono text-xs uppercase text-mu">{colors.ac}</span>
+            <Btn v="ghost" className="ml-auto px-2 py-1" onClick={() => setCustomTheme({ ...custom, hue: accentHue(THEME_COLORS[base]) })}>Rebuild from base accent</Btn>
+          </div>
+        </div>
         <div className="space-y-3">
           <Field label={`Hue · ${hue}°`} hint="Rotates colours except syntax highlighting. Starts at the base accent hue."><RangeSlider label="Hue" min={0} max={360} step={1} value={hue} set={(v) => setCustomTheme({ ...custom, hue: Math.round(v) })} className="w-full" /></Field>
           <Field label={`Saturation · ${sat.toFixed(2)}x`} hint="Scales colour intensity across everything except syntax highlighting and the error colour."><RangeSlider label="Saturation" min={0} max={2} step={0.01} value={sat} set={(v) => setCustomTheme({ ...custom, sat: Math.round(v * 100) / 100 })} className="w-full" /></Field>
@@ -1864,7 +1925,7 @@ function Look() {
             <Btn v="ghost" className="px-2 py-1" onClick={() => setCustomTheme(defaultCustomTheme(base))}>Reset to base defaults</Btn>
           </div>
         </div>
-        <div className="space-y-2"><div className="text-sm font-medium">Live preview</div><div className="flex h-14 overflow-hidden rounded-lg border border-bor"><div className="w-1/4" style={{ background: colors.side }} /><div className="flex-1 flex items-center gap-2 p-2" style={{ background: colors.bg }}><div className="h-2 w-10 rounded" style={{ background: colors.ac }} /><span className="text-xs" style={{ color: colors.tx }}>Text</span><span className="text-xs" style={{ color: colors.mu }}>Muted</span></div><div className="w-1/4" style={{ background: colors.surf }} /></div></div>
+        <div className="space-y-2"><div className="text-sm font-medium">Live preview</div><div className="flex h-14 overflow-hidden rounded-lg border border-bor"><div className="w-1/4" style={{ background: colors.side }} /><div className="flex-1 flex items-center gap-2 p-2" style={{ background: colors.bg }}><div className="h-2 w-10 rounded-sm" style={{ background: colors.ac }} /><span className="text-xs" style={{ color: colors.tx }}>Text</span><span className="text-xs" style={{ color: colors.mu }}>Muted</span></div><div className="w-1/4" style={{ background: colors.surf }} /></div></div>
         <details className="rounded-lg bg-bg p-2"><summary className="cursor-pointer text-xs text-mu">Advanced: edit hex colours directly</summary>
         <p className="mt-1 text-[11px] text-mu">Hand-tuned here stays until a slider or base theme is changed — those rebuild the palette from the base theme.</p>
         <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">{THEME_COLOR_KEYS.map((key) => <div key={key} className="relative flex items-center gap-2 rounded-lg bg-surf p-2 text-sm">
@@ -1882,7 +1943,7 @@ function Look() {
       <Anchor id="temp-glow">
       <div className="rounded-xl bg-surf p-3 space-y-2">
         <div className="text-sm font-medium">Temporary chat glow</div>
-        <div className="text-xs text-mu">Edge glow while a temporary chat is still empty. 0x turns it off.</div>
+        <div className="text-xs text-mu">Edge glow while a temporary chat is still empty; it waves in intensity and never goes dark. 0x turns it off.</div>
         <div className="flex items-center gap-3">
           <RangeSlider label="Temporary chat glow intensity" min={0} max={2} step={0.05} value={s.prefs.tempGlow ?? 1} set={(tempGlow) => s.patch({ prefs: { ...s.prefs, tempGlow: Math.round(tempGlow * 100) / 100 } })} className="flex-1" />
           <span className="w-20 text-right text-sm">{(s.prefs.tempGlow ?? 1) === 0 ? 'Off' : `${(s.prefs.tempGlow ?? 1).toFixed(2)}x`}</span>
@@ -1899,6 +1960,81 @@ function Look() {
         </div>
       </div>
       </Anchor>
+      </Section>
+      <Section title="Style" desc="The shape of surfaces and how much room the chat breathes.">
+      <Anchor id="style-preset">
+      <div className="rounded-xl bg-surf p-3 space-y-3">
+        <div><div className="text-sm font-medium">Style preset</div><div className="text-xs text-mu">Changes corner rounding and elevation across the whole app. Colours, fonts, and layout stay where they are. Each tile previews its own preset.</div></div>
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+          {STYLE_PRESET_IDS.map((id) => {
+            const active = (s.prefs.stylePreset ?? 'modern') === id
+            return (
+              <button key={id} type="button" aria-pressed={active} onClick={() => s.patch({ prefs: { ...s.prefs, stylePreset: id } })} className={cx('space-y-2 rounded-xl border p-2 text-left text-sm transition-colors', active ? 'border-ac ring-1 ring-ac' : 'border-bor hover:bg-hov')}>
+                <span data-style={id} aria-hidden="true" className="flex h-12 items-center gap-1.5 rounded-lg bg-bg p-2">
+                  <i className="size-6 shrink-0 rounded-md bg-hov" />
+                  <i className="h-6 flex-1 rounded-lg bg-surf shadow-md" />
+                  <i className="h-6 w-3 shrink-0 rounded-2xl bg-ac/40" />
+                </span>
+                <span className="flex items-center justify-between gap-1 font-medium">{STYLE_PRESETS[id].label}{active && <Check size={14} className="text-ac" />}</span>
+                <span className="block text-[11px] font-normal leading-4 text-mu">{STYLE_PRESETS[id].description}</span>
+              </button>
+            )
+          })}
+        </div>
+      </div>
+      </Anchor>
+      {(() => {
+        const spacing = resolveSpacing(s.prefs.density, s.prefs.uiSpacing)
+        const custom = hasSpacingOverrides(s.prefs.uiSpacing)
+        const setSpacing = (patch: Partial<NonNullable<typeof s.prefs.uiSpacing>>) =>
+          s.patch({ prefs: { ...s.prefs, uiSpacing: { ...(s.prefs.uiSpacing ?? {}), ...patch } } })
+        return (
+          <>
+          <Anchor id="density">
+          <div className="rounded-xl bg-surf p-3 space-y-2">
+            <div><div className="text-sm font-medium">Density</div><div className="text-xs text-mu">A single scale for every structural surface: the top bar, the conversation, the sidebar, the composer, the side panels and code blocks.</div></div>
+            <Seg v={s.prefs.density ?? 'comfortable'} set={(density) => s.patch({ prefs: { ...s.prefs, density, uiSpacing: custom ? s.prefs.uiSpacing : {} } })} opts={DENSITY_IDS.map((id) => [id, DENSITIES[id].label] as [typeof id, string])} />
+            <div className="text-xs text-mu">{DENSITIES[s.prefs.density ?? 'comfortable'].description}</div>
+          </div>
+          </Anchor>
+          <Anchor id="density-advanced">
+          <details className="rounded-xl bg-surf p-3">
+            <summary className="flex cursor-pointer items-center gap-2 text-sm font-medium">Advanced spacing overrides{custom && <span className="rounded-full bg-ac/15 px-2 py-0.5 text-[11px] text-ac">custom</span>}</summary>
+            <p className="mt-1 text-xs text-mu">Fine-tune each area without changing the density preset. Values are in pixels; the conversation's vertical margins follow its horizontal margin.</p>
+            <div className="mt-3 space-y-3">
+              <div className="text-xs font-medium uppercase tracking-wide text-mu">Top bar</div>
+              <Field label={`Inline padding · ${spacing.headerPad}px`}><RangeSlider label="Top bar inline padding" min={SPACING_LIMITS.headerPad.min} max={SPACING_LIMITS.headerPad.max} step={1} value={spacing.headerPad} set={(headerPad) => setSpacing({ headerPad })} className="w-full" /></Field>
+              <Field label={`Vertical padding · ${spacing.headerPadY}px`} hint="Extra breathing room above and below the title row."><RangeSlider label="Top bar vertical padding" min={SPACING_LIMITS.headerPadY.min} max={SPACING_LIMITS.headerPadY.max} step={1} value={spacing.headerPadY} set={(headerPadY) => setSpacing({ headerPadY })} className="w-full" /></Field>
+              <div className="pt-2 text-xs font-medium uppercase tracking-wide text-mu">Conversation</div>
+              <Field label={`Container margins · ${spacing.chatPad}px`}><RangeSlider label="Chat container margins" min={SPACING_LIMITS.chatPad.min} max={SPACING_LIMITS.chatPad.max} step={1} value={spacing.chatPad} set={(chatPad) => setSpacing({ chatPad })} className="w-full" /></Field>
+              <Field label={`Message spacing · ${spacing.messageGap}px`}><RangeSlider label="Message spacing" min={SPACING_LIMITS.messageGap.min} max={SPACING_LIMITS.messageGap.max} step={1} value={spacing.messageGap} set={(messageGap) => setSpacing({ messageGap })} className="w-full" /></Field>
+              <div className="pt-2 text-xs font-medium uppercase tracking-wide text-mu">Sidebar</div>
+              <Field label={`Outer padding · ${spacing.sidePad}px`}><RangeSlider label="Sidebar outer padding" min={SPACING_LIMITS.sidePad.min} max={SPACING_LIMITS.sidePad.max} step={1} value={spacing.sidePad} set={(sidePad) => setSpacing({ sidePad })} className="w-full" /></Field>
+              <Field label={`Section gap · ${spacing.sideGap}px`} hint="Space between the toolbar, search, chat list and library."><RangeSlider label="Sidebar section gap" min={SPACING_LIMITS.sideGap.min} max={SPACING_LIMITS.sideGap.max} step={1} value={spacing.sideGap} set={(sideGap) => setSpacing({ sideGap })} className="w-full" /></Field>
+              <Field label={`Item padding · ${spacing.sideItemPad}px`} hint="Vertical padding inside each chat and item row."><RangeSlider label="Sidebar item padding" min={SPACING_LIMITS.sideItemPad.min} max={SPACING_LIMITS.sideItemPad.max} step={1} value={spacing.sideItemPad} set={(sideItemPad) => setSpacing({ sideItemPad })} className="w-full" /></Field>
+              <Field label={`Item spacing · ${spacing.sideItemGap}px`} hint="Space between the rows in the chat list."><RangeSlider label="Sidebar item spacing" min={SPACING_LIMITS.sideItemGap.min} max={SPACING_LIMITS.sideItemGap.max} step={1} value={spacing.sideItemGap} set={(sideItemGap) => setSpacing({ sideItemGap })} className="w-full" /></Field>
+              <div className="pt-2 text-xs font-medium uppercase tracking-wide text-mu">Composer &amp; panels</div>
+              <Field label={`Composer padding · ${spacing.composerPad}px`}><RangeSlider label="Composer padding" min={SPACING_LIMITS.composerPad.min} max={SPACING_LIMITS.composerPad.max} step={1} value={spacing.composerPad} set={(composerPad) => setSpacing({ composerPad })} className="w-full" /></Field>
+              <Field label={`Side panel padding · ${spacing.panelPad}px`} hint="The widget rail, the workspace tile and panel, and similar docked cards."><RangeSlider label="Side panel padding" min={SPACING_LIMITS.panelPad.min} max={SPACING_LIMITS.panelPad.max} step={1} value={spacing.panelPad} set={(panelPad) => setSpacing({ panelPad })} className="w-full" /></Field>
+              <div className="pt-2 text-xs font-medium uppercase tracking-wide text-mu">Code blocks</div>
+              <Field label={`Body padding X · ${spacing.codePadX}px`}><RangeSlider label="Code body horizontal padding" min={SPACING_LIMITS.codePadX.min} max={SPACING_LIMITS.codePadX.max} step={1} value={spacing.codePadX} set={(codePadX) => setSpacing({ codePadX })} className="w-full" /></Field>
+              <Field label={`Body padding Y · ${spacing.codePadY}px`}><RangeSlider label="Code body vertical padding" min={SPACING_LIMITS.codePadY.min} max={SPACING_LIMITS.codePadY.max} step={1} value={spacing.codePadY} set={(codePadY) => setSpacing({ codePadY })} className="w-full" /></Field>
+              <Field label={`Header padding X · ${spacing.codeHeadPadX}px`}><RangeSlider label="Code header horizontal padding" min={SPACING_LIMITS.codeHeadPadX.min} max={SPACING_LIMITS.codeHeadPadX.max} step={1} value={spacing.codeHeadPadX} set={(codeHeadPadX) => setSpacing({ codeHeadPadX })} className="w-full" /></Field>
+              <Field label={`Header padding Y · ${spacing.codeHeadPadY}px`}><RangeSlider label="Code header vertical padding" min={SPACING_LIMITS.codeHeadPadY.min} max={SPACING_LIMITS.codeHeadPadY.max} step={1} value={spacing.codeHeadPadY} set={(codeHeadPadY) => setSpacing({ codeHeadPadY })} className="w-full" /></Field>
+              <div className="flex items-center justify-between gap-2 text-xs text-mu">
+                <span>Overrides apply on top of the density preset.</span>
+                <Btn v="ghost" className="px-2 py-1" disabled={!custom} onClick={() => s.patch({ prefs: { ...s.prefs, uiSpacing: {} } })}>Reset to density defaults</Btn>
+              </div>
+            </div>
+          </details>
+          </Anchor>
+          </>
+        )
+      })()}
+      </Section>
+      <Section title="Messages" desc="Extra details around each reply.">
+      {row('message-times', 'showTimestamps', 'Message times', 'Show the time each message was sent: beside the model label on replies and above your own messages.')}
+      {row('message-actions', 'alwaysShowActions', 'Always show message actions', 'Keep copy, read aloud, regenerate, branch and delete visible on every reply instead of revealing them on hover.')}
       </Section>
       <Section title="Model picker" desc="What the model menu shows and how tall it may grow.">
       <Anchor id="model-picker-labels">
@@ -1921,6 +2057,29 @@ function Look() {
       <Anchor id="model-picker-height">
       <div className="rounded-xl bg-surf p-3 space-y-2"><div className="text-sm font-medium">Model picker height</div><div className="text-xs text-mu">Maximum height of the model and playlist menu. Smaller screens constrain it to fit.</div><Field label={`Height · ${modelPickerHeight}px`}><RangeSlider label="Model picker height" min={320} max={720} step={20} value={modelPickerHeight} set={(modelPickerHeight) => s.patch({ prefs: { ...s.prefs, modelPickerHeight } })} className="w-full" /></Field></div>
       </Anchor>
+      <Anchor id="model-favorites">
+      <div className="rounded-xl bg-surf p-3 space-y-3">
+        <div>
+          <div className="text-sm font-medium">Favorite models</div>
+          <div className="text-xs text-mu">Star a model in the model menu or an endpoint's model list to pin it to a Favorites section at the top of the picker.</div>
+        </div>
+        <label className="flex items-center justify-between gap-3 text-sm">Show Favorites section<Toggle on={s.prefs.favoritesSection !== false} set={(favoritesSection) => s.patch({ prefs: { ...s.prefs, favoritesSection } })} label="Show Favorites section" /></label>
+        <label className="flex items-center justify-between gap-3 text-sm">Hide favorites from provider lists<Toggle on={s.prefs.hideFavoritesInProviders !== false} set={(hideFavoritesInProviders) => s.patch({ prefs: { ...s.prefs, hideFavoritesInProviders } })} label="Hide favorites from provider lists" /></label>
+        {(s.favs?.length ?? 0) > 0 ? <>
+          <div className="space-y-1">{(s.favs ?? []).map((ref) => {
+            const [id, model] = splitHelperRef(ref)
+            const e = s.eps.find((x) => x.id === id)
+            return <div key={ref} className="flex items-center gap-2 rounded-lg bg-bg px-2.5 py-2 text-sm">
+              <Star size={13} fill="currentColor" className="shrink-0 text-ac" />
+              <span className="min-w-0 flex-1 truncate">{e ? `${e.name} · ${modelNameOf(e, model)}` : 'Removed endpoint'}</span>
+              <button type="button" onClick={() => s.patch({ favs: (s.favs ?? []).filter((x) => x !== ref) })} title="Remove from favorites" aria-label="Remove from favorites" className="grid size-6 shrink-0 place-items-center rounded-md text-mu hover:bg-hov hover:text-tx"><X size={13} /></button>
+            </div>
+          })}</div>
+          <button type="button" onClick={() => s.patch({ favs: [] })} className="text-xs text-mu hover:text-er">Clear all favorites</button>
+        </> : <p className="text-xs text-mu">No favorites yet. Hover a model in the picker and click its star.</p>}
+        {(s.prefs.collapsedProviders?.length ?? 0) > 0 && <button type="button" onClick={() => s.patch({ prefs: { ...s.prefs, collapsedProviders: [] } })} className="block text-xs text-mu hover:text-tx">Expand all collapsed provider groups</button>}
+      </div>
+      </Anchor>
       </Section>
       <Section title="Layout" desc="Sizes and spacing of the chat, the composer and the panels.">
       <Anchor id="palette-height">
@@ -1941,6 +2100,24 @@ function Look() {
         <label className="flex items-center justify-between gap-3 text-sm">Glass composer<Toggle on={s.prefs.glassComposer !== false} set={(glassComposer) => s.patch({ prefs: { ...s.prefs, glassComposer } })} /></label>
         <div className="text-xs text-mu">Give the message box a translucent, blurred surface.</div>
       </div>
+      <Anchor id="reduce-transparency">
+      <div className="flex items-center justify-between gap-3 rounded-xl bg-surf p-3">
+        <div className="min-w-0">
+          <div className="text-sm font-medium">Reduce transparency<HelpTip text="Removes glass, background blur and dropped shadows across the app for flat, opaque surfaces. Easier to read on slow GPUs, and skips the blur work entirely." label="Help: Reduce transparency" /></div>
+          <div className="text-xs text-mu">Flat, opaque surfaces: no glass, no background blur, no dropped shadows.</div>
+        </div>
+        <Toggle on={s.prefs.reduceTransparency === true} set={(reduceTransparency) => s.patch({ prefs: { ...s.prefs, reduceTransparency } })} label="Reduce transparency" />
+      </div>
+      </Anchor>
+      <Anchor id="high-contrast">
+      <div className="flex items-center justify-between gap-3 rounded-xl bg-surf p-3">
+        <div className="min-w-0">
+          <div className="text-sm font-medium">High contrast<HelpTip text="Pushes muted text and hairline borders toward full strength, beyond what the theme defines. Works on every theme, including custom ones." label="Help: High contrast" /></div>
+          <div className="text-xs text-mu">Stronger muted text and borders for easier reading.</div>
+        </div>
+        <Toggle on={s.prefs.highContrast === true} set={(highContrast) => s.patch({ prefs: { ...s.prefs, highContrast } })} label="High contrast" />
+      </div>
+      </Anchor>
       <Anchor id="settings-size">
       <div className="rounded-xl bg-surf p-3 space-y-3">
         <div><div className="text-sm font-medium">Settings window size</div><div className="text-xs text-mu">Set the maximum width and height of the settings window. Smaller screens constrain it to fit.</div></div>
@@ -1963,6 +2140,36 @@ function Look() {
         <Field label="Body font"><FontPicker value={s.prefs.fontBody} set={(fontBody) => s.patch({ prefs: { ...s.prefs, fontBody } })} options={FONT_OPTIONS} /></Field>
         <Field label="Heading font"><FontPicker value={s.prefs.fontHeader} set={(fontHeader) => s.patch({ prefs: { ...s.prefs, fontHeader } })} options={FONT_OPTIONS} /></Field>
         <Field label="Monospace font"><FontPicker value={s.prefs.fontMono} set={(fontMono) => s.patch({ prefs: { ...s.prefs, fontMono } })} options={MONO_OPTIONS} /></Field>
+      </div>
+      </Anchor>
+      <Anchor id="text-size">
+      <div className="rounded-xl bg-surf p-3 space-y-2">
+        <div className="text-sm font-medium">Text size</div>
+        <div className="text-xs text-mu">Scales every text together — chat, replies and settings — on top of the font choices. 100% is the app default.</div>
+        <div className="flex items-center gap-3">
+          <RangeSlider label="Text size" min={85} max={135} step={5} value={s.prefs.textScale ?? 100} set={(textScale) => s.patch({ prefs: { ...s.prefs, textScale } })} className="flex-1" />
+          <span className="w-14 text-right text-sm">{s.prefs.textScale ?? 100}%</span>
+        </div>
+      </div>
+      </Anchor>
+      {row('code-wrap', 'codeWrap', 'Wrap long code lines', 'Soft-wrap long lines inside code blocks instead of scrolling them sideways.')}
+      <Anchor id="code-line-numbers">
+      <div className="flex items-center justify-between gap-3 rounded-xl bg-surf p-3">
+        <div className="min-w-0">
+          <div className="text-sm font-medium">Code line numbers</div>
+          <div className="text-xs text-mu">Show a fixed gutter of line numbers beside highlighted code blocks. Copying still copies only the code.</div>
+        </div>
+        <Toggle on={s.prefs.codeLines === true} set={(codeLines) => s.patch({ prefs: { ...s.prefs, codeLines } })} label="Code line numbers" />
+      </div>
+      </Anchor>
+      <Anchor id="code-max-height">
+      <div className="rounded-xl bg-surf p-3 space-y-2">
+        <div className="text-sm font-medium">Code block height</div>
+        <div className="text-xs text-mu">Cap how tall a code block grows before it scrolls internally. Long replies stay readable without the page jumping. 0 means no cap.</div>
+        <div className="flex items-center gap-3">
+          <RangeSlider label="Code block maximum height" min={0} max={1200} step={40} value={s.prefs.codeMaxHeight ?? 0} set={(codeMaxHeight) => s.patch({ prefs: { ...s.prefs, codeMaxHeight } })} className="flex-1" />
+          <span className="w-20 text-right text-sm">{s.prefs.codeMaxHeight ? `${s.prefs.codeMaxHeight}px` : 'No cap'}</span>
+        </div>
       </div>
       </Anchor>
       </Section>
@@ -2068,6 +2275,33 @@ function Chats() {
       {row('show-log', 'showLog', 'Show model-use details', 'List every model called for a reply, including classifiers and failures.')}
       {row('show-tps', 'showTps', 'Show generation speed', 'Show tokens per second below each reply.')}
       {row('stream-md', 'streamMd', 'Render markdown while streaming', 'Format each completed line as markdown as it arrives instead of plain text. Off shows plain text until the reply finishes.')}
+      <Anchor id="copy-markdown">
+      <div className="flex items-center justify-between gap-3 rounded-xl bg-surf p-3">
+        <div className="min-w-0">
+          <div className="text-sm font-medium">Copy replies as Markdown</div>
+          <div className="text-xs text-mu">Keep tables, code fences and links when copying a reply, with citations expanded to their real URLs. Off copies plain prose.</div>
+        </div>
+        <Toggle on={s.prefs.copyMarkdown !== false} set={(copyMarkdown) => s.patch({ prefs: { ...s.prefs, copyMarkdown } })} label="Copy replies as Markdown" />
+      </div>
+      </Anchor>
+      <Anchor id="pinned-context">
+      <div className="rounded-xl bg-surf p-3 space-y-3">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="text-sm font-medium">Include the pinned reply in context</div>
+            <div className="text-xs text-mu">A pinned reply (the pin on any answer) is added to the model's context on every request, so its guidance survives even when the original message has scrolled out of the working history.</div>
+          </div>
+          <Toggle on={s.prefs.pinContext !== false} set={(pinContext) => s.patch({ prefs: { ...s.prefs, pinContext } })} label="Include pinned reply in context" />
+        </div>
+        <div className={cx('space-y-2', s.prefs.pinContext === false && 'opacity-50')}>
+          <div className="flex items-center gap-3">
+            <RangeSlider label="Pinned reply context share" min={5} max={50} step={5} value={s.prefs.pinContextPercent ?? 50} set={(pinContextPercent) => s.patch({ prefs: { ...s.prefs, pinContextPercent } })} className="flex-1" />
+            <span className="w-20 text-right text-sm">≤{s.prefs.pinContextPercent ?? 50}%</span>
+          </div>
+          <p className="text-[11px] text-mu">The pin is included whole while it fits under this share of the model's context window; past that it is truncated. Keeping it at or below 50% leaves room for the conversation itself.</p>
+        </div>
+      </div>
+      </Anchor>
       {row('remote-images', 'remoteImages', 'Load remote images', 'Render images that replies link to over the network. Off keeps them behind a click-to-load button, so reading a reply never contacts third-party hosts.')}
       <Anchor id="stream-fade">
       <div className="rounded-xl bg-surf p-3 space-y-3">
@@ -2104,6 +2338,13 @@ function Chats() {
       </Anchor>
       <Section title="Behavior" desc="How the app handles sending messages and opening chats.">
       {row('enter-sends', 'enterSends', 'Enter sends the message', 'Turn off to send with the button and use Enter for new lines.')}
+      <Anchor id="prompt-recall">
+      <div className="rounded-xl bg-surf p-3 space-y-2">
+        <div className="text-sm font-medium">Prompt recall (↑ / ↓)</div>
+        <div className="text-xs text-mu">When the up and down arrows recall the messages you sent this session. While walking, both keys step through the history; typing exits it. Off also stops recording them.</div>
+        <Seg v={normPromptRecall(s.prefs.promptRecall)} set={(promptRecall) => s.patch({ prefs: { ...s.prefs, promptRecall: normPromptRecall(promptRecall) } })} opts={PROMPT_RECALL_MODES as unknown as [string, string][]} />
+      </div>
+      </Anchor>
       {row('auto-title', 'autoTitle', 'Auto-generate chat names', 'Automatically generate a concise title after the first reply.')}
       <Anchor id="startup">
       <div className="rounded-xl bg-surf p-3 space-y-2">

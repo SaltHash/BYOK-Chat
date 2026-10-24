@@ -3,7 +3,7 @@ import { useShallow } from 'zustand/react/shallow'
 import { useS, exportChat, featOn } from './store'
 import { combo, rec } from './engine'
 import { clampSidebarWidth, clampWidgetWidth } from './layout'
-import { canUseDOM, useThemeCss, usePanelResize } from './hooks'
+import { canUseDOM, useThemeCss, useStyleCss, useVisualPrefs, usePanelResize } from './hooks'
 import { useFontCss, sanitizeFontName } from './fonts'
 import { nextThemePatch, stepModelSelection, stepPromptSelection } from './selection'
 import { Sidebar } from './components/Sidebar'
@@ -47,8 +47,12 @@ export default function App() {
     if (window.location.hash !== hash) window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}${hash}`)
   }, [cfg, shareId])
   const resize = usePanelResize()
-  useThemeCss({ themeMode, themeDark, themeLight, customDarkColors, customLightColors, modalBlur: prefs.modalBlur ?? 12 })
+  // Reduced transparency removes the modal blur entirely rather than dimming
+  // it, so the overlay switch (below) is the single source of the flat look.
+  useThemeCss({ themeMode, themeDark, themeLight, customDarkColors, customLightColors, modalBlur: prefs.reduceTransparency ? 0 : prefs.modalBlur ?? 12 })
   useFontCss(prefs.fontBody, prefs.fontHeader, prefs.fontMono)
+  useStyleCss(prefs.stylePreset, prefs.density, prefs.uiSpacing)
+  useVisualPrefs(prefs.textScale, prefs.codeWrap, prefs.reduceTransparency, prefs.highContrast)
   useEffect(() => {
     if (!canUseDOM()) return
     const purge = () => {
@@ -122,6 +126,17 @@ export default function App() {
     const f = (e: BeforeUnloadEvent) => { if (useS.getState().busy) e.preventDefault() }
     window.addEventListener('beforeunload', f)
     return () => window.removeEventListener('beforeunload', f)
+  }, [])
+  // Opt-in local backups run lazily (boot and returning to the tab), not on a
+  // timer: the snapshot is only useful once a day and never worth blocking a
+  // keystroke for.
+  useEffect(() => {
+    if (!canUseDOM()) return
+    const run = () => { void import('./storage/localBackup').then(({ maybeRunDailyBackup }) => maybeRunDailyBackup()).catch(() => {}) }
+    const boot = setTimeout(run, 5000)
+    const visibility = () => { if (document.visibilityState === 'visible') run() }
+    document.addEventListener('visibilitychange', visibility)
+    return () => { clearTimeout(boot); document.removeEventListener('visibilitychange', visibility) }
   }, [])
   useEffect(() => {
     if (!canUseDOM()) return

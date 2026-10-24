@@ -9,6 +9,7 @@ export const DURABLE_CHATS_KEY = 'chats'
 export const DURABLE_WORKSPACES_KEY = 'workspaces'
 export const DURABLE_BLOBS_PREFIX = 'blob:'
 export const DURABLE_META_KEY = 'meta'
+export const DURABLE_BACKUPS_KEY = 'backups'
 
 export type DurableMeta = { migratedAt?: number; storeVersion?: number; backend?: 'opfs' | 'idb' | 'memory' }
 
@@ -177,6 +178,34 @@ export async function durableGetMeta(): Promise<DurableMeta | null> {
 
 export async function durableSetMeta(m: DurableMeta): Promise<void> {
   await idbSet(DURABLE_META_KEY, m)
+}
+
+/* ---- local scheduled backups ----
+ * A small rolling set of complete config snapshots, kept in IndexedDB on this
+ * device only. They are deliberately separate from Neon sync and from the
+ * live chat mirror: clearing one backup never touches the live store. */
+export type StoredBackup = { id: string; at: number; bytes: number; json: string }
+
+export async function durablePutBackup(entry: StoredBackup, keep = 5): Promise<void> {
+  const list = (await idbGet<StoredBackup[]>(DURABLE_BACKUPS_KEY)) ?? []
+  const next = [entry, ...list.filter((x) => x.id !== entry.id)].slice(0, Math.max(1, keep))
+  await idbSet(DURABLE_BACKUPS_KEY, next)
+}
+
+/** Backup metadata without the JSON bodies (cheap for list UIs). */
+export async function durableListBackups(): Promise<Array<Omit<StoredBackup, 'json'>>> {
+  const list = (await idbGet<StoredBackup[]>(DURABLE_BACKUPS_KEY)) ?? []
+  return list.map(({ json, ...meta }) => ({ ...meta, bytes: meta.bytes || json?.length || 0 }))
+}
+
+export async function durableGetBackup(id: string): Promise<string | null> {
+  const list = (await idbGet<StoredBackup[]>(DURABLE_BACKUPS_KEY)) ?? []
+  return list.find((x) => x.id === id)?.json ?? null
+}
+
+export async function durableDeleteBackup(id: string): Promise<void> {
+  const list = (await idbGet<StoredBackup[]>(DURABLE_BACKUPS_KEY)) ?? []
+  await idbSet(DURABLE_BACKUPS_KEY, list.filter((x) => x.id !== id))
 }
 
 /* Erase every durable copy (chats, workspaces, blobs, meta). Without this a

@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { THEME_COLOR_KEYS, themeKeyOf, themeCustomOf } from './store'
 import { clampSidebarWidth, clampWidgetWidth, roundFrac } from './layout'
+import { normDensity, normStylePreset, spacingVars, type SpacingOverrides } from './style'
 import { createFrameThrottle } from './throttle'
 import { useS } from './store'
 
@@ -32,6 +33,43 @@ export function useThemeCss(opts: {
       root.style.colorScheme = luminance > 145 ? 'light' : 'dark'
     } else root.style.removeProperty('color-scheme')
   }, [theme, customColors, opts.modalBlur])
+}
+
+/** Applies the style preset (`data-style`), the density (`data-density`) and
+ *  the resolved spacing tokens. Radius and shadow values live in index.css so
+ *  the preset is correct before React mounts; this only selects one and writes
+ *  the spacing pixels, which depend on user overrides. */
+export function useStyleCss(preset: unknown, density: unknown, spacing?: SpacingOverrides): void {
+  const style = normStylePreset(preset)
+  const mode = normDensity(density)
+  useEffect(() => {
+    if (!canUseDOM()) return
+    const root = document.documentElement
+    root.dataset.style = style
+    root.dataset.density = mode
+    for (const [name, value] of Object.entries(spacingVars(mode, spacing))) root.style.setProperty(name, value)
+  }, [style, mode, spacing])
+}
+
+/** Applies the visual-detail prefs that are pure document attributes: the
+ *  root text-size scale (a percentage of the browser default, so every rem
+ *  size in the app scales together), code-block soft-wrapping, the flat
+ *  (reduced-transparency) switch and the high-contrast switch. Nothing here
+ *  changes the layout itself. */
+export function useVisualPrefs(textScale: unknown, codeWrap: unknown, reduceTransparency: unknown, highContrast: unknown): void {
+  useEffect(() => {
+    if (!canUseDOM()) return
+    const root = document.documentElement
+    const scale = typeof textScale === 'number' && Number.isFinite(textScale) ? Math.min(200, Math.max(50, textScale)) : 100
+    if (scale === 100) root.style.removeProperty('font-size')
+    else root.style.fontSize = `${Math.round(scale)}%`
+    if (codeWrap === true) root.dataset.codewrap = ''
+    else delete root.dataset.codewrap
+    if (reduceTransparency === true) root.dataset.flat = ''
+    else delete root.dataset.flat
+    if (highContrast === true) root.dataset.contrast = ''
+    else delete root.dataset.contrast
+  }, [textScale, codeWrap, reduceTransparency, highContrast])
 }
 
 /** Run a horizontal pointer drag. `onMove(clientX)` fires at most once per

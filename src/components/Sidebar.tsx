@@ -1,6 +1,6 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useShallow } from 'zustand/react/shallow'
-import { Plus, Clock, Search, PanelLeftClose, Pin, Pencil, Trash2, MessageSquare, Server, ListMusic, ScrollText, Terminal, Wrench, Settings, Palette, PanelRight, Folder, FolderPlus, FolderMinus, ChevronRight, Bookmark, Download } from 'lucide-react'
+import { Plus, Clock, Search, PanelLeftClose, Pin, Pencil, Trash2, MessageSquare, Server, ListMusic, ScrollText, Terminal, Wrench, Settings, Palette, PanelRight, Folder, FolderPlus, FolderMinus, ChevronRight, Bookmark, Download, Archive, ArchiveRestore } from 'lucide-react'
 import { useS, chatMd, dl, THEMES, DARK_THEMES, LIGHT_THEMES, themeKeyOf, DEFAULT_LIBRARY_SHOW, featOn, type Chat, type FeatureId } from '../store'
 import { searchChats } from '../recall'
 import { clampSidebarWidth } from '../layout'
@@ -38,7 +38,7 @@ function RowBody({ c, mv, del, dnd, container, index }: RowProps) {
       {...h} title="Drag to move to a project"
       className={cx('dnd-handle group flex cursor-grab items-center rounded-lg pr-1 text-sm', selected ? 'bg-hov' : 'hover:bg-surf', dragging && 'opacity-25')}>
       {ed ? <Name v={c.title} save={(t) => useS.getState().rename(c.id, t)} done={() => setEd(false)} /> : (
-        <button onDoubleClick={() => setEd(true)} onClick={() => useS.getState().patch({ chat: c.id, activeProject: '' })} className="flex min-w-0 flex-1 items-center gap-2.5 px-2.5 py-2 text-left">
+        <button onDoubleClick={() => setEd(true)} onClick={() => useS.getState().patch({ chat: c.id, activeProject: '' })} className="side-item flex min-w-0 flex-1 items-center gap-2.5 px-2.5 text-left">
           {c.pin ? <Pin size={15} className="shrink-0 text-ac" /> : c.temporary ? <Clock size={15} className="shrink-0 text-mu" /> : <MessageSquare size={15} className="shrink-0 text-mu" />}
           <span className="truncate">{c.title}{c.temporary ? ' · temporary' : ''}</span>
         </button>
@@ -54,6 +54,7 @@ function RowBody({ c, mv, del, dnd, container, index }: RowProps) {
         }} className={act}><Download size={14} /></button>
         <button title="Move to project" onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); mv(c.id, r.left, r.bottom + 4) }} className={act}><Folder size={14} /></button>
         <button title={c.pin ? 'Unpin' : 'Pin'} onClick={() => useS.getState().chatOp(c.id, 'pin')} className={act}><Pin size={14} /></button>
+        <button title={c.archived ? 'Restore from archive' : 'Archive chat (kept, hidden from the main list)'} onClick={() => useS.getState().chatOp(c.id, 'archive')} className={act}>{c.archived ? <ArchiveRestore size={14} /> : <Archive size={14} />}</button>
         <button title="Delete chat (hold Shift to skip confirmation)" onClick={(e) => del(c.id, e.shiftKey)} className={cx(act, 'hover:text-er')}><Trash2 size={14} /></button>
       </span>
     </div>
@@ -62,7 +63,7 @@ function RowBody({ c, mv, del, dnd, container, index }: RowProps) {
 
 const Row = memo(RowBody, (a, b) =>
   a.container === b.container && a.index === b.index && a.dnd === b.dnd && a.mv === b.mv && a.del === b.del
-  && a.c.id === b.c.id && a.c.title === b.c.title && a.c.pin === b.c.pin && a.c.temporary === b.c.temporary)
+  && a.c.id === b.c.id && a.c.title === b.c.title && a.c.pin === b.c.pin && a.c.temporary === b.c.temporary && a.c.archived === b.c.archived)
 
 export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; toggle: () => void; cfg: (t: string) => void; width?: number }) {
   /* Narrow slice: the sidebar shows chat metadata, project names and library
@@ -77,6 +78,9 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
   })))
   const [clock, setClock] = useState(Date.now())
   const [q, setQ] = useState('')
+  // Archived chats are kept out of every normal section and only rendered in
+  // their own view, so the sidebar stays a to-do list of live conversations.
+  const [showArchived, setShowArchived] = useState(false)
   const [fe, setFe] = useState('')
   const [menu, setMenu] = useState<{ id: string; x: number; y: number } | null>(null)
   const [deleteId, setDeleteId] = useState('')
@@ -123,9 +127,10 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
   // Filter and partition in single passes, memoized: the list only changes
   // when chats or the query change, not on every unrelated store write.
   const L = useMemo(
-    () => s.chats.filter((c) => !k || c.title.toLowerCase().includes(k) || c.msgs.some((m) => m.t.toLowerCase().includes(k))),
-    [s.chats, k],
+    () => s.chats.filter((c) => (showArchived ? c.archived === true : c.archived !== true) && (!k || c.title.toLowerCase().includes(k) || c.msgs.some((m) => m.t.toLowerCase().includes(k)))),
+    [s.chats, k, showArchived],
   )
+  const archivedCount = useMemo(() => s.chats.filter((c) => c.archived).length, [s.chats])
   const { temporary, pinned, free } = useMemo(() => {
     const out = { temporary: [] as Chat[], pinned: [] as Chat[], free: [] as Chat[] }
     for (const c of L) {
@@ -146,12 +151,12 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
     // Count only what the project actually lists: pinned and temporary chats
     // are rendered in their own sections, so counting them here made the
     // badge disagree with the visible rows.
-    for (const c of s.chats) if (c.project && !c.pin && !c.temporary) m.set(c.project, (m.get(c.project) ?? 0) + 1)
+    for (const c of s.chats) if (c.project && !c.pin && !c.temporary && !c.archived) m.set(c.project, (m.get(c.project) ?? 0) + 1)
     return m
   }, [s.chats])
   // Ranked message search (BM25): one hit per chat with a text snippet.
   // Jump-to-message sets flashMsg, which Chat highlights and scrolls to.
-  const hits = useMemo(() => (k ? searchChats(s.chats, q, 30) : []), [s.chats, q, k])
+  const hits = useMemo(() => (k ? searchChats(s.chats.filter((c) => (showArchived ? c.archived === true : c.archived !== true)), q, 30) : []), [s.chats, q, k, showArchived])
   const jump = (chatId: string, msgId: string | null) => {
     s.patch({ chat: chatId, flashMsg: msgId, activeProject: '' })
     if (typeof window !== 'undefined' && window.innerWidth < 768) toggle()
@@ -447,10 +452,10 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
   const tempBase = tempPref >= 6 ? temporary : tempPref === 0 ? temporary.filter((c) => c.id === s.chat) : temporary.slice(0, tempPref)
   const tempVisible = tempOpen ? temporary : tempBase
   const tempMore = temporary.length - tempBase.length
-  const item = 'flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm hover:bg-surf'
+  const item = 'side-item flex w-full items-center gap-2.5 rounded-lg px-2.5 text-left text-sm hover:bg-surf'
   const safeWidth = clampSidebarWidth(width)
   return (
-    <aside ref={asideRef} style={{ width: safeWidth, maxWidth: '90vw' }} className="z-20 flex min-w-0 shrink-0 flex-col gap-3 border-r border-bor bg-side p-3 max-md:fixed max-md:inset-y-0 max-md:left-0">
+    <aside ref={asideRef} style={{ width: safeWidth, maxWidth: '90vw', padding: 'var(--ui-side-pad)', gap: 'var(--ui-side-gap)' }} className="side-shell z-20 flex min-w-0 shrink-0 flex-col border-r border-bor bg-side max-md:fixed max-md:inset-y-0 max-md:left-0">
       <div className="flex gap-2">
         <Btn v="solid" icon={s.prefs.temporaryByDefault ? Clock : Plus} title={s.prefs.temporaryByDefault ? 'New temporary chat' : 'New chat'} className="flex-1" onClick={() => s.newChat()}>{s.prefs.temporaryByDefault ? 'Temporary chat' : 'New chat'}</Btn>
         <Btn icon={s.prefs.temporaryByDefault ? Plus : Clock} title={s.prefs.temporaryByDefault ? 'New regular chat' : 'New temporary chat'} onClick={() => s.newChat(!s.prefs.temporaryByDefault)} />
@@ -460,41 +465,55 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
         <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-mu" />
         <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search titles and messages" className="h-9 w-full rounded-lg bg-surf pl-9 pr-3 text-sm outline-none focus:ring-2 focus:ring-ac/40" />
       </div>
+      <div role="group" aria-label="Chat filter" className="flex items-center gap-1 rounded-lg bg-surf p-0.5 text-xs">
+        <button type="button" aria-pressed={!showArchived} onClick={() => setShowArchived(false)} className={cx('flex-1 rounded-md px-2 py-1 text-left font-medium', !showArchived ? 'bg-hov text-tx' : 'text-mu hover:text-tx')}>Chats</button>
+        <button type="button" aria-pressed={showArchived} onClick={() => setShowArchived(true)} title="Show chats moved out of the main list" className={cx('flex flex-1 items-center justify-center gap-1.5 rounded-md px-2 py-1 font-medium', showArchived ? 'bg-hov text-tx' : 'text-mu hover:text-tx')}>
+          <Archive size={12} />Archived{archivedCount ? <span className="text-[10px] opacity-70">{archivedCount}</span> : null}
+        </button>
+      </div>
       <nav ref={navRef} data-dnd-scroll="" className="-mx-1 flex-1 space-y-3 overflow-y-auto px-1">
         {k ? (
           <div>
             <div className="px-2.5 pb-1 text-xs font-medium text-mu">{hits.length ? `Top matches (${hits.length})` : 'No matches'}</div>
-            {hits.map((h) => {
+            <div className="side-rows">{hits.map((h) => {
               const c = s.chats.find((x) => x.id === h.chatId)
               if (!c) return null
               return (
-                <button key={h.chatId} onClick={() => jump(h.chatId, h.msgId)} className={cx('block w-full rounded-lg px-2.5 py-2 text-left text-sm hover:bg-surf', s.chat === h.chatId && 'bg-hov')}>
+                <button key={h.chatId} onClick={() => jump(h.chatId, h.msgId)} className={cx('side-item block w-full rounded-lg px-2.5 text-left text-sm hover:bg-surf', s.chat === h.chatId && 'bg-hov')}>
                   <span className="flex items-center gap-2">
                     {c.pin ? <Pin size={13} className="shrink-0 text-ac" /> : c.temporary ? <Clock size={13} className="shrink-0 text-mu" /> : <MessageSquare size={13} className="shrink-0 text-mu" />}
                     <span className="min-w-0 flex-1 truncate font-medium">{c.title}</span>
                   </span>
                   {(h.pre || h.match) && (
-                    <span className="mt-1 block truncate text-xs text-mu">{h.pre}<mark className="rounded bg-ac/25 px-0.5 text-tx">{h.match}</mark>{h.post}</span>
+                    <span className="mt-1 block truncate text-xs text-mu">{h.pre}<mark className="rounded-sm bg-ac/25 px-0.5 text-tx">{h.match}</mark>{h.post}</span>
                   )}
                 </button>
               )
             })}
+            </div>
           </div>
         ) : (
         <>
-        {!!pinned.length && <div><div className="px-2.5 pb-1 text-xs font-medium text-mu">Pinned</div>{rows(pinned, 'pinned')}</div>}
+        {showArchived ? (
+          <div ref={registerZone('archived')}>
+            <div className="px-2.5 pb-1 text-xs font-medium text-mu">Archived chats</div>
+            <div className="side-rows">{rows(L, 'archived')}</div>
+            {!L.length && <p className="px-2.5 py-2 text-sm text-mu">{k ? 'No archived chats match.' : 'No archived chats. Use the archive button on a chat to move it here.'}</p>}
+          </div>
+        ) : (<>
+        {!!pinned.length && <div><div className="px-2.5 pb-1 text-xs font-medium text-mu">Pinned</div><div className="side-rows">{rows(pinned, 'pinned')}</div></div>}
         <div className="flex flex-col rounded-lg" style={{ maxHeight: tempMaxH }}>
           <div className="shrink-0 px-2.5 pb-1 text-xs font-medium text-mu">Temporary chats</div>
-          <div className="min-h-0 overflow-y-auto">
+          <div className="side-rows min-h-0 overflow-y-auto">
             {tempVisible.map((c) => <div key={c.id} className={cx('group flex items-center rounded-lg pr-2 text-sm', s.chat === c.id ? 'bg-hov' : 'hover:bg-surf')}>
-              <button onClick={() => s.patch({ chat: c.id, activeProject: '' })} className="flex min-w-0 flex-1 items-center gap-2.5 rounded-lg px-2.5 py-2 text-left">
+              <button onClick={() => s.patch({ chat: c.id, activeProject: '' })} className="side-item flex min-w-0 flex-1 items-center gap-2.5 rounded-lg px-2.5 text-left">
                 <Clock size={15} className="shrink-0 text-mu" /><span className="truncate">{c.title}</span>
               </button>
               <span title={c.expiresAt ? `Deletes in ${timeLeft(c)}` : 'Deletes when you leave'} className="shrink-0 text-xs text-mu">{timeLeft(c)}</span>
               <button title="Save as a permanent chat" aria-label={`Save ${c.title} as a permanent chat`} onClick={() => s.promoteChat(c.id)} className={cx(act, 'hidden shrink-0 max-md:grid md:group-hover:grid')}><Bookmark size={14} /></button>
               <button title="Delete chat (hold Shift to skip confirmation)" onClick={(e) => del(c.id, e.shiftKey)} className={cx(act, 'ml-1 hidden shrink-0 hover:text-er max-md:grid md:group-hover:grid')}><Trash2 size={14} /></button>
             </div>)}
-            {!temporary.length && <p className="px-2.5 py-1 text-sm text-mu">No temporary chats. Nothing to clean up, nice.</p>}
+            {!temporary.length && <p className="px-2.5 py-1 text-sm text-mu">Nothing here yet.</p>}
           </div>
           {(tempMore > 0 || tempOpen) && (
             <button onClick={() => setTempOpen((v) => !v)} aria-expanded={tempOpen} className="mt-0.5 shrink-0 rounded-lg px-2.5 py-1.5 text-left text-xs font-medium text-mu hover:bg-surf hover:text-tx">
@@ -517,10 +536,10 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
                 {fe === f.id ? <Name v={f.name} save={(t) => s.renameProject(f.id, t)} done={() => setFe('')} /> : (
                   <button onClick={() => s.openProject(f.id)} onDoubleClick={() => setFe(f.id)}
                     title="Open the project overview"
-                    aria-expanded={o} className="flex min-w-0 flex-1 items-center gap-2 px-2.5 py-2 text-left">
+                    aria-expanded={o} className="side-item flex min-w-0 flex-1 items-center gap-2 px-2.5 text-left">
                     <span className="relative grid shrink-0 place-items-center" aria-hidden="true">
                       <Folder size={20} className={active ? 'text-ac' : 'text-mu'} />
-                      <span className={cx('absolute inset-0 flex items-center justify-center pt-[3px] text-[9px] font-semibold leading-none', active ? 'text-ac' : 'text-mu')}>{projectCounts.get(f.id) ?? 0}</span>
+                      <span className={cx('absolute inset-0 flex items-center justify-center pt-[2px] text-[9px] font-semibold leading-none', active ? 'text-ac' : 'text-mu')}>{projectCounts.get(f.id) ?? 0}</span>
                     </span><span className="min-w-0 truncate">{f.name}<span className="sr-only"> ({projectCounts.get(f.id) ?? 0} chats)</span></span>
                     <ChevronRight size={14} className={cx('shrink-0 text-mu transition-transform', o && 'rotate-90')} />
                   </button>
@@ -530,15 +549,16 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
                   <button title="Delete project (its chats are kept)" onClick={() => setProjectId(f.id)} className={cx(act, 'hover:text-er')}><Trash2 size={14} /></button>
                 </span>
               </div>
-              {o && <div className="ml-3">{rows(l, f.id)}{!l.length && !dragId && <p className="px-2.5 py-1 text-xs text-mu">Drop chats here.</p>}</div>}
+              {o && <div className="ml-3"><div className="side-rows">{rows(l, f.id)}{!l.length && !dragId && <p className="px-2.5 py-1 text-xs text-mu">Drop chats here.</p>}</div></div>}
             </div>
           )
         })}
         <div ref={registerZone('')} className="rounded-lg">
           <div className="px-2.5 pb-1 text-xs font-medium text-mu">Recent</div>
-          {rows(free, '')}
+          <div className="side-rows">{rows(free, '')}</div>
           {!free.length && <p className="px-2.5 py-1 text-sm text-mu">{!s.chats.length ? 'No chats yet.' : k ? 'No chats match.' : 'Nothing here. Drop a chat to unfile it.'}</p>}
         </div>
+        </>)}
         </>
         )}
       </nav>

@@ -230,7 +230,7 @@ export function mapNetworkError(provider: ProviderConfig, url: string): MappedPr
   let host = url
   try { host = new URL(url).host || url } catch { /* keep raw */ }
   const cors = provider.cors === 'blocked'
-    ? ' This provider does not send browser CORS headers, so its requests have to travel through this app\'s server relay (Settings → Endpoints → Request routing).'
+    ? ' This provider does not send browser CORS headers, so its requests have to travel through this app\'s same-origin proxy (Settings → Endpoints → Request routing).'
     : provider.cors === 'unverified'
       ? ' Browser CORS for this provider is unverified.'
       : ''

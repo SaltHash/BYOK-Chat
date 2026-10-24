@@ -22,7 +22,7 @@ export type CatalogEntry = {
  *  `base`, and (for branded endpoints) `openrouter` are already scoped. */
 export type CatalogSource = 'provider' | 'openrouter' | 'litellm' | 'base'
 
-export type CatalogEndpoint = { url?: string; key?: string; type?: 'openai' | 'anthropic'; auth?: EndpointAuth; headers?: string; preset?: string; name?: string; endpointId?: string; endpointFilter?: string; accountId?: string; gatewayId?: string }
+export type CatalogEndpoint = { id?: string; url?: string; key?: string; type?: 'openai' | 'anthropic'; auth?: EndpointAuth; headers?: string; preset?: string; name?: string; endpointId?: string; endpointFilter?: string; accountId?: string; gatewayId?: string }
 
 /** Unit used by a provider's pricing fields, normalized to USD per 1M tokens. */
 type PriceUnit = 'perToken' | 'perMillion' | 'centsPer100M' | 'none'
@@ -680,4 +680,67 @@ export async function fetchModelCatalog(
   }
 
   return { entries: [], error: errors.filter(Boolean).join('; ') || 'No model catalog was available.' }
+}
+
+/* ---- session cache + idle prefetch ----
+ * Opening Endpoints used to wait for a live catalog request every time. The
+ * catalog is stable for minutes, and the picker is the only consumer, so a
+ * short-lived session cache plus an idle prefetch makes the open instant while
+ * still refreshing when the user asks. Keys include a non-reversible hint of
+ * the key (length + last four characters) so changing credentials cannot serve
+ * another key's catalog. */
+export const CATALOG_CACHE_TTL_MS = 10 * 60_000
+
+type CatalogResult = { entries: CatalogEntry[]; error?: string; source?: CatalogSource; stale?: boolean }
+type CacheRow = { at: number; result: CatalogResult }
+const cache = new Map<string, CacheRow>()
+const inflight = new Map<string, Promise<CatalogResult>>()
+
+const keyHint = (e: CatalogEndpoint): string => {
+  const key = String(e.key ?? '')
+  return `${key.length}:${key.slice(-4)}`
+}
+
+/** Stable cache key for an endpoint's catalog. */
+export function catalogCacheKey(e: CatalogEndpoint): string {
+  return [e.id ?? '', e.url ?? '', e.preset ?? '', e.endpointId ?? '', e.endpointFilter ?? '', e.accountId ?? '', e.gatewayId ?? '', keyHint(e)].join('|')
+}
+
+/** Drop one endpoint's cached catalog (or all of them). The "Retry model-list
+ *  checks" button clears this too, so a refresh really refetches. */
+export function clearCatalogCache(id?: string): void {
+  if (!id) { cache.clear(); return }
+  for (const k of [...cache.keys()]) if (k.startsWith(`${id}|`)) cache.delete(k)
+}
+
+/** Catalog request shared by the picker and the idle prefetch, with a short
+ *  TTL. Concurrent callers for the same endpoint share one request. */
+export async function fetchModelCatalogCached(
+  e: CatalogEndpoint,
+  fetchFn: typeof fetch = providerFetch,
+  opts: { force?: boolean } = {},
+): Promise<CatalogResult> {
+  const key = catalogCacheKey(e)
+  const hit = cache.get(key)
+  if (!opts.force && hit && Date.now() - hit.at < CATALOG_CACHE_TTL_MS) return hit.result
+  const running = inflight.get(key)
+  if (running) return running
+  const p = fetchModelCatalog(e, fetchFn)
+    .then((result) => { cache.set(key, { at: Date.now(), result }); return result })
+    .finally(() => { inflight.delete(key) })
+  inflight.set(key, p)
+  return p
+}
+
+/** Warm an endpoint's catalog during idle time. Safe to call repeatedly: a
+ *  cached or in-flight request is a no-op. Errors are ignored — prefetching is
+ *  a convenience, never a requirement. */
+export function prefetchModelCatalog(e: CatalogEndpoint): void {
+  if (!e?.url?.trim()) return
+  const key = catalogCacheKey(e)
+  if (cache.has(key) || inflight.has(key)) return
+  const run = () => { void fetchModelCatalogCached(e).catch(() => {}) }
+  const idle = (globalThis as { requestIdleCallback?: (fn: () => void, opts?: { timeout: number }) => void }).requestIdleCallback
+  if (typeof idle === 'function') idle(run, { timeout: 4000 })
+  else if (typeof setTimeout === 'function') setTimeout(run, 1200)
 }

@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
-import { Plus, FileUp, FileText, Image as ImageIcon, ArrowUp, Square, CornerDownRight, ChevronRight, ListMusic, Cpu, ScrollText, Settings, Search, BookOpen, X, TriangleAlert, Wrench, Link as LinkIcon, ScanText, Mic } from 'lucide-react'
-import { useS, usable, modelsOf, modelNameOf, featOn, normDocs, normSearch, fetchOptsOf, effortClassifierOf, type Att, type Ep } from '../store'
+import { Plus, FileUp, FileText, Image as ImageIcon, ArrowUp, Square, CornerDownRight, ChevronRight, ListMusic, Cpu, ScrollText, Settings, Search, BookOpen, X, TriangleAlert, Wrench, Link as LinkIcon, ScanText, Mic, Star, GripVertical } from 'lucide-react'
+import { useS, usable, modelsOf, modelNameOf, featOn, normDocs, normSearch, fetchOptsOf, effortClassifierOf, helperRef, splitHelperRef, toggleFavRef, type Att, type Ep } from '../store'
 import { CI, orderTools } from '../meta'
 import { composerWidth } from '../layout'
 import { can, readAtts, ocrImage, fetchPage } from '../engine'
@@ -11,6 +11,7 @@ import { Btn, Item, Pop, Seg, RangeSlider, Toggle, cx, type Ic } from './ui'
 import { MentionBanner, MentionInfo } from './Mention'
 import { Notice } from './Extra'
 import { dictationAvailable, startDictation, stopSpeaking, normVoice, type Dictation } from '../voice'
+import { getPromptHistory, pushPromptHistory } from '../promptHistory'
 
 const chip = 'flex h-9 min-w-0 items-center gap-2 rounded-lg px-2.5 text-sm text-mu hover:bg-hov hover:text-tx'
 
@@ -164,21 +165,53 @@ function ModelMenu({ close, cfg }: { close: () => void; cfg: (t: string) => void
   const plsOn = featOn(s, 'playlists')
   const [t, setT] = useState<'pl' | 'ep'>(plsOn ? s.sel?.k ?? 'ep' : 'ep')
   const [q, setQ] = useState('')
-  const L: any[] = (t === 'pl' && plsOn ? s.pls : s.eps).filter((x) => x.name.toLowerCase().includes(q.toLowerCase()) || (t === 'ep' && modelsOf(x as Ep).some((model) => model.toLowerCase().includes(q.toLowerCase()))))
+  const query = q.trim().toLowerCase()
+  const favs = Array.isArray(s.favs) ? s.favs : []
+  const favSet = new Set(favs)
+  const favsOn = s.prefs.favoritesSection !== false
+  const hideFavs = favsOn && s.prefs.hideFavoritesInProviders !== false
+  const collapsed = s.prefs.collapsedProviders ?? []
+  const labelOf = (x: Ep, model: string) => {
+    const primary = s.prefs.modelPrimary ?? 'name'
+    const secondary = s.prefs.modelSecondary ?? 'none'
+    const alias = modelNameOf(x, model)
+    const title = (primary === 'name' ? alias : model).replace(/^~+/, '')
+    const sub = secondary === 'provider' ? x.name : secondary === 'none' || secondary === primary ? '' : (secondary === 'name' ? alias : model).replace(/^~+/, '')
+    return { title, sub }
+  }
+  const matches = (x: Ep, model: string) => !query || x.name.toLowerCase().includes(query) || model.toLowerCase().includes(query) || modelNameOf(x, model).toLowerCase().includes(query)
+  // A model row gets a star so it can be favorited without leaving the menu.
+  const modelRow = (x: Ep, model: string, keyPrefix = '') => {
+    const { title, sub } = labelOf(x, model)
+    const favorite = favSet.has(helperRef(x.id, model))
+    return <Item key={`${keyPrefix}${x.id}:${model}`} icon={Cpu} off={x.on === false} on={s.sel?.id === x.id && s.sel?.model === model} sub={keyPrefix ? x.name : sub} star={{ on: favorite, set: () => s.patch({ favs: toggleFavRef(s.favs, helperRef(x.id, model)) }) }} onClick={() => { s.patch({ sel: { k: 'ep', id: x.id, model } }); close() }}>{title}</Item>
+  }
+  const L: any[] = (t === 'pl' && plsOn ? s.pls : s.eps).filter((x) => x.name.toLowerCase().includes(query) || (t === 'ep' && modelsOf(x as Ep).some((model) => matches(x as Ep, model))))
+  // Favorites are addressed by endpoint + model, so a starred model keeps its
+  // identity when it also appears in a provider group.
+  const favModels = (t === 'ep' ? favs : []).flatMap((ref) => {
+    const [id, model] = splitHelperRef(ref)
+    const x = s.eps.find((e) => e.id === id)
+    return x && model && modelsOf(x).includes(model) ? [{ x, model }] : []
+  }).filter(({ x, model }) => matches(x, model))
   const activeEp = t === 'ep' && s.sel?.k === 'ep' && s.sel.model ? s.eps.find((x) => x.id === s.sel?.id) : undefined
   const activeModel = activeEp && s.sel?.model
   const efforts: string[] = activeModel ? activeEp?.modelEfforts?.[activeModel] ?? [] : []
   const effortRank: Record<string, number> = { none: 0, minimal: 1, low: 2, medium: 3, high: 4, xhigh: 5, max: 6, auto: -1 }
-  const effortLevels = [...efforts].sort((a, b) => (effortRank[a.toLowerCase()] ?? 50) - (effortRank[b.toLowerCase()] ?? 50))
+  // Dedupe case-insensitively: a provider list that already contains "none"
+  // must not produce a second, synthetic one.
+  const effortLevels = [...new Map(efforts.filter(Boolean).map((x) => [x.toLowerCase(), x])).values()]
+    .sort((a, b) => (effortRank[a.toLowerCase()] ?? 50) - (effortRank[b.toLowerCase()] ?? 50))
   const autoOn = !!effortClassifierOf(s)
-  const effortChoices = [...(autoOn ? ['auto'] : []), 'none', ...effortLevels]
+  const effortChoices = [...(autoOn ? ['auto'] : []), ...effortLevels]
   const storedEffort = activeModel ? s.effort[activeModel] : undefined
-  const effortValue = storedEffort && effortChoices.includes(storedEffort) ? storedEffort : (effortLevels[0] ?? (autoOn ? 'auto' : 'none'))
+  const effortValue = storedEffort && effortChoices.includes(storedEffort) ? storedEffort : (effortLevels[0] ?? (autoOn ? 'auto' : ''))
   const effortIndex = Math.max(0, effortChoices.indexOf(effortValue))
-  const activeEffort = effortChoices[effortIndex]
+  const activeEffort = effortChoices[effortIndex] ?? ''
+  const toggleProvider = (id: string) => s.patch({ prefs: { ...s.prefs, collapsedProviders: collapsed.includes(id) ? collapsed.filter((x) => x !== id) : [...collapsed, id] } })
   return (
     <div className="flex flex-col" style={{ maxHeight: `min(${s.prefs.modelPickerHeight ?? 480}px, 85dvh)` }}>
-      {plsOn && <Seg v={t} set={setT} opts={[['pl', 'Playlists', ListMusic], ['ep', 'Models', Cpu]]} />}
+      {plsOn && <Seg v={t} set={setT} opts={[['ep', 'Models', Cpu], ['pl', 'Playlists', ListMusic]]} />}
       <div className="relative my-2">
         <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-mu" />
         <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search" className="h-9 w-full rounded-lg bg-surf pl-9 pr-3 text-sm outline-none" />
@@ -189,24 +222,28 @@ function ModelMenu({ close, cfg }: { close: () => void; cfg: (t: string) => void
         <div className="mt-1 flex justify-between text-xs capitalize text-mu"><span>{effortChoices[0]}</span><span>{effortChoices.at(-1)}</span></div>
       </div>}
       <div className="min-h-0 flex-1 overflow-y-auto">
-      {t === 'ep' && <Item icon={Cpu} on={!s.sel} sub="list order" onClick={() => { s.patch({ sel: null }); close() }}>All endpoints</Item>}
-      {L.map((x) => (
-        <div key={x.id}>
-          {t === 'pl' || (plsOn && x.modelsMode === 'playlist')
-            ? <Item icon={t === 'pl' ? ListMusic : Cpu} off={x.on === false} on={s.sel?.id === x.id && !s.sel?.model} sub={t === 'pl' ? `${x.e.length} models` : `${modelsOf(x).length} model playlist`} onClick={() => { s.patch({ sel: { k: t, id: x.id } }); close() }}>{x.name}</Item>
-            : <>
-              <div className="px-3 pb-1 pt-2 text-xs font-semibold uppercase tracking-wide text-mu">{x.name}</div>
-              {modelsOf(x).map((model) => {
-                const primary = s.prefs.modelPrimary ?? 'name'
-                const secondary = s.prefs.modelSecondary ?? 'none'
-                const alias = modelNameOf(x, model)
-                const title = (primary === 'name' ? alias : model).replace(/^~+/, '')
-                const sub = secondary === 'provider' ? x.name : secondary === 'none' || secondary === primary ? '' : (secondary === 'name' ? alias : model).replace(/^~+/, '')
-                return <Item key={model} icon={Cpu} off={x.on === false} on={s.sel?.id === x.id && s.sel?.model === model} sub={sub} onClick={() => { s.patch({ sel: { k: 'ep', id: x.id, model } }); close() }}>{title}</Item>
-              })}
-            </>}
+      {t === 'ep' && favsOn && favModels.length > 0 && <>
+        <div className="flex items-center gap-1.5 px-3 pb-1 pt-2 text-xs font-semibold uppercase tracking-wide text-ac"><Star size={12} fill="currentColor" />Favorites<span className="ml-auto font-normal normal-case opacity-70">{favModels.length}</span></div>
+        {favModels.map(({ x, model }) => modelRow(x, model, 'fav:'))}
+        <div className="mx-2 my-1 border-t border-bor" />
+      </>}
+      {L.map((x) => {
+        if (t === 'pl' || (plsOn && x.modelsMode === 'playlist')) return <Item key={x.id} icon={t === 'pl' ? ListMusic : Cpu} off={x.on === false} on={s.sel?.id === x.id && !s.sel?.model} sub={t === 'pl' ? `${x.e.length} models` : `${modelsOf(x).length} model playlist`} onClick={() => { s.patch({ sel: { k: t, id: x.id } }); close() }}>{x.name}</Item>
+        const models = modelsOf(x).filter((model) => {
+          if (hideFavs && favSet.has(helperRef(x.id, model))) return false
+          return !query || x.name.toLowerCase().includes(query) || matches(x, model)
+        })
+        if (!models.length) return null
+        const isCollapsed = collapsed.includes(x.id)
+        return <div key={x.id}>
+          <button type="button" aria-expanded={!isCollapsed} onClick={() => toggleProvider(x.id)} className="group flex w-full items-center gap-1.5 rounded-md px-3 pb-1 pt-2 text-left text-xs font-semibold uppercase tracking-wide text-mu hover:text-tx">
+            <ChevronRight size={12} className={cx('shrink-0 transition-transform', !isCollapsed && 'rotate-90')} />
+            <span className="min-w-0 flex-1 truncate">{x.name}</span>
+            <span className="font-normal normal-case opacity-70">{models.length}</span>
+          </button>
+          {!isCollapsed && models.map((model) => modelRow(x, model))}
         </div>
-      ))}
+      })}
       {!L.length && <p className="px-2.5 py-3 text-sm text-mu">Nothing here yet. Suspiciously quiet.</p>}
       </div>
       <div className="shrink-0 border-t border-bor px-1 pt-2">
@@ -224,6 +261,11 @@ export function Composer({ cfg }: { cfg: (t: string) => void }) {
   const pending = useRef<number | 'end' | null>(null)
   const composing = useRef(false)
   const fi = useRef<HTMLInputElement>(null)
+  /* Prompt-recall navigation state: while non-null, ArrowUp/ArrowDown step
+   * through the messages sent this session and `histDraft` holds the unsent
+   * draft the user was typing before the walk started. */
+  const histIdx = useRef<number | null>(null)
+  const histDraft = useRef('')
   const v = s.draft
   const [hi, setHi] = useState(0)
   // Focus the composer on load so typing starts here straight away. Skip when
@@ -248,7 +290,7 @@ export function Composer({ cfg }: { cfg: (t: string) => void }) {
   const [active, setActive] = useState<{ i: number; m: Mention; left: number; top: number } | null>(null)
   const tw = v.match(/(?:^|\s)(@\w*)$/)?.[1]
   const menu: { k: string; icon: Ic; label: string; hint: string; pick: () => void }[] | null = /^\/\S*$/.test(v) && featOn(s, 'commands')
-    ? s.cmds.filter((c) => c.on && c.name.startsWith(v.slice(1))).map((c) => ({ k: c.id, icon: CI[c.in], label: '/' + c.name, hint: c.desc || c.in, pick: () => s.patch({ draft: '/' + c.name + ' ' }) }))
+    ? s.cmds.filter((c) => c.on && c.name.startsWith(v.slice(1))).map((c) => ({ k: c.id, icon: CI[c.in], label: '/' + c.name, hint: `${c.desc || c.in}${c.args ? ` · /${c.name} ${c.args}` : ''}`, pick: () => s.patch({ draft: '/' + c.name + ' ' }) }))
     : tw && featOn(s, 'tools')
       ? [
         ...orderTools(s.tools).filter((t) => t[3].startsWith(tw.toLowerCase())).map((t) => ({ k: t[0], icon: t[2], label: t[3].split('(')[0], hint: s.tools[t[0]] ? t[4] : 'Off. Enable in Settings → Tools', pick: () => s.patch({ draft: v.slice(0, v.length - tw.length) + '@' + t[0] + (/^(calc|count|json|base64|search|fetch_page|random|hash)$/.test(t[0]) ? '(' : ' ') }) })),
@@ -323,7 +365,7 @@ export function Composer({ cfg }: { cfg: (t: string) => void }) {
   const pr = s.prompts.find((p) => p.id === s.pr)
   const bad = (a: Att) => !!ep && !a.text && (a.kind === 'media' || ((a.kind === 'img' || a.kind === 'pdf') && !can(ep, a.kind)))
   const pick = (accept: string) => { if (fi.current) { fi.current.accept = accept; fi.current.click() } }
-  const add = async (l: FileList | null) => {
+  const add = async (l: FileList | File[] | null) => {
     if (!l) return
     const dp = normDocs(s.docPrefs)
     const txtChars = att.reduce((a, x) => a + (x.text?.length ?? 0), 0)
@@ -331,6 +373,49 @@ export function Composer({ cfg }: { cfg: (t: string) => void }) {
     if (notices.length) s.patch({ notice: { t: notices.join('\n') } })
     if (atts.length) setAtt((a) => [...a, ...atts])
   }
+  /* Pasting an image used to attach it silently. Show what was pasted first:
+   * a thumbnail and its pixel dimensions, with an explicit Attach step. Other
+   * pasted files still attach immediately (their names make them obvious). */
+  const [pastePreview, setPastePreview] = useState<{ file: File; url: string; w?: number; h?: number }[] | null>(null)
+  const previewPaste = (files: File[]) => {
+    const images = files.filter((f) => /^image\//i.test(f.type) || /\.(png|jpe?g|gif|webp|bmp|avif)$/i.test(f.name))
+    const rest = files.filter((f) => !images.includes(f))
+    if (rest.length) void add(rest)
+    if (!images.length) return
+    setPastePreview((prev) => {
+      for (const p of prev ?? []) URL.revokeObjectURL(p.url)
+      const rows = images.map((file) => {
+        const row: { file: File; url: string; w?: number; h?: number } = { file, url: URL.createObjectURL(file) }
+        const img = new Image()
+        img.onload = () => setPastePreview((cur) => cur ? cur.map((x) => (x.url === row.url ? { ...x, w: img.naturalWidth, h: img.naturalHeight } : x)) : cur)
+        img.src = row.url
+        return row
+      })
+      return rows
+    })
+  }
+  const discardPaste = () => {
+    setPastePreview((prev) => { for (const p of prev ?? []) URL.revokeObjectURL(p.url); return null })
+  }
+  const attachPasted = () => {
+    const files = (pastePreview ?? []).map((p) => p.file)
+    discardPaste()
+    if (files.length) void add(files)
+  }
+  const pasteRef = useRef(pastePreview)
+  pasteRef.current = pastePreview
+  useEffect(() => () => { for (const p of pasteRef.current ?? []) URL.revokeObjectURL(p.url) }, [])
+  /* Pending attachments are draggable: the order is sometimes meaningful (the
+   * model reads them in the order they are listed), and there was no way to
+   * change it before sending. */
+  const [dragAtt, setDragAtt] = useState<number | null>(null)
+  const reorderAtt = (from: number, to: number) => setAtt((list) => {
+    if (from === to || from < 0 || to < 0 || from >= list.length || to >= list.length) return list
+    const next = [...list]
+    const [item] = next.splice(from, 1)
+    next.splice(to, 0, item)
+    return next
+  })
   const [urlOpen, setUrlOpen] = useState(false)
   const [urlVal, setUrlVal] = useState('')
   const [urlBusy, setUrlBusy] = useState(false)
@@ -404,6 +489,11 @@ export function Composer({ cfg }: { cfg: (t: string) => void }) {
     // research planner still receive exactly what they expect.
     const raw = armed ? `@${armed}(${v.trim()})` : v, files = att
     if (await s.send(raw, files)) {
+      // The history records what the user composed (the visible draft), not
+      // the armed `@tool(…)` wrapper, so recall reproduces the typing. With
+      // recall off nothing is recorded at all.
+      if ((s.prefs.promptRecall ?? 'edges') !== 'off') pushPromptHistory(v)
+      histIdx.current = null
       if (useS.getState().draft === v) { pending.current = 'end'; s.patch({ draft: '' }) }
       setArmed(null)
       setAtt([])
@@ -427,6 +517,7 @@ export function Composer({ cfg }: { cfg: (t: string) => void }) {
       if (document.activeElement === el) setCaret(el, 0)
       if (s.draft === '') return
       setActive(null)
+      histIdx.current = null
       s.patch({ draft: '' })
       setHi(0)
       return
@@ -434,6 +525,8 @@ export function Composer({ cfg }: { cfg: (t: string) => void }) {
     ensureTrailingBreak(el)
     if (next === s.draft) return
     setActive(null)
+    // Typing ends a prompt-recall walk; the recalled snapshot is stale now.
+    histIdx.current = null
     s.patch({ draft: next })
     setHi(0)
   }
@@ -493,9 +586,9 @@ export function Composer({ cfg }: { cfg: (t: string) => void }) {
   const placeholder = armed === 'search' ? 'What should I search for?' : armed === 'research' ? 'What should I research?' : s.eps.some(usable) ? (featOn(s, 'commands') && featOn(s, 'tools') ? 'Message, / for commands, @ for tools' : featOn(s, 'commands') ? 'Message, / for commands' : featOn(s, 'tools') ? 'Message, @ for tools' : 'Message') : 'Add a model endpoint to start (press Send for a walkthrough)'
   return (
     <div className="w-full self-center">
-      <div className="mx-auto w-full px-4" style={{ maxWidth: composerWidth(s.prefs.chatWidth) }}>
+      <div className="mx-auto w-full" style={{ maxWidth: composerWidth(s.prefs.chatWidth), paddingLeft: 'var(--ui-chat-pad-x)', paddingRight: 'var(--ui-chat-pad-x)' }}>
       <Notice cfg={cfg} />
-      <div ref={box} className={cx('composer-shell relative rounded-2xl p-3 transition-colors', s.prefs.glassComposer !== false ? 'glass-composer border border-hov hover:border-bor focus-within:border-bor shadow-lg shadow-black/10' : 'edge-border bg-surf hover:border-bor focus-within:border-bor')} data-lit={menusOpen || listening ? '1' : undefined} onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); add(e.dataTransfer.files) }}>
+      <div ref={box} style={{ padding: 'var(--ui-composer-pad)' }} className={cx('composer-shell relative rounded-2xl transition-colors', s.prefs.glassComposer !== false ? 'glass-composer border border-hov hover:border-bor focus-within:border-bor shadow-lg shadow-black/10' : 'edge-border bg-surf hover:border-bor focus-within:border-bor')} data-lit={menusOpen || listening ? '1' : undefined} onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); add(e.dataTransfer.files) }}>
         {banner && <MentionBanner kind={banner} onDismiss={dismissBanner} warning={banner === 'search' && !searchEnabled ? 'Web search is off.' : undefined} onEnable={banner === 'search' && !searchEnabled ? () => { s.patch({ features: { ...s.features, tools: true }, tools: { ...s.tools, search: true } }) } : undefined} />}
         {menu && !menuOff && (
           <div className="edge-border absolute inset-x-0 bottom-full mb-2 rounded-xl bg-hov p-1.5">
@@ -504,20 +597,40 @@ export function Composer({ cfg }: { cfg: (t: string) => void }) {
             )) : <p className="px-2.5 py-3 text-sm text-mu">{tw ? 'No tool matches.' : 'No enabled command matches. Manage commands in Settings.'}</p>}
           </div>
         )}
+        {pastePreview && (
+          <div className="mb-2 rounded-xl border border-ac/40 bg-ac/5 p-2.5">
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <span className="text-xs font-medium">Pasted image{pastePreview.length > 1 ? `s (${pastePreview.length})` : ''} — review before attaching</span>
+              <div className="flex gap-1.5">
+                <Btn v="solid" className="h-8 px-2.5 text-xs" onClick={attachPasted}>Attach {pastePreview.length > 1 ? 'images' : 'image'}</Btn>
+                <Btn v="soft" className="h-8 px-2.5 text-xs" onClick={discardPaste}>Discard</Btn>
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {pastePreview.map((p) => (
+                <figure key={p.url} className="flex h-24 w-32 flex-col overflow-hidden rounded-lg bg-hov p-1.5">
+                  <img src={p.url} alt={p.file.name} className="min-h-0 flex-1 rounded-sm object-contain p-1" />
+                  <figcaption className="truncate px-1 text-xs text-mu" title={p.file.name}>{p.file.name} · {p.w && p.h ? `${p.w}×${p.h}` : 'loading size…'}</figcaption>
+                </figure>
+              ))}
+            </div>
+          </div>
+        )}
         {att.length > 0 && (
           <div className="mb-2 flex flex-wrap gap-2">
             {att.map((a, i) => a.kind === 'img' && a.data ? (
-              <div key={i} className={cx('group/preview relative flex h-24 w-28 flex-col overflow-hidden rounded-lg bg-hov p-1.5 ring-1 ring-hov', bad(a) && 'ring-er')} title={a.text ? `${a.name} · transcribed text attached` : a.name}>
-                <img src={`data:${a.mime || 'image/*'};base64,${a.data}`} alt={a.name} className="min-h-0 flex-1 rounded object-contain p-1" />
+              <div key={i} draggable onDragStart={(e) => { setDragAtt(i); e.dataTransfer.effectAllowed = 'move' }} onDragOver={(e) => { if (dragAtt != null) { e.preventDefault(); e.dataTransfer.dropEffect = 'move' } }} onDrop={(e) => { e.preventDefault(); if (dragAtt != null) reorderAtt(dragAtt, i); setDragAtt(null) }} onDragEnd={() => setDragAtt(null)} title={`${a.text ? `${a.name} · transcribed text attached` : a.name} · drag to reorder`} className={cx('group/preview relative flex h-24 w-28 cursor-grab flex-col overflow-hidden rounded-lg bg-hov p-1.5 ring-1 ring-hov', bad(a) && 'ring-er', dragAtt === i && 'opacity-50')}>
+                <img src={`data:${a.mime || 'image/*'};base64,${a.data}`} alt={a.name} className="min-h-0 flex-1 rounded-sm object-contain p-1" />
                 <span className="truncate px-1 text-xs text-mu" title={a.name}>{a.text ? '✓ ' : ''}{a.name}</span>
+                <span aria-hidden="true" className="absolute left-1 top-1 grid size-5 place-items-center rounded-full bg-black/60 text-white opacity-100 md:opacity-0 md:group-hover/preview:opacity-100"><GripVertical size={12} /></span>
                 {!a.text && <button aria-label={`Transcribe text from ${a.name}`} title="Transcribe image text with a vision model" onClick={() => { void ocrOne(a) }} disabled={ocrBusy != null} className="absolute bottom-6 left-1 grid size-5 place-items-center rounded-full bg-black/70 text-white opacity-100 transition-opacity md:opacity-0 md:group-hover/preview:opacity-100 md:focus:opacity-100 disabled:opacity-40"><ScanText size={12} /></button>}
                 <button aria-label={`Remove ${a.name}`} onClick={() => setAtt(att.filter((_, j) => j !== i))} className="absolute right-1 top-1 grid size-5 place-items-center rounded-full bg-black/70 text-white opacity-100 transition-opacity md:opacity-0 md:group-hover/preview:opacity-100 md:focus:opacity-100"><X size={12} /></button>
-                {bad(a) && <span className="absolute left-1 right-1 top-7 rounded bg-er/90 px-1 py-0.5 text-center text-xs text-white"><TriangleAlert size={11} className="inline" /> Unsupported</span>}
+                {bad(a) && <span className="absolute left-1 right-1 top-7 rounded-sm bg-er/90 px-1 py-0.5 text-center text-xs text-white"><TriangleAlert size={11} className="inline" /> Unsupported</span>}
               </div>
             ) : (
-              <span key={i} title={bad(a) ? 'The selected model cannot process this file' : (a.source ? `${a.name} · ${a.source}${a.pages ? ` · ${a.pages} pages` : ''}${a.text ? ` · ${Math.round(a.text.length / 1024)} KB text` : ''}` : undefined)} className={cx('inline-flex items-center gap-1.5 rounded-lg bg-hov py-1 pl-2 pr-1 text-xs', bad(a) && 'text-er')}>
-                {bad(a) ? <TriangleAlert size={13} /> : <FileText size={13} />}{a.text && a.kind !== 'txt' ? '✓ ' : ''}{a.name}<span className="text-mu">{a.size}</span>
-                <button onClick={() => setAtt(att.filter((_, j) => j !== i))} className="grid size-5 place-items-center rounded hover:bg-surf"><X size={12} /></button>
+              <span key={i} draggable onDragStart={(e) => { setDragAtt(i); e.dataTransfer.effectAllowed = 'move' }} onDragOver={(e) => { if (dragAtt != null) { e.preventDefault(); e.dataTransfer.dropEffect = 'move' } }} onDrop={(e) => { e.preventDefault(); if (dragAtt != null) reorderAtt(dragAtt, i); setDragAtt(null) }} onDragEnd={() => setDragAtt(null)} title={bad(a) ? 'The selected model cannot process this file' : (a.source ? `${a.name} · ${a.source}${a.pages ? ` · ${a.pages} pages` : ''}${a.text ? ` · ${Math.round(a.text.length / 1024)} KB text` : ''} · drag to reorder` : 'Drag to reorder')} className={cx('inline-flex cursor-grab items-center gap-1.5 rounded-lg bg-hov py-1 pl-2 pr-1 text-xs', bad(a) && 'text-er', dragAtt === i && 'opacity-50')}>
+                <GripVertical size={12} className="text-mu" aria-hidden="true" />{bad(a) ? <TriangleAlert size={13} /> : <FileText size={13} />}{a.text && a.kind !== 'txt' ? '✓ ' : ''}{a.name}<span className="text-mu">{a.size}</span>
+                <button onClick={() => setAtt(att.filter((_, j) => j !== i))} className="grid size-5 place-items-center rounded-sm hover:bg-surf"><X size={12} /></button>
               </span>
             ))}
           </div>
@@ -554,6 +667,42 @@ export function Composer({ cfg }: { cfg: (t: string) => void }) {
               }
               if (menu && !menuOff && e.key === 'Escape') { e.preventDefault(); setMenuOff(true); return }
               if (pillKeys(e)) return
+            // Prompt recall: walk the messages sent this session. Entering
+            // the walk is gated by the recall mode — at the composer's edges
+            // (caret at the start for ↑, the end for ↓), at any caret
+            // position, only when the composer is empty, or never. Once
+            // inside, both keys step regardless of the caret, like a terminal
+            // history. Plain text only — with a modifier held the keys keep
+            // their native selection meaning.
+            if (!e.altKey && !e.ctrlKey && !e.metaKey && !(menu && menu.length) && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
+              const el = ta.current
+              const pos = el ? caretOffset(el) : null
+              const hist = getPromptHistory()
+              const walking = histIdx.current != null
+              const mode = s.prefs.promptRecall ?? 'edges'
+              const atStart = pos === 0
+              const atEnd = pos != null && pos >= v.length
+              const canEnter = mode === 'anytime' ? true : mode === 'empty' ? v === '' : e.key === 'ArrowUp' ? atStart : atEnd
+              if (mode !== 'off' && hist.length && (walking ? true : canEnter)) {
+                  e.preventDefault()
+                  if (histIdx.current == null) histDraft.current = v
+                  const end = e.key === 'ArrowUp'
+                    ? histIdx.current == null ? hist.length - 1 : Math.max(0, histIdx.current - 1)
+                    : histIdx.current == null ? null : histIdx.current + 1 >= hist.length ? null : histIdx.current + 1
+                  if (end == null) {
+                    // Stepped past the newest entry: the draft that was being
+                    // typed comes back and the walk ends.
+                    histIdx.current = null
+                    s.patch({ draft: histDraft.current })
+                    pending.current = 'end'
+                  } else {
+                    histIdx.current = end
+                    s.patch({ draft: hist[end] })
+                    pending.current = 'end'
+                  }
+                  return
+                }
+              }
               if (e.key === 'Enter') {
                 if (!e.shiftKey && s.prefs.enterSends && !s.busy) { e.preventDefault(); void submit(); return }
                 // Shift+Enter (or Enter when send-on-enter is off) inserts a
@@ -568,7 +717,7 @@ export function Composer({ cfg }: { cfg: (t: string) => void }) {
             onCompositionEnd={() => { composing.current = false; setIme(false); commitInput() }}
             onBlur={() => setActive(null)}
             onPaste={(e) => {
-              if (e.clipboardData.files.length) { e.preventDefault(); void add(e.clipboardData.files); return }
+              if (e.clipboardData.files.length) { e.preventDefault(); previewPaste(Array.from(e.clipboardData.files)); return }
               const text = e.clipboardData.getData('text/plain')
               if (!text) return
               e.preventDefault()
@@ -619,15 +768,16 @@ export function Composer({ cfg }: { cfg: (t: string) => void }) {
             const effortsArr = activeModel ? activeEp?.modelEfforts?.[activeModel] ?? [] : []
             const autoOn = !!effortClassifierOf(s)
             const effortRank: Record<string, number> = { none: 0, minimal: 1, low: 2, medium: 3, high: 4, xhigh: 5, max: 6, auto: -1 }
-            const effortLevels = [...effortsArr].sort((a, b) => (effortRank[a.toLowerCase()] ?? 50) - (effortRank[b.toLowerCase()] ?? 50))
-            const allChoices = [...(autoOn ? ['auto'] : []), 'none', ...effortLevels]
+            const effortLevels = [...new Map(effortsArr.filter(Boolean).map((x) => [x.toLowerCase(), x])).values()]
+              .sort((a, b) => (effortRank[a.toLowerCase()] ?? 50) - (effortRank[b.toLowerCase()] ?? 50))
+            const allChoices = [...(autoOn ? ['auto'] : []), ...effortLevels]
             const stored = activeModel ? s.effort[activeModel] : undefined
-            const currentEffort = stored && allChoices.includes(stored) ? stored : (effortLevels[0] ?? (autoOn ? 'auto' : 'none'))
+            const currentEffort = stored && allChoices.includes(stored) ? stored : (effortLevels[0] ?? (autoOn ? 'auto' : ''))
             return (
             <button className={chip}>
               {s.sel?.k === 'pl' && featOn(s, 'playlists') ? <ListMusic size={16} /> : <Cpu size={16} />}
-              <span className="max-w-24 truncate sm:max-w-40">{sel ? (s.sel?.model && s.sel.k === 'ep' ? modelNameOf(sel as any, s.sel.model) : sel.name) : 'All endpoints'}</span>
-              {activeModel ? <span className="ml-1 shrink-0 text-sm text-mu capitalize leading-none opacity-60">{currentEffort}</span> : null}
+              <span className="max-w-24 truncate sm:max-w-40">{sel ? (s.sel?.model && s.sel.k === 'ep' ? modelNameOf(sel as any, s.sel.model) : sel.name) : 'Choose a model'}</span>
+              {activeModel && currentEffort ? <span className="ml-1 shrink-0 text-sm text-mu capitalize leading-none opacity-60">{currentEffort}</span> : null}
               <ChevronRight size={14} className={cx('transition-transform', o && 'rotate-90')} />
             </button>
             )

@@ -4,6 +4,7 @@ import { useShallow } from 'zustand/react/shallow'
 import { DEFAULT_TOOLS, KEYS, WIDGETS, TOOLS } from './meta'
 import { est, redact, stream, wire, trimHistory, estimateHistoryTokens, runToolLoop, type ToolCall, type ToolResult, searchWeb, formatSearch, fetchPage, formatPage, can, ocrImage, clearSessionCache, setDynamicTools, DYNAMIC_TOOLS, type ToolSpec, type PageExcerpt } from './engine'
 import { normMcpServers, mcpBindings, callMcpTool, toolParameters, type McpServer, type McpTool } from './mcp'
+import { uniqueAttachmentNames } from './attachments'
 import { generateImages, normImageGen, BLANK_IMAGE_GEN, imageSummary, type ImageGenPrefs } from './imagegen'
 import { runCode, formatCodeResult, normCodeRun, BLANK_CODE_RUN, type CodeRunPrefs, type CodeLang } from './codesandbox'
 import type { EndpointAuth } from './endpointAuth'
@@ -32,6 +33,7 @@ export type { RouteStat, RoutingMode }
 import { QUOTA_FLAG, prunePersisted, storageUsage, persistStorage, createPersistMapper, STORE_VERSION, withoutExpiredTemps } from './persistence'
 import { providerPresetEntries } from './providerRegistry'
 import { accentHue, adjustThemeColors, type ThemeAdjustment } from './theme'
+import { normDensity, normSpacing, normStylePreset, type Density, type SpacingOverrides, type StylePreset } from './style'
 export { accentHue, adjustThemeColors } from './theme'
 import type { ShareRecord } from './share'
 
@@ -49,16 +51,16 @@ export type Endpoint = { id: string; name: string; type: 'openai' | 'anthropic';
 export type Ep = Endpoint
 export type Playlist = { id: string; name: string; sys: string; e: string[]; cls: string; clsModel?: string; rule: string }
 export type Pl = Playlist
-export type Command = { id: string; name: string; desc: string; in: 'text' | 'image' | 'image+text' | 'doc'; sys: string; tpl: string; pl: string; on: boolean }
+export type Command = { id: string; name: string; desc: string; in: 'text' | 'image' | 'image+text' | 'doc'; sys: string; tpl: string; pl: string; on: boolean; /** Argument hint shown in the `/` menu, e.g. "<text>" or "[language]". */ args?: string }
 export type Cmd = Command
 export type Attempt = { n: string; m: string; detail?: string; ms?: number; err?: string; errCode?: ErrorCode; tin?: number; tout?: number; cacheRead?: number; cacheWrite?: number; cost?: number; at?: number }
 export type Try = Attempt
 export type Attachment = { name: string; kind: 'img' | 'pdf' | 'txt' | 'media'; size: string; mime?: string; data?: string; text?: string; source?: string; pages?: number }
 export type Att = Attachment
-export type Message = { id: string; r: 'user' | 'assistant'; t: string; at?: number; by?: string; tps?: number; log?: Attempt[]; att?: Attachment[]; err?: boolean; trunc?: boolean; capped?: boolean; full?: string; ctx?: string[]; fx?: string; cmd?: string; alts?: Snap[]; ai?: number; historyTokens?: number; explicitTokens?: number; reasoning?: string; toolRounds?: { text: string; calls: ToolResult[] }[]; toolFinal?: string; sys?: string; workspaceIds?: string[]; research?: ResearchState }
+export type Message = { id: string; r: 'user' | 'assistant'; t: string; at?: number; by?: string; tps?: number; log?: Attempt[]; att?: Attachment[]; err?: boolean; trunc?: boolean; capped?: boolean; full?: string; ctx?: string[]; fx?: string; cmd?: string; alts?: Snap[]; ai?: number; historyTokens?: number; explicitTokens?: number; reasoning?: string; toolRounds?: { text: string; calls: ToolResult[] }[]; toolFinal?: string; sys?: string; workspaceIds?: string[]; research?: ResearchState; /** Kept visible under the header and added to the model context (see prefs.pinContext). */ pin?: boolean }
 export type Msg = Message
 export type Snap = { t: string; by?: string; tps?: number; log?: Try[]; err?: boolean; toolRounds?: { text: string; calls: ToolResult[] }[]; toolFinal?: string; workspaceIds?: string[] }
-export type Chat = { id: string; title: string; pin?: boolean; started?: boolean; project?: string; msgs: Msg[]; temporary?: boolean; expiresAt?: number; titleAuto?: boolean }
+export type Chat = { id: string; title: string; pin?: boolean; started?: boolean; project?: string; msgs: Msg[]; temporary?: boolean; expiresAt?: number; titleAuto?: boolean; /** Hidden from the normal sidebar until the Archived filter is opened. */ archived?: boolean }
 /** An optional context file attached to a project: name and size for display,
  *  plus the extracted text the AI may consult. Text is capped at import time. */
 export type ProjectFile = { id: string; name: string; size: string; mime?: string; text: string }
@@ -332,7 +334,7 @@ export const BLANK: Record<Kind, () => any> = {
   eps: () => ({ id: uid(), name: 'New endpoint', type: 'openai', url: '', key: '', model: '', models: [''], modelsMode: 'separate', prices: {}, on: true }),
   prompts: () => ({ id: uid(), name: 'New prompt', text: '' }),
   pls: () => ({ id: uid(), name: 'New playlist', sys: '', e: [], cls: '', rule: '' }),
-  cmds: () => ({ id: uid(), name: 'command', desc: '', in: 'text', sys: '', tpl: '{{input}}', pl: '', on: true }),
+  cmds: () => ({ id: uid(), name: 'command', desc: '', in: 'text', sys: '', tpl: '{{input}}', pl: '', on: true, args: '' }),
   mcps: () => ({ id: uid(), name: 'New MCP server', url: '', headers: '', on: true }),
 }
 const ZERO = (): Stats => ({ tin: 0, tout: 0, historyIn: 0, explicitIn: 0, sent: 0, chats: 0, since: Date.now(), cost: 0 })
@@ -379,10 +381,19 @@ export type StartupMode = 'new' | 'temporary' | 'recent' | 'permanent'
 export const STARTUP_MODES: [StartupMode, string][] = [['recent', 'Most recent chat'], ['permanent', 'Most recent permanent chat'], ['new', 'New chat'], ['temporary', 'New temporary chat']]
 export const normStartup = (v: unknown): StartupMode => (v === 'new' || v === 'temporary' || v === 'permanent' ? v : 'recent')
 
+/* When ↑/↓ recall the messages sent this session in the composer.
+ * 'edges' enters the walk with the caret at the composer's start (↑) or end
+ * (↓); 'anytime' steps regardless of the caret; 'empty' only with an empty
+ * composer; 'off' disables recall entirely and stops recording history. */
+export type PromptRecallMode = 'anytime' | 'edges' | 'empty' | 'off'
+export const PROMPT_RECALL_MODES: [PromptRecallMode, string][] = [['edges', 'At the composer edges'], ['anytime', 'Any time'], ['empty', 'Composer empty'], ['off', 'Off (not recorded)']]
+export const normPromptRecall = (v: unknown): PromptRecallMode =>
+  (v === 'anytime' || v === 'edges' || v === 'empty' || v === 'off' ? v : 'edges')
+
 /* Default shapes for the settings objects a Data-tab import can replace
  * wholesale: keep the initial state and import "replace" mode on the same
  * literal so a sparse file can never leave undefined fields behind. */
-export const DEFAULT_PREFS: S['prefs'] = { showBy: true, showLog: true, showTps: false, enterSends: true, autoTitle: true, temporaryByDefault: false, seasonal: true, cues: false, showModelPricing: false, showContextMeter: true, titleEp: '', titleModel: '', effortEp: '', effortModel: '', recallEp: '', recallModel: '', tempHours: 3, startup: 'recent', tempShow: 2, tempGlow: 1, tempGlowSent: 0.5, draftSurvive: 'both', fontBody: 'system', fontMono: 'system', fontHeader: 'system', modelPrimary: 'name', modelSecondary: 'none', paletteMax: 320, chatWidth: 'standard', settingsWidth: 1024, settingsHeight: 780, modelPickerHeight: 480, sidebarWidth: 288, widgetWidth: 320, workspaceWidth: 0.4, workspaceSplit: 0.2, modalBlur: 12, settingsOpacity: 55, streamFade: 0.3, streamMd: true, remoteImages: false, glassComposer: true, proxyMode: 'auto' }
+export const DEFAULT_PREFS: S['prefs'] = { showBy: true, showLog: true, showTps: false, enterSends: true, autoTitle: true, temporaryByDefault: false, seasonal: true, cues: false, showModelPricing: false, showContextMeter: true, stylePreset: 'modern', density: 'comfortable', uiSpacing: {}, showTimestamps: false, alwaysShowActions: false, titleEp: '', titleModel: '', effortEp: '', effortModel: '', recallEp: '', recallModel: '', tempHours: 3, startup: 'recent', tempShow: 2, tempGlow: 1, tempGlowSent: 0.5, draftSurvive: 'both', fontBody: 'system', fontMono: 'system', fontHeader: 'system', modelPrimary: 'name', modelSecondary: 'none', paletteMax: 320, chatWidth: 'standard', settingsWidth: 1024, settingsHeight: 780, modelPickerHeight: 480, favoritesSection: true, hideFavoritesInProviders: true, collapsedProviders: [], sidebarWidth: 288, widgetWidth: 320, workspaceWidth: 0.4, workspaceSplit: 0.2,  modalBlur: 12, settingsOpacity: 55, streamFade: 0.3, streamMd: true, remoteImages: false, glassComposer: true, proxyMode: 'auto', textScale: 100, codeWrap: false, reduceTransparency: false, promptRecall: 'edges', highContrast: false, copyMarkdown: true, codeLines: false, codeMaxHeight: 0, pinContext: true, pinContextPercent: 50 }
 export const DEFAULT_PARAMS: S['params'] = { def: true, temp: 0.7, topp: 1, max: 4096, maxToolRounds: 8, highToolsUnlocked: false }
 export const DEFAULT_WIDGET_PREFS: S['widgetPrefs'] = { usageGroup: 'endpoint', usageMode: 'success', usageFormat: '{in}/{out}', usageTotal: false, usagePeriod: 'all', lastSpeed: true, timeUnit: 'auto', widgetOrder: WIDGETS.map(([k]) => k), shortcuts: KEYS.map(([k]) => k), contextLimit: 128000, showDisabledEndpoints: true, scratchRows: 6, snippetLimit: 20, costDecimals: 4, activePromptsOnly: false, charsPerToken: 4, hideDoneTodos: false }
 const SEARCH_VALID_PROVIDERS: SearchProvider[] = ['tinyfish', 'you', 'exa', 'firecrawl', 'brightdata', 'jina']
@@ -503,6 +514,8 @@ type S = {
   search: SearchPrefs
   skills: SkillState[]
   sel: { k: 'ep' | 'pl'; id: string; model?: string } | null; pr: string
+  /** Starred models as `<endpointId>::<model>` refs, newest last. */
+  favs: string[]
   globalPrompt: GlobalPrompt
   features: Record<FeatureId, boolean>
   featureOrder: FeatureId[]
@@ -515,7 +528,7 @@ type S = {
   customDarkTheme: CustomTheme
   customLightTheme: CustomTheme
   setupDone: boolean
-  prefs: { showBy: boolean; showLog: boolean; showTps: boolean; enterSends: boolean; autoTitle: boolean; temporaryByDefault: boolean; seasonal?: boolean; cues?: boolean; showModelPricing: boolean; showContextMeter: boolean; titleEp: string; titleModel?: string; effortEp: string; effortModel?: string; recallEp: string; recallModel?: string; tempHours: number; startup?: StartupMode; tempShow?: number; tempGlow?: number; tempGlowSent?: number; draftSurvive?: 'off' | 'new' | 'chats' | 'both'; fontBody: string; fontMono: string; fontHeader: string; modelPrimary: 'id' | 'name'; modelSecondary: 'none' | 'provider' | 'id' | 'name'; modelDisplay?: 'none' | 'name' | 'provider' | 'both'; paletteMax: number; chatWidth: 'narrow' | 'standard' | 'wide'; settingsWidth: number; settingsHeight: number; modelPickerHeight: number; sidebarWidth?: number; widgetWidth?: number; workspaceWidth?: number; workspaceSplit?: number; modalBlur: number; settingsOpacity: number; routingMode?: RoutingMode; streamFade: number; streamMd: boolean; remoteImages?: boolean; glassComposer?: boolean; proxyMode?: 'auto' | 'always' | 'off' }
+  prefs: { showBy: boolean; showLog: boolean; showTps: boolean; enterSends: boolean; autoTitle: boolean; temporaryByDefault: boolean; seasonal?: boolean; cues?: boolean; showModelPricing: boolean; showContextMeter: boolean; /** Copy replies with markdown formatting and linked citations; off copies plain text. */ copyMarkdown?: boolean; /** Show line numbers in code blocks. */ codeLines?: boolean; /** Max code-block height in pixels before scrolling (0 = no cap). */ codeMaxHeight?: number; /** Include the pinned reply in the model context. */ pinContext?: boolean; /** Maximum slice of the context window the pinned reply may use (5–50%). */ pinContextPercent?: number; titleEp: string; titleModel?: string; effortEp: string; effortModel?: string; recallEp: string; recallModel?: string; tempHours: number; startup?: StartupMode; tempShow?: number; tempGlow?: number; tempGlowSent?: number; draftSurvive?: 'off' | 'new' | 'chats' | 'both'; fontBody: string; fontMono: string; fontHeader: string; modelPrimary: 'id' | 'name'; modelSecondary: 'none' | 'provider' | 'id' | 'name'; modelDisplay?: 'none' | 'name' | 'provider' | 'both'; paletteMax: number; chatWidth: 'narrow' | 'standard' | 'wide'; settingsWidth: number; settingsHeight: number; modelPickerHeight: number; /** Show a Favorites section at the top of the model picker. */ favoritesSection?: boolean; /** Hide starred models from their normal provider groups. */ hideFavoritesInProviders?: boolean; /** Endpoint ids whose provider groups are collapsed in the picker. */ collapsedProviders?: string[]; sidebarWidth?: number; widgetWidth?: number; workspaceWidth?: number; workspaceSplit?: number; modalBlur: number; settingsOpacity: number; routingMode?: RoutingMode; streamFade: number; streamMd: boolean; remoteImages?: boolean; glassComposer?: boolean; proxyMode?: 'auto' | 'always' | 'off';  stylePreset: StylePreset; density: Density; uiSpacing?: SpacingOverrides; showTimestamps?: boolean; alwaysShowActions?: boolean; /** Root font-size percent (50–200, 100 = unchanged). */ textScale?: number; /** Soft-wrap long lines inside code blocks instead of scrolling sideways. */ codeWrap?: boolean; /** Disable glass, blur and dropped shadows (flat, opaque surfaces). */ reduceTransparency?: boolean; /** When ↑/↓ recall sent prompts; 'off' also stops recording them. */ promptRecall?: PromptRecallMode; /** Raise muted-text and border contrast beyond the theme's values. */ highContrast?: boolean }
   widgets: Record<string, boolean>; widgetPrefs: { usageGroup: 'endpoint' | 'model'; usageMode: 'success' | 'tokens'; usageFormat: string; usageTotal: boolean; usagePeriod: 'session' | 'day' | 'week' | 'custom' | 'all'; usageFrom?: string; usageTo?: string; lastSpeed: boolean; timeUnit: 'ms' | 's' | 'auto'; widgetOrder: string[]; shortcuts: string[]; contextLimit: number; showDisabledEndpoints: boolean; scratchRows: number; snippetLimit: number; costDecimals: number; activePromptsOnly: boolean; charsPerToken: number; hideDoneTodos: boolean }; rail: boolean; pad: string; snips: string[]
   params: { def: boolean; temp: number; topp: number; max: number; maxToolRounds: number; highToolsUnlocked: boolean }; effort: Record<string, string>
   workspacePrefs: WorkspacePrefs
@@ -549,10 +562,14 @@ type S = {
   del: (k: Kind, id: string) => void
   move: (k: Kind, id: string, d: number) => void
   newChat: (temporary?: boolean) => void
-  chatOp: (id: string, op: 'pin' | 'del') => void
+  chatOp: (id: string, op: 'pin' | 'del' | 'archive') => void
+  /** Pin an assistant reply (one per chat) and keep it in the model context. */
+  pinMsg: (id: string) => void
   send: (v: string, att: Att[]) => Promise<boolean>
   stop: () => void
   regen: () => void
+  /** Re-run the request behind a failed final reply, replacing it. */
+  retryMsg: (id: string) => void
   delMsg: (id: string) => void
   editMsg: (id: string, t: string) => boolean
   chooseResearchTier: (mid: string, tier: ResearchTierId) => void
@@ -619,6 +636,41 @@ function plan(s: S, um: Msg) {
 /* System prompt for the process log when a reply has no saved `sys` (older
    replies). Rebuilt from the preceding user message with current settings,
    so it is an approximation — memory recall in particular may have differed. */
+/* ---- pinned reply ----
+ * One assistant reply per chat can be pinned. It stays visible under the
+ * header and is re-sent with every request, so the model keeps the answer the
+ * user cares about in view. It may occupy at most a configurable slice of the
+ * context window (50% by default); a larger reply is truncated rather than
+ * dropped or allowed to crowd out the conversation. */
+export const pinnedReplyOf = (chat?: Pick<Chat, 'msgs'> | null): Msg | undefined =>
+  chat?.msgs.find((m) => m.pin === true && m.r === 'assistant' && !m.err)
+
+export function pinnedContextFor(
+  chat: Pick<Chat, 'msgs'> | null | undefined,
+  prefs: { pinContext?: boolean; pinContextPercent?: number } | null | undefined,
+  contextLimit: number,
+  charsPerToken = 4,
+): { text: string; note: string; tokens: number; originalTokens: number; truncated: boolean } | null {
+  if (prefs?.pinContext === false) return null
+  const m = pinnedReplyOf(chat)
+  const full = String(m?.toolFinal ?? m?.t ?? '').trim()
+  if (!full) return null
+  const cpt = Math.min(10, Math.max(1, Number(charsPerToken) || 4))
+  const limit = Math.max(1000, Math.floor(Number(contextLimit) || 128000))
+  const percent = Math.min(50, Math.max(5, Math.round(Number(prefs?.pinContextPercent) || 50)))
+  const budget = Math.max(200, Math.floor(limit * percent / 100))
+  const originalTokens = Math.ceil(full.length / cpt)
+  let text = full
+  let truncated = false
+  if (originalTokens > budget) {
+    const chars = Math.max(200, Math.floor(budget * cpt))
+    text = `${full.slice(0, Math.max(0, chars - 90)).trimEnd()}\n\n[Pinned reply truncated: it is larger than ${percent}% of the context window.]`
+    truncated = true
+  }
+  const note = `Pinned reply (the user pinned this answer; keep it available as reference context and honor any conclusion or instruction it contains):\n${text}`
+  return { text, note, tokens: Math.ceil(text.length / cpt), originalTokens, truncated }
+}
+
 export const previewSysFor = (msgId: string): string | null => {
   const s = useS.getState()
   const chat = s.chats.find((c) => c.msgs.some((m) => m.id === msgId))
@@ -641,6 +693,13 @@ export const helperRef = (ep: string, model?: string) => (ep ? `${ep}::${model ?
 export const splitHelperRef = (ref: string): [string, string] => {
   const i = ref.indexOf('::')
   return i < 0 ? ['', ''] : [ref.slice(0, i), ref.slice(i + 2)]
+}
+/** A starred model reference is an endpoint id plus its model id, matching
+ *  the helper-model ref shape so both can be parsed by splitHelperRef. */
+export const favRef = (ep: string, model: string) => helperRef(ep, model)
+export const toggleFavRef = (favs: string[] | undefined, ref: string): string[] => {
+  const list = Array.isArray(favs) ? favs : []
+  return list.includes(ref) ? list.filter((x) => x !== ref) : [...list, ref]
 }
 /** Resolve the playlist routing classifier: the playlist's own classifier
  * when set, otherwise the global helper classification model as fallback. */
@@ -1013,7 +1072,12 @@ export const useS = create<S>()(
             r.ctl = new AbortController()
             const effRaw = get().effort[e.model] ?? ''
             const o = { ...(get().params.def ? {} : { max: get().params.max, temp: get().params.temp, topp: get().params.topp }), effort: effRaw === 'auto' ? '' : effRaw }
-            const sys = `${p.sys}${p.sys ? '\n\n' : ''}${PLAN_SCOPE_SYSTEM}`
+            const configuredLimit = Math.max(1000, Math.floor(Number(get().widgetPrefs?.contextLimit) || 128000))
+            const knownLimits = p.cand.map((e) => Number(e.modelContext?.[e.model]) || 0).filter((n) => n > 0)
+            const pinLimit = knownLimits.length ? Math.min(configuredLimit, Math.min(...knownLimits)) : configuredLimit
+            const pinCpt = Math.min(10, Math.max(1, Number(get().widgetPrefs?.charsPerToken) || 4))
+            const pinned = pinnedContextFor(get().chats.find((c) => c.id === chatId), get().prefs, pinLimit, pinCpt)
+            const sys = `${p.sys}${p.sys ? '\n\n' : ''}${PLAN_SCOPE_SYSTEM}${pinned ? `\n\n${pinned.note}` : ''}`
             const ask = planUserAsk(query, tier, new Date(), followUp)
             const existingPlan = researchMsg(chatId, mid)?.research?.plan
             const wirePlan = (rounds: { text: string; calls: ToolResult[] }[]) => wire(e, [
@@ -1108,13 +1172,16 @@ export const useS = create<S>()(
         const prefs = normSearch(get().search)
         const searchOpts = searchOptsOf(prefs)
         const cpt = Math.min(10, Math.max(1, Number(get().widgetPrefs?.charsPerToken) || 4))
-        const ctxLimit = Math.max(2000, Number(get().widgetPrefs?.contextLimit) || 128000)
+        const configuredCtx = Math.max(2000, Number(get().widgetPrefs?.contextLimit) || 128000)
+        const candidateCtx = p.cand.map((e) => Number(e.modelContext?.[e.model]) || 0).filter((n) => n > 0)
+        const ctxLimit = candidateCtx.length ? Math.min(configuredCtx, Math.min(...candidateCtx)) : configuredCtx
         const baseSteps = resume ? (getResearch()?.steps ?? []) : []
         const baseRounds = resume ? (researchMsg(chatId, mid)?.toolRounds ?? []) : []
         const baseSearches = baseSteps.filter((s) => s.kind === 'search').length
         const baseReads = baseSteps.filter((s) => s.kind === 'read').length
         const planApproved = getResearch()?.plan ?? null
-        const system = `${p.sys}${p.sys ? '\n\n' : ''}${researchSystemNote(query, tier, new Date(), planApproved)}`
+        const pinned = pinnedContextFor(get().chats.find((c) => c.id === chatId), get().prefs, ctxLimit, cpt)
+        const system = `${p.sys}${p.sys ? '\n\n' : ''}${researchSystemNote(query, tier, new Date(), planApproved)}${pinned ? `\n\n${pinned.note}` : ''}`
         const histFor = () => (get().chats.find((c) => c.id === chatId)?.msgs ?? []).filter((m) => m.id !== mid)
         if (!resume || !getResearch()?.estimate) {
           // A run can fail over to any candidate, so the ceiling uses the most
@@ -1404,11 +1471,29 @@ export const useS = create<S>()(
         // reserve for the reply. The trim is reported in the process log.
         const budgetOf = () => {
           const st = get()
-          const limit = Math.max(1000, Math.floor(Number(st.widgetPrefs?.contextLimit) || 128000))
+          const configured = Math.max(1000, Math.floor(Number(st.widgetPrefs?.contextLimit) || 128000))
+          // Respect the smallest context window among the candidates: a fallback
+          // model with 32k must not receive a request budgeted for 128k just
+          // because it is not the first choice.
+          const known = p.cand.map((e) => Number(e.modelContext?.[e.model]) || 0).filter((n) => n > 0)
+          const limit = known.length ? Math.min(configured, Math.min(...known)) : configured
           const cpt = Math.min(10, Math.max(1, Number(st.widgetPrefs?.charsPerToken) || 4))
           const outReserve = st.params?.def ? 8000 : Math.max(4096, Math.floor(Number(st.params?.max) || 4096) + 4000)
           const reserve = Math.min(16000, Math.max(4000, Math.min(Math.floor(limit * 0.1), outReserve)))
           return { limit, cpt, reserve }
+        }
+        // The pinned reply is part of the system prompt: it is re-sent every
+        // round and never trimmed away with old history. Its own size is
+        // capped at a share of the same context limit.
+        {
+          const g = get()
+          const chat = g.chats.find((c) => c.id === id)
+          const { limit, cpt } = budgetOf()
+          const pin = pinnedContextFor(chat, g.prefs, limit, cpt)
+          if (pin) {
+            system += `${system ? '\n\n' : ''}${pin.note}`
+            log.push({ n: 'Pinned reply', m: '', detail: pin.truncated ? `Included the pinned reply (~${pin.tokens.toLocaleString()} of ${pin.originalTokens.toLocaleString()} estimated tokens; truncated to fit the configured ${g.prefs.pinContextPercent ?? 50}% context share).` : `Included the pinned reply (~${pin.tokens.toLocaleString()} estimated tokens).`, at: Date.now() })
+          }
         }
         let trimLogged = false
         const histFor = () => {
@@ -1833,19 +1918,19 @@ export const useS = create<S>()(
           { id: 'concise', name: 'Concise', text: CONCISE_PROMPT_TEXT },
         ],
         cmds: [
-          { id: 'k1', name: 'describe', desc: 'Describe an image', in: 'image', sys: 'Describe images accurately and objectively.', tpl: 'Describe this image.', pl: '', on: true },
-          { id: 'k2', name: 'summarize', desc: 'Summarize a document', in: 'doc', sys: 'Summarize documents faithfully in under 150 words.', tpl: 'Summarize the attached document. {{input}}', pl: '', on: true },
-          { id: 'k3', name: 'ask', desc: 'Ask about an image', in: 'image+text', sys: '', tpl: '{{input}}', pl: '', on: false },
-          { id: 'k4', name: 'explain', desc: 'Explain a concept clearly', in: 'text', sys: 'Explain the topic clearly, define unfamiliar terms, and use a concrete example.', tpl: '{{input}}', pl: '', on: true },
-          { id: 'k5', name: 'rewrite', desc: 'Rewrite text for clarity', in: 'text', sys: 'Rewrite the provided text for clarity and flow while preserving its meaning. Return only the rewrite.', tpl: '{{input}}', pl: '', on: true },
-          { id: 'k6', name: 'translate', desc: 'Translate text', in: 'text', sys: 'Translate the provided text into the language requested. If no target language is specified, ask which language.', tpl: '{{input}}', pl: '', on: true },
-          { id: 'k7', name: 'brainstorm', desc: 'Generate useful ideas', in: 'text', sys: 'Generate varied, practical ideas. Keep each idea distinct and briefly explain why it may work.', tpl: '{{input}}', pl: '', on: true },
+          { id: 'k1', name: 'describe', desc: 'Describe an image', in: 'image', sys: 'Describe images accurately and objectively.', tpl: 'Describe this image.', pl: '', on: true, args: '' },
+          { id: 'k2', name: 'summarize', desc: 'Summarize a document', in: 'doc', sys: 'Summarize documents faithfully in under 150 words.', tpl: 'Summarize the attached document. {{input}}', pl: '', on: true, args: '[focus]' },
+          { id: 'k3', name: 'ask', desc: 'Ask about an image', in: 'image+text', sys: '', tpl: '{{input}}', pl: '', on: false, args: '<question>' },
+          { id: 'k4', name: 'explain', desc: 'Explain a concept clearly', in: 'text', sys: 'Explain the topic clearly, define unfamiliar terms, and use a concrete example.', tpl: '{{input}}', pl: '', on: true, args: '<topic>' },
+          { id: 'k5', name: 'rewrite', desc: 'Rewrite text for clarity', in: 'text', sys: 'Rewrite the provided text for clarity and flow while preserving its meaning. Return only the rewrite.', tpl: '{{input}}', pl: '', on: true, args: '<text>' },
+          { id: 'k6', name: 'translate', desc: 'Translate text', in: 'text', sys: 'Translate the provided text into the language requested. If no target language is specified, ask which language.', tpl: '{{input}}', pl: '', on: true, args: '<text> to <language>' },
+          { id: 'k7', name: 'brainstorm', desc: 'Generate useful ideas', in: 'text', sys: 'Generate varied, practical ideas. Keep each idea distinct and briefly explain why it may work.', tpl: '{{input}}', pl: '', on: true, args: '<topic>' },
         ],
         chats: [], chat: '', drafts: {}, memories: [], imageGen: { ...BLANK_IMAGE_GEN }, codeRun: { ...BLANK_CODE_RUN }, voicePrefs: { ...BLANK_VOICE }, memoryPrefs: { enabled: false, intent: 'balanced', recall: 'contextual', method: 'local', classifierEp: '', classifierModel: '' }, docPrefs: { ...BLANK_DOCS }, research: { ...BLANK_RESEARCH }, tools: { ...DEFAULT_TOOLS }, toolConsent: {}, search: { ...BLANK_SEARCH, keys: { ...BLANK_SEARCH.keys } }, skills: DEFAULT_SKILL_STATE.map((s) => ({ ...s })), widgets: {}, widgetPrefs: { ...DEFAULT_WIDGET_PREFS, widgetOrder: [...DEFAULT_WIDGET_PREFS.widgetOrder], shortcuts: [...DEFAULT_WIDGET_PREFS.shortcuts] }, rail: false, pad: '', snips: [],
         params: { ...DEFAULT_PARAMS }, effort: {},
         workspacePrefs: { defaultView: 'latest', autoOpen: true, autoFollow: true },
         advanced: { ...DEFAULT_ADVANCED },
-        sel: null, pr: 'general', globalPrompt: { on: true, text: GENERAL_PROMPT_TEXT, qualities: [] }, features: { ...DEFAULT_FEATURES }, featureOrder: FEATURES.map(([id]) => id), libraryShow: { ...DEFAULT_LIBRARY_SHOW }, themeMode: 'dark', themeDark: 'plum', themeLight: 'paper', customDarkColors: { ...DEFAULT_CUSTOM_COLORS }, customLightColors: { ...DEFAULT_CUSTOM_LIGHT_COLORS }, customDarkTheme: { ...DEFAULT_CUSTOM_DARK_THEME }, customLightTheme: { ...DEFAULT_CUSTOM_LIGHT_THEME }, setupDone: false, prefs: { ...DEFAULT_PREFS },
+        sel: null, favs: [], pr: 'general', globalPrompt: { on: true, text: GENERAL_PROMPT_TEXT, qualities: [] }, features: { ...DEFAULT_FEATURES }, featureOrder: FEATURES.map(([id]) => id), libraryShow: { ...DEFAULT_LIBRARY_SHOW }, themeMode: 'dark', themeDark: 'plum', themeLight: 'paper', customDarkColors: { ...DEFAULT_CUSTOM_COLORS }, customLightColors: { ...DEFAULT_CUSTOM_LIGHT_COLORS }, customDarkTheme: { ...DEFAULT_CUSTOM_DARK_THEME }, customLightTheme: { ...DEFAULT_CUSTOM_LIGHT_THEME }, setupDone: false, prefs: { ...DEFAULT_PREFS },
         stats: ZERO(), keys: Object.fromEntries(KEYS.map(([k, , d]) => [k, d])), gistToken: '',
         projects: [], activeProject: '', price: { in: 0, out: 0 }, todos: [],
         routeStats: {}, shares: [], flashMsg: null,
@@ -1866,6 +1951,8 @@ export const useS = create<S>()(
           const n: any = { [k]: (s[k] as any[]).filter((x) => x.id !== id) }
           if (k === 'eps') {
             n.pls = s.pls.map((p) => ({ ...p, e: p.e.filter((x) => splitEntry(x)[0] !== id), cls: p.cls === id ? '' : p.cls, clsModel: p.cls === id ? '' : p.clsModel }))
+            n.favs = (s.favs ?? []).filter((ref) => splitHelperRef(ref)[0] !== id)
+            if ((s.prefs.collapsedProviders ?? []).includes(id)) n.prefs = { ...(n.prefs ?? s.prefs), collapsedProviders: (s.prefs.collapsedProviders ?? []).filter((x) => x !== id) }
             if (s.prefs.titleEp === id) n.prefs = { ...s.prefs, titleEp: '', titleModel: '' }
             if (s.prefs.effortEp === id) n.prefs = { ...(n.prefs ?? s.prefs), effortEp: '', effortModel: '' }
             if (s.prefs.recallEp === id) n.prefs = { ...(n.prefs ?? s.prefs), recallEp: '', recallModel: '' }
@@ -1912,13 +1999,22 @@ export const useS = create<S>()(
             if (gone?.msgs.length) void import('./storage/boot').then(({ dropAttachmentBytes }) => dropAttachmentBytes(gone.msgs).catch(() => {})).catch(() => {})
           }
           set((s) => {
-            const chats = op === 'del' ? s.chats.filter((c) => c.id !== id) : s.chats.map((c) => (c.id === id ? { ...c, pin: !c.pin } : c))
+            const chats = op === 'del'
+              ? s.chats.filter((c) => c.id !== id)
+              : s.chats.map((c) => (c.id === id ? (op === 'pin' ? { ...c, pin: !c.pin } : { ...c, archived: !c.archived, ...(c.archived ? {} : { pin: false }) }) : c))
             // Drop the deleted chat's stashed draft along with the chat.
             const drafts = { ...s.drafts }
             if (op === 'del') delete drafts[id]
             return { chats, chat: s.chat === id && op === 'del' ? chats[0]?.id ?? '' : s.chat, drafts }
           })
         },
+        pinMsg: (id) => set((s) => {
+          const chat = s.chats.find((c) => c.msgs.some((m) => m.id === id))
+          const target = chat?.msgs.find((m) => m.id === id)
+          if (!chat || !target || target.r !== 'assistant' || target.err) return s
+          const next = target.pin !== true
+          return { chats: s.chats.map((c) => (c.id === chat.id ? { ...c, msgs: c.msgs.map((m) => (m.r === 'assistant' ? { ...m, pin: m.id === id ? next : false } : m)) } : c)) }
+        }),
 
         send: async (v, att) => {
           if (sendPause) return false
@@ -1926,11 +2022,15 @@ export const useS = create<S>()(
           if (s.busy) return false
           const raw = v.trim()
           if (!raw && !att.length) return false
+          // Every uploaded file gets a distinct name before anything else sees
+          // it, so the model can refer to "report (2).pdf" unambiguously and
+          // the visible attachment chips match what the prompt contains.
+          const namedAtt = uniqueAttachmentNames(att)
           const researchReq = parseResearchRequest(raw)
-          if (researchReq && !att.length) {
+          if (researchReq && !namedAtt.length) {
             const pre = plan(s, { id: 'tmp', r: 'user', t: raw } as Msg)
             if (pre.err) return warn(pre.err)
-            const um: Msg = { id: uid(), r: 'user', t: raw, at: Date.now(), att, full: raw }
+            const um: Msg = { id: uid(), r: 'user', t: raw, at: Date.now(), att: namedAtt, full: raw }
             um.historyTokens = 0
             um.explicitTokens = est(raw)
             const mid = uid()
@@ -1952,7 +2052,7 @@ export const useS = create<S>()(
           {
             const pm = activePlanMsg()
             if (pm && !att.length) {
-              const um: Msg = { id: uid(), r: 'user', t: raw, at: Date.now(), att, full: raw }
+              const um: Msg = { id: uid(), r: 'user', t: raw, at: Date.now(), att: namedAtt, full: raw }
               um.historyTokens = 0
               um.explicitTokens = est(raw)
               set((st) => ({ chats: st.chats.map((c) => (c.id === pm.c.id ? { ...c, msgs: [...c.msgs, um] } : c)), notice: null }))
@@ -1971,7 +2071,7 @@ export const useS = create<S>()(
             const miss = { text: !text && 'text', image: !i && 'an image', 'image+text': (!i || !text) && 'an image and some text', doc: !d && 'a document (PDF or text file)' }[cmd.in]
             if (miss) return warn({ t: `/${cmd.name} needs ${miss}. Attach it with the + button, then send again.` })
           }
-          const um: Msg = { id: uid(), r: 'user', t: raw, at: Date.now(), att, cmd: cmd?.id }
+          const um: Msg = { id: uid(), r: 'user', t: raw, at: Date.now(), att: namedAtt, cmd: cmd?.id }
           // The chat the user is sending from, captured before any await: the
           // OCR pass below can take seconds and the user may switch chats
           // while it runs.
@@ -1979,10 +2079,10 @@ export const useS = create<S>()(
           // Vision OCR (Documents setting): when no usable endpoint can take
           // images natively (or OCR is set to always), transcribe images to
           // text first so plan() sees text-backed attachments.
-          let files = att
+          let files = namedAtt
           {
             const dp = normDocs((s as unknown as { docPrefs?: unknown }).docPrefs)
-            const bare = att.filter((a) => a.kind === 'img' && a.data && !a.text)
+            const bare = namedAtt.filter((a) => a.kind === 'img' && a.data && !a.text)
             if (bare.length && dp.ocr !== 'off') {
               // `busy` is only set once the message is appended; the flag
               // keeps a second send from slipping through this await window.
@@ -1994,7 +2094,7 @@ export const useS = create<S>()(
                   if (!picked) return warn({ t: 'These images need text extraction, but no usable vision-capable endpoint is configured. Add one in Settings → Endpoints, pick it as the OCR endpoint in Settings → Chats → Documents, or remove the images.', tab: 'eps', label: 'Open endpoints' })
                   const model = picked.id === dp.ocrEp && dp.ocrModel && modelsOf(picked).includes(dp.ocrModel) ? dp.ocrModel : picked.model
                   try {
-                    files = await Promise.all(att.map(async (a) => {
+                    files = await Promise.all(namedAtt.map(async (a) => {
                       if (a.kind !== 'img' || !a.data || a.text) return a
                       const text = await ocrImage(picked, model, a)
                       return { ...a, text: `[ocr: transcribed from ${a.name}]\n${text}`, source: 'ocr' }
@@ -2009,6 +2109,8 @@ export const useS = create<S>()(
           }
           // Re-read after the awaited OCR pass: plan and append against the
           // chat the message was sent from, not whichever one is open now.
+          files = uniqueAttachmentNames(files)
+          um.att = files
           const s2 = get()
           const pre = plan(s2, um)
           if (pre.err) return warn(pre.err)
@@ -2057,6 +2159,34 @@ export const useS = create<S>()(
             return
           }
           void answer(um, prev)
+        },
+        retryMsg: (id) => {
+          const s = get()
+          if (s.busy) { set({ notice: { t: 'A reply is still in progress. Stop it first, then retry.' } }); return }
+          const c = s.chats.find((x) => x.msgs.some((m) => m.id === id))
+          if (!c) return
+          const i = c.msgs.findIndex((m) => m.id === id)
+          const failed = c.msgs[i]
+          if (!failed || failed.r !== 'assistant' || !failed.err) return
+          // Resending rebuilds the answer from its request, so anything written
+          // after the failure would be dropped. Only the trailing reply can be
+          // retried in place; older failures are regenerated from their own
+          // message with "Branch from here" or by editing the request.
+          if (i !== c.msgs.length - 1) { set({ notice: { t: 'Only the most recent reply can be retried.' } }); return }
+          let j = i - 1
+          while (j >= 0 && c.msgs[j].r !== 'user') j--
+          if (j < 0) return
+          const um = c.msgs[j]
+          const pre = plan(s, um)
+          if (pre.err) { set({ notice: pre.err }); return }
+          set({ chats: s.chats.map((x) => (x.id === c.id ? { ...x, msgs: c.msgs.slice(0, i) } : x)), chat: c.id })
+          // A failed @research request re-enters the tier picker, like regen.
+          const rreq = parseResearchRequest(um.t ?? '')
+          if (rreq && !um.att?.length) {
+            startResearchTierPick(c.id, c.msgs.slice(0, i), rreq.query)
+            return
+          }
+          void answer(um)
         },
         delMsg: (id) => {
           const gone = get().chats.flatMap((c) => c.msgs).find((m) => m.id === id)
@@ -2251,7 +2381,9 @@ export const useS = create<S>()(
           p.prefs.titleEp = ''
         }
         if (p.prefs && p.prefs.showTps === undefined) p.prefs.showTps = false
-        p.prefs = { ...p.prefs, tempHours: p.prefs?.tempHours ?? 3, startup: normStartup(p.prefs?.startup), tempShow: Number.isInteger(p.prefs?.tempShow) ? Math.max(0, Math.min(6, p.prefs.tempShow)) : 2, tempGlow: typeof p.prefs?.tempGlow === 'number' && p.prefs.tempGlow >= 0 && p.prefs.tempGlow <= 2 ? Math.round(p.prefs.tempGlow * 100) / 100 : 1, tempGlowSent: typeof p.prefs?.tempGlowSent === 'number' && p.prefs.tempGlowSent >= 0 && p.prefs.tempGlowSent <= 2 ? Math.round(p.prefs.tempGlowSent * 100) / 100 : 0.5, draftSurvive: ['off', 'new', 'chats', 'both'].includes(p.prefs?.draftSurvive) ? p.prefs.draftSurvive : 'both', fontBody: p.prefs?.fontBody ?? 'system', fontMono: p.prefs?.fontMono ?? 'system', fontHeader: p.prefs?.fontHeader ?? 'system', modelPrimary: p.prefs?.modelPrimary ?? ({ none: 'id', name: 'name', provider: 'id', both: 'name' } as const)[(p.prefs?.modelDisplay as string) ?? 'both'] ?? 'name', modelSecondary: p.prefs?.modelSecondary ?? ({ none: 'none', name: 'none', provider: 'provider', both: 'provider' } as const)[(p.prefs?.modelDisplay as string) ?? 'both'] ?? 'none', paletteMax: p.prefs?.paletteMax ?? 320, chatWidth: p.prefs?.chatWidth ?? 'standard', settingsWidth: p.prefs?.settingsWidth ?? 1024, settingsHeight: p.prefs?.settingsHeight ?? 780, modelPickerHeight: p.prefs?.modelPickerHeight ?? 480, showModelPricing: p.prefs?.showModelPricing ?? false, showContextMeter: p.prefs?.showContextMeter ?? true, titleEp: p.prefs?.titleEp ?? '', titleModel: p.prefs?.titleModel ?? '', effortEp: p.prefs?.effortEp ?? '', effortModel: p.prefs?.effortModel ?? '', recallEp: p.prefs?.recallEp ?? '', recallModel: p.prefs?.recallModel ?? '', routingMode: ['ordered', 'fastest', 'cheapest'].includes(p.prefs?.routingMode) ? p.prefs.routingMode : 'ordered', sidebarWidth: p.prefs?.sidebarWidth ?? 288, widgetWidth: p.prefs?.widgetWidth ?? 320, workspaceWidth: typeof p.prefs?.workspaceWidth === 'number' && p.prefs.workspaceWidth <= 1 ? p.prefs.workspaceWidth : 0.4, workspaceSplit: typeof p.prefs?.workspaceSplit === 'number' ? p.prefs.workspaceSplit : 0.2, modalBlur: p.prefs?.modalBlur ?? 12, settingsOpacity: p.prefs?.settingsOpacity ?? 55, temporaryByDefault: p.prefs?.temporaryByDefault ?? false, streamFade: typeof p.prefs?.streamFade === 'number' && p.prefs.streamFade >= 0 && p.prefs.streamFade <= 1 ? p.prefs.streamFade : 0.3, streamMd: p.prefs?.streamMd ?? true, proxyMode: p.prefs?.proxyMode === 'always' || p.prefs?.proxyMode === 'off' ? p.prefs.proxyMode : 'auto', glassComposer: p.prefs?.glassComposer ?? true }
+        p.prefs = { ...p.prefs, copyMarkdown: p.prefs?.copyMarkdown !== false, codeLines: p.prefs?.codeLines === true, codeMaxHeight: typeof p.prefs?.codeMaxHeight === 'number' && Number.isFinite(p.prefs.codeMaxHeight) ? Math.max(0, Math.min(1200, Math.round(p.prefs.codeMaxHeight))) : 0, pinContext: p.prefs?.pinContext !== false, pinContextPercent: typeof p.prefs?.pinContextPercent === 'number' && Number.isFinite(p.prefs.pinContextPercent) ? Math.max(5, Math.min(50, Math.round(p.prefs.pinContextPercent))) : 50, tempHours: p.prefs?.tempHours ?? 3, startup: normStartup(p.prefs?.startup), tempShow: Number.isInteger(p.prefs?.tempShow) ? Math.max(0, Math.min(6, p.prefs.tempShow)) : 2, tempGlow: typeof p.prefs?.tempGlow === 'number' && p.prefs.tempGlow >= 0 && p.prefs.tempGlow <= 2 ? Math.round(p.prefs.tempGlow * 100) / 100 : 1, tempGlowSent: typeof p.prefs?.tempGlowSent === 'number' && p.prefs.tempGlowSent >= 0 && p.prefs.tempGlowSent <= 2 ? Math.round(p.prefs.tempGlowSent * 100) / 100 : 0.5, draftSurvive: ['off', 'new', 'chats', 'both'].includes(p.prefs?.draftSurvive) ? p.prefs.draftSurvive : 'both', fontBody: p.prefs?.fontBody ?? 'system', fontMono: p.prefs?.fontMono ?? 'system', fontHeader: p.prefs?.fontHeader ?? 'system', modelPrimary: p.prefs?.modelPrimary ?? ({ none: 'id', name: 'name', provider: 'id', both: 'name' } as const)[(p.prefs?.modelDisplay as string) ?? 'both'] ?? 'name', modelSecondary: p.prefs?.modelSecondary ?? ({ none: 'none', name: 'none', provider: 'provider', both: 'provider' } as const)[(p.prefs?.modelDisplay as string) ?? 'both'] ?? 'none', paletteMax: p.prefs?.paletteMax ?? 320, chatWidth: p.prefs?.chatWidth ?? 'standard', settingsWidth: p.prefs?.settingsWidth ?? 1024, settingsHeight: p.prefs?.settingsHeight ?? 780, modelPickerHeight: p.prefs?.modelPickerHeight ?? 480, showModelPricing: p.prefs?.showModelPricing ?? false, showContextMeter: p.prefs?.showContextMeter ?? true, titleEp: p.prefs?.titleEp ?? '', titleModel: p.prefs?.titleModel ?? '', effortEp: p.prefs?.effortEp ?? '', effortModel: p.prefs?.effortModel ?? '', recallEp: p.prefs?.recallEp ?? '', recallModel: p.prefs?.recallModel ?? '', routingMode: ['ordered', 'fastest', 'cheapest'].includes(p.prefs?.routingMode) ? p.prefs.routingMode : 'ordered', sidebarWidth: p.prefs?.sidebarWidth ?? 288, widgetWidth: p.prefs?.widgetWidth ?? 320, workspaceWidth: typeof p.prefs?.workspaceWidth === 'number' && p.prefs.workspaceWidth <= 1 ? p.prefs.workspaceWidth : 0.4, workspaceSplit: typeof p.prefs?.workspaceSplit === 'number' ? p.prefs.workspaceSplit : 0.2, modalBlur: p.prefs?.modalBlur ?? 12, settingsOpacity: p.prefs?.settingsOpacity ?? 55, temporaryByDefault: p.prefs?.temporaryByDefault ?? false, streamFade: typeof p.prefs?.streamFade === 'number' && p.prefs.streamFade >= 0 && p.prefs.streamFade <= 1 ? p.prefs.streamFade : 0.3, streamMd: p.prefs?.streamMd ?? true, proxyMode: p.prefs?.proxyMode === 'always' || p.prefs?.proxyMode === 'off' ? p.prefs.proxyMode : 'auto', glassComposer: p.prefs?.glassComposer ?? true, stylePreset: normStylePreset(p.prefs?.stylePreset), density: normDensity(p.prefs?.density), uiSpacing: normSpacing(p.prefs?.uiSpacing), showTimestamps: p.prefs?.showTimestamps === true, alwaysShowActions: p.prefs?.alwaysShowActions === true, textScale: typeof p.prefs?.textScale === 'number' && Number.isFinite(p.prefs.textScale) ? Math.round(Math.min(200, Math.max(50, p.prefs.textScale))) : 100, codeWrap: p.prefs?.codeWrap === true, reduceTransparency: p.prefs?.reduceTransparency === true, promptRecall: normPromptRecall(p.prefs?.promptRecall), highContrast: p.prefs?.highContrast === true }
+        p.favs = Array.isArray(p.favs) ? [...new Set(p.favs.filter((x: unknown) => typeof x === 'string' && x.includes('::')))] : []
+        p.prefs = { ...p.prefs, favoritesSection: p.prefs?.favoritesSection !== false, hideFavoritesInProviders: p.prefs?.hideFavoritesInProviders !== false, collapsedProviders: Array.isArray(p.prefs?.collapsedProviders) ? p.prefs.collapsedProviders.filter((x: unknown) => typeof x === 'string') : [] }
         p.tools = { ...DEFAULT_TOOLS, ...(p.tools ?? {}) }
         // Only boolean flags for known tools survive a reload.
         p.toolConsent = Object.fromEntries(Object.entries(p.toolConsent ?? {}).filter(([k, v]) => v === true && TOOLS.some(([id]) => id === k)))
@@ -2335,10 +2467,10 @@ export const useS = create<S>()(
         }) }))
         if (Array.isArray(p.cmds)) {
           const defaults: Cmd[] = [
-            { id: 'k4', name: 'explain', desc: 'Explain a concept clearly', in: 'text', sys: 'Explain the topic clearly, define unfamiliar terms, and use a concrete example.', tpl: '{{input}}', pl: '', on: true },
-            { id: 'k5', name: 'rewrite', desc: 'Rewrite text for clarity', in: 'text', sys: 'Rewrite the provided text for clarity and flow while preserving its meaning. Return only the rewrite.', tpl: '{{input}}', pl: '', on: true },
-            { id: 'k6', name: 'translate', desc: 'Translate text', in: 'text', sys: 'Translate the provided text into the language requested. If no target language is specified, ask which language.', tpl: '{{input}}', pl: '', on: true },
-            { id: 'k7', name: 'brainstorm', desc: 'Generate useful ideas', in: 'text', sys: 'Generate varied, practical ideas. Keep each idea distinct and briefly explain why it may work.', tpl: '{{input}}', pl: '', on: true },
+            { id: 'k4', name: 'explain', desc: 'Explain a concept clearly', in: 'text', sys: 'Explain the topic clearly, define unfamiliar terms, and use a concrete example.', tpl: '{{input}}', pl: '', on: true, args: '<topic>' },
+            { id: 'k5', name: 'rewrite', desc: 'Rewrite text for clarity', in: 'text', sys: 'Rewrite the provided text for clarity and flow while preserving its meaning. Return only the rewrite.', tpl: '{{input}}', pl: '', on: true, args: '<text>' },
+            { id: 'k6', name: 'translate', desc: 'Translate text', in: 'text', sys: 'Translate the provided text into the language requested. If no target language is specified, ask which language.', tpl: '{{input}}', pl: '', on: true, args: '<text> to <language>' },
+            { id: 'k7', name: 'brainstorm', desc: 'Generate useful ideas', in: 'text', sys: 'Generate varied, practical ideas. Keep each idea distinct and briefly explain why it may work.', tpl: '{{input}}', pl: '', on: true, args: '<topic>' },
           ]
           for (const c of defaults) if (!p.cmds.some((x: Cmd) => x.name === c.name || x.id === c.id)) p.cmds.push(c)
         }

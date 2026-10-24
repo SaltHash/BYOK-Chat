@@ -14,7 +14,139 @@
   --color-codeh: var(--codeh);
   --color-bor: var(--bor);
   --font-sans: var(--font-body, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif);
+  /* Style presets own radii and elevation through these indirections, so a
+     single `data-style` switch restyles every rounded/shadowed surface. */
+  --radius-sm: var(--r-sm);
+  --radius-md: var(--r-md);
+  --radius-lg: var(--r-lg);
+  --radius-xl: var(--r-xl);
+  --radius-2xl: var(--r-2xl);
+  --radius-3xl: var(--r-3xl);
+  --shadow-sm: var(--sh-sm);
+  --shadow-md: var(--sh-md);
+  --shadow-lg: var(--sh-lg);
+  --shadow-2xl: var(--sh-2xl);
 }
+
+/* Style presets. `modern` is the original look; the other three change only
+   corner radii and elevation, never colours, fonts or layout. */
+:root {
+  --r-sm: 0.25rem; --r-md: 0.375rem; --r-lg: 0.5rem; --r-xl: 0.75rem; --r-2xl: 1rem; --r-3xl: 1.5rem;
+  --sh-sm: 0 1px 2px 0 rgb(0 0 0 / 5%);
+  --sh-md: 0 4px 6px -1px rgb(0 0 0 / 10%), 0 2px 4px -2px rgb(0 0 0 / 10%);
+  --sh-lg: 0 10px 15px -3px rgb(0 0 0 / 10%), 0 4px 6px -4px rgb(0 0 0 / 10%);
+  --sh-2xl: 0 25px 50px -12px rgb(0 0 0 / 25%);
+  /* Spacing tokens consumed by the shell (see src/style.ts). Every structural
+   * surface — top bar, conversation, sidebar, composer, panels, code blocks —
+   * reads one of these, so density + overrides scale the whole app. */
+  --ui-header-pad: 12px;
+  --ui-header-pad-y: 0px;
+  --ui-chat-pad-x: 16px;
+  --ui-chat-pad-y: 24px;
+  --ui-msg-gap: 32px;
+  --ui-side-pad: 12px;
+  --ui-side-gap: 12px;
+  --ui-composer-pad: 12px;
+  --ui-panel-pad: 12px;
+  --ui-code-pad-x: 16px;
+  --ui-code-pad-y: 12px;
+  --ui-code-head-pad-x: 16px;
+  --ui-code-head-pad-y: 8px;
+  /* How far the Floating preset lifts the docked panels off the edges. */
+  --ui-float-gap: 10px;
+}
+[data-style=sharp] {
+  --r-sm: 0rem; --r-md: 0rem; --r-lg: 0rem; --r-xl: 0rem; --r-2xl: 0rem; --r-3xl: 0rem;
+  --sh-sm: 0 1px 0 0 rgb(0 0 0 / 12%);
+  --sh-md: 0 1px 0 0 rgb(0 0 0 / 14%), 0 2px 6px -2px rgb(0 0 0 / 10%);
+  --sh-lg: 0 2px 0 0 rgb(0 0 0 / 14%), 0 8px 18px -6px rgb(0 0 0 / 14%);
+  --sh-2xl: 0 2px 0 0 rgb(0 0 0 / 16%), 0 18px 40px -16px rgb(0 0 0 / 34%);
+}
+[data-style=bubbly] {
+  --r-sm: 0.5rem; --r-md: 0.75rem; --r-lg: 1rem; --r-xl: 1.25rem; --r-2xl: 1.75rem; --r-3xl: 2.5rem;
+  --sh-sm: 0 2px 4px -1px rgb(0 0 0 / 8%);
+  --sh-md: 0 8px 18px -6px rgb(0 0 0 / 16%), 0 2px 6px -2px rgb(0 0 0 / 8%);
+  --sh-lg: 0 18px 34px -14px rgb(0 0 0 / 20%), 0 6px 12px -8px rgb(0 0 0 / 10%);
+  --sh-2xl: 0 34px 70px -22px rgb(0 0 0 / 34%);
+}
+[data-style=floating] {
+  --r-sm: 0.3125rem; --r-md: 0.5rem; --r-lg: 0.625rem; --r-xl: 0.875rem; --r-2xl: 1.125rem; --r-3xl: 1.625rem;
+  --sh-sm: 0 2px 6px -2px rgb(0 0 0 / 12%);
+  --sh-md: 0 10px 24px -10px rgb(0 0 0 / 26%), 0 2px 8px -3px rgb(0 0 0 / 14%);
+  --sh-lg: 0 22px 46px -18px rgb(0 0 0 / 32%), 0 6px 16px -8px rgb(0 0 0 / 16%);
+  --sh-2xl: 0 40px 80px -28px rgb(0 0 0 / 45%), 0 10px 26px -14px rgb(0 0 0 / 22%);
+}
+/* Reduced motion keeps the same look; the shadows are static, so nothing to do. */
+
+/* Floating (`data-style=floating`): the docked panels detach from the window
+ * edges as floating cards on the app background, each lifted on the preset's
+ * deep shadow. The page background shows through the gap, and the resize
+ * separators stay usable between the cards. */
+html[data-style=floating] .side-shell,
+html[data-style=floating] .widgets-shell {
+  margin: var(--ui-float-gap);
+  border: 1px solid var(--bor);
+  border-radius: var(--r-2xl);
+  box-shadow: var(--sh-lg);
+  height: calc(100dvh - 2 * var(--ui-float-gap));
+}
+/* On narrow screens the panels are full-screen overlays again — a floating
+ * card with a margin would waste the little space there is. */
+@media (max-width: 767px) {
+  html[data-style=floating] .side-shell { margin: 0; height: 100dvh; border-radius: 0; border: 0; box-shadow: none; }
+}
+@media (max-width: 1023px) {
+  html[data-style=floating] .widgets-shell { margin: 0; height: 100dvh; border-radius: 0; border: 0; box-shadow: none; }
+}
+/* Keep the floating look out of the flat (reduced-transparency) mode's way:
+ * the border stays, only the shadow is dropped. */
+html[data-style=floating][data-flat] .side-shell,
+html[data-style=floating][data-flat] .widgets-shell,
+html[data-style=floating][data-flat] .panel-shell { box-shadow: none; }
+
+/* The workspace (code) and deep-research report panels float too, but only
+ * once they are side columns: below the wide breakpoint they are bottom
+ * overlays, where a floating card with margins would waste the space. */
+@media (min-width: 640px) {
+  html[data-style=floating] .panel-shell {
+    margin: var(--ui-float-gap);
+    border: 1px solid var(--bor);
+    border-radius: var(--r-2xl);
+    box-shadow: var(--sh-lg);
+  }
+}
+
+/* Reduced transparency (`data-flat`): surfaces go opaque and blur/drop
+ * shadows are removed. This handles the composer glass, the dnd overlays and
+ * the settings dropdown shadow; the modal blur itself is zeroed by passing 0
+ * to useThemeCss so the inline custom property is the single source. */
+html[data-flat] .glass-composer { background: var(--surf); -webkit-backdrop-filter: none; backdrop-filter: none; }
+html[data-flat] .dnd-overlay, html[data-flat] .dnd-lift { filter: none; }
+html[data-flat] .settings-root { --settings-dropdown-shadow: none; }
+
+/* High-contrast (`data-contrast`): push muted text and hairline borders well
+ * above their theme values by mixing each toward the foreground colour. Works
+ * for every theme, custom themes included, without per-theme values. */
+html[data-contrast] { --mu: color-mix(in srgb, var(--mu) 55%, var(--tx)); --bor: color-mix(in srgb, var(--bor) 55%, var(--tx)); }
+
+/* Code blocks follow the spacing tokens; the utilities inside Rich.tsx stay as
+ * fallbacks and are overridden at higher specificity here. */
+.md pre { padding: var(--ui-code-pad-y) var(--ui-code-pad-x) !important; }
+.code-head { padding: var(--ui-code-head-pad-y) var(--ui-code-head-pad-x) !important; }
+
+/* Sidebar rows follow the density: vertical padding inside each item and the
+ * gap between rows. Comfortable reproduces the original 8px / 0px. */
+.side-item { padding-top: var(--ui-side-item-py); padding-bottom: var(--ui-side-item-py); }
+.side-rows { display: flex; flex-direction: column; gap: var(--ui-side-item-gap); }
+
+/* The search / deep-research banner fuses to the composer's edges whatever the
+ * density: its negative margins mirror the composer padding token (the fixed
+ * -12px utilities underneath only match the comfortable default). */
+.composer-shell .mention-banner { margin: calc(-1 * var(--ui-composer-pad)) calc(-1 * var(--ui-composer-pad)) 0.75rem; }
+
+/* Code wrap (`data-codewrap`): long lines in fenced code blocks soft-wrap
+ * instead of scrolling sideways. Inline code always flows. */
+html[data-codewrap] .md pre code { white-space: pre-wrap; overflow-wrap: anywhere; }
 
 /* c2..c5 are the syntax colors for strings, numbers, titles and types in each theme */
 [data-t=plum] { color-scheme: dark; --bg:#17101c; --side:#120c16; --surf:#211828; --hov:#2c2036; --tx:#f3eaf7; --mu:#a893b4; --ac:#dc8ad8; --acx:#1b1020; --er:#ff8fa3; --code:#100b15; --codeh:#2f2040; --c2:#9fe3c5; --c3:#f2b98b; --c4:#8fb9ff; --c5:#c7a6ff }
@@ -32,8 +164,13 @@
   h1, h2, h3, h4, h5, h6 { font-family: var(--font-heading, var(--font-body)); }
   code, pre, kbd { font-family: var(--font-mono-custom, ui-monospace, monospace); }
   ::placeholder { color: color-mix(in srgb, var(--mu) 70%, transparent); }
+  /* One selection colour everywhere, tinted by the active theme. */
+  ::selection { background: color-mix(in srgb, var(--ac) 30%, transparent); }
   * { scrollbar-width: thin; scrollbar-color: var(--hov) transparent; }
   button { cursor: pointer; }
+  /* Timestamps and other figures read better when digits do not shift width
+   * (e.g. "14:05" lining up down a transcript). */
+  time { font-variant-numeric: tabular-nums; }
   :focus-visible { outline: 2px solid var(--ac); outline-offset: 2px; }
   html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
   /* The app owns its own scroll containers; stop the page itself from
@@ -138,12 +275,14 @@
 /* Hairline edges: panes, menus and dialogs read as separate surfaces. */
 /* --bor is the single border color used across the app; --edge aliases it. */
 :root { --bor: color-mix(in srgb, var(--hov) 80%, var(--mu)); --edge: var(--bor); }
-/* Composer frame: hover, focus, an open menu (+ attach / model / prompt) or
-   dictation raise the border from --hov to the app border colour --bor, the
-   same edge everything else in the app uses. */
-.composer-shell:hover,
-.composer-shell:focus-within,
-.composer-shell[data-lit] { border-color: var(--bor); }
+/* Composer frame: hover, focus and open menus (+ attach / model / prompt) or
+   dictation all lift the border to the app edge colour (the same brighter
+   hairline as the sidebar's right edge), so the active surface reads as
+   focused without pulling in the accent colour. Menus and dictation go a
+   step brighter than the plain focused edge. */
+.composer-shell:hover { border-color: var(--bor); }
+.composer-shell:focus-within { border-color: var(--bor); }
+.composer-shell[data-lit] { border-color: color-mix(in srgb, var(--tx) 22%, var(--bor)); }
 
 /* Plum and Obsidian have bright muted tones, which makes the default mix read
    as a drawn line. Lean further toward each theme's surface colour so the
@@ -276,7 +415,11 @@
    falling inward from the frame rather than a drawn border. The Settings →
    Look intensity slider scales the whole thing through --temp-glow-i (0–2,
    1 by default; 0 disables the overlay entirely). A second relative slider
-   (--temp-glow-sent, 0.5) scales the constant after-first-message foothold. */
+   (--temp-glow-sent, 0.5) scales the constant after-first-message foothold.
+
+   No shine sweep: the overlay only ever varies its own glow intensity. While
+   the chat is still empty it waves around in brightness (see temp-glow-breathe)
+   and never actually turns off. */
 .temp-glow {
   --i: var(--temp-glow-i, 1);
   position: fixed;
@@ -296,21 +439,16 @@
  * --temp-glow-sent, multiplied onto the same base the keyframes use. */
 .temp-glow { --sent: var(--temp-glow-sent, 0.5); }
 .temp-glow[data-sent=""] { opacity: calc(var(--i) * var(--sent) * 0.6); }
-/* While the chat is empty the glow drifts instead of pulsing: an irregular,
- * non-looping-feeling keyframe ramp (no two dips alike, rise and fall at
- * different speeds) over a slow period. */
+/* While the chat is empty the glow never actually turns off: instead of an
+ * on/off cycle it just waves around in intensity, oscillating softly between
+ * a dim glow and a full breath. 6s period = one full wave. The extreme values
+ * are scaled by --temp-glow-i, like every other opacity in this component. */
+@keyframes temp-glow-breathe {
+  0%, 100% { opacity: calc(var(--i) * 0.5); }
+  50% { opacity: calc(var(--i) * 0.9); }
+}
 @media not (prefers-reduced-motion: reduce) {
-  @keyframes temp-glow-pulse {
-    0% { opacity: calc(var(--i) * 0.58); }
-    14% { opacity: calc(var(--i) * 0.44); }
-    23% { opacity: calc(var(--i) * 0.52); }
-    41% { opacity: calc(var(--i) * 0.3); }
-    58% { opacity: calc(var(--i) * 0.45); }
-    67% { opacity: calc(var(--i) * 0.36); }
-    86% { opacity: calc(var(--i) * 0.54); }
-    100% { opacity: calc(var(--i) * 0.58); }
-  }
-  .temp-glow:not([data-sent]) { animation: temp-glow-pulse 11s ease-in-out infinite; }
+  .temp-glow:not([data-sent]) { animation: temp-glow-breathe 6s ease-in-out infinite; }
 }
 @media (prefers-reduced-motion: reduce) {
   .temp-glow { transition: none; }

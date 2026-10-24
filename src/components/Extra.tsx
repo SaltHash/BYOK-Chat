@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import { useShallow } from 'zustand/react/shallow'
-import { Info, X, Server, Play, MessageSquare, Keyboard, ArrowUp, ArrowDown, MessagesSquare, RotateCcw, Download, Upload, FileText, Trash2, CircleCheck, CircleX, Gauge, ShieldCheck } from 'lucide-react'
+import { Info, X, Server, Play, MessageSquare, Keyboard, ArrowUp, ArrowDown, MessagesSquare, RotateCcw, Download, Upload, FileText, Trash2, CircleCheck, CircleX, Gauge, ShieldCheck, DatabaseBackup, GitMerge, CalendarDays, RefreshCw, ArchiveRestore } from 'lucide-react'
 import { useS, dl, BLANK, THEMES, themePatch, DEFAULT_FEATURES, DEFAULT_PREFS, DEFAULT_PARAMS, DEFAULT_WIDGET_PREFS, DEFAULT_CUSTOM_DARK_THEME, DEFAULT_CUSTOM_LIGHT_THEME, normCustomTheme, modelsOf, modelNameOf, normSearch, normAdvanced, normFeatureOrder, normDocs, featOn, errText, storageUsage, QUOTA_FLAG, type Ep, type Kind, type FeatureId } from '../store'
 import { normSkills } from '../skills'
 import { normMcpServers } from '../mcp'
@@ -13,7 +13,9 @@ import { probeProviderCors, resolveProvider } from '../providerAdapter'
 import { KEYS, TOOLS, DEFAULT_TOOLS } from '../meta'
 import { Btn, Toggle, Checkbox, Confirm, Modal, Surface, Input, cx, type Ic } from './ui'
 import { Panel, Anchor, Section } from './Settings'
-import { detectAvailableCategories, buildExportPayload } from '../configIO'
+import { detectAvailableCategories, buildExportPayload, chatsInDateRange } from '../configIO'
+import { getAutoBackup, setAutoBackup, runLocalBackup, listLocalBackups, readLocalBackup, deleteLocalBackup, getLastBackup, type BackupMeta } from '../storage/localBackup'
+import { readSyncConflicts, dismissSyncConflict, clearSyncConflicts, conflictChat, type SyncConflict } from '../storage/syncConflicts'
 import { encryptBackup, decryptBackup, isEncryptedBackup } from '../storage/backupCrypto'
 import { SyncBox } from './SyncBox'
 
@@ -39,7 +41,7 @@ export function Tutorial({ cfg }: { cfg: (t: string) => void }) {
     [MessageSquare, 'Send a message', 'Type below and press Enter. Type / for commands and @ for tools.'],
   ]
   return (
-    <div className="mx-auto flex h-full max-w-xl flex-col justify-center gap-6 px-4 py-6">
+    <div className="mx-auto flex w-full max-w-xl flex-col justify-center gap-6 px-4 py-6">
       <div className="space-y-1">
         <h2 className="text-xl font-semibold">Connect a model to begin</h2>
         <p className="text-sm text-mu">{eps.length ? 'Your endpoints are disabled or incomplete. Each one must be enabled and have a base URL and a model id.' : 'No models are built in. Bring your own endpoint and key.'}</p>
@@ -265,7 +267,147 @@ function StorageBox() {
       }}>Compact durable</Btn>
       {quotaFull && <span className="basis-full text-xs text-er">The last save did not fit: settings were kept and bulky history was compacted automatically. Use Compact or delete old chats to free space.</span>}
       {note && <span className="basis-full text-xs text-mu">{note}</span>}
+      <LargestChats kb={kb} />
     </Box>
+  )
+}
+
+/** Per-chat storage breakdown: the five heaviest chats by serialized size,
+ *  so a space emergency can be fixed chat by chat instead of by compaction. */
+function LargestChats({ kb }: { kb: (n: number) => string }) {
+  const chats = useS((s) => s.chats)
+  const [show, setShow] = useState(false)
+  const sizes = useCallback(() => {
+    const out: { id: string; title: string; chars: number }[] = []
+    for (const c of useS.getState().chats) {
+      let chars = 0
+      try { chars = JSON.stringify(c.msgs ?? []).length } catch { /* unserializable attachments: skip counting this chat */ continue }
+      out.push({ id: c.id, title: c.title || 'Untitled chat', chars })
+    }
+    return out.sort((a, b) => b.chars - a.chars).slice(0, 5)
+  }, [])
+  const [top, setTop] = useState(sizes)
+  const del = (id: string) => {
+    const st = useS.getState()
+    const remaining = st.chats.filter((c) => c.id !== id)
+    st.patch({ chats: remaining, chat: st.chat === id ? remaining[0]?.id ?? '' : st.chat })
+    setTop(sizes())
+  }
+  return (
+    <div className="basis-full">
+      <button onClick={() => { if (!show) setTop(sizes()); setShow((v) => !v) }} aria-expanded={show} className="text-xs font-medium text-mu hover:text-tx">
+        {show ? 'Hide largest chats' : 'Largest chats'}
+      </button>
+      {show && (
+        <div className="mt-1.5 space-y-1">
+          {top.length ? top.map((c) => (
+            <div key={c.id} className="flex items-center gap-2 rounded-lg bg-bg px-2 py-1 text-xs">
+              <span className="min-w-0 flex-1 truncate text-tx" title={c.title}>{c.title}</span>
+              <span className="shrink-0 text-mu">~{kb(c.chars)}</span>
+              <button onClick={() => del(c.id)} title="Delete this chat" aria-label={`Delete ${c.title}`} className="grid size-5 shrink-0 place-items-center rounded-sm text-mu hover:text-er"><Trash2 size={12} /></button>
+            </div>
+          )) : <span className="text-xs text-mu">No chats stored.</span>}
+        </div>
+      )}
+    </div>
+  )
+}
+
+/* ---- local backups ---- */
+function LocalBackups({ onRestore }: { onRestore: (j: Record<string, any>) => void }) {
+  const [auto, setAuto] = useState(getAutoBackup)
+  const [items, setItems] = useState<BackupMeta[]>([])
+  const [last, setLast] = useState(getLastBackup)
+  const [note, setNote] = useState('')
+  const [busy, setBusy] = useState(false)
+  const refresh = useCallback(() => {
+    void listLocalBackups().then((v) => setItems(v)).catch(() => setItems([]))
+    setLast(getLastBackup())
+  }, [])
+  useEffect(() => { refresh() }, [refresh])
+  const kb = (n: number) => n < 1024 * 1024 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1024 / 1024).toFixed(2)} MB`
+  const make = async () => {
+    setBusy(true); setNote('')
+    const r = await runLocalBackup(true)
+    setBusy(false)
+    setNote(r.ok ? `Backed up ${new Date(r.meta!.at).toLocaleString()}.` : `Backup failed: ${r.error ?? 'unknown error'}`)
+    refresh()
+  }
+  const restore = async (id: string) => {
+    setNote('')
+    const raw = await readLocalBackup(id)
+    if (!raw) { setNote('That local backup could not be read.'); return }
+    try { onRestore(JSON.parse(raw)) } catch { setNote('That local backup is not valid JSON.') }
+  }
+  const download = async (id: string) => {
+    const raw = await readLocalBackup(id)
+    if (!raw) return
+    dl(`chat-backup-${new Date(Number(id.split('-').pop()) || Date.now()).toISOString().slice(0, 10)}.json`, raw, 'application/json')
+  }
+  return (
+    <div className="space-y-3 rounded-xl bg-surf p-4">
+      <div className="flex flex-wrap items-center gap-2 text-sm font-medium"><DatabaseBackup size={16} className="text-ac" />Local backups <span className="text-xs font-normal text-mu">on this device only{last ? ` · last ${new Date(last).toLocaleString()}` : ''}</span></div>
+      <p className="text-xs text-mu">A rolling snapshot of settings, prompts, projects and chats, written to this browser&rsquo;s IndexedDB. No API keys and no uploaded file bytes are included, and nothing is sent to the sync server. Automatic backups run at most once a day while the app is open.</p>
+      <div className="flex flex-wrap items-center gap-2">
+        <Checkbox checked={auto} set={(v) => { setAuto(v); setAutoBackup(v) }} label="Daily automatic backup" />
+        <Btn v="solid" icon={DatabaseBackup} disabled={busy} onClick={() => void make()}>{busy ? 'Backing up…' : 'Back up now'}</Btn>
+        <Btn v="soft" icon={RefreshCw} onClick={refresh}>Refresh</Btn>
+      </div>
+      {note && <p className="text-xs text-mu">{note}</p>}
+      {items.length ? (
+        <div className="space-y-1.5">
+          {items.map((b) => (
+            <div key={b.id} className="flex flex-wrap items-center gap-2 rounded-lg bg-bg px-2.5 py-2 text-xs">
+              <CalendarDays size={13} className="shrink-0 text-ac" />
+              <span className="min-w-0 flex-1 truncate">{new Date(b.at).toLocaleString()} <span className="text-mu">· {kb(b.bytes)}</span></span>
+              <button type="button" onClick={() => void restore(b.id)} title="Load this backup into the import dialog" className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-mu hover:bg-hov hover:text-tx"><ArchiveRestore size={13} />Restore</button>
+              <button type="button" onClick={() => void download(b.id)} title="Download this backup" className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-mu hover:bg-hov hover:text-tx"><Download size={13} />Download</button>
+              <button type="button" onClick={() => { void deleteLocalBackup(b.id).then(refresh) }} title="Delete this backup" className="grid size-6 place-items-center rounded-md text-mu hover:bg-hov hover:text-er"><Trash2 size={13} /></button>
+            </div>
+          ))}
+        </div>
+      ) : <p className="text-xs text-mu">No local backups yet. Turn on daily backups or press Back up now.</p>}
+    </div>
+  )
+}
+
+/* ---- visible sync conflicts ---- */
+function ConflictsBox() {
+  const [items, setItems] = useState<SyncConflict[]>(readSyncConflicts)
+  const [note, setNote] = useState('')
+  const refresh = () => setItems(readSyncConflicts())
+  const restore = (c: SyncConflict, side: 'local' | 'remote') => {
+    const chat = conflictChat(c, side)
+    if (!chat) { setNote('That side of the conflict could not be restored.'); return }
+    const st = useS.getState()
+    const exists = st.chats.some((x) => x.id === (chat as { id: string }).id)
+    const chats = exists ? st.chats.map((x) => (x.id === (chat as { id: string }).id ? chat as never : x)) : [chat as never, ...st.chats]
+    st.patch({ chats, chat: (chat as { id: string }).id })
+    setItems(dismissSyncConflict(c.id))
+    setNote(`Restored the ${side} version of “${c.title}”.`)
+  }
+  if (!items.length) return null
+  return (
+    <div className="space-y-2 rounded-xl border border-er/30 bg-er/5 p-4">
+      <div className="flex items-center gap-2 text-sm font-medium"><GitMerge size={16} className="text-er" />Sync conflicts <span className="text-xs font-normal text-mu">{items.length}</span></div>
+      <p className="text-xs text-mu">Both devices added different messages to these chats. The merge kept the richer copy; restore whichever side you meant to keep. This replaces that chat locally and the choice syncs on the next push.</p>
+      {items.map((c) => (
+        <div key={c.id} className="space-y-2 rounded-lg bg-bg p-2.5 text-xs">
+          <div className="font-medium">{c.title}</div>
+          <div className="grid gap-2 sm:grid-cols-2">
+            {(['local', 'remote'] as const).map((side) => (
+              <div key={side} className="space-y-1 rounded-md bg-surf p-2">
+                <div className="flex items-center justify-between gap-2"><span className="font-medium capitalize">{side === 'local' ? 'This device' : 'Other device'}</span><span className="text-mu">{c[side].msgs} messages</span></div>
+                <p className="line-clamp-3 text-mu">{c[side].last || 'No visible text'}</p>
+                <button type="button" onClick={() => restore(c, side)} className="rounded-md bg-hov px-2 py-1 font-medium hover:bg-ac hover:text-acx">Restore this side</button>
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
+      {note && <p className="text-xs text-mu">{note}</p>}
+      <div className="flex gap-2"><button type="button" onClick={() => { clearSyncConflicts(); refresh() }} className="text-xs text-mu hover:text-tx">Dismiss all</button></div>
+    </div>
   )
 }
 
@@ -290,6 +432,9 @@ export function DataTab() {
   // Export password: empty exports plain JSON, non-empty encrypts the file.
   const [expPw, setExpPw] = useState('')
   const [expMsg, setExpMsg] = useState('')
+  // Optional active-date window for chat history exports.
+  const [fromDate, setFromDate] = useState('')
+  const [toDate, setToDate] = useState('')
   // A chosen file that is password-encrypted, awaiting its password before it
   // can be parsed and offered for import.
   const [pendingEnc, setPendingEnc] = useState<{ text: string } | null>(null)
@@ -315,7 +460,9 @@ export function DataTab() {
     return () => window.removeEventListener('byok:import-backup', f)
   }, [])
   const exp = async () => {
-    const data = buildExportPayload(useS.getState() as unknown as Parameters<typeof buildExportPayload>[0], exports, withKeys, normSkills, normSearch)
+    const live = useS.getState()
+    const chats = exports.chats ? chatsInDateRange(live.chats, fromDate || undefined, toDate || undefined) : live.chats
+    const data = buildExportPayload({ ...(live as unknown as Parameters<typeof buildExportPayload>[0]), chats }, exports, withKeys, normSkills, normSearch)
     const json = JSON.stringify(data, null, 1)
     if (!expPw) { dl('chat-config.json', json, 'application/json'); return }
     setExpMsg('Encrypting…')
@@ -332,6 +479,13 @@ export function DataTab() {
     setFileData(j)
     setMerge(true)
     setMsg('')
+  }
+  /* Restoring a local snapshot opens the same review dialog as importing a
+   * file, but defaults to Replace so it actually rolls back instead of merging
+   * today's data into yesterday's copy. */
+  const restoreParsed = (j: Record<string, any>) => {
+    loadParsed(j)
+    setMerge(false)
   }
   const chooseFile = async (f?: File) => {
     if (!f) return
@@ -392,10 +546,11 @@ export function DataTab() {
         const chats = !imports.chats ? st.chats : merge ? [...st.chats.filter((c) => !importedChats.some((x: any) => x.id === c.id)), ...importedChats] : importedChats
         const validSel = j.sel && typeof j.sel === 'object' && (j.sel.k === 'ep' || j.sel.k === 'pl') && typeof j.sel.id === 'string'
           ? { k: j.sel.k, id: j.sel.id, ...(typeof j.sel.model === 'string' && j.sel.model ? { model: j.sel.model } : {}) } : null
+        const validFavs = Array.isArray(j.favs) ? j.favs.filter((x: unknown): x is string => typeof x === 'string' && x.includes('::')) : []
         const validMemories = Array.isArray(j.memories) ? j.memories.filter((x: any) => x && typeof x.id === 'string' && typeof x.text === 'string').map((x: any) => ({ id: x.id, text: String(x.text).slice(0, 500), category: typeof x.category === 'string' ? x.category.slice(0, 60) || 'General' : 'General', createdAt: typeof x.createdAt === 'number' ? x.createdAt : Date.now(), updatedAt: typeof x.updatedAt === 'number' ? x.updatedAt : Date.now() })) : []
         const validTodos = Array.isArray(j.todos) ? j.todos.filter((x: any) => x && typeof x.id === 'string' && typeof x.t === 'string').map((x: any) => ({ id: x.id, t: String(x.t).slice(0, 500), done: x.done === true })) : []
         return {
-        ...(imports.eps ? { eps: m('eps', st.eps).map((e: Ep) => ({ ...e, models: Array.isArray(e.models) ? e.models.filter((x: unknown) => typeof x === 'string') : [], key: merge && !e.key ? st.eps.find((x) => x.id === e.id)?.key || '' : e.key })), ...(validSel ? { sel: validSel } : {}) } : {}),
+        ...(imports.eps ? { eps: m('eps', st.eps).map((e: Ep) => ({ ...e, models: Array.isArray(e.models) ? e.models.filter((x: unknown) => typeof x === 'string') : [], key: merge && !e.key ? st.eps.find((x) => x.id === e.id)?.key || '' : e.key })), ...(validSel ? { sel: validSel } : {}), ...(Array.isArray(j.favs) ? { favs: merge ? [...new Set([...st.favs, ...validFavs])] : validFavs } : {}) } : {}),
         ...(imports.prompts ? { prompts: m('prompts', st.prompts), ...(typeof j.pr === 'string' ? { pr: j.pr } : {}), ...(j.globalPrompt && typeof j.globalPrompt === 'object' ? { globalPrompt: normGlobalPrompt(j.globalPrompt) } : {}) } : {}),
         ...(imports.pls ? { pls: m('pls', st.pls) } : {}), ...(imports.cmds ? { cmds: m('cmds', st.cmds) } : {}),
         ...(imports.skills && Array.isArray(j.skills) ? { skills: normSkills(merge ? [...(st as any).skills ?? [], ...j.skills] : j.skills).skills } : {}),
@@ -424,6 +579,8 @@ export function DataTab() {
     <Panel id="data">
       <Section title="Sync and transfer" desc="Keep this browser in sync, or move your setup somewhere else.">
       <Anchor id="device-sync"><SyncBox /></Anchor>
+      <Anchor id="sync-conflicts"><ConflictsBox /></Anchor>
+      <Anchor id="local-backups"><LocalBackups onRestore={restoreParsed} /></Anchor>
       <Anchor id="export">
       <Box icon={Download} t="Export data" d="Choose which data to include in a JSON file. Add a password to encrypt it.">
         <Btn v="soft" onClick={() => { setExpMsg(''); setCf(3) }}>Export</Btn>
@@ -470,6 +627,17 @@ export function DataTab() {
         <div><h2 id="export-title" className="text-lg font-semibold">Export data</h2><p className="mt-1 text-sm text-mu">Choose the data to include in this file.</p></div>
         <div className="grid grid-cols-2 gap-2 rounded-xl bg-surf p-3 sm:grid-cols-3">{categories.map(([id, label]) => <Checkbox key={id} checked={exports[id]} set={(checked) => setExports({ ...exports, [id]: checked })} label={label} />)}</div>
         {exports.eps && <div className="rounded-xl bg-surf p-3"><Checkbox checked={withKeys} set={setWithKeys} label="Include API keys" /></div>}
+        {exports.chats && (
+          <div className="space-y-1.5 rounded-xl bg-surf p-3">
+            <div className="text-xs font-medium">Only chats active between (optional)</div>
+            <div className="flex items-center gap-2">
+              <input type="date" aria-label="Export chats from date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} className="min-w-0 flex-1 rounded-md bg-bg px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-ac/40" />
+              <span className="text-xs text-mu">to</span>
+              <input type="date" aria-label="Export chats to date" value={toDate} onChange={(e) => setToDate(e.target.value)} className="min-w-0 flex-1 rounded-md bg-bg px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-ac/40" />
+            </div>
+            <p className="text-xs text-mu">A chat is included when any message was sent in the window. Leave both empty to include every chat.</p>
+          </div>
+        )}
         <div className="space-y-1.5 rounded-xl bg-surf p-3">
           <Input type="password" value={expPw} set={setExpPw} placeholder="Password (optional)" />
           <p className="text-xs text-mu">Leave empty for a plain JSON file. With a password this export is encrypted (AES-GCM-256) and can only be imported with the same password.</p>

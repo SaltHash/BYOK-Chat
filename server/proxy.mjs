@@ -51,7 +51,7 @@ const DROP_REQUEST_PREFIX = /^(?:sec-|cf-|x-forwarded-|x-real-ip|x-proxy)/i
 
 /* Response headers that belong to the upstream hop, to the browser's CORS
  * layer, or to a cookie jar this proxy deliberately does not have. */
-const DROP_RESPONSE = /^(?:set-cookie|set-cookie2|content-encoding|content-length|transfer-encoding|connection|keep-alive|access-control-|vary|alt-svc|server|strict-transport-security|expect-ct|report-to|nel|date)$/i
+const DROP_RESPONSE = /^(?:set-cookie2?|content-encoding|content-length|transfer-encoding|connection|keep-alive|vary|alt-svc|server|strict-transport-security|expect-ct|report-to|nel|date)$|^access-control-/i
 
 function jsonResponse(status, body, headers = {}) {
   return new Response(JSON.stringify(body), {

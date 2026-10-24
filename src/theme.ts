@@ -65,6 +65,45 @@ export function accentHue(colors: Record<string, string>): number {
   return Math.round(hue) % 360
 }
 
+/** Relative luminance of an `#rrggbb` colour (WCAG coefficients). */
+export function luminance(hex: string): number {
+  const hsl = hexToHsl(hex)
+  // HSL lightness is enough for choosing a readable foreground: the accent's
+  // own saturation does not change whether black or white text reads better.
+  return hsl.l
+}
+
+/** Build a complete palette from one picked accent colour and a base theme.
+ *
+ * The base supplies each surface's lightness and the fixed syntax/error hues;
+ * the picked colour supplies the hue, and lightly tints neutrals so the theme
+ * reads as one family rather than a stock theme with a swapped button. The
+ * accent is used exactly as picked, and `acx` (text on the accent) flips to
+ * black or white for contrast. This is the "accent-only" palette: one choice,
+ * a whole theme, no sliders. */
+export function accentOnlyColors(base: Record<string, string>, accent: string): Record<string, string> {
+  const picked = /^#[0-9a-f]{6}$/i.test(String(accent ?? '').trim()) ? String(accent).trim().toLowerCase() : (base.ac ?? '#888888')
+  const a = hexToHsl(picked)
+  const out: Record<string, string> = {}
+  for (const [key, value] of Object.entries(base)) {
+    if (key === 'ac') { out[key] = picked; continue }
+    if (key === 'acx') { out[key] = luminance(picked) > 0.58 ? '#101010' : '#ffffff'; continue }
+    // Syntax and error colours keep the base theme's identity (and stay
+    // legible); everything else picks up a restrained amount of the accent hue.
+    if ((UNADJUSTED_KEYS as readonly string[]).includes(key)) { out[key] = value; continue }
+    const hsl = hexToHsl(value)
+    const text = (TEXT_COLOR_KEYS as readonly string[]).includes(key)
+    const tint = key === 'bg' || key === 'side' || key === 'surf' || key === 'hov'
+      ? Math.min(0.18, a.s * 0.22)
+      : text ? Math.min(0.16, a.s * 0.18) : Math.min(0.3, a.s * 0.4)
+    out[key] = hslToHex({ h: a.h, s: tint, l: hsl.l })
+  }
+  // The accent itself may be very light or very dark; keep the hover surface
+  // distinct from it so a pressed control still reads as pressed.
+  if (out.hov === out.ac) out.hov = hslToHex({ h: a.h, s: Math.min(1, a.s * 0.9), l: a.l > 0.5 ? Math.max(0, a.l - 0.12) : Math.min(1, a.l + 0.12) })
+  return out
+}
+
 /** Apply a hue rotation, saturation multiplier and brightness multiplier.
  *
  * `hue` is the target hue; the rotation is relative to `baseHue` so a freshly

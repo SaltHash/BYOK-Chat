@@ -1,11 +1,12 @@
 import { memo, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
-import { GitBranch, ChevronLeft, ChevronRight, ChevronDown, Server, Cpu, Copy, Check, RefreshCw, Trash2, ListOrdered, CircleCheck, CircleX, TriangleAlert, Paperclip, Download, ExternalLink, Volume2 } from 'lucide-react'
-import { useS, useLive, usable, featOn, previewSysFor, activeWorkspaceForChat, type Msg } from '../store'
+import { GitBranch, ChevronLeft, ChevronRight, ChevronDown, Server, Cpu, Copy, Check, RefreshCw, Trash2, ListOrdered, CircleCheck, CircleX, TriangleAlert, Paperclip, Download, ExternalLink, Volume2, Pin, PinOff, Search, ArrowUp, ArrowDown, X, Quote } from 'lucide-react'
+import { useS, useLive, usable, featOn, previewSysFor, activeWorkspaceForChat, pinnedReplyOf, type Msg } from '../store'
 import { clampWorkspaceFrac, roundFrac, CHAT_WIDTH } from '../layout'
 import { startPointerDrag } from '../hooks'
 import { createFrameThrottle } from '../throttle'
 import { CI, fmtDuration } from '../meta'
+import { formatMsgDateTime, formatMsgTime } from '../time'
 import { Btn, Chip, cx, type Ic } from './ui'
 import { Composer } from './Composer'
 import { ProjectOverview } from './ProjectOverview'
@@ -18,7 +19,7 @@ import { splitStream } from '../streamMd'
 import { WorkspaceTile, WorkspacePanel } from './Workspace'
 import { ResearchTierPicker, ResearchPlanCard, ResearchProgressCard, ResearchTile, ResearchPanel } from './Research'
 import { SourcesPanel, scrollToSource } from './Sources'
-import { collectMessageSources, linkifyCitations, parseSearchEvidence, stripCitations } from '../citations'
+import { claimForCitation, collectMessageSources, linkifyCitations, messageForCopy, parseSearchEvidence, stripCitations } from '../citations'
 import { findWritingPath, extractWorkspaceIds, type WorkspaceCallLike } from '../workspace'
 import { imageRefsFromRounds, imageSrc, type GeneratedImage } from '../imagegen'
 import { blobGet } from '../storage/durable'
@@ -275,6 +276,7 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
   const [ok, setOk] = useState(false)
   const [srcOpen, setSrcOpen] = useState<boolean | null>(null)
   const [srcFlash, setSrcFlash] = useState<string | null>(null)
+  const [srcClaim, setSrcClaim] = useState<string | null>(null)
   const searchPrefs = useS((s) => s.search)
   const sources = useMemo(() => collectMessageSources(m.toolRounds), [m.toolRounds])
   const displayText = m.toolFinal ?? m.t
@@ -287,9 +289,10 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
   const openCite = useCallback((citeId: string) => {
     setSrcOpen(true)
     setSrcFlash(citeId.toUpperCase())
+    setSrcClaim(claimForCitation(displayText, citeId))
     window.setTimeout(() => scrollToSource(m.id, citeId), 60)
     window.setTimeout(() => setSrcFlash((v) => (v === citeId.toUpperCase() ? null : v)), 1800)
-  }, [m.id])
+  }, [m.id, displayText])
   // Stable identity: `cites` feeds the memoized markdown renderer, so a fresh
   // object here would re-parse this message's whole body on every render.
   const cites = useMemo(() => searchPrefs?.citeStyle === 'links' || searchPrefs?.citeStyle === 'off' || !sources.length ? undefined : {
@@ -303,15 +306,25 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
   // Research reports live in the side panel (opened from the report card),
   // never inline. Error text still renders so failures stay visible.
   const hideBody = !!m.research && m.research.status !== 'error'
+  const copyMarkdown = prefs.copyMarkdown !== false
+  const copyReply = () => {
+    const text = messageForCopy(displayText, sources, copyMarkdown)
+    const p = navigator.clipboard?.writeText(text)
+    if (!p) return
+    void p.then(() => { setOk(true); setTimeout(() => setOk(false), 1200) }).catch(() => {})
+  }
   if (m.r === 'user')
     return (
-      <div id={`msg-${m.id}`} className={cx('ml-auto max-w-[85%] space-y-2 rounded-xl p-1', flash && 'ring-2 ring-ac')}>
-        <div className="flex flex-wrap justify-end gap-1.5">{m.att?.map((a, i) => <Chip key={`${i}-${a.name}`} icon={Paperclip}>{a.name}</Chip>)}</div>
+      <div id={`msg-${m.id}`} data-msg-role="user" className={cx('ml-auto max-w-[85%] space-y-2 rounded-xl p-1', flash && 'ring-2 ring-ac')}>
+        <div className="flex flex-wrap items-center justify-end gap-1.5">
+          {prefs.showTimestamps && m.at != null && <time dateTime={new Date(m.at).toISOString()} title={formatMsgDateTime(m.at)} className="text-xs text-mu">{formatMsgTime(m.at)}</time>}
+          {m.att?.map((a, i) => <Chip key={`${i}-${a.name}`} icon={Paperclip}>{a.name}</Chip>)}
+        </div>
         {m.t && <UserText m={m} />}
       </div>
     )
   return (
-    <div id={`msg-${m.id}`} className={cx('group space-y-2 rounded-xl p-1', flash && 'ring-2 ring-ac')}>
+    <div id={`msg-${m.id}`} data-msg-role="assistant" className={cx('group space-y-2 rounded-xl p-1', flash && 'ring-2 ring-ac')}>
       {prefs.showBy && (
         <div className="flex flex-wrap items-center gap-2 text-sm text-mu">
           <span className={cx('inline-flex items-center gap-1.5', m.err && 'text-er')}>{m.err ? <TriangleAlert size={14} /> : <Cpu size={14} />}{m.by}</span>
@@ -320,7 +333,11 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
           <ListOrdered size={14} />Process to answer
             </button>
           )}
+          {prefs.showTimestamps && m.at != null && <time dateTime={new Date(m.at).toISOString()} title={formatMsgDateTime(m.at)} className="ml-auto text-xs text-mu">{formatMsgTime(m.at)}</time>}
         </div>
+      )}
+      {!prefs.showBy && prefs.showTimestamps && m.at != null && (
+        <div className="text-xs text-mu"><time dateTime={new Date(m.at).toISOString()} title={formatMsgDateTime(m.at)}>{formatMsgTime(m.at)}</time></div>
       )}
       {log && (
         <div className="space-y-1.5 rounded-xl bg-surf p-3 text-sm">
@@ -398,9 +415,12 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
                 </button>
               </div>
             )}
-            <button onClick={() => setShowRawErr(!showRawErr)} className="rounded-lg bg-er/20 px-3 py-1.5 text-sm font-medium text-er hover:bg-er/30 transition-colors">
-              {showRawErr ? 'Hide raw error' : 'Show raw error'}
-            </button>
+            <div className="flex flex-wrap items-center gap-2">
+              <Btn v="solid" icon={RefreshCw} title="Send the same request again" onClick={() => useS.getState().retryMsg(m.id)}>Try again</Btn>
+              <button onClick={() => setShowRawErr(!showRawErr)} className="rounded-lg bg-er/20 px-3 py-1.5 text-sm font-medium text-er hover:bg-er/30 transition-colors">
+                {showRawErr ? 'Hide raw error' : 'Show raw error'}
+              </button>
+            </div>
             {showRawErr && (
               <pre className="overflow-x-auto whitespace-pre-wrap break-words rounded-lg bg-bg p-3 font-mono text-xs text-mu border border-bor">{(() => { try { return JSON.stringify(JSON.parse(m.t || '{}'), null, 2) } catch { return m.t || '' } })()}</pre>
             )}
@@ -493,11 +513,12 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
           open={srcOpen ?? undefined}
           onToggle={setSrcOpen}
           flash={srcFlash}
+          claim={srcClaim}
         />
       )}
       {(m.toolRounds ?? []).length > 0 && <MessageActions calls={(m.toolRounds ?? []).flatMap((round) => round.calls)} />}
       {prefs.showTps && m.tps != null && !m.err && <div className="text-xs text-mu">{m.by} · {m.tps.toLocaleString()} tokens/s</div>}
-      <div className={cx('flex flex-wrap items-center gap-0.5 transition-opacity', m.alts && m.alts.length > 1 ? '' : 'opacity-100 md:opacity-0 md:group-hover:opacity-100 md:focus-within:opacity-100')}>
+      <div className={cx('flex flex-wrap items-center gap-0.5 transition-opacity', prefs.alwaysShowActions || (m.alts && m.alts.length > 1) ? '' : 'opacity-100 md:opacity-0 md:group-hover:opacity-100 md:focus-within:opacity-100')}>
         {m.alts && m.alts.length > 1 && !busy && (
           <>
             <Btn sm icon={ChevronLeft} title="Previous reply" disabled={(m.ai ?? 0) < 1} onClick={() => useS.getState().variant(m.id, (m.ai ?? 0) - 1)} />
@@ -505,7 +526,10 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
             <Btn sm icon={ChevronRight} title="Next reply" disabled={(m.ai ?? 0) >= m.alts.length - 1} onClick={() => useS.getState().variant(m.id, (m.ai ?? 0) + 1)} />
           </>
         )}
-        <Btn icon={ok ? Check : Copy} title="Copy" onClick={() => { const p = navigator.clipboard?.writeText(m.t); if (!p) return; void p.then(() => { setOk(true); setTimeout(() => setOk(false), 1200) }).catch(() => {}) }} />
+        <Btn icon={ok ? Check : Copy} title={copyMarkdown ? 'Copy as Markdown (including source links)' : 'Copy as plain text'} onClick={copyReply} />
+        {!m.err && !hideBody && (
+          <Btn icon={m.pin ? PinOff : Pin} title={m.pin ? 'Unpin this reply (it stays in the model context until unpinned)' : 'Pin this reply (shown under the header and kept in the model context)'} className={m.pin ? 'text-ac' : undefined} onClick={() => useS.getState().pinMsg(m.id)} />
+        )}
         {voiceOn({ features }) && speechAvailable() && !hideBody && !m.err && !!displayText.trim() && (
           <Btn icon={Volume2} title="Read aloud" onClick={() => speak(displayText, normVoice(useS.getState().voicePrefs))} />
         )}
@@ -562,6 +586,9 @@ export function Chat({ side, toggle, cfg, pal }: { side: boolean; toggle: () => 
   }, [s.chat, newChatPending])
   const tiles = featOn(s, 'commands') ? s.cmds.filter((k) => k.on).slice(0, 4) : []
   const box = useRef<HTMLDivElement>(null), stick = useRef(true)
+  /* Session-only scroll memory per chat, so switching back and forth keeps the
+     place the reader was at instead of snapping every transcript to the end. */
+  const scrollMemo = useRef(new Map<string, { top: number; atEnd: boolean }>())
   // Mirrors `stick` into state so a jump-to-latest pill can appear while the
   // user reads back through the transcript (scroll events only; no renders
   // from streamed chunks).
@@ -570,6 +597,7 @@ export function Chat({ side, toggle, cfg, pal }: { side: boolean; toggle: () => 
     const b = e.currentTarget
     const near = b.scrollHeight - b.scrollTop - b.clientHeight < 80
     stick.current = near
+    if (s.chat) scrollMemo.current.set(s.chat, { top: b.scrollTop, atEnd: near })
     setAtEnd((was) => (was === near ? was : near))
   }
   const liveTools = useLive((l) => l.tools)
@@ -594,7 +622,23 @@ export function Chat({ side, toggle, cfg, pal }: { side: boolean; toggle: () => 
      runs, and open again with the next one. */
   const panelClosed = useRef(false)
 
-  useEffect(() => { stick.current = !useS.getState().flashMsg }, [s.chat])
+  /* Restore the reader's position when the open chat changes. A jump from the
+     sidebar search owns the scroll for its highlight window, so it is left
+     alone; a chat never visited this session starts at the end as before. */
+  useEffect(() => {
+    if (useS.getState().flashMsg) return
+    const b = box.current
+    const saved = scrollMemo.current.get(s.chat)
+    if (!b || !saved) { stick.current = true; return }
+    // One entry per chat seen this session; keep the map bounded.
+    if (scrollMemo.current.size > 60) {
+      for (const key of scrollMemo.current.keys()) { if (key !== s.chat) { scrollMemo.current.delete(key); break } }
+    }
+    if (saved.atEnd) { stick.current = true; b.scrollTop = b.scrollHeight; setAtEnd(true); return }
+    b.scrollTop = Math.max(0, Math.min(saved.top, b.scrollHeight - b.clientHeight))
+    stick.current = false
+    setAtEnd(false)
+  }, [s.chat])
   /* Follow-the-bottom scrolling is coalesced to at most one write per frame:
      assigning `scrollTop` forces a layout, and streamed chunks can arrive
      faster than the display refreshes. */
@@ -711,19 +755,187 @@ export function Chat({ side, toggle, cfg, pal }: { side: boolean; toggle: () => 
     })
   }
 
+  /* ---- long transcripts, find, rail ----
+   * Past a couple hundred messages, mounting every row makes typing and
+   * scrolling feel old. A moving window keeps the DOM bounded; the button at
+   * the top (and a jump from find, the rail, or the sidebar) widens it. */
+  const WINDOW_SIZE = 120
+  const [windowFrom, setWindowFrom] = useState(0)
+  // A different chat starts at its newest window; the same chat only trims as
+  // it grows, so revealing older messages is never undone by a new reply.
+  useEffect(() => {
+    const n = c?.msgs.length ?? 0
+    setWindowFrom(Math.max(0, n - WINDOW_SIZE))
+  }, [s.chat])
+  useEffect(() => {
+    const n = c?.msgs.length ?? 0
+    setWindowFrom((v) => Math.min(v, Math.max(0, n - WINDOW_SIZE)))
+  }, [c?.msgs.length])
+  const flashMsg = useS((st) => st.flashMsg)
+  useEffect(() => {
+    if (!flashMsg || !c) return
+    const i = c.msgs.findIndex((m) => m.id === flashMsg)
+    if (i >= 0) setWindowFrom((v) => (i < v ? Math.max(0, i - 20) : v))
+  }, [flashMsg, c])
+  const scrollToMsgTop = (mid: string) => {
+    const b = box.current
+    const el = document.getElementById(`msg-${mid}`)
+    if (!b || !el) return
+    b.scrollTop = el.getBoundingClientRect().top - b.getBoundingClientRect().top + b.scrollTop - 10
+  }
+  const reveal = (mid: string) => {
+    const i = c?.msgs.findIndex((m) => m.id === mid) ?? -1
+    if (i >= 0 && i < windowFrom) setWindowFrom(Math.max(0, i - 10))
+    requestAnimationFrame(() => requestAnimationFrame(() => scrollToMsgTop(mid)))
+  }
+  const flashTo = (mid: string) => {
+    reveal(mid)
+    useS.getState().patch({ flashMsg: mid })
+  }
+  const showEarlier = () => {
+    if (!c || windowFrom <= 0) return
+    const target = c.msgs[Math.max(0, windowFrom - WINDOW_SIZE)]
+    setWindowFrom(Math.max(0, windowFrom - WINDOW_SIZE))
+    if (target) requestAnimationFrame(() => requestAnimationFrame(() => scrollToMsgTop(target.id)))
+  }
+
+  const [findOpen, setFindOpen] = useState(false)
+  const [findQ, setFindQ] = useState('')
+  const [findIdx, setFindIdx] = useState(0)
+  const findHits = useMemo(() => {
+    const q = findQ.trim().toLowerCase()
+    if (!q) return []
+    return (c?.msgs ?? []).filter((m) => {
+      const text = m.r === 'assistant' ? (m.toolFinal ?? m.t) : m.t
+      return (text ?? '').toLowerCase().includes(q)
+    }).map((m) => m.id)
+  }, [findQ, c?.msgs])
+  useEffect(() => { setFindIdx(0) }, [findQ])
+  useEffect(() => {
+    if (!findOpen || !findHits.length) return
+    const id = findHits[Math.min(findIdx, findHits.length - 1)]
+    if (id) flashTo(id)
+    // Deliberately keyed on the number of hits, not the array: a streaming
+    // reply rewrites message text on every chunk and must not yank the
+    // transcript back to the active match while the reader is elsewhere.
+  }, [findOpen, findHits.length, findIdx, findQ])
+  const stepFind = (dir: number) => {
+    if (!findHits.length) return
+    setFindIdx((i) => (i + dir + findHits.length) % findHits.length)
+  }
+  useEffect(() => {
+    const f = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey) || e.shiftKey || e.key.toLowerCase() !== 'f') return
+      if (!c?.msgs.length) return
+      if (document.querySelector('[role="dialog"]')) return
+      e.preventDefault()
+      setFindOpen(true)
+      requestAnimationFrame(() => (document.getElementById('chat-find') as HTMLInputElement | null)?.focus())
+    }
+    window.addEventListener('keydown', f)
+    return () => window.removeEventListener('keydown', f)
+  }, [c?.msgs.length])
+
+  /* Selected assistant text offers a reply-with-quote action right where the
+   * reader selected it: the conversational gesture that used to require
+   * copying into the composer by hand. */
+  const [quote, setQuote] = useState<{ text: string; x: number; y: number } | null>(null)
+  const captureQuote = () => {
+    const sel = window.getSelection()
+    if (!sel || sel.isCollapsed || !sel.rangeCount) { setQuote(null); return }
+    const text = sel.toString().trim()
+    if (!text || text.length > 4000) { setQuote(null); return }
+    const node = sel.anchorNode
+    const el = node?.nodeType === 1 ? (node as Element) : node?.parentElement
+    if (!el?.closest('[data-msg-role="assistant"]')) { setQuote(null); return }
+    const rect = sel.getRangeAt(0).getBoundingClientRect()
+    setQuote({ text, x: Math.max(90, Math.min(window.innerWidth - 90, rect.left + rect.width / 2)), y: rect.top })
+  }
+  useEffect(() => {
+    if (!quote && !findOpen) return
+    const f = (e: KeyboardEvent) => { if (e.key === 'Escape') { setQuote(null); setFindOpen(false) } }
+    window.addEventListener('keydown', f)
+    return () => window.removeEventListener('keydown', f)
+  }, [quote, findOpen])
+  const quoteReply = () => {
+    if (!quote) return
+    const quoted = quote.text.split('\n').map((line) => `> ${line}`).join('\n')
+    const st = useS.getState()
+    st.patch({ draft: `${quoted}\n\n${st.draft}` })
+    setQuote(null)
+    window.getSelection()?.removeAllRanges()
+    requestAnimationFrame(() => document.getElementById('composer')?.focus())
+  }
+  const pinned = pinnedReplyOf(c)
+  // Dense transcripts get sampled down to a readable rail instead of 400
+  // overlapping dots; every dot still jumps to a real message.
+  const railDots = useMemo(() => {
+    const msgs = c?.msgs ?? []
+    const max = 160
+    if (msgs.length <= max) return msgs
+    const step = Math.ceil(msgs.length / max)
+    return msgs.filter((_, i) => i % step === 0 || i === msgs.length - 1)
+  }, [c?.msgs])
+
   return (
     <section className="flex min-h-0 min-w-0 flex-1 flex-col bg-bg">
       <Header side={side} toggle={toggle} cfg={cfg} pal={pal} title={c?.title ?? (project ? project.name : pendingTemp ? 'Temporary chat' : 'New chat')} />
+      {pinned && !project && (
+        <div className="mx-3 mt-2 flex items-center gap-2 rounded-xl border border-ac/30 bg-ac/5 px-3 py-1.5">
+          <Pin size={13} className="shrink-0 text-ac" aria-hidden="true" />
+          <span className="shrink-0 text-xs font-medium text-ac">Pinned</span>
+          <button onClick={() => flashTo(pinned.id)} className="min-w-0 flex-1 truncate text-left text-xs text-mu hover:text-tx" title="Jump to the pinned reply">
+            {(pinned.by ? `${pinned.by} · ` : '') + (pinned.toolFinal ?? pinned.t).replace(/\s+/g, ' ').slice(0, 200)}
+          </button>
+          <button onClick={() => useS.getState().pinMsg(pinned.id)} title="Unpin this reply" aria-label="Unpin this reply" className="grid size-6 shrink-0 place-items-center rounded-md text-mu hover:bg-surf hover:text-tx"><X size={13} /></button>
+        </div>
+      )}
       <div ref={rowRef} className="flex min-h-0 flex-1 flex-col sm:flex-row">
         {project ? (
           <ProjectOverview project={project} cfg={cfg} />
         ) : (
         <>
         <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
-          <div ref={box} onScroll={onScrollBox} className="absolute inset-0 overflow-y-auto" style={glass ? { paddingBottom: composerH + (empty ? 32 : 0) } : { paddingBottom: composerH + (empty ? 32 : 0), WebkitMaskImage: `linear-gradient(to bottom, black calc(100% - ${composerH + 32}px), rgba(0,0,0,0.1) calc(100% - ${composerH}px))`, maskImage: `linear-gradient(to bottom, black calc(100% - ${composerH + 32}px), rgba(0,0,0,0.1) calc(100% - ${composerH}px))` }}>
+          {findOpen && (
+            <div className="absolute inset-x-2 top-2 z-30 mx-auto flex w-full max-w-md items-center gap-1 rounded-xl border border-bor bg-surf p-1.5 shadow-lg">
+              <Search size={14} className="ml-1 shrink-0 text-mu" aria-hidden="true" />
+              <input id="chat-find" value={findQ} onChange={(e) => setFindQ(e.target.value)} placeholder="Find in conversation" aria-label="Find in conversation" onKeyDown={(e) => {
+                if (e.key === 'Enter') { e.preventDefault(); stepFind(e.shiftKey ? -1 : 1) }
+                if (e.key === 'Escape') { e.preventDefault(); setFindOpen(false) }
+              }} className="min-w-0 flex-1 bg-transparent px-1 text-sm outline-none" />
+              <span aria-live="polite" className="shrink-0 text-xs text-mu">{findQ.trim() ? (findHits.length ? `${Math.min(findIdx + 1, findHits.length)}/${findHits.length}` : 'No matches') : ''}</span>
+              <Btn sm icon={ArrowUp} title="Previous match" disabled={!findHits.length} onClick={() => stepFind(-1)} />
+              <Btn sm icon={ArrowDown} title="Next match" disabled={!findHits.length} onClick={() => stepFind(1)} />
+              <Btn sm icon={X} title="Close find" onClick={() => { setFindOpen(false); setFindQ('') }} />
+            </div>
+          )}
+          {quote && (
+            <div className="fixed z-50 -translate-x-1/2 -translate-y-full pb-2" style={{ left: quote.x, top: quote.y }}>
+              <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={quoteReply} className="inline-flex items-center gap-1.5 rounded-lg border border-bor bg-surf px-2.5 py-1.5 text-xs font-medium text-tx shadow-xl hover:bg-hov">
+                <Quote size={13} className="text-ac" />Reply with quote
+              </button>
+            </div>
+          )}
+          {c && c.msgs.length > 1 && (
+            <nav aria-label="Message rail" className="absolute inset-y-6 left-0 z-20 hidden w-4 md:block">
+              <div className="relative h-full w-full">
+                {railDots.map((m, i) => (
+                  <button key={m.id} type="button" aria-label={`Jump to ${m.r === 'user' ? 'your message' : 'reply'}: ${(m.r === 'assistant' ? (m.toolFinal ?? m.t) : m.t).replace(/\s+/g, ' ').slice(0, 60)}`} title={`${m.r === 'user' ? 'You' : (m.by || 'Assistant')}: ${(m.r === 'assistant' ? (m.toolFinal ?? m.t) : m.t).replace(/\s+/g, ' ').slice(0, 120)}`} onClick={() => reveal(m.id)} style={{ top: `${railDots.length === 1 ? 50 : (i / (railDots.length - 1)) * 100}%` }} className={cx('absolute left-1/2 size-[5px] -translate-x-1/2 -translate-y-1/2 rounded-full transition-[background-color,transform] hover:scale-150 hover:bg-tx focus-visible:scale-150 focus-visible:bg-tx focus-visible:outline-none', m.r === 'user' ? 'bg-mu/55' : 'bg-mu/35')} />
+                ))}
+              </div>
+            </nav>
+          )}
+          <div ref={box} onScroll={(e) => { if (quote) setQuote(null); onScrollBox(e) }} onMouseUp={captureQuote} className="absolute inset-0 overflow-y-auto" style={glass ? { paddingBottom: composerH + (empty ? 32 : 0) } : { paddingBottom: composerH + (empty ? 32 : 0), WebkitMaskImage: `linear-gradient(to bottom, black calc(100% - ${composerH + 32}px), rgba(0,0,0,0.1) calc(100% - ${composerH}px))`, maskImage: `linear-gradient(to bottom, black calc(100% - ${composerH + 32}px), rgba(0,0,0,0.1) calc(100% - ${composerH}px))` }}>
             {c && c.msgs.length ? (
-              <div className="mx-auto space-y-8 px-4 py-6" style={{ maxWidth: CHAT_WIDTH[s.prefs.chatWidth] }}>
-                {c.msgs.map((m, i) => <M key={m.id} m={m} cfg={cfg} last={i === c.msgs.length - 1} onOpenWorkspace={openWorkspace} onOpenResearch={openResearch} selectedWorkspaceId={workspacePanel?.mid === m.id ? selectedRevId : null} />)}
+              <div className="mx-auto flex flex-col" style={{ maxWidth: CHAT_WIDTH[s.prefs.chatWidth], padding: 'var(--ui-chat-pad-y) var(--ui-chat-pad-x)', rowGap: 'var(--ui-msg-gap)' }}>
+                {windowFrom > 0 && (
+                  <div className="flex justify-center pb-2">
+                    <button type="button" onClick={showEarlier} className="rounded-full border border-bor bg-surf px-3 py-1 text-xs text-mu transition-colors hover:bg-hov hover:text-tx">
+                      Show {Math.min(WINDOW_SIZE, windowFrom)} earlier message{Math.min(WINDOW_SIZE, windowFrom) === 1 ? '' : 's'} ({windowFrom} hidden for speed)
+                    </button>
+                  </div>
+                )}
+                {c.msgs.slice(windowFrom).map((m, i) => <M key={m.id} m={m} cfg={cfg} last={windowFrom + i === c.msgs.length - 1} onOpenWorkspace={openWorkspace} onOpenResearch={openResearch} selectedWorkspaceId={workspacePanel?.mid === m.id ? selectedRevId : null} />)}
                 {c.msgs[c.msgs.length - 1]?.r === 'user' && !busy && (
                   <div className="flex justify-center pt-2">
                     <button onClick={() => useS.getState().regen()} className="inline-flex min-h-9 items-center gap-2 rounded-full border border-bor bg-surf px-4 py-1.5 text-sm text-tx transition-colors hover:bg-hov focus-visible:ring-2 focus-visible:ring-ac">
@@ -732,15 +944,19 @@ export function Chat({ side, toggle, cfg, pal }: { side: boolean; toggle: () => 
                   </div>
                 )}
               </div>
-            ) : !s.eps.some(usable) ? (
-              <Tutorial cfg={cfg} />
             ) : (
-              <div className="mx-auto flex h-full max-w-xl flex-col items-center justify-center gap-6 px-4 text-center">
-                <h2 className="text-xl font-semibold">{flairLine(new Date(), { temporary: isTemp, seasonal: s.prefs.seasonal, seed: s.chats.length })}</h2>
-                <div className="grid w-full gap-2 sm:grid-cols-2">
-                  {!s.eps.length && <Tile icon={Server} t="Add an endpoint" d="Connect a model with your own key" on={() => cfg('eps')} />}
-                  {tiles.map((k) => <Tile key={k.id} icon={CI[k.in]} t={'/' + k.name} d={k.desc} on={() => s.patch({ draft: '/' + k.name + ' ' })} />)}
-                </div>
+              <div className="absolute inset-x-0 top-0 flex overflow-y-auto" style={{ bottom: `calc(50% + ${composerH / 2 + 24}px)` }}>
+                {!s.eps.some(usable) ? (
+                  <div className="m-auto w-full"><Tutorial cfg={cfg} /></div>
+                ) : (
+                  <div className="m-auto mx-auto flex w-full max-w-xl flex-col items-center gap-6 px-4 py-4 text-center">
+                    <h2 className="text-xl font-semibold">{flairLine(new Date(), { temporary: isTemp, seasonal: s.prefs.seasonal, seed: s.chats.length })}</h2>
+                    <div className="grid w-full gap-2 sm:grid-cols-2">
+                      {!s.eps.length && <Tile icon={Server} t="Add an endpoint" d="Connect a model with your own key" on={() => cfg('eps')} />}
+                      {tiles.map((k) => <Tile key={k.id} icon={CI[k.in]} t={'/' + k.name} d={k.desc} on={() => s.patch({ draft: '/' + k.name + ' ' })} />)}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -756,7 +972,7 @@ export function Chat({ side, toggle, cfg, pal }: { side: boolean; toggle: () => 
         {workspaceMsg && workspace && workspacePanel && (
           <>
             <div role="separator" aria-orientation="vertical" aria-label="Resize workspace panel" onPointerDown={startResize} className="hidden w-1.5 shrink-0 cursor-col-resize bg-transparent hover:bg-ac/50 sm:block" />
-            <aside aria-label="Workspace side panel" style={wide ? { flex: `0 0 ${workspaceFrac * 100}%`, maxWidth: '70%', minWidth: '15%' } : { height: '45dvh', width: '100%' }} className="flex min-h-0 shrink-0 flex-col border-t border-bor bg-surf/40 sm:border-l sm:border-t-0">
+            <aside aria-label="Workspace side panel" style={wide ? { flex: `0 0 ${workspaceFrac * 100}%`, maxWidth: '70%', minWidth: '15%' } : { height: '45dvh', width: '100%' }} className="panel-shell flex min-h-0 shrink-0 flex-col border-t border-bor bg-surf/40 sm:border-l sm:border-t-0">
               <WorkspacePanel key={`${workspaceMsg.id}:${workspaceMsg.ai ?? 0}:${workspaceId}`} msg={workspaceMsg} live={liveTools[workspaceMsg.id]} workspace={workspace} selectedRevisionId={selectedRevId ?? workspace.revisions[workspace.revisions.length - 1]?.id ?? null} setSelectedRevisionId={(id) => s.patch({ selectedRevision: { ...s.selectedRevision, [workspaceId]: id } })} onClose={() => { panelClosed.current = true; setWorkspacePanel(null) }} initialFilePath={workspacePanel.initialFilePath} focus={workspacePanel.focus ?? 0} sharedOf={sharedWorkspaceOf} />
             </aside>
           </>
@@ -764,7 +980,7 @@ export function Chat({ side, toggle, cfg, pal }: { side: boolean; toggle: () => 
         {researchMsg && (
           <>
             <div role="separator" aria-orientation="vertical" aria-label="Resize research panel" onPointerDown={startResize} className="hidden w-1.5 shrink-0 cursor-col-resize bg-transparent hover:bg-ac/50 sm:block" />
-            <aside aria-label="Research side panel" style={wide ? { flex: `0 0 ${workspaceFrac * 100}%`, maxWidth: '70%', minWidth: '15%' } : { height: '45dvh', width: '100%' }} className="flex min-h-0 shrink-0 flex-col border-t border-bor bg-surf/40 sm:border-l sm:border-t-0">
+            <aside aria-label="Research side panel" style={wide ? { flex: `0 0 ${workspaceFrac * 100}%`, maxWidth: '70%', minWidth: '15%' } : { height: '45dvh', width: '100%' }} className="panel-shell flex min-h-0 shrink-0 flex-col border-t border-bor bg-surf/40 sm:border-l sm:border-t-0">
               <ResearchPanel key={`${researchMsg.id}:${researchMsg.research?.finishedAt ?? 0}`} msg={researchMsg} onClose={() => s.patch({ researchPanel: null })} />
             </aside>
           </>
@@ -774,9 +990,10 @@ export function Chat({ side, toggle, cfg, pal }: { side: boolean; toggle: () => 
       </div>
       {(isTemp || project) && <div className="px-4 pb-2 text-center text-xs text-mu">{project ? 'Temporary chats are unavailable in projects.' : 'Some providers may retain temporary chats for safety or model training.'}</div>}
       {/* Temporary-chat frame: one soft accent glow hugging the viewport edges.
-         It breathes while the chat is still empty and settles to a faint,
-         static rim after the first message — the "this conversation will not
-         stick" tell that stays legible without shouting. */}
+         No shine sweep any more: while the chat is still empty the glow just
+         waves in intensity and never actually turns off, then settles to a
+         faint, static rim after the first message — the "this conversation will
+         not stick" tell that stays legible without shouting. */}
       {isTemp && !project && glowI > 0 && <div aria-hidden="true" className="temp-glow" data-sent={c?.msgs.length ? '' : undefined} style={{ ['--temp-glow-i' as never]: glowI, ['--temp-glow-sent' as never]: Math.max(0, Math.min(2, s.prefs.tempGlowSent ?? 0.5)) }} />}
     </section>
   )
