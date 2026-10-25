@@ -8,6 +8,14 @@ import { proxyRoute } from './server/proxy.mjs'
 import { jsonResult } from './server/http.mjs'
 import { pinnedFetch } from './server/pinnedFetch.mjs'
 
+// A local `npm start` should see the same gitignored `.env` that `npm run dev`
+// loads, so DATABASE_URL and provider keys work without exporting them by
+// hand. Existing environment variables always win, and production hosts are
+// left alone (they are expected to set real variables).
+if (process.env.NODE_ENV !== 'production') {
+  try { process.loadEnvFile() } catch { /* no .env file: use the environment as-is */ }
+}
+
 // An invalid PORT should fail loudly instead of silently listening elsewhere.
 const requestedPort = Number(process.env.PORT || 8787)
 const port = Number.isInteger(requestedPort) && requestedPort >= 0 && requestedPort <= 65535 ? requestedPort : 8787

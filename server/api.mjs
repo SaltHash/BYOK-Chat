@@ -263,8 +263,8 @@ export async function apiSync(req, env = process.env) {
       try {
         const backend = await syncBackend(env)
         // `configured` means the slot is shared between devices (a database).
-        // With Neon switched off the slot lives in this server's memory, so
-        // the UI can say so instead of pretending two devices sync.
+        // A memory backend is per process, so the UI says so instead of
+        // pretending two devices sync.
         return jsonResult(200, {
           ok: true,
           backend: backend.kind,

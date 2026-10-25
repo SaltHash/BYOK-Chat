@@ -105,13 +105,16 @@ async function neonStore(env = process.env) {
   return neonClient
 }
 
-/* Neon is switched off for now: the device-sync slot lives in the server's
- * memory instead, so a deployment no longer talks to the database. Everything
- * else — the token format, the encryption, the merge, the API and the client
- * runtime — is untouched and works exactly the same.
- * Set SYNC_BACKEND=neon (plus DATABASE_URL) to turn the database back on. */
+/* Whether the Neon backend is on. `SYNC_BACKEND` wins when it is set: "memory"
+ * forces the in-memory store, "neon" forces the database. When it is unset,
+ * the presence of DATABASE_URL decides, so local `npm run dev` (which loads
+ * `.env`) and any self-hosted Node host use Neon with only a connection string,
+ * while a deployment without the secret stays in memory. */
 export function neonSyncEnabled(env = process.env) {
-  return String(env?.SYNC_BACKEND || '').trim().toLowerCase() === 'neon'
+  const mode = String(env?.SYNC_BACKEND ?? '').trim().toLowerCase()
+  if (mode === 'memory') return false
+  if (mode === 'neon') return true
+  return Boolean(String(env?.DATABASE_URL ?? '').trim())
 }
 
 export async function syncBackend(env = process.env) {

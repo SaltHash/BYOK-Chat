@@ -90,20 +90,23 @@ test('syncBackend uses memory without DATABASE_URL and surfaces query failures',
   assert.equal((await syncBackend({})).kind, 'memory')
   // A configured database is never silently replaced by the in-memory store:
   // failures reaching the store's own methods must propagate to the caller.
-  const backend = await syncBackend({ DATABASE_URL: 'postgres://user:pw@127.0.0.1:1/db', SYNC_BACKEND: 'neon' })
+  const backend = await syncBackend({ DATABASE_URL: 'postgres://user:pw@127.0.0.1:1/db' })
   assert.equal(backend.kind, 'neon')
   await assert.rejects(() => backend.get('anything'))
 })
 
-test('Neon sync is switched off unless it is switched on again', async () => {
-  // The database is not contacted while Neon is off, even with a URL set.
+test('DATABASE_URL turns Neon on unless SYNC_BACKEND says otherwise', async () => {
+  // Local dev and self-hosted Node only have a connection string, so it is the
+  // switch. An explicit mode still wins.
   assert.equal(neonSyncEnabled({}), false)
-  assert.equal(neonSyncEnabled({ DATABASE_URL: 'postgres://user:pw@127.0.0.1:1/db' }), false)
-  assert.equal((await syncBackend({ DATABASE_URL: 'postgres://user:pw@127.0.0.1:1/db' })).kind, 'memory')
-  // The switch that brings it back: SYNC_BACKEND=neon.
+  assert.equal(neonSyncEnabled({ DATABASE_URL: 'postgres://user:pw@127.0.0.1:1/db' }), true)
+  assert.equal((await syncBackend({ DATABASE_URL: 'postgres://user:pw@127.0.0.1:1/db' })).kind, 'neon')
+  assert.equal(neonSyncEnabled({ DATABASE_URL: 'postgres://user:pw@127.0.0.1:1/db', SYNC_BACKEND: 'memory' }), false)
+  assert.equal((await syncBackend({ DATABASE_URL: 'postgres://user:pw@127.0.0.1:1/db', SYNC_BACKEND: 'memory' })).kind, 'memory')
   assert.equal(neonSyncEnabled({ SYNC_BACKEND: 'neon' }), true)
   assert.equal(neonSyncEnabled({ SYNC_BACKEND: 'NEON' }), true)
-  assert.equal(neonSyncEnabled({ SYNC_BACKEND: 'memory' }), false)
+  // "neon" without a URL cannot reach a database, so it stays in memory.
+  assert.equal((await syncBackend({ SYNC_BACKEND: 'neon' })).kind, 'memory')
 })
 
 test('connection strings are redacted before they can reach logs', () => {

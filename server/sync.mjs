@@ -233,7 +233,9 @@ export async function handleSyncPull(req, backend) {
   // Touch rows that are halfway to expiry, so a device that only ever pulls
   // keeps the token alive while a genuinely abandoned one still expires.
   if (age > SYNC_ROW_TTL_MS / 2) {
-    try { await backend.put({ ...row, updatedAt: Date.now() }) } catch { /* the next push will refresh */ }
+    // Keep-alive only: never rewrite the row from this read, or a delta pushed
+    // while we were reading it would be erased.
+    try { await backend.touch?.(id, Date.now()) } catch { /* the next push will refresh */ }
   }
 
   const seq = seqOf(row)

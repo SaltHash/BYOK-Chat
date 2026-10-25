@@ -9,9 +9,9 @@
   "compatibility_date": "2026-09-23",
   // Needed by server/syncStore.mjs (node:crypto, Buffer) for token hashing.
   "compatibility_flags": ["nodejs_compat"],
-  // Turn the Neon-backed device-sync store on. `syncBackend()` returns the
-  // in-memory store unless this is exactly "neon", so DATABASE_URL alone does
-  // nothing; without a DATABASE_URL secret it still falls back to memory.
+  // Optional: Neon is used whenever DATABASE_URL is set. This pin keeps the
+  // database explicit in production even if the secret goes missing (unset it
+  // or set "memory" to force the in-memory store).
   "vars": { "SYNC_BACKEND": "neon" },
   "upload_source_maps": true,
   "assets": {

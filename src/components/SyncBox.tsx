@@ -61,7 +61,12 @@ export function SyncBox() {
     void linkAndMerge(t, mode, data, seq)
       .then((r) => {
         setSyncToken(t); setAutoSync(true); setToken(t); setAuto(true); startSyncRuntime(); setLinked(null)
-        setStatus(`Linked and merged at ${new Date(r.updatedAt).toLocaleTimeString()} via ${r.backend}. Automatic sync is on.`)
+        const when = new Date(r.updatedAt).toLocaleTimeString()
+        setStatus(mode === 'remote'
+          ? `Linked at ${when}. This device now follows the other device. Automatic sync is on.`
+          : mode === 'local'
+            ? `Linked at ${when}. This device's data replaced the slot. Automatic sync is on.`
+            : `Linked and merged at ${when} via ${r.backend}. Automatic sync is on.`)
       })
       .catch((e) => setStatus(`Merge failed: ${(e as Error).message}`))
       .finally(() => setBusy(false))
@@ -95,6 +100,7 @@ export function SyncBox() {
             <Input value={input} set={setInput} placeholder="Paste token from other device (byok1-…)" />
             <Btn v="soft" disabled={busy || !input.trim()} onClick={link}>Link</Btn>
           </div>
+          <p className="basis-full text-xs text-mu">On a first link you choose how to combine the two stores: merge both, keep this device&rsquo;s data, or take the other device&rsquo;s data. Nothing changes on this device until you pick.</p>
         </div>
       ) : (
         <div className="space-y-2">
