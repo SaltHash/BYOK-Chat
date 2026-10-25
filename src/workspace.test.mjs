@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-const { sanitizePath, parseWorkspaceArgsPartial, truncateWorkspaceContent, groupWorkspaceVersions, countWorkspaceFiles, buildZipEntries, zipFilename, WORKSPACE_MAX_CONTENT, migrateLegacyCanvasGroups, applyUnifiedDiff, diffLines, diffStat, changedFilesBetween, sanitizeHtmlPreview, previewKindFor, parseCsvPreview, WORKSPACE_TEMPLATES, templateById, pendingLiveCalls, findWritingPath } = await import('./workspace.ts')
+const { sanitizePath, parseWorkspaceArgsPartial, truncateWorkspaceContent, groupWorkspaceVersions, countWorkspaceFiles, compactWorkspaceHistory, buildZipEntries, zipFilename, WORKSPACE_MAX_CONTENT, migrateLegacyCanvasGroups, applyUnifiedDiff, diffLines, diffStat, changedFilesBetween, sanitizeHtmlPreview, previewKindFor, parseCsvPreview, WORKSPACE_TEMPLATES, templateById, pendingLiveCalls, findWritingPath } = await import('./workspace.ts')
 
 test('sanitizePath keeps valid relative paths and never throws', () => {
   assert.equal(sanitizePath('src/app.py'), 'src/app.py')
@@ -104,9 +104,11 @@ test('grouping collects versions by path in message order and has no file cap', 
     { id: '2', name: 'workspace_upsert', arguments: JSON.stringify({ action: 'create', path: 'src/a.py', language: 'python', content: 'v1' }) },
     { id: '3', name: 'workspace_upsert', arguments: JSON.stringify({ action: 'update', path: 'src/a.py', language: 'python', content: 'v2' }) },
     { id: '4', name: 'workspace_upsert', arguments: JSON.stringify({ action: 'create', path: '/tmp/b.txt', language: '', content: 'b' }) },
+    { id: '5', name: 'workspace_upsert', arguments: JSON.stringify({ action: 'read', path: 'src/a.py' }) },
   ]
   const groups = groupWorkspaceVersions(calls)
-  assert.equal(groups.length, 2)
+  assert.equal(groups.length, 2, 'reads never become a file version')
+  assert.equal(findWritingPath([{ id: '5', name: 'workspace_upsert', arguments: JSON.stringify({ action: 'read', path: 'src/a.py' }) }], []), null)
   assert.equal(groups[0].path, 'src/a.py')
   assert.deepEqual(groups[0].versions.map((v) => v.content), ['v1', 'v2'])
   assert.equal(countWorkspaceFiles(calls), 2)
@@ -327,6 +329,138 @@ test('applyWorkspaceCall scaffolds templates and holds any number of files', asy
   }, { msgId: 'm2', uid }), /File not found for patch/)
 })
 
+test('applyUnifiedDiff accepts apply_patch hunks without line numbers', () => {
+  const base = 'const a = 1\nfunction stats() {\n  return 1\n}\nconst b = 2\n'
+  const diff = '*** Begin Patch\n*** Update File: app.js\n@@\n-  return 1\n+  return 2\n@@\n }\n+const c = 3\n*** End Patch'
+  const r = applyUnifiedDiff(base, diff)
+  assert.equal(r.applied, true)
+  assert.equal(r.added, 2)
+  assert.equal(r.removed, 1)
+  assert.equal(r.text, 'const a = 1\nfunction stats() {\n  return 2\n}\nconst c = 3\nconst b = 2\n')
+})
+
+test('applyUnifiedDiff applies the user-reported apply_patch block with bare @@ hunks', () => {
+  const base = [
+    'let saved = readProgress();',
+    '  function readProgress() {',
+    '    return {',
+    '        badges: Array.isArray(parsed.badges) ? parsed.badges.filter(id => BADGES.some(b => b.id === id)) : []',
+    '    };',
+    '  }',
+    '  function renderStats() {',
+    '    const count = saved.bestDigits;',
+    '  }',
+    '  function updateTimer() {',
+    "    if (startedAt === null) { startedAt = performance.now(); if (mode === 'trial') timer = setInterval(updateTimer, 100); }",
+    '  }',
+    "  els['digit-input'].addEventListener('keydown', event => { if (event.key === 'Enter') checkAnswer(); });",
+  ].join('\n') + '\n'
+  const diff = [
+    '@@',
+    '-        badges: Array.isArray(parsed.badges) ? parsed.badges.filter(id => BADGES.some(b => b.id === id)) : []',
+    '+        badges: Array.isArray(parsed.badges) ? parsed.badges.filter(id => BADGES.some(b => b.id === id)) : [],',
+    '+        streak: 0',
+    '@@',
+    '   function renderStats() {',
+    '+    saved.streak = currentStreak();',
+    '@@',
+    '   }',
+    '+  function currentStreak() {',
+    '+    const days = new Set(saved.practiceDays);',
+    '+    let cursor = new Date(`${today()}T12:00:00`);',
+    '+    if (!days.has(today())) cursor.setDate(cursor.getDate() - 1);',
+    '+    let streak = 0;',
+    '+    while (true) {',
+    "+      const key = `${cursor.getFullYear()}-${String(cursor.getMonth()+1).padStart(2,'0')}-${String(cursor.getDate()).padStart(2,'0')}`;",
+    '+      if (!days.has(key)) return streak;',
+    '+      streak++;',
+    '+      cursor.setDate(cursor.getDate() - 1);',
+    '+    }',
+    '+  }',
+    '@@',
+    "-    if (startedAt === null) { startedAt = performance.now(); if (mode === 'trial') timer = setInterval(updateTimer, 100); }",
+    '+    if (startedAt === null) startedAt = performance.now();',
+    '@@',
+    "   els['digit-input'].addEventListener('keydown', event => { if (event.key === 'Enter') checkAnswer(); });",
+    "+  els['digit-input'].addEventListener('input', () => {",
+    "+    if (mode === 'trial' && active && startedAt === null && cleanInput(els['digit-input'].value)) {",
+    '+      startedAt = performance.now();',
+    '+      timer = setInterval(updateTimer, 100);',
+    "+      els['input-feedback'].textContent = 'Timer running: 0.0 seconds';",
+    "+      els['input-feedback'].className = '';",
+    '+    }',
+    '+  });',
+    '*** End Patch',
+  ].join('\n')
+  const r = applyUnifiedDiff(base, diff)
+  assert.equal(r.applied, true)
+  assert.match(r.text, /streak: 0/)
+  assert.match(r.text, /saved\.streak = currentStreak\(\);/)
+  assert.ok(r.text.indexOf('function currentStreak') > r.text.indexOf('function renderStats'))
+  assert.ok(r.text.indexOf('function currentStreak') < r.text.indexOf('function updateTimer'))
+  assert.match(r.text, /if \(startedAt === null\) startedAt = performance\.now\(\);/)
+  assert.ok(!r.text.includes("if (startedAt === null) { startedAt = performance.now(); if (mode === 'trial')"))
+  assert.match(r.text, /addEventListener\('keydown'[^\n]*\n  els\['digit-input'\]\.addEventListener\('input'/)
+})
+
+test('applyUnifiedDiff finds hunks by content even when line numbers are stale', () => {
+  const base = Array.from({ length: 120 }, (_, i) => `line ${i + 1}`).join('\n')
+  const diff = '@@ -1,1 +1,1 @@\n-line 80\n+LINE 80\n@@ -2,1 +2,1 @@\n-line 119\n+LINE 119\n'
+  const r = applyUnifiedDiff(base, diff)
+  assert.equal(r.applied, true)
+  assert.equal(r.added, 2)
+  assert.equal(r.removed, 2)
+  assert.ok(r.text.includes('LINE 80'))
+  assert.ok(r.text.includes('LINE 119'))
+  assert.ok(!r.text.includes('line 80\n'))
+  assert.ok(!r.text.includes('line 119'))
+})
+
+test('applyUnifiedDiff accepts bare hunks and plain -/+ bodies', () => {
+  const bare = applyUnifiedDiff('a\nb\nc\nd\n', '@@\n-b\n+B\n@@\n-d\n+D\n')
+  assert.equal(bare.applied, true)
+  assert.equal(bare.text, 'a\nB\nc\nD\n')
+  const plain = applyUnifiedDiff('hello\nworld\n', '-world\n+there\n')
+  assert.equal(plain.applied, true)
+  assert.equal(plain.text, 'hello\nthere\n')
+})
+
+test('applyUnifiedDiff tolerates indentation drift and CRLF files', () => {
+  const spaced = applyUnifiedDiff('function x() {\n\treturn 1\n}\n', '@@\n-    return 1\n+    return 2\n')
+  assert.equal(spaced.applied, true)
+  assert.ok(spaced.text.includes('return 2'))
+  const crlf = applyUnifiedDiff('a\r\nb\r\nc', '@@ -1,1 +1,1 @@\n-a\n+A\n')
+  assert.equal(crlf.applied, true)
+  assert.equal(crlf.text, 'A\r\nb\r\nc')
+})
+
+test('applyUnifiedDiff does not mistake --/+ content for file headers', () => {
+  const r = applyUnifiedDiff('-- old comment\nvalue\n', '--- old comment\n+++ new comment\n')
+  assert.equal(r.applied, true)
+  assert.equal(r.text, '++ new comment\nvalue\n')
+})
+
+test('applyUnifiedDiff keeps a leading Markdown fence context line', () => {
+  const base = '```js\nconst x = 1\n```\n'
+  const diff = ' ```js\n-const x = 1\n+const x = 2\n ```'
+  const r = applyUnifiedDiff(base, diff)
+  assert.equal(r.applied, true)
+  assert.equal(r.text, '```js\nconst x = 2\n```\n')
+})
+
+test('applyUnifiedDiff warns when a hunk is ambiguous', () => {
+  const r = applyUnifiedDiff('x\ny\nx\ny\n', '@@\n-x\n+X\n')
+  assert.equal(r.applied, true)
+  assert.equal(r.text, 'X\ny\nx\ny\n')
+  assert.ok(r.warnings?.some((w) => /2 places/.test(w)))
+})
+
+test('applyUnifiedDiff refuses a patch that changes more than one file', () => {
+  const r = applyUnifiedDiff('a\n', '*** Begin Patch\n*** Update File: a.js\n@@\n-a\n+b\n*** Update File: b.js\n@@\n-c\n+d\n*** End Patch')
+  assert.equal(r.applied, false)
+  assert.match(r.error ?? '', /more than one file/)
+})
+
 test('applyUnifiedDiff inserts zero-old-count hunks after the stated line', () => {
   const top = applyUnifiedDiff('a\nb\nc', '@@ -0,0 +1,1 @@\n+X')
   assert.equal(top.applied, true)
@@ -337,6 +471,111 @@ test('applyUnifiedDiff inserts zero-old-count hunks after the stated line', () =
   const end = applyUnifiedDiff('a\nb\nc', '@@ -3,0 +4,1 @@\n+X')
   assert.equal(end.applied, true)
   assert.equal(end.text, 'a\nb\nc\nX')
+})
+
+test('applyWorkspaceCall read returns current content without adding a revision', async () => {
+  const { applyWorkspaceCall } = await import('./workspace.ts')
+  let n = 0
+  const uid = () => `id-${++n}`
+  const first = applyWorkspaceCall({}, {
+    createNew: true, workspaceName: 'W', revisionName: 'Start',
+    action: 'create', path: 'a.txt', language: 'text', content: 'one\ntwo\n',
+  }, { msgId: 'm1', uid })
+  const read = applyWorkspaceCall(first.workspaces, {
+    workspaceId: first.result.workspaceId, revisionName: 'Read', action: 'read', path: 'a.txt',
+  }, { msgId: 'm2', uid })
+  assert.equal(read.result.action, 'read')
+  assert.equal(read.result.content, 'one\ntwo\n')
+  assert.equal(read.result.lines, 3)
+  assert.equal(read.workspaces[first.result.workspaceId].revisions.length, 1)
+  assert.equal(read.selectedRevisionId, first.selectedRevisionId)
+  assert.throws(() => applyWorkspaceCall(first.workspaces, {
+    workspaceId: first.result.workspaceId, revisionName: 'Read', action: 'read', path: 'missing.txt',
+  }, { msgId: 'm2', uid }), /not found for read/)
+  assert.throws(() => applyWorkspaceCall({}, {
+    revisionName: 'Read', action: 'read', path: 'a.txt',
+  }, { msgId: 'm2', uid }), /needs an existing workspaceId/)
+})
+
+test('compactWorkspaceHistory elides obsolete file bodies from the wire copy', () => {
+  const oldBody = `const x = 1\n${'// filler\n'.repeat(200)}`
+  const newBody = `const x = 2\n${'// filler\n'.repeat(200)}`
+  const patch = '@@\n-const x = 1\n+const x = 2'
+  const rounds = [
+    { text: '', calls: [
+      { id: 'c1', name: 'workspace_upsert', arguments: JSON.stringify({ action: 'create', workspaceId: 'ws', revisionName: 'Create', path: 'app.js', content: oldBody }), result: JSON.stringify({ workspaceId: 'ws', path: 'app.js', action: 'ready', files: ['app.js'], fileCount: 1 }) },
+      { id: 'c2', name: 'workspace_upsert', arguments: JSON.stringify({ action: 'patch', workspaceId: 'ws', revisionName: 'Patch', path: 'app.js', content: patch }), result: JSON.stringify({ workspaceId: 'ws', path: 'app.js', action: 'ready', files: ['app.js'], fileCount: 1 }) },
+    ] },
+    { text: '', calls: [
+      { id: 'c3', name: 'workspace_upsert', arguments: JSON.stringify({ action: 'update', workspaceId: 'ws', revisionName: 'Update', path: 'app.js', content: newBody }), result: JSON.stringify({ workspaceId: 'ws', path: 'app.js', action: 'ready', files: ['app.js'], fileCount: 1 }) },
+    ] },
+  ]
+  const msgs = [{ id: 'm', r: 'assistant', toolRounds: rounds }]
+  const out = compactWorkspaceHistory(msgs)
+  const first = JSON.parse(out[0].toolRounds[0].calls[0].arguments)
+  assert.match(first.content, /earlier version omitted/)
+  assert.equal(JSON.parse(out[0].toolRounds[0].calls[1].arguments).content, patch)
+  assert.equal(JSON.parse(out[0].toolRounds[1].calls[0].arguments).content, newBody)
+  const firstResult = JSON.parse(out[0].toolRounds[0].calls[0].result)
+  assert.equal(firstResult.files, undefined)
+  assert.match(firstResult.filesNote, /omitted/)
+  assert.deepEqual(JSON.parse(out[0].toolRounds[1].calls[0].result).files, ['app.js'])
+  // The stored history is untouched; only the request copy is compacted.
+  assert.equal(JSON.parse(rounds[0].calls[0].arguments).content, oldBody)
+  assert.deepEqual(JSON.parse(rounds[0].calls[0].result).files, ['app.js'])
+})
+
+test('compactWorkspaceHistory resolves a new workspace id and keeps same-named files in separate workspaces', () => {
+  const bodyOne = '// one\n'.repeat(80)
+  const bodyTwo = '// two\n'.repeat(80)
+  const updated = '// one v2\n'.repeat(80)
+  const call = (id, args, result) => ({ id, name: 'workspace_upsert', arguments: JSON.stringify({ revisionName: id, ...args }), result: JSON.stringify(result) })
+  const msgs = [{ id: 'm', r: 'assistant', toolRounds: [{ text: '', calls: [
+    call('c1', { action: 'create', createNew: true, workspaceName: 'One', path: 'app.js', content: bodyOne }, { workspaceId: 'ws1', path: 'app.js', action: 'ready', files: ['app.js'] }),
+    call('c2', { action: 'create', createNew: true, workspaceName: 'Two', path: 'app.js', content: bodyTwo }, { workspaceId: 'ws2', path: 'app.js', action: 'ready', files: ['app.js'] }),
+    call('c3', { action: 'update', workspaceId: 'ws1', path: 'app.js', content: updated }, { workspaceId: 'ws1', path: 'app.js', action: 'ready', files: ['app.js'] }),
+  ] }] }]
+  const out = compactWorkspaceHistory(msgs)
+  const [first, second, third] = out[0].toolRounds[0].calls.map((c) => JSON.parse(c.arguments))
+  assert.match(first.content, /earlier version omitted/, 'the create resolves to ws1 through its result')
+  assert.equal(first.createNew, true, 'unparsed argument fields survive the rewrite')
+  assert.equal(first.workspaceName, 'One')
+  assert.equal(second.content, bodyTwo, 'ws2 has its own app.js, not superseded by ws1')
+  assert.equal(third.content, updated)
+  assert.equal(JSON.parse(msgs[0].toolRounds[0].calls[0].arguments).content, bodyOne)
+})
+
+test('compactWorkspaceHistory keeps only the newest read of a file', () => {
+  const read = (id, result) => ({ id, name: 'workspace_upsert', arguments: JSON.stringify({ action: 'read', workspaceId: 'ws', revisionName: id, path: 'app.js' }), result: JSON.stringify({ workspaceId: 'ws', path: 'app.js', action: 'read', files: ['app.js'], content: result }) })
+  const rounds = [{ text: '', calls: [read('r1', 'old body'), read('r2', 'new body')] }]
+  const out = compactWorkspaceHistory([{ id: 'm', r: 'assistant', toolRounds: rounds }])
+  const first = JSON.parse(out[0].toolRounds[0].calls[0].result)
+  const second = JSON.parse(out[0].toolRounds[0].calls[1].result)
+  assert.equal(first.content, undefined)
+  assert.match(first.contentNote, /earlier read omitted/)
+  assert.equal(second.content, 'new body')
+  // The stored history keeps both full reads.
+  assert.equal(JSON.parse(rounds[0].calls[0].result).content, 'old body')
+})
+
+test('compactWorkspaceHistory elides a read once the file is written again', () => {
+  const body = '// next\n'.repeat(100)
+  const call = (id, args, result) => ({ id, name: 'workspace_upsert', arguments: JSON.stringify({ revisionName: id, ...args }), result: JSON.stringify(result) })
+  const rounds = [{ text: '', calls: [
+    call('r1', { action: 'read', workspaceId: 'ws', path: 'app.js' }, { workspaceId: 'ws', path: 'app.js', action: 'read', files: ['app.js'], content: 'old body' }),
+    call('u1', { action: 'update', workspaceId: 'ws', path: 'app.js', content: body }, { workspaceId: 'ws', path: 'app.js', action: 'ready', files: ['app.js'] }),
+  ] }]
+  const out = compactWorkspaceHistory([{ id: 'm', r: 'assistant', toolRounds: rounds }])
+  const read = JSON.parse(out[0].toolRounds[0].calls[0].result)
+  assert.equal(read.content, undefined)
+  assert.match(read.contentNote, /changed after this read/)
+  assert.equal(JSON.parse(out[0].toolRounds[0].calls[1].arguments).content, body)
+})
+
+test('applyUnifiedDiff refuses an unanchored insertion instead of appending it', () => {
+  const r = applyUnifiedDiff('a\nb\n', '@@\n+orphan\n')
+  assert.equal(r.applied, false)
+  assert.match(r.error ?? '', /nothing to place them after/)
 })
 
 test('workspace update without content is rejected instead of blanking the file', async () => {

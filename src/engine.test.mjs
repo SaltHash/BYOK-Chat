@@ -62,6 +62,18 @@ test('older assistant messages keep only their text; tool calls/results are drop
   assert.deepEqual(ow[5], { role: 'assistant', content: 'Second answer.' })
 })
 
+test('a new turn does not resend the previous reply tool rounds', () => {
+  const old = { id: 'a1', r: 'assistant', t: 'First answer.', toolRounds: [
+    { text: '', calls: [{ id: 'c1', name: 'workspace_upsert', arguments: JSON.stringify({ action: 'create', path: 'app.js', content: 'x'.repeat(1000) }), result: 'ready' }] },
+  ] }
+  const partial = { id: 'a2', r: 'assistant', t: '', toolRounds: [] }
+  const ow = wire(openai, [old, { id: 'u', r: 'user', t: 'Again.' }, partial])
+  assert.deepEqual(ow, [
+    { role: 'assistant', content: 'First answer.' },
+    { role: 'user', content: 'Again.' },
+  ])
+})
+
 test('provider wire history retains multiple rounds, arguments, results and call IDs', () => {
   const msg = { id: 'a', r: 'assistant', t: 'The answer is 14.', toolFinal: 'The answer is 14.', toolRounds: [
     { text: '', calls: [{ id: 'c1', name: 'calc', arguments: '{"expression":"2*7"}', result: '14' }] },
@@ -147,6 +159,59 @@ test('tool loop executes calls and sends their results back before final generat
     assert.deepEqual(requests[1].messages[2], { role: 'tool', tool_call_id: 'calc-1', content: '42' })
     assert.equal(requests[1].messages[0].content, 'What is 6 times 7?')
   } finally { globalThis.fetch = originalFetch; globalThis.requestAnimationFrame = originalRaf }
+})
+
+test('tool loop separates cumulative prompt spend from final-round context tokens', async () => {
+  const originalFetch = globalThis.fetch, originalRaf = globalThis.requestAnimationFrame
+  globalThis.requestAnimationFrame = (fn) => setTimeout(fn, 0)
+  let n = 0
+  globalThis.fetch = async () => {
+    n++
+    if (n === 1) return jsonResponse({
+      choices: [{ message: { tool_calls: [{ id: 'time-1', type: 'function', function: { name: 'time', arguments: '{}' } }] } }],
+      usage: { prompt_tokens: 5, completion_tokens: 1 },
+    })
+    return jsonResponse({ choices: [{ message: { content: 'Done.' } }], usage: { prompt_tokens: 9, completion_tokens: 2 } })
+  }
+  try {
+    const result = await runToolLoop(openai, '', (rounds) => wire(openai, [
+      { id: 'u', r: 'user', t: 'What time is it?' },
+      { id: 'a', r: 'assistant', t: '', toolRounds: rounds },
+    ]), { time: true }, () => {}, new AbortController())
+    assert.equal(result.tin, 14, 'prompt spend is summed for billing')
+    assert.equal(result.tout, 3)
+    assert.equal(result.contextTin, 9, 'context uses only the last request')
+    assert.equal(result.contextTout, 2, 'context uses only the final round output')
+  } finally { globalThis.fetch = originalFetch; globalThis.requestAnimationFrame = originalRaf }
+})
+
+test('wire elides superseded workspace file bodies from the live tool loop', () => {
+  const oldBody = `const x = 1\n${'// filler\n'.repeat(200)}`
+  const newBody = `const x = 2\n${'// filler\n'.repeat(200)}`
+  const msg = { id: 'a', r: 'assistant', t: '', toolRounds: [
+    { text: '', calls: [{ id: 'w1', name: 'workspace_upsert', arguments: JSON.stringify({ action: 'create', workspaceId: 'ws', revisionName: 'Create', path: 'app.js', content: oldBody }), result: JSON.stringify({ workspaceId: 'ws', path: 'app.js', action: 'ready', files: ['app.js'] }) }] },
+    { text: '', calls: [{ id: 'w2', name: 'workspace_upsert', arguments: JSON.stringify({ action: 'update', workspaceId: 'ws', revisionName: 'Update', path: 'app.js', content: newBody }), result: JSON.stringify({ workspaceId: 'ws', path: 'app.js', action: 'ready', files: ['app.js'] }) }] },
+  ] }
+  const ow = wire(openai, [msg])
+  const first = JSON.parse(ow[0].tool_calls[0].function.arguments)
+  const second = JSON.parse(ow[2].tool_calls[0].function.arguments)
+  assert.match(first.content, /earlier version omitted/)
+  assert.equal(second.content, newBody)
+  assert.equal(JSON.parse(ow[1].content).files, undefined)
+  assert.deepEqual(JSON.parse(ow[3].content).files, ['app.js'])
+})
+
+test('history estimates ignore old tool rounds that wire will not resend', () => {
+  const old = { id: 'a1', r: 'assistant', t: 'First answer.', toolRounds: [
+    { text: '', calls: [{ id: 'c1', name: 'calc', arguments: '{}', result: 'x'.repeat(10000) }] },
+  ] }
+  const live = { id: 'a2', r: 'assistant', t: 'Second answer.', toolRounds: [
+    { text: '', calls: [{ id: 'c2', name: 'calc', arguments: '{}', result: 'y'.repeat(100) }] },
+  ] }
+  const withOld = estimateHistoryTokens([old, live])
+  const withoutOldText = estimateHistoryTokens([{ ...old, t: '' }, live])
+  assert.ok(withOld - withoutOldText < 20, 'only the old text remains, not its 10k tool result')
+  assert.ok(withOld < estimateHistoryTokens([live]) + 100, 'the old 10k result is not counted')
 })
 
 test('text written around a tool call is separated by a blank line', async () => {

@@ -39,7 +39,7 @@ export function ContextMeter() {
   const u = useMemo(() => deriveUsage({ logs, lastBy, eps, sel, manualLimit }), [logs, lastBy, eps, sel, manualLimit])
   if (!show) return null
 
-  const { hasReply, tok, limit, pct, over, tin, tout, cacheRead, cacheWrite, uncached, replyCost, chatCost, modelLabel } = u
+  const { hasReply, tok, limit, pct, over, tin, contextTin, contextTout, tout, cacheRead, cacheWrite, uncached, replyCost, chatCost, modelLabel } = u
   const costLabel = chatCost > 0 ? `≈ $${chatCost.toFixed(decimals)}` : '$0.00'
   // Header label: no "≈" and always 3 decimals, independent of the popup's decimals setting.
   const costHeader = `$${chatCost.toFixed(3)}`
@@ -87,11 +87,13 @@ export function ContextMeter() {
             {hasReply ? (
               <div>
                 <div className="px-2 pb-1 text-xs text-mu">Last reply{modelLabel ? ` · ${modelLabel}` : ''}</div>
-                <Row k="Input (uncached)" v={fmtInt(uncached)} />
-                <Row k="Output" v={fmtInt(tout)} />
-                <Row k="Cache read" v={fmtInt(cacheRead)} />
-                <Row k="Cache write" v={fmtInt(cacheWrite)} />
-                <Row k="Prompt total (reported)" v={fmtInt(tin)} />
+                <Row k="Input (final round)" v={fmtInt(contextTin)} />
+                <Row k="Output (final round)" v={fmtInt(contextTout)} />
+                <Row k="Uncached input (all rounds)" v={fmtInt(uncached)} />
+                <Row k="Output (all rounds)" v={fmtInt(tout)} />
+                <Row k="Cache read (all rounds)" v={fmtInt(cacheRead)} />
+                <Row k="Cache write (all rounds)" v={fmtInt(cacheWrite)} />
+                <Row k="Prompt total (all rounds)" v={fmtInt(tin)} />
                 <Row k="Cost estimate" v={cost > 0 ? `≈ $${cost.toFixed(decimals)}` : 'no priced usage'} />
               </div>
             ) : (

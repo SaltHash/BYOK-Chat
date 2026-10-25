@@ -125,13 +125,19 @@ export type UsageSource = {
 export type Usage = {
   /** The chat has at least one reply with reported usage. */
   hasReply: boolean
-  /** Verified tokens of the last reply (input + output). */
+  /** Estimated context size after the last reply: the final tool round's
+   *  prompt plus the reply's output, not the sum of every round's prompt. */
   tok: number
   /** Effective context window for the last reply's model. */
   limit: number
   pct: number
   over: boolean
+  /** Cumulative prompt tokens across every tool round (billing/usage). */
   tin: number
+  /** Prompt tokens of the final tool round (context-window size). */
+  contextTin: number
+  /** Reply tokens of the final tool round (not every round's output). */
+  contextTout: number
   tout: number
   cacheRead: number
   cacheWrite: number
@@ -196,6 +202,15 @@ export function deriveUsage({ logs, lastBy, eps, sel, manualLimit }: UsageSource
     cacheWrite += t.cacheWrite ?? 0
     reported += t.cost ?? 0
   }
+  // `tin`/`tout` are cumulative across tool rounds because that is what the
+  // provider billed. The context ring must show the final request's size;
+  // older logs without context fields fall back to the cumulative values.
+  const contextEntry = main.length ? main[main.length - 1] : entries[entries.length - 1]
+  const hasContext = contextEntry?.contextTin != null
+  const contextTin = contextEntry?.contextTin ?? contextEntry?.tin ?? 0
+  // The final prompt already contains every earlier round's output, so adding
+  // cumulative `tout` would count that text twice.
+  const contextTout = hasContext ? contextEntry?.contextTout ?? 0 : contextEntry?.tout ?? 0
   // Prefer provider-reported spend for the reply; fall back to the price
   // table only when the provider reported none at all.
   const priced = tin > 0 || tout > 0 ? entries.reduce((a, t) => a + costOf(eps, t), 0) : 0
@@ -206,7 +221,7 @@ export function deriveUsage({ logs, lastBy, eps, sel, manualLimit }: UsageSource
   let chatCost = 0
   for (const log of logs) for (const t of log) if (billable(t)) chatCost += costOf(eps, t)
 
-  const tok = tin + tout
+  const tok = contextTin + contextTout
   return {
     hasReply: entries.length > 0,
     tok,
@@ -214,6 +229,8 @@ export function deriveUsage({ logs, lastBy, eps, sel, manualLimit }: UsageSource
     pct: Math.max(0, Math.min(1, tok / limit)),
     over: tok > limit,
     tin,
+    contextTin,
+    contextTout,
     tout,
     cacheRead,
     cacheWrite,

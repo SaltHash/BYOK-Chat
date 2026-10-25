@@ -53,7 +53,7 @@ export type Playlist = { id: string; name: string; sys: string; e: string[]; cls
 export type Pl = Playlist
 export type Command = { id: string; name: string; desc: string; in: 'text' | 'image' | 'image+text' | 'doc'; sys: string; tpl: string; pl: string; on: boolean; /** Argument hint shown in the `/` menu, e.g. "<text>" or "[language]". */ args?: string }
 export type Cmd = Command
-export type Attempt = { n: string; m: string; detail?: string; ms?: number; err?: string; errCode?: ErrorCode; tin?: number; tout?: number; cacheRead?: number; cacheWrite?: number; cost?: number; at?: number }
+export type Attempt = { n: string; m: string; detail?: string; ms?: number; err?: string; errCode?: ErrorCode; tin?: number; tout?: number; /** Prompt and reply tokens of the final tool round; the context meter uses these instead of the cumulative `tin`/`tout` across rounds. */ contextTin?: number; contextTout?: number; cacheRead?: number; cacheWrite?: number; cost?: number; at?: number }
 export type Try = Attempt
 export type Attachment = { name: string; kind: 'img' | 'pdf' | 'txt' | 'media'; size: string; mime?: string; data?: string; text?: string; source?: string; pages?: number }
 export type Att = Attachment
@@ -1234,7 +1234,7 @@ export const useS = create<S>()(
           edit(chatId, mid, (m) => ({ ...m, by: `${e.name} · ${e.model} · Deep research (${tier.label})` }))
           let txt = ''
           let report = ''
-          let tin = 0, tout = 0, cacheRead = 0, cacheWrite = 0, usageCost = 0
+          let tin = 0, tout = 0, contextTin = 0, contextTout = 0, cacheRead = 0, cacheWrite = 0, usageCost = 0
           const enabledTools = researchEnabled(p)
           patchRs(chatId, mid, (rs) => ({ ...rs, status: 'running', note: '' }))
           // Older tool rounds are compacted before they are re-sent, keeping
@@ -1349,6 +1349,8 @@ export const useS = create<S>()(
             const addLoop = (r0: Awaited<ReturnType<typeof runToolLoop>>) => {
               loopTok.tin += r0.tin; loopTok.tout += r0.tout; loopTok.cost += (r0 as any).cost ?? 0
               loopTok.cacheRead += (r0 as any).cacheRead ?? 0; loopTok.cacheWrite += (r0 as any).cacheWrite ?? 0
+              contextTin = r0.contextTin
+              contextTout = r0.contextTout
             }
             try {
               x = await runLoop('', [], Math.max(4, tier.maxRounds - liveRounds.length))
@@ -1396,7 +1398,7 @@ export const useS = create<S>()(
                 try {
                   const y = await streamReport(cand, assistantText, ask)
                   bump(y.tin, y.tout); addCost(cand, cand.model, y.tin, y.tout, (y as any).cost ?? 0, y)
-                  tin += y.tin; tout += y.tout; cacheRead += (y as any).cacheRead ?? 0; cacheWrite += (y as any).cacheWrite ?? 0; usageCost += (y as any).cost ?? 0
+                  tin += y.tin; tout += y.tout; contextTin = y.contextTin; contextTout = y.contextTout; cacheRead += (y as any).cacheRead ?? 0; cacheWrite += (y as any).cacheWrite ?? 0; usageCost += (y as any).cost ?? 0
                   if (report.trim()) return
                   lastErr = Error('The model returned no report text.')
                 } catch (err) {
@@ -1443,7 +1445,7 @@ export const useS = create<S>()(
             }
             txt = txtCandidate.trim()
             if (!txt) throw Error('The model returned no report text.')
-            log.push({ n: e.name, m: e.model, detail: `Deep research (${tier.label}) on “${query.slice(0, 80)}”: ${usedSearches} searches, ${usedReads} reads`, ms: Date.now() - t0, tin, tout, cacheRead, cacheWrite, cost: usageCost, at: Date.now() })
+            log.push({ n: e.name, m: e.model, detail: `Deep research (${tier.label}) on “${query.slice(0, 80)}”: ${usedSearches} searches, ${usedReads} reads`, ms: Date.now() - t0, tin, tout, contextTin: contextTin || tin, contextTout: contextTout || tout, cacheRead, cacheWrite, cost: usageCost, at: Date.now() })
             edit(chatId, mid, (m) => ({ ...m, t: txt, toolRounds: liveRounds.length ? liveRounds : x.rounds, toolFinal: txt, sys: system, log, research: m.research ? { ...m.research, status: 'done', finishedAt: Date.now() } : m.research }))
             celebrate(get().prefs.cues === true)
             ok = true
@@ -1606,7 +1608,13 @@ export const useS = create<S>()(
               log.push({ n: 'Project workspace', m: '', detail: `Workspace sharing is on for "${projName}": the workspace "${ws.name}" last used in one of its other chats is available to write into.`, at: Date.now() })
             }
             if (shared.id && ws) {
-              system += `${system ? '\n\n' : ''}Active workspace: "${ws.name}" (workspaceId: ${shared.id}).${shared.shared ? ` It is shared with the project's other chats, so files written here are already in context there. Write every file of this project into it` : ` Write every file of this project into it`} with workspace_upsert, one file per call, reusing that workspaceId. Only pass createNew:true when the user asks for a separate project.`
+              const latest = ws.revisions[ws.revisions.length - 1]
+              const paths = latest?.files.map((f) => f.path) ?? []
+              const shown = paths.slice(-40)
+              const manifest = paths.length
+                ? ` It holds ${paths.length} file${paths.length === 1 ? '' : 's'}: ${shown.join(', ')}${paths.length > shown.length ? `, plus ${paths.length - shown.length} earlier` : ''}.`
+                : ' It is empty.'
+              system += `${system ? '\n\n' : ''}Active workspace: "${ws.name}" (workspaceId: ${shared.id}).${manifest}${shared.shared ? ` It is shared with the project's other chats, so files written here are already in context there.` : ''} Write every file of this project into it with workspace_upsert, one file per call, reusing that workspaceId (several calls may go in one response when they are independent). Prefer action patch for edits, and call action read first when you do not have a file's exact current lines; use action update only for a genuine whole-file replacement. Never paste a file's full contents into your reply; describe the change instead, because the file is already visible in the panel. Only pass createNew:true when the user asks for a separate project.`
             }
           }
         }
@@ -1793,7 +1801,7 @@ export const useS = create<S>()(
               },
               workspace_upsert: async ({ workspaceId, createNew, workspaceName, revisionName, action, path, language, content, template }: {
                 workspaceId?: string; createNew?: boolean; workspaceName?: string; revisionName: string;
-                action: 'create' | 'update' | 'delete' | 'continue' | 'patch'; path: string; language?: string; content?: string;
+                action: 'create' | 'update' | 'delete' | 'continue' | 'patch' | 'read'; path: string; language?: string; content?: string;
                 template?: string
               }) => {
                 // All file semantics live in applyWorkspaceCall (pure,
@@ -1809,21 +1817,26 @@ export const useS = create<S>()(
                   { workspaceId, createNew, workspaceName },
                   { workspaces: st.workspaces, activeId: activeWorkspaceForChat(st, id).id },
                 )
+                // A read is not a write: never let the target resolver create
+                // an empty workspace just because the chat has none yet.
+                if (action === 'read' && target.createNew) throw Error('There is no workspace to read from yet. Create a file first, or pass an existing workspaceId.')
                 const { workspaces, selectedRevisionId, result } = applyWorkspaceCall(
                   st.workspaces,
                   { workspaceId: target.workspaceId, createNew: target.createNew, workspaceName: target.workspaceName, revisionName, action, path, language, content, template },
                   { msgId: mid, uid },
                 )
                 const wid = result.workspaceId
-                set((s) => ({
-                  workspaces: { ...s.workspaces, [wid]: workspaces[wid] },
-                  selectedRevision: { ...s.selectedRevision, [wid]: selectedRevisionId },
-                }))
-                // Record the workspace on the message straight away: the side
-                // panel needs the id while the reply is still streaming, and
-                // a reply that fails later must still show its files.
-                edit(id, mid, (m) => (m.workspaceIds?.includes(wid) ? m : { ...m, workspaceIds: [...(m.workspaceIds ?? []), wid] }))
-                if (action !== 'delete') workspaceWritesPending = true
+                if (action !== 'read') {
+                  set((s) => ({
+                    workspaces: { ...s.workspaces, [wid]: workspaces[wid] },
+                    selectedRevision: { ...s.selectedRevision, [wid]: selectedRevisionId },
+                  }))
+                  // Record the workspace on the message straight away: the side
+                  // panel needs the id while the reply is still streaming, and
+                  // a reply that fails later must still show its files.
+                  edit(id, mid, (m) => (m.workspaceIds?.includes(wid) ? m : { ...m, workspaceIds: [...(m.workspaceIds ?? []), wid] }))
+                }
+                if (action !== 'delete' && action !== 'read') workspaceWritesPending = true
                 // The file list tells the model what the workspace already
                 // holds, so it can update or patch instead of rewriting, and
                 // create only what is missing. The list is capped: a long
@@ -1833,7 +1846,7 @@ export const useS = create<S>()(
                 const shown = paths.slice(-WORKSPACE_RESULT_FILES)
                 return JSON.stringify({
                   ...result,
-                  action: action === 'delete' ? 'deleted' : 'ready',
+                  action: action === 'delete' ? 'deleted' : action === 'read' ? 'read' : 'ready',
                   files: shown,
                   fileCount: paths.length,
                   ...(shown.length < paths.length ? { filesNote: `showing the ${shown.length} most recent of ${paths.length} files` } : {}),
@@ -1849,7 +1862,7 @@ export const useS = create<S>()(
 
               const elapsed = Date.now() - t0
               const toolElapsed = toolRounds.reduce((total, round) => total + Math.max(0, ...round.calls.map((call) => call.ms ?? 0)), 0)
-              log.push({ n: e.name, m: e.model, detail: `Answered ${p.tgt} with ${(um.att ?? []).length} attachments and ${(() => { const g = get(); return featOn(g, 'tools') ? Object.values(g.tools).filter(Boolean).length : 0 })()} enabled tools`, ms: Math.max(0, elapsed - toolElapsed), tin: responseTokensIn, tout: responseTokensOut, cacheRead: (x as any).cacheRead ?? 0, cacheWrite: (x as any).cacheWrite ?? 0, cost: (x as any).cost ?? 0, at: Date.now() })
+              log.push({ n: e.name, m: e.model, detail: `Answered ${p.tgt} with ${(um.att ?? []).length} attachments and ${(() => { const g = get(); return featOn(g, 'tools') ? Object.values(g.tools).filter(Boolean).length : 0 })()} enabled tools`, ms: Math.max(0, elapsed - toolElapsed), tin: responseTokensIn, tout: responseTokensOut, contextTin: x.contextTin ?? responseTokensIn, contextTout: x.contextTout ?? responseTokensOut, cacheRead: (x as any).cacheRead ?? 0, cacheWrite: (x as any).cacheWrite ?? 0, cost: (x as any).cost ?? 0, at: Date.now() })
               const sum = (um.historyTokens ?? 0) + (um.explicitTokens ?? 0), explicit = sum ? Math.round(x.tin * (um.explicitTokens ?? 0) / sum) : 0
               bump(responseTokensIn, responseTokensOut, responseTokensIn - explicit, explicit); ok = true
               track(e, Date.now() - t0, false)

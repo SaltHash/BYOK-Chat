@@ -2,7 +2,7 @@ import type { Ep, Att, Msg } from './store'
 import { TOOLS } from './meta'
 import { BLANK_DOCS, expandArchives, extractOffThread, fitDoc, pairTranscripts } from './docs'
 import { attachmentManifest } from './attachments'
-import { WORKSPACE_MAX_CONTENT, WORKSPACE_TRUNC_MARKER, sanitizePath } from './workspace'
+import { WORKSPACE_MAX_CONTENT, WORKSPACE_TRUNC_MARKER, compactWorkspaceHistory, sanitizePath } from './workspace'
 import { withCode, type ErrorCode } from './errors'
 import { buildStreamRequest, splitSseBuffer } from './streamRequest'
 import { mapNetworkError, providerError, resolveProvider } from './providerAdapter'
@@ -50,10 +50,21 @@ export const DEFAULT_CONTEXT_LIMIT = 128000
 export const DEFAULT_CONTEXT_RESERVE = 8000
 export const estimateTokens = (text: string, charsPerToken = 4) =>
   Math.ceil(String(text ?? '').length / Math.max(1, charsPerToken))
-const msgSize = (m: Msg, charsPerToken: number) =>
-  estimateTokens(JSON.stringify({ t: m.t, full: (m as any).full, fx: (m as any).fx, ctx: (m as any).ctx, att: (m.att ?? []).map((a) => ({ name: a.name, text: (a as any).text ?? '' })), toolRounds: m.toolRounds ?? [] }), charsPerToken)
+const msgSize = (m: Msg, charsPerToken: number, liveRounds = false) =>
+  estimateTokens(JSON.stringify({ t: m.t, full: (m as any).full, fx: (m as any).fx, ctx: (m as any).ctx, att: (m.att ?? []).map((a) => ({ name: a.name, text: (a as any).text ?? '' })), toolRounds: liveRounds ? (m.toolRounds ?? []) : [] }), charsPerToken)
+/** Index of the assistant message whose tool rounds wire() will resend. Older
+ *  rounds are dropped from the request, so counting them here made history
+ *  trimming discard messages that did not actually consume context. */
+const liveRoundsIndex = (msgs: Msg[]): number => {
+  // Mirrors wire(): only a trailing assistant message can still be running.
+  // A completed reply's rounds are dropped as soon as the next user message
+  // arrives, so they must not count toward the request budget either.
+  const i = msgs.length - 1
+  return i >= 0 && msgs[i].r === 'assistant' && !!msgs[i].toolRounds?.length ? i : -1
+}
 export function estimateHistoryTokens(msgs: Msg[], sys = '', charsPerToken = 4): number {
-  return estimateTokens(sys, charsPerToken) + msgs.reduce((a, m) => a + msgSize(m, charsPerToken), 0)
+  const live = liveRoundsIndex(msgs)
+  return estimateTokens(sys, charsPerToken) + msgs.reduce((a, m, i) => a + msgSize(m, charsPerToken, i === live), 0)
 }
 export function trimHistory(msgs: Msg[], opts: { limit?: number; reserve?: number; charsPerToken?: number; sys?: string } = {}): { msgs: Msg[]; dropped: number; estimated: number; budget: number } {
   const limit = Math.max(1000, Math.floor(Number(opts.limit) || DEFAULT_CONTEXT_LIMIT))
@@ -61,12 +72,14 @@ export function trimHistory(msgs: Msg[], opts: { limit?: number; reserve?: numbe
   const cpt = Math.min(10, Math.max(1, Number(opts.charsPerToken) || 4))
   const budget = Math.max(1000, limit - reserve)
   const sys = String(opts.sys ?? '')
-  let estimated = estimateHistoryTokens(msgs, sys, cpt)
+  const live = liveRoundsIndex(msgs)
+  const sizes = msgs.map((m, i) => msgSize(m, cpt, i === live))
+  let estimated = estimateTokens(sys, cpt) + sizes.reduce((a, n) => a + n, 0)
   if (estimated <= budget || msgs.length <= 1) return { msgs, dropped: 0, estimated, budget }
   // Drop oldest-first, never dropping the latest message (the active request).
   let start = 0
   while (start < msgs.length - 1 && estimated > budget) {
-    estimated -= msgSize(msgs[start], cpt)
+    estimated -= sizes[start]
     start++
   }
   return { msgs: msgs.slice(start), dropped: start, estimated, budget }
@@ -264,19 +277,20 @@ export const TOOL_REGISTRY: Record<string, ToolSpec> = {
   inline_poll: { description: 'Ask a short survey-style question card below your reply, to learn the user\'s environment, preferences, or any detail you need to answer accurately and safely. Use this whenever you are genuinely uncertain about something that materially affects your answer — the user\'s setup, constraints, context, or intent — and cannot safely assume. Each item in `questions` is one question with its own input type. Prefer multiple choice and sliders over typed text: use typed text or numbers only when a free-form answer is truly needed. Multiple choice options should include an "Other" choice with a typeable area next to it when the likely answers aren\'t fully covered. Keep questions few (1–4), each one focused, and phrase the label as a complete sentence. The user fills the card and presses Continue, and their answers are sent back to you as a message so you can proceed. Never mention the question card, the questions, or that you are asking through a widget in your prose; ask only through the card.', parameters: { type: 'object', properties: { questions: { type: 'array', minItems: 1, maxItems: 4, description: 'One question per item; the user answers each in turn.', items: { type: 'object', properties: { label: textArg('The question text, phrased as a complete sentence.'), type: { type: 'string', enum: ['choice', 'slider', 'text', 'number'], description: 'choice = multiple choice (prefer this). slider = a range with a visible value. text = short free-form answer. number = a numeric answer.' }, options: { type: 'array', minItems: 2, maxItems: 6, description: 'Required for choice. Each option is a visible label, or an object with label, an optional follow-up prompt, and an optional fillBlank flag. Set fillBlank:true only on the options that should accept a typed custom answer (usually "Other"); you choose per option. Do not add a separate "type your own" choice unless it uses fillBlank.', items: { anyOf: [{ type: 'string' }, { type: 'object', properties: { label: textArg('Visible choice label.'), prompt: textArg('Optional follow-up prompt sent for this choice.'), fillBlank: { type: 'boolean', description: 'Attach a typeable text field to this option when selected. Use for "Other" or any choice that needs a custom answer.' } }, required: ['label'], additionalProperties: false }] } }, min: { type: 'number', description: 'Required for slider. Minimum value.' }, max: { type: 'number', description: 'Required for slider. Maximum value.' }, step: { type: 'number', description: 'Optional for slider. Increment between values.' }, placeholder: textArg('Optional hint shown in the empty field. Use for text and number.'), defaultValue: textArg('Optional starting value. Use for text; for number this is a numeric default.'), multiline: { type: 'boolean', description: 'Optional for text. Use a taller textarea when the answer is likely to be a paragraph.' } }, required: ['label', 'type'], additionalProperties: false } } }, required: ['questions'], additionalProperties: false }, run: ({ questions }) => `Choice card ready: ${Array.isArray(questions) ? questions.length : 0} question(s)` },
   generate_image: { description: 'Generate one or more images from a text prompt and show them beside the reply. Only use when the user asks for a picture, illustration, logo concept, photo, or other visual; do not use it for diagrams that text or code can describe. Write a specific, visual prompt (subject, style, lighting, composition) in the language the user is using.', parameters: { type: 'object', properties: { prompt: textArg('Detailed visual description of the image to generate.'), size: textArg('Output size such as 1024x1024, 1024x1536, 1536x1024, 1024x1792, 1792x1024, 512x512, or 256x256. Optional; the user setting is used when omitted.'), count: { type: 'integer', minimum: 1, maximum: 4, description: 'How many images to generate (1-4). Optional; the user setting is used when omitted.' } }, required: ['prompt'], additionalProperties: false }, run: () => { throw Error('Image generation is not available in this context.') } },
   run_code: { description: 'Run a short JavaScript or Python snippet locally and return its stdout and result. Use for exact arithmetic, data transformations, text or date processing, trying an algorithm, or verifying output. The sandbox has no DOM, files, packages, or (for JavaScript) network, and each run starts fresh, so print everything needed and pass data in the code itself. Keep snippets small; output and run time are capped. Python must be enabled in settings by the user.', parameters: { type: 'object', properties: { language: { type: 'string', enum: ['javascript', 'python'], description: 'Runtime for the snippet.' }, code: textArg('Complete snippet. Use console.log or print for output; the last expression is also returned. Top-level await/return work in JavaScript.') }, required: ['language', 'code'], additionalProperties: false }, run: () => { throw Error('Code execution is not available in this context.') } },
-  workspace_upsert: { description: 'Write files into a Workspace: the files are shown beside the reply with a preview, diffs, versioning and a download button. Do not give download links in your text — use the panel button instead. One file per call: one call changes exactly one file, so to change several files you send one call per file. Provide workspaceId to write into the workspace the chat is already using (the system prompt names it); pass createNew with workspaceName only for a genuinely separate project, never for another file of the current one. Always supply a human-readable revisionName (e.g. "Add auth form"). When naming a workspace, prefer readability-first names (for example, "Habit Tracker" instead of "habit-tracker"). Action: create (a new file, full content), update (replace the whole file), patch (a small unified diff against the file as it is now), continue (append to a truncated file), delete. Prefer patch for a small change instead of resending the whole file, and never rewrite a file that already holds what you want. The tool result lists the files the workspace holds, so check it before writing: create a file only when it is not there yet, and update or patch it when it is.', parameters: { type: 'object', properties: { workspaceId: textArg('Existing workspace ID to append to.'), createNew: { type: 'boolean', description: 'Create a new workspace (requires workspaceName). Only for a separate project.' }, workspaceName: textArg('Name for the new workspace (required if createNew).'), revisionName: textArg('Human-readable name for this revision, e.g. "Add auth form". Required.'), action: { type: 'string', enum: ['create', 'update', 'delete', 'continue', 'patch'], description: 'File action. patch applies content as a unified diff.' }, path: textArg('Relative path inside the download bundle, e.g. src/app.py.'), language: textArg('Programming language for syntax highlighting, e.g. python.'), content: textArg('Full file content, or a unified diff for patch. Omitted for delete.'), template: textArg('Starter template id: static-site, python-script, or markdown-notes (use with createNew).') }, required: ['revisionName', 'action', 'path'], additionalProperties: false },
+  workspace_upsert: { description: 'Write or inspect files in a Workspace: files are shown beside the reply with a preview, diffs, versioning and a download button. Do not give download links in your text — use the panel button instead. One file per call: one call changes exactly one file, so to change several files send one call per file; independent calls can share one response to save a round. Provide workspaceId to write into the workspace the chat is already using (the system prompt names it and lists its files); pass createNew with workspaceName only for a genuinely separate project, never for another file of the current one. Always supply a human-readable revisionName (e.g. "Add auth form"). When naming a workspace, prefer readability-first names (for example, "Habit Tracker" instead of "habit-tracker"). Action: create (a new file, full content), update (replace the whole file — only when a rewrite is genuinely smaller or simpler than a diff), patch (a small diff against the file as it is now; use this for edits), read (return the current text of one file), continue (append to a truncated file), delete. Prefer patch for a small change instead of resending the whole file, and never rewrite a file that already holds what you want. Patch content may be a standard unified diff (`@@ -a,b +c,d @@`), an apply_patch block (bare `@@` with -/+ lines), or just the -/+ lines; line numbers are hints and hunks are matched by content, so stale numbers will not reject a correct patch. Before patching a file whose exact current text you do not have, call read for it. The tool result lists the files the workspace holds, so check it before writing: create a file only when it is not there yet, and read, update or patch it when it is.', parameters: { type: 'object', properties: { workspaceId: textArg('Existing workspace ID to append to.'), createNew: { type: 'boolean', description: 'Create a new workspace (requires workspaceName). Only for a separate project.' }, workspaceName: textArg('Name for the new workspace (required if createNew).'), revisionName: textArg('Human-readable name for this revision, e.g. "Add auth form". Required.'), action: { type: 'string', enum: ['create', 'update', 'delete', 'continue', 'patch', 'read'], description: 'File action. patch applies content as a small diff; read returns one file\u2019s current text.' }, path: textArg('Relative path inside the download bundle, e.g. src/app.py.'), language: textArg('Programming language for syntax highlighting, e.g. python.'), content: textArg('Full file content for create/update, or the changed lines (unified diff or -/+ hunks) for patch. Omitted for read and delete.'), template: textArg('Starter template id: static-site, python-script, or markdown-notes (use with createNew).') }, required: ['revisionName', 'action', 'path'], additionalProperties: false },
     rejected: { files: 'This tool writes one file per call: send path, action and content for a single file. Make one workspace_upsert call per file instead of a files array.' },
     run: ({ action, path, content, workspaceId, createNew, workspaceName, revisionName, template }) => {
-    if (action !== 'create' && action !== 'update' && action !== 'delete' && action !== 'continue' && action !== 'patch') throw Error('action must be create, update, delete, continue, or patch')
+    if (!['create', 'update', 'delete', 'continue', 'patch', 'read'].includes(action)) throw Error('action must be create, update, delete, continue, patch, or read')
     if (!workspaceId && !createNew) throw Error('Must provide workspaceId or createNew:true')
     if (createNew && !workspaceName) throw Error('workspaceName required when createNew:true')
     if (!revisionName) throw Error('revisionName is required')
+    if (action === 'read' && !workspaceId) throw Error('action read needs an existing workspaceId')
     const p = sanitizePath(path)
     if (!p || p === 'file.txt') throw Error('path resolved to an invalid or empty name after sanitization')
     let body = typeof content === 'string' ? content : ''
     if (body.length > WORKSPACE_MAX_CONTENT) body = body.slice(0, WORKSPACE_MAX_CONTENT) + WORKSPACE_TRUNC_MARKER
     void body
-    return JSON.stringify({ status: action === 'delete' ? 'deleted' : 'ready', path: p, action })
+    return JSON.stringify({ status: action === 'delete' ? 'deleted' : action === 'read' ? 'read' : 'ready', path: p, action })
   } },
 }
 
@@ -605,15 +619,23 @@ export async function ocrImage(ep: Ep, model: string, att: Att): Promise<string>
 /* wire format */
 export type Wire = { role: 'user' | 'assistant'; content: any }
 export function wire(e: Ep, msgs: Msg[]): Wire[] {
-  // Tool calls/results only need to be resent for the tool loop that produced
-  // them (the latest assistant message with rounds); older rounds are read-only
-  // history, so they are dropped to keep context (and caching) lean.
-  const lastRounds = findLastIndex(msgs, (x) => x.r === 'assistant' && !!x.toolRounds?.length)
-  return msgs.filter((x) => x.r === 'user' || (x.r === 'assistant' && ((!x.err && x.t) || x.toolRounds?.length))).flatMap((x): any[] => {
+  // Tool calls/results only need to be resent for the tool loop that is still
+  // running (the trailing assistant message); rounds from completed replies are
+  // read-only history, so they are dropped to keep context (and caching) lean.
+  // Within the live tool loop, obsolete full-file bodies are also elided: the
+  // workspace keeps every revision, but re-sending each one on every round
+  // turned a small project into hundreds of thousands of prompt tokens.
+  const wireMsgs = compactWorkspaceHistory(msgs)
+  // Only the trailing assistant message can belong to the tool loop that is
+  // still running. Using "last message with rounds" instead re-sent the
+  // previous completed reply's tool calls (including whole file bodies) on the
+  // first request of every new turn, which was a major source of context bloat.
+  const lastAssistant = findLastIndex(wireMsgs, (x) => x.r === 'assistant')
+  return wireMsgs.filter((x) => x.r === 'user' || (x.r === 'assistant' && ((!x.err && x.t) || x.toolRounds?.length))).flatMap((x): any[] => {
     if (x.r !== 'user') {
       const out: any[] = []
       if (x.toolRounds?.length) {
-        const live = msgs.indexOf(x) === lastRounds
+        const live = wireMsgs.indexOf(x) === lastAssistant
         for (const round of x.toolRounds ?? []) {
           if (live) {
             if (e.type === 'anthropic') {
@@ -959,7 +981,7 @@ export async function stream(e: Ep, sys: string, ms: Wire[], on: (t: string) => 
 
 export async function runToolLoop(e: Ep, sys: string, messages: (rounds: { text: string; calls: ToolResult[] }[]) => Wire[], enabled: Record<string, boolean>, on: (text: string) => void, ac: AbortController, o: O = {}, onSummary: (text: string) => void = () => {}, onRound: (rounds: { text: string; calls: ToolResult[] }[]) => void = () => {}, maxRounds = 8, handlers: Record<string, (args: any) => unknown | Promise<unknown>> = {}, onToolDelta: (calls: ToolCall[]) => void = () => {}, execTools: { serialize?: string[]; maxParallel?: number } = {}) {
   const rounds: { text: string; calls: ToolResult[] }[] = []
-  let text = '', finalText = '', tin = 0, tout = 0, cost = 0, cacheRead = 0, cacheWrite = 0, roundCount = 0
+  let text = '', finalText = '', tin = 0, tout = 0, contextTin = 0, contextTout = 0, cost = 0, cacheRead = 0, cacheWrite = 0, roundCount = 0
   /* Stop reason of the final (non-tool) round, surfaced to the store so a
      reply cut off by the output cap can offer to continue. */
   let finish: string | null = null
@@ -997,6 +1019,12 @@ export async function runToolLoop(e: Ep, sys: string, messages: (rounds: { text:
     }
     streamMs += Math.max(0, Date.now() - streamStart)
     tin += x.tin; tout += x.tout
+    // `tin`/`tout` are the cumulative spend across every tool round (used for
+    // billing and usage stats). `contextTin`/`contextTout` are the final round's
+    // prompt and reply, which is what the context-window meter shows: summing
+    // every round made a 40k-token conversation look like 250k+.
+    contextTin = x.tin
+    contextTout = x.tout
     if (typeof (x as { cost?: unknown }).cost === 'number' && Number.isFinite((x as { cost?: number }).cost!) && (x as { cost?: number }).cost! > 0) cost += (x as { cost?: number }).cost!
     if (typeof (x as { cacheRead?: unknown }).cacheRead === 'number' && Number.isFinite((x as { cacheRead?: number }).cacheRead!)) cacheRead += (x as { cacheRead?: number }).cacheRead!
     if (typeof (x as { cacheWrite?: unknown }).cacheWrite === 'number' && Number.isFinite((x as { cacheWrite?: number }).cacheWrite!)) cacheWrite += (x as { cacheWrite?: number }).cacheWrite!
@@ -1009,7 +1037,7 @@ export async function runToolLoop(e: Ep, sys: string, messages: (rounds: { text:
     onRound(rounds)
     pendingSep = true
   }
-  return { text, finalText, rounds, tin, tout, streamMs, cost, cacheRead, cacheWrite, finish }
+  return { text, finalText, rounds, tin, tout, contextTin, contextTout, streamMs, cost, cacheRead, cacheWrite, finish }
 }
 
 export async function testEp(e: Ep) {

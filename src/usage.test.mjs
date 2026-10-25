@@ -92,6 +92,16 @@ test('deriveUsage resolves the context limit and reports reply/chat cost', () =>
   assert.equal(u.modelLabel, 'A Model')
 })
 
+test('deriveUsage shows the final-round prompt as context, not cumulative tool-round spend', () => {
+  const logs = [[{ n: 'A', m: 'a-model', tin: 900, tout: 100, contextTin: 300, contextTout: 40, at: 1 }]]
+  const u = deriveUsage({ logs, lastBy: 'A', eps: [], sel: null, manualLimit: 1000 })
+  assert.equal(u.tin, 900, 'billing still sees every round')
+  assert.equal(u.contextTin, 300)
+  assert.equal(u.contextTout, 40)
+  assert.equal(u.tok, 340, 'context is the final prompt plus the final reply, not every round')
+  assert.equal(u.over, false)
+})
+
 test('deriveUsage prefers provider-reported cost and the selection limit', () => {
   const reported = [[{ n: 'A', m: 'a-model', tin: 10, tout: 5, cost: 0.5, at: 1 }]]
   const eps = [
