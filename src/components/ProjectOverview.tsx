@@ -28,8 +28,12 @@ export function ProjectOverview({ project, cfg }: { project: Project; cfg: (t: s
   const [editModal, setEditModal] = useState(false)
   const [delId, setDelId] = useState('')
   const [confirmFile, setConfirmFile] = useState<ProjectFile | null>(null)
-  const recent = chats.filter((c) => !c.pin && !c.temporary)
-  const pinned = chats.filter((c) => c.pin)
+  // Newest activity first: "Recent chats" is an activity list, not the store's
+  // insertion order. Archived chats stay in their own sidebar view.
+  const recent = chats
+    .filter((c) => !c.pin && !c.temporary && !c.archived)
+    .sort((a, b) => (b.msgs[b.msgs.length - 1]?.at ?? 0) - (a.msgs[a.msgs.length - 1]?.at ?? 0))
+  const pinned = chats.filter((c) => c.pin && !c.archived)
   const msgs = chats.reduce((n, c) => n + c.msgs.length, 0)
   const created = project.createdAt ? new Date(project.createdAt).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) : null
   return (
@@ -65,12 +69,17 @@ export function ProjectOverview({ project, cfg }: { project: Project; cfg: (t: s
                 </button>
               ))}
               {recent.map((c) => (
-                <button key={c.id} onClick={() => useS.getState().patch({ chat: c.id, activeProject: '' })} className={item}>
-                  <MessageSquare size={15} className="shrink-0 text-mu" />
-                  <span className="min-w-0 flex-1 truncate">{c.title}</span>
-                  <span className="shrink-0 text-xs text-mu">{c.msgs.length} msg{c.msgs.length === 1 ? '' : 's'}</span>
-                  <button title="Delete chat (hold Shift to skip confirmation)" onClick={(e) => { e.stopPropagation(); if (e.shiftKey) useS.getState().chatOp(c.id, 'del'); else setDelId(c.id) }} className="grid size-7 shrink-0 place-items-center rounded-md text-mu hover:text-er"><Trash2 size={14} /></button>
-                </button>
+                // The open action and the delete action are siblings, not nested
+                // buttons: a nested button makes the whole row fire when the
+                // delete control is pressed.
+                <div key={c.id} className="flex items-center rounded-lg text-sm hover:bg-surf">
+                  <button onClick={() => useS.getState().patch({ chat: c.id, activeProject: '' })} className="flex min-w-0 flex-1 items-center gap-2.5 px-2.5 py-2 text-left">
+                    <MessageSquare size={15} className="shrink-0 text-mu" />
+                    <span className="min-w-0 flex-1 truncate">{c.title}</span>
+                    <span className="shrink-0 text-xs text-mu">{c.msgs.length} msg{c.msgs.length === 1 ? '' : 's'}</span>
+                  </button>
+                  <button title="Delete chat (hold Shift to skip confirmation)" onClick={(e) => { if (e.shiftKey) useS.getState().chatOp(c.id, 'del'); else setDelId(c.id) }} className="mr-1 grid size-7 shrink-0 place-items-center rounded-md text-mu hover:text-er"><Trash2 size={14} /></button>
+                </div>
               ))}
               {!chats.length && <p className="px-2.5 py-2 text-sm text-mu">No chats in this project yet. Send a message below to start one.</p>}
             </div>

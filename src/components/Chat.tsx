@@ -1,4 +1,4 @@
-import { memo, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import { GitBranch, ChevronLeft, ChevronRight, ChevronDown, Server, Cpu, Copy, Check, RefreshCw, Trash2, ListOrdered, CircleCheck, CircleX, TriangleAlert, Paperclip, Download, ExternalLink, Volume2, Pin, PinOff, Search, ArrowUp, ArrowDown, X, Quote } from 'lucide-react'
 import { useS, useLive, usable, featOn, previewSysFor, activeWorkspaceForChat, pinnedReplyOf, type Msg } from '../store'
@@ -238,7 +238,49 @@ function StreamedMd({ chunks, fade }: { chunks: string[]; fade: number }) {
   )
 }
 
-const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWorkspaceId, cfg }: { m: Msg; last: boolean; onOpenWorkspace: (mid: string, workspaceId: string, filePath?: string) => void; onOpenResearch: (mid: string) => void; selectedWorkspaceId?: string | null; cfg: (t: string) => void }) {
+function applySearchHighlights(el: HTMLElement | null, query?: string, open?: boolean) {
+  if (!el) return
+  const marks = Array.from(el.querySelectorAll('.search-highlight'))
+  for (const mark of marks) {
+    const parent = mark.parentNode
+    if (!parent) continue
+    parent.insertBefore(document.createTextNode(mark.textContent ?? ''), mark)
+    parent.removeChild(mark)
+    parent.normalize()
+  }
+  const q = query?.trim()
+  if (!open || !q) return
+  const regex = new RegExp('(' + q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ')', 'gi')
+  const walk = (node: Node) => {
+    if (node.nodeType === Node.TEXT_NODE) {
+      const text = node.textContent ?? ''
+      if (regex.test(text)) {
+        regex.lastIndex = 0
+        const parts = text.split(regex)
+        const frag = document.createDocumentFragment()
+        for (let i = 0; i < parts.length; i++) {
+          if (i % 2 === 1) {
+            const mark = document.createElement('mark')
+            mark.className = 'search-highlight'
+            mark.textContent = parts[i]
+            frag.appendChild(mark)
+          } else {
+            frag.appendChild(document.createTextNode(parts[i]))
+          }
+        }
+        node.parentNode?.replaceChild(frag, node)
+      }
+    } else if (node.nodeType === Node.ELEMENT_NODE) {
+      const tag = (node as Element).tagName.toLowerCase()
+      if (tag === 'script' || tag === 'style' || tag === 'svg') return
+      const children = Array.from(node.childNodes)
+      for (const child of children) walk(child)
+    }
+  }
+  walk(el)
+}
+
+const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWorkspaceId, cfg, searchQuery, searchOpen }: { m: Msg; last: boolean; onOpenWorkspace: (mid: string, workspaceId: string, filePath?: string) => void; onOpenResearch: (mid: string) => void; selectedWorkspaceId?: string | null; cfg: (t: string) => void; searchQuery?: string; searchOpen?: boolean }) {
   // Granular subscriptions: a streamed chunk only changes `chats`, so these
   // slices stay referentially stable and this message does not re-render
   // unless its own `m` prop (or one of these) actually changed.
@@ -286,6 +328,12 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
     if (liveChunks?.length) return displayText
     return searchPrefs?.citeStyle === 'off' ? stripCitations(displayText) : linkifyCitations(displayText, sources)
   }, [displayText, sources, searchPrefs?.citeStyle, liveChunks])
+  // Keep the find-in-conversation marks in step with the rendered body. Runs
+  // after render so it can wrap text inside the already-rendered markdown.
+  const contentRef = useRef<HTMLDivElement>(null)
+  useLayoutEffect(() => {
+    applySearchHighlights(contentRef.current, searchQuery, searchOpen)
+  }, [searchQuery, searchOpen, citedText, m.id])
   const openCite = useCallback((citeId: string) => {
     setSrcOpen(true)
     setSrcFlash(citeId.toUpperCase())
@@ -320,7 +368,7 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
           {prefs.showTimestamps && m.at != null && <time dateTime={new Date(m.at).toISOString()} title={formatMsgDateTime(m.at)} className="text-xs text-mu">{formatMsgTime(m.at)}</time>}
           {m.att?.map((a, i) => <Chip key={`${i}-${a.name}`} icon={Paperclip}>{a.name}</Chip>)}
         </div>
-        {m.t && <UserText m={m} />}
+        {m.t && <UserText m={m} searchQuery={searchQuery} searchOpen={searchOpen} />}
       </div>
     )
   return (
@@ -439,7 +487,7 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
           return (
             <>
               {m.t && (
-                <div className="inline">
+                <div ref={contentRef} className="inline">
                   {liveChunks && liveChunks.length ? (
                     streamMd ? <StreamedMd chunks={liveChunks} fade={streamFade} /> : <StreamedText chunks={liveChunks} fade={streamFade} />
                   ) : (
@@ -815,17 +863,35 @@ export function Chat({ side, toggle, cfg, pal }: { side: boolean; toggle: () => 
     if (!findOpen || !findHits.length) return
     const id = findHits[Math.min(findIdx, findHits.length - 1)]
     if (id) flashTo(id)
+    // After message is revealed, scroll the first highlight inside it into view
+    requestAnimationFrame(() => {
+      setTimeout(() => {
+        const msgEl = document.getElementById(`msg-${id}`)
+        if (!msgEl) return
+        const hl = msgEl.querySelector('.search-highlight')
+        if (hl) hl.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' })
+      }, 60)
+    })
     // Deliberately keyed on the number of hits, not the array: a streaming
     // reply rewrites message text on every chunk and must not yank the
     // transcript back to the active match while the reader is elsewhere.
   }, [findOpen, findHits.length, findIdx, findQ])
   const stepFind = (dir: number) => {
     if (!findHits.length) return
-    setFindIdx((i) => (i + dir + findHits.length) % findHits.length)
+    const next = (findIdx + dir + findHits.length) % findHits.length
+    setFindIdx(next)
+    requestAnimationFrame(() => {
+      const id = findHits[next]
+      const msgEl = document.getElementById(`msg-${id}`)
+      if (!msgEl) return
+      const hl = msgEl.querySelector('.search-highlight')
+      if (hl) hl.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'smooth' })
+    })
   }
   useEffect(() => {
     const f = (e: KeyboardEvent) => {
       if (!(e.ctrlKey || e.metaKey) || e.shiftKey || e.key.toLowerCase() !== 'f') return
+      if (s.prefs.customSearch === false) return
       if (!c?.msgs.length) return
       if (document.querySelector('[role="dialog"]')) return
       e.preventDefault()
@@ -834,7 +900,7 @@ export function Chat({ side, toggle, cfg, pal }: { side: boolean; toggle: () => 
     }
     window.addEventListener('keydown', f)
     return () => window.removeEventListener('keydown', f)
-  }, [c?.msgs.length])
+  }, [c?.msgs.length, s.prefs.customSearch])
 
   /* Selected assistant text offers a reply-with-quote action right where the
    * reader selected it: the conversational gesture that used to require
@@ -896,17 +962,17 @@ export function Chat({ side, toggle, cfg, pal }: { side: boolean; toggle: () => 
         ) : (
         <>
         <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
-          {findOpen && (
-            <div className="absolute inset-x-2 top-2 z-30 mx-auto flex w-full max-w-md items-center gap-1 rounded-xl border border-bor bg-surf p-1.5 shadow-lg">
-              <Search size={14} className="ml-1 shrink-0 text-mu" aria-hidden="true" />
+          {findOpen && s.prefs.customSearch !== false && (
+            <div className="absolute inset-x-3 top-3 z-30 mx-auto flex w-full max-w-xl items-center gap-3 rounded-2xl border border-bor bg-surf p-3 shadow-2xl">
+              <Search size={20} className="ml-1 shrink-0 text-mu" aria-hidden="true" />
               <input id="chat-find" value={findQ} onChange={(e) => setFindQ(e.target.value)} placeholder="Find in conversation" aria-label="Find in conversation" onKeyDown={(e) => {
                 if (e.key === 'Enter') { e.preventDefault(); stepFind(e.shiftKey ? -1 : 1) }
                 if (e.key === 'Escape') { e.preventDefault(); setFindOpen(false) }
-              }} className="min-w-0 flex-1 bg-transparent px-1 text-sm outline-none" />
-              <span aria-live="polite" className="shrink-0 text-xs text-mu">{findQ.trim() ? (findHits.length ? `${Math.min(findIdx + 1, findHits.length)}/${findHits.length}` : 'No matches') : ''}</span>
-              <Btn sm icon={ArrowUp} title="Previous match" disabled={!findHits.length} onClick={() => stepFind(-1)} />
-              <Btn sm icon={ArrowDown} title="Next match" disabled={!findHits.length} onClick={() => stepFind(1)} />
-              <Btn sm icon={X} title="Close find" onClick={() => { setFindOpen(false); setFindQ('') }} />
+              }} className="min-w-0 flex-1 bg-transparent px-2 py-1.5 text-lg outline-none placeholder:text-base" />
+              <span aria-live="polite" className="shrink-0 text-sm text-mu">{findQ.trim() ? (findHits.length ? `${Math.min(findIdx + 1, findHits.length)}/${findHits.length}` : 'No matches') : ''}</span>
+              <Btn icon={ArrowUp} title="Previous match" disabled={!findHits.length} onClick={() => stepFind(-1)} />
+              <Btn icon={ArrowDown} title="Next match" disabled={!findHits.length} onClick={() => stepFind(1)} />
+              <Btn icon={X} title="Close find" onClick={() => { setFindOpen(false); setFindQ('') }} />
             </div>
           )}
           {quote && (
@@ -925,7 +991,7 @@ export function Chat({ side, toggle, cfg, pal }: { side: boolean; toggle: () => 
               </div>
             </nav>
           )}
-          <div ref={box} onScroll={(e) => { if (quote) setQuote(null); onScrollBox(e) }} onMouseUp={captureQuote} className="absolute inset-0 overflow-y-auto" style={glass ? { paddingBottom: composerH + (empty ? 32 : 0) } : { paddingBottom: composerH + (empty ? 32 : 0), WebkitMaskImage: `linear-gradient(to bottom, black calc(100% - ${composerH + 32}px), rgba(0,0,0,0.1) calc(100% - ${composerH}px))`, maskImage: `linear-gradient(to bottom, black calc(100% - ${composerH + 32}px), rgba(0,0,0,0.1) calc(100% - ${composerH}px))` }}>
+          <div ref={box} onScroll={(e) => { if (quote) setQuote(null); onScrollBox(e) }} onMouseUp={captureQuote} className="absolute inset-0 overflow-y-auto overflow-x-auto" style={glass ? { paddingBottom: composerH + (empty ? 32 : 0) } : { paddingBottom: composerH + (empty ? 32 : 0), WebkitMaskImage: `linear-gradient(to bottom, black calc(100% - ${composerH + 32}px), rgba(0,0,0,0.1) calc(100% - ${composerH}px))`, maskImage: `linear-gradient(to bottom, black calc(100% - ${composerH + 32}px), rgba(0,0,0,0.1) calc(100% - ${composerH}px))` }}>
             {c && c.msgs.length ? (
               <div className="mx-auto flex flex-col" style={{ maxWidth: CHAT_WIDTH[s.prefs.chatWidth], padding: 'var(--ui-chat-pad-y) var(--ui-chat-pad-x)', rowGap: 'var(--ui-msg-gap)' }}>
                 {windowFrom > 0 && (
@@ -935,7 +1001,7 @@ export function Chat({ side, toggle, cfg, pal }: { side: boolean; toggle: () => 
                     </button>
                   </div>
                 )}
-                {c.msgs.slice(windowFrom).map((m, i) => <M key={m.id} m={m} cfg={cfg} last={windowFrom + i === c.msgs.length - 1} onOpenWorkspace={openWorkspace} onOpenResearch={openResearch} selectedWorkspaceId={workspacePanel?.mid === m.id ? selectedRevId : null} />)}
+                {c.msgs.slice(windowFrom).map((m, i) => <M key={m.id} m={m} cfg={cfg} last={windowFrom + i === c.msgs.length - 1} onOpenWorkspace={openWorkspace} onOpenResearch={openResearch} selectedWorkspaceId={workspacePanel?.mid === m.id ? selectedRevId : null} searchQuery={findQ} searchOpen={findOpen} />)}
                 {c.msgs[c.msgs.length - 1]?.r === 'user' && !busy && (
                   <div className="flex justify-center pt-2">
                     <button onClick={() => useS.getState().regen()} className="inline-flex min-h-9 items-center gap-2 rounded-full border border-bor bg-surf px-4 py-1.5 text-sm text-tx transition-colors hover:bg-hov focus-visible:ring-2 focus-visible:ring-ac">

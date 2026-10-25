@@ -1,4 +1,4 @@
-import { lazy, Suspense, useMemo, useState } from 'react'
+import { lazy, Suspense, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Check, Copy, GitBranch, Pencil, Trash2 } from 'lucide-react'
 import { useS, featOn, type Msg } from '../store'
 import { tokenizeMentions, bannerOf, sentBodyText, isPill } from '../mentions'
@@ -17,7 +17,7 @@ export function Md({ t, bare = false, cites, blocks = false, fadeFrom }: { t: st
   )
 }
 
-export function UserText({ m }: { m: Msg }) {
+export function UserText({ m, searchQuery, searchOpen }: { m: Msg; searchQuery?: string; searchOpen?: boolean }) {
   const edit = useS((s) => s.editMsg)
   const branch = useS((s) => s.branch)
   const cmds = useS((s) => s.cmds)
@@ -31,6 +31,49 @@ export function UserText({ m }: { m: Msg }) {
   const bodyText = useMemo(() => sentBodyText(m.t, sentBanner), [m.t, sentBanner])
   const cmdMsg = segs[0]?.kind === 'mention' && segs[0].m.kind === 'command'
   const hasMention = segs.some((s) => s.kind === 'mention')
+  const contentRef = useRef<HTMLDivElement>(null)
+  useLayoutEffect(() => {
+    const el = contentRef.current
+    if (!el) return
+    const marks = Array.from(el.querySelectorAll('.search-highlight'))
+    for (const mark of marks) {
+      const parent = mark.parentNode
+      if (!parent) continue
+      parent.insertBefore(document.createTextNode(mark.textContent ?? ''), mark)
+      parent.removeChild(mark)
+      parent.normalize()
+    }
+    const q = searchQuery?.trim()
+    if (!searchOpen || !q) return
+    const regex = new RegExp('(' + q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ')', 'gi')
+    const walk = (node: Node) => {
+      if (node.nodeType === Node.TEXT_NODE) {
+        const text = node.textContent ?? ''
+        if (regex.test(text)) {
+          regex.lastIndex = 0
+          const parts = text.split(regex)
+          const frag = document.createDocumentFragment()
+          for (let i = 0; i < parts.length; i++) {
+            if (i % 2 === 1) {
+              const mark = document.createElement('mark')
+              mark.className = 'search-highlight'
+              mark.textContent = parts[i]
+              frag.appendChild(mark)
+            } else {
+              frag.appendChild(document.createTextNode(parts[i]))
+            }
+          }
+          node.parentNode?.replaceChild(frag, node)
+        }
+      } else if (node.nodeType === Node.ELEMENT_NODE) {
+        const tag = (node as Element).tagName.toLowerCase()
+        if (tag === 'script' || tag === 'style' || tag === 'svg') return
+        const children = Array.from(node.childNodes)
+        for (const child of children) walk(child)
+      }
+    }
+    walk(el)
+  }, [searchQuery, searchOpen, m.t, segs, bodyText, sentBanner])
   if (ed)
     return (
       <div className="space-y-2">
@@ -46,7 +89,7 @@ export function UserText({ m }: { m: Msg }) {
     <div className="group/u flex flex-col items-end gap-1">
       <div className={cx('max-w-full overflow-hidden rounded-2xl', cmdMsg ? 'min-w-40 border border-ac/40 bg-ac/5 shadow-sm' : 'bg-surf')}>
         {sentBanner && <SentMentionBanner kind={sentBanner.kind} />}
-        <div className="whitespace-pre-wrap px-4 py-2.5">
+        <div ref={contentRef} className="whitespace-pre-wrap px-4 py-2.5">
           {sentBanner
             ? bodyText
             : hasMention

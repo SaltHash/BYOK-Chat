@@ -466,9 +466,9 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
         <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search titles and messages" className="h-9 w-full rounded-lg bg-surf pl-9 pr-3 text-sm outline-none focus:ring-2 focus:ring-ac/40" />
       </div>
       <div role="group" aria-label="Chat filter" className="flex items-center gap-1 rounded-lg bg-surf p-0.5 text-xs">
-        <button type="button" aria-pressed={!showArchived} onClick={() => setShowArchived(false)} className={cx('flex-1 rounded-md px-2 py-1 text-left font-medium', !showArchived ? 'bg-hov text-tx' : 'text-mu hover:text-tx')}>Chats</button>
-        <button type="button" aria-pressed={showArchived} onClick={() => setShowArchived(true)} title="Show chats moved out of the main list" className={cx('flex flex-1 items-center justify-center gap-1.5 rounded-md px-2 py-1 font-medium', showArchived ? 'bg-hov text-tx' : 'text-mu hover:text-tx')}>
-          <Archive size={12} />Archived{archivedCount ? <span className="text-[10px] opacity-70">{archivedCount}</span> : null}
+        <button type="button" aria-pressed={!showArchived} onClick={() => setShowArchived(false)} className={cx('flex flex-1 items-center justify-center rounded-md px-2 py-1 text-center font-medium', !showArchived ? 'bg-hov text-tx' : 'text-mu hover:text-tx')}>Chats</button>
+        <button type="button" aria-pressed={showArchived} onClick={() => setShowArchived(true)} title="Show chats moved out of the main list" className={cx('flex flex-1 items-center justify-center gap-1.5 rounded-md px-2 py-1 text-center font-medium', showArchived ? 'bg-hov text-tx' : 'text-mu hover:text-tx')}>
+          Archived{archivedCount ? <span className="text-[10px] opacity-70">{archivedCount}</span> : null}
         </button>
       </div>
       <nav ref={navRef} data-dnd-scroll="" className="-mx-1 flex-1 space-y-3 overflow-y-auto px-1">
@@ -528,7 +528,10 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
         {s.projects.map((f) => {
           const l = L.filter((c) => c.project === f.id && !c.pin)
           if (k && !l.length) return null
-          const o = f.open || !!k
+          // Projects stay collapsed unless they are the context the reader is
+          // in: the open project home, or a chat that belongs to the project.
+          // Search temporarily reveals every matching project.
+          const o = !!k || s.activeProject === f.id || s.chats.find((c) => c.id === s.chat)?.project === f.id
           const active = s.activeProject === f.id
           return (
             <div key={f.id} ref={registerZone(f.id)} className="rounded-lg">
@@ -539,7 +542,7 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
                     aria-expanded={o} className="side-item flex min-w-0 flex-1 items-center gap-2 px-2.5 text-left">
                     <span className="relative grid shrink-0 place-items-center" aria-hidden="true">
                       <Folder size={20} className={active ? 'text-ac' : 'text-mu'} />
-                      <span className={cx('absolute inset-0 flex items-center justify-center pt-[2px] text-[9px] font-semibold leading-none', active ? 'text-ac' : 'text-mu')}>{projectCounts.get(f.id) ?? 0}</span>
+                      <span className={cx('absolute inset-0 flex items-center justify-center pt-px text-[9px] font-semibold leading-none', active ? 'text-ac' : 'text-mu')}>{projectCounts.get(f.id) ?? 0}</span>
                     </span><span className="min-w-0 truncate">{f.name}<span className="sr-only"> ({projectCounts.get(f.id) ?? 0} chats)</span></span>
                     <ChevronRight size={14} className={cx('shrink-0 text-mu transition-transform', o && 'rotate-90')} />
                   </button>

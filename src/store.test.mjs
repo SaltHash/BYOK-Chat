@@ -21,6 +21,26 @@ test('drafts are remembered per chat and never leak across chats', () => {
   assert.equal(s().draft, 'b draft')
 })
 
+/* "Never" must not keep a draft anywhere: the in-memory stash is dropped too,
+ * so a chat switch cannot resurrect text typed in a previous chat (a reload
+ * used to be the only thing that cleared it). */
+test('keeping no drafts also drops the in-memory stash on chat switches', () => {
+  const s = () => useS.getState()
+  seed()
+  s().patch({ prefs: { ...s().prefs, draftSurvive: 'off' } })
+  s().patch({ draft: 'temp text' })
+  assert.equal(s().drafts.a ?? '', '')
+  s().patch({ chat: 'b' })
+  assert.equal(s().draft, '')
+  s().patch({ chat: 'a' })
+  assert.equal(s().draft, '')
+  // Turning it back on stages the draft that is currently being typed.
+  s().patch({ draft: 'typed now' })
+  s().patch({ prefs: { ...s().prefs, draftSurvive: 'both' } })
+  assert.equal(s().draft, 'typed now')
+  assert.equal(s().drafts.a, undefined)
+})
+
 test('the draft of a deleted chat is dropped with it', () => {
   const s = () => useS.getState()
   seed()

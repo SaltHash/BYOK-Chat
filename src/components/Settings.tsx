@@ -1815,7 +1815,7 @@ function FontPicker({ value, set, options }: { value: string; set: (v: string) =
   </div>
 }
 
-type PrefToggle = 'showBy' | 'showLog' | 'showTps' | 'enterSends' | 'autoTitle' | 'temporaryByDefault' | 'streamMd' | 'seasonal' | 'cues' | 'remoteImages' | 'showTimestamps' | 'alwaysShowActions' | 'codeWrap' | 'reduceTransparency'
+type PrefToggle = 'showBy' | 'showLog' | 'showTps' | 'enterSends' | 'autoTitle' | 'temporaryByDefault' | 'streamMd' | 'seasonal' | 'cues' | 'remoteImages' | 'showTimestamps' | 'alwaysShowActions' | 'codeWrap' | 'reduceTransparency' | 'customSearch'
 
 /** One boolean preference rendered as a labelled toggle row. */
 function prefRow(s: ReturnType<typeof useSConfig>, anchor: string, k: PrefToggle, t: string, d: string) {
@@ -2275,6 +2275,7 @@ function Chats() {
       {row('show-log', 'showLog', 'Show model-use details', 'List every model called for a reply, including classifiers and failures.')}
       {row('show-tps', 'showTps', 'Show generation speed', 'Show tokens per second below each reply.')}
       {row('stream-md', 'streamMd', 'Render markdown while streaming', 'Format each completed line as markdown as it arrives instead of plain text. Off shows plain text until the reply finishes.')}
+      {row('custom-search', 'customSearch', 'Custom find in conversation (Ctrl+F)', 'Enable the in-chat search box that highlights matches in text and code blocks.')}
       <Anchor id="copy-markdown">
       <div className="flex items-center justify-between gap-3 rounded-xl bg-surf p-3">
         <div className="min-w-0">
