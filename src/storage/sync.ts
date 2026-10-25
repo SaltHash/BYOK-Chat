@@ -105,6 +105,26 @@ export async function encryptSyncPayload(payload: SyncPayload, token: string): P
   return { encrypted: await encryptBackup(json, token) }
 }
 
+/* Deltas use the same token-derived envelope as the full snapshot, one
+ * envelope per push. The server only ever sees ciphertext, so a pull since a
+ * sequence can hand back exactly the envelopes that device missed. */
+export async function encryptSyncDelta(delta: unknown, token: string): Promise<SyncEnvelope> {
+  const json = JSON.stringify(delta)
+  const bytes = new TextEncoder().encode(json).length
+  if (bytes > SYNC_PLAINTEXT_MAX_BYTES) {
+    throw Error(`This sync change is too large to encrypt (${(bytes / 1e6).toFixed(1)} MB; the limit is about 5.7 MB). Split the workspace into smaller files, or export a file backup instead.`)
+  }
+  return { encrypted: await encryptBackup(json, token) }
+}
+
+export async function decryptSyncDelta(body: unknown, token: string): Promise<unknown> {
+  if (body && typeof body === 'object' && typeof (body as SyncEnvelope).encrypted === 'string') {
+    return JSON.parse(await decryptBackup((body as SyncEnvelope).encrypted, token)) as unknown
+  }
+  if (body && typeof body === 'object') return body
+  throw Error('That sync delta is not usable.')
+}
+
 export async function decryptSyncPayload(body: unknown, token: string): Promise<SyncPayload> {
   if (body && typeof body === 'object' && typeof (body as SyncEnvelope).encrypted === 'string') {
     return JSON.parse(await decryptBackup((body as SyncEnvelope).encrypted, token)) as SyncPayload

@@ -2,13 +2,33 @@
    free so the logic stays unit-testable from src/workspace.test.mjs. */
 
 export const WORKSPACE_TOOL = 'workspace_upsert'
-export const WORKSPACE_MAX_CONTENT = 50000
+export const WORKSPACE_MAX_CONTENT = 200000
 export const WORKSPACE_MAX_PATH = 200
 /** How many file paths a tool result lists back to the model. The workspace
  *  itself is uncapped; only this manifest is shortened, so a long project
  *  cannot flood the context on every call. */
 export const WORKSPACE_RESULT_FILES = 40
-export const WORKSPACE_TRUNC_MARKER = '\n\n[truncated: content exceeded 50,000 characters]'
+export const WORKSPACE_TRUNC_MARKER = `\n\n[truncated: content exceeded ${WORKSPACE_MAX_CONTENT.toLocaleString('en-US')} characters]`
+/** Any truncation marker, including the old 50,000-character one, so a file
+ *  cut by an earlier version can still be recognised and continued. */
+export const WORKSPACE_TRUNC_RE = /\n\n\[truncated: content exceeded [\d,]+ characters\]$/
+export const isTruncatedContent = (s: unknown) => WORKSPACE_TRUNC_RE.test(String(s ?? ''))
+/** How many lines one `read` returns before the model has to page on with
+ *  `startLine`. A whole large file would otherwise fill the context and hide
+ *  the lines the model actually needs to patch. */
+export const WORKSPACE_READ_MAX_LINES = 400
+/** Character safety net for a read window (a single minified line can be huge). */
+export const WORKSPACE_READ_MAX_CHARS = 40000
+/** Every action the workspace tool accepts. Writes are listed separately: only
+ *  they create a revision or make earlier reads stale. */
+export const WORKSPACE_ACTIONS = ['create', 'update', 'delete', 'continue', 'patch', 'read', 'list', 'search', 'diff', 'move'] as const
+export type WorkspaceActionName = (typeof WORKSPACE_ACTIONS)[number]
+export const WORKSPACE_WRITE_ACTIONS: readonly string[] = ['create', 'update', 'delete', 'continue', 'patch', 'move']
+export const isWorkspaceWriteAction = (action: unknown): boolean => WORKSPACE_WRITE_ACTIONS.includes(String(action))
+/** True for actions that only inspect the workspace (read, list, search, diff).
+ *  They must never create a workspace or a revision. */
+export const isWorkspaceReadAction = (action: unknown): boolean =>
+  (WORKSPACE_ACTIONS as readonly string[]).includes(String(action)) && !isWorkspaceWriteAction(action)
 
 /** Coerce any model-supplied path to a safe relative zip entry. Never throws. */
 export function sanitizePath(raw: unknown): string {
@@ -31,12 +51,18 @@ export function sanitizePath(raw: unknown): string {
   return joined
 }
 
+/** Cut content at the per-file limit. New writes are refused rather than
+ *  stored cut (see applyOneFileOp); this stays for legacy data and for the
+ *  size check. */
 export function truncateWorkspaceContent(content: string, max = WORKSPACE_MAX_CONTENT): { text: string; truncated: boolean } {
   if (content.length > max) return { text: content.slice(0, max) + WORKSPACE_TRUNC_MARKER, truncated: true }
   return { text: content, truncated: false }
 }
 
-export type WorkspaceArgs = { action?: string; path?: string; language?: string; content?: string; label?: string; template?: string; workspaceId?: string; workspaceName?: string }
+export type WorkspaceArgs = { action?: string; path?: string; language?: string; content?: string; label?: string; template?: string; workspaceId?: string; workspaceName?: string; revisionName?: string; to?: string; query?: string; glob?: string; against?: string }
+
+/** Argument keys the tolerant parser reads as plain strings. */
+const WORKSPACE_STRING_ARGS = ['action', 'path', 'language', 'content', 'label', 'template', 'workspaceId', 'workspaceName', 'revisionName', 'to', 'query', 'glob', 'against'] as const
 
 /** Best-effort unescape of a JSON string fragment (tolerates a cut-off tail). */
 function unescapeFragment(s: string): string {
@@ -55,14 +81,16 @@ export function parseWorkspaceArgsPartial(raw: string): WorkspaceArgs {
     const v = JSON.parse(raw)
     if (v && typeof v === 'object' && !Array.isArray(v)) {
       const out: WorkspaceArgs = {}
-      for (const k of ['action', 'path', 'language', 'content', 'label', 'template', 'workspaceId', 'workspaceName'] as const) {
+      for (const k of WORKSPACE_STRING_ARGS) {
         if (typeof (v as Record<string, unknown>)[k] === 'string') out[k] = (v as Record<string, string>)[k]
       }
       return out
     }
   } catch { /* truncated JSON — extract prefixes below */ }
   const out: WorkspaceArgs = {}
-  for (const k of ['action', 'path', 'language', 'label', 'template', 'workspaceId', 'workspaceName'] as const) {
+  for (const k of WORKSPACE_STRING_ARGS) {
+    // Content is extracted below, where an unterminated string is handled.
+    if (k === 'content') continue
     const m = raw.match(new RegExp('"' + k + '"\\s*:\\s*"((?:\\\\.|[^"\\\\])*)'))
     if (m) out[k] = unescapeFragment(m[1])
   }
@@ -98,12 +126,15 @@ export function groupWorkspaceVersions(calls: WorkspaceCallLike[], limit = Numbe
     // is not a file named "file.txt", it is just arguments still arriving.
     const hasPath = typeof a.path === 'string' && a.path.trim().length > 0
     if (!hasPath) continue
-    // A read has no new file content: it is inspection, not a version, and
-    // must never become the latest state in the panel or count as a write.
-    if (a.action === 'read') continue
+    // read, list, search and diff are inspection, not versions: they must
+    // never become the latest state in the panel, make a file look written,
+    // or count as a project file. Arguments still streaming have no action
+    // yet, so they are skipped too.
+    const action = typeof a.action === 'string' ? a.action : ''
+    if (!isWorkspaceWriteAction(action)) continue
     const path = sanitizePath(a.path ?? '')
     const v: WorkspaceVersion = {
-      action: typeof a.action === 'string' && a.action ? a.action : 'create',
+      action,
       path,
       language: typeof a.language === 'string' ? a.language : '',
       content: typeof a.content === 'string' ? a.content : '',
@@ -156,6 +187,12 @@ const workspaceKeyOf = (args: WorkspaceArgs, result: unknown): string => {
 }
 
 const fileKeyOf = (ws: string, path: string) => `${ws}\u0000${path}`
+/** Inspection results are snapshots, not history: the newest answer to the
+ *  same question makes the earlier one redundant. These keys identify that
+ *  question so the compactor can drop only true duplicates. */
+const listKeyOf = (ws: string, args: WorkspaceArgs) => `${ws}\u0000${args.path ?? ''}\u0000${args.glob ?? ''}`
+const searchKeyOf = (ws: string, args: WorkspaceArgs, raw: Record<string, unknown>) =>
+  `${ws}\u0000${args.query ?? ''}\u0000${args.path ?? ''}\u0000${args.glob ?? ''}\u0000${raw.regex === true ? 1 : 0}\u0000${raw.caseSensitive === true ? 1 : 0}`
 
 /** The original argument object, so replacing a body keeps fields the tolerant
  *  parser deliberately ignores (`createNew`, booleans, future additions). */
@@ -173,6 +210,9 @@ export function compactWorkspaceHistory<T extends WorkspaceWireMessage>(msgs: T[
   const meta = new Map<string, WorkspaceCallMeta>()
   const latestFull = new Map<string, Loc>()
   const latestRead = new Map<string, Loc>()
+  const latestList = new Map<string, Loc>()
+  const latestSearch = new Map<string, Loc>()
+  const latestDiff = new Map<string, Loc>()
   const readHistory = new Map<string, string[]>()
   const staleReads = new Set<string>()
   const deleted = new Set<string>()
@@ -193,19 +233,32 @@ export function compactWorkspaceHistory<T extends WorkspaceWireMessage>(msgs: T[
         const ws = workspaceKeyOf(args, result)
         const path = typeof args.path === 'string' && args.path.trim() ? sanitizePath(args.path) : ''
         const fileKey = path ? fileKeyOf(ws, path) : undefined
-        meta.set(key, { args, ws, fileKey, result, rawArgs: jsonObjectOf(raw) })
+        const rawArgs = jsonObjectOf(raw)
+        meta.set(key, { args, ws, fileKey, result, rawArgs })
+        if (result && typeof result === 'object') {
+          if (args.action === 'list' && typeof (result as { tree?: unknown }).tree === 'string') latestList.set(listKeyOf(ws, args), { m, r, c })
+          if (args.action === 'search' && Array.isArray((result as { matches?: unknown }).matches)) latestSearch.set(searchKeyOf(ws, args, rawArgs), { m, r, c })
+          if (args.action === 'diff' && fileKey && typeof (result as { diff?: unknown }).diff === 'string') latestDiff.set(fileKey, { m, r, c })
+        }
         if (fileKey) {
+          const write = isWorkspaceWriteAction(args.action)
           if (args.action === 'create' || args.action === 'update') {
             latestFull.set(fileKey, { m, r, c })
             deleted.delete(fileKey)
-          } else if (args.action === 'delete') {
+          } else if (args.action === 'delete' || args.action === 'move') {
             deleted.add(fileKey)
           }
           if (args.action === 'read') {
-            latestRead.set(fileKey, { m, r, c })
+            // Only a whole-file read can stand in for an earlier read. A
+            // paged window (startLine/hasMore) must not hide the rest of the
+            // file that an earlier read already brought into context.
+            const start = result && typeof result === 'object' ? (result as { startLine?: unknown }).startLine : undefined
+            const whole = start === undefined
+              || (Number(start) <= 1 && (result as { hasMore?: unknown }).hasMore !== true)
+            if (whole) latestRead.set(fileKey, { m, r, c })
             readHistory.set(fileKey, [...(readHistory.get(fileKey) ?? []), key])
-          } else if (args.action) {
-            // Any write makes earlier reads stale: their text is no longer the
+          } else if (write) {
+            // A write makes earlier reads stale: their text is no longer the
             // file, so it must not travel as if it were current.
             for (const prior of readHistory.get(fileKey) ?? []) staleReads.add(prior)
             readHistory.delete(fileKey)
@@ -237,7 +290,7 @@ export function compactWorkspaceHistory<T extends WorkspaceWireMessage>(msgs: T[
           const latest = latestFull.get(fileKey)
           if (deleted.has(fileKey) || !isLatest(latest, m, r, c)) {
             const note = deleted.has(fileKey)
-              ? `[earlier version omitted from the model context: ${args.content.length.toLocaleString()} characters. The file was deleted later in this transcript.]`
+              ? `[earlier version omitted from the model context: ${args.content.length.toLocaleString()} characters. The file was deleted or moved later in this transcript.]`
               : `[earlier version omitted from the model context: ${args.content.length.toLocaleString()} characters. The latest version of this file is later in this transcript.]`
             next = { ...next, arguments: JSON.stringify({ ...info.rawArgs, content: note }) }
           }
@@ -253,12 +306,36 @@ export function compactWorkspaceHistory<T extends WorkspaceWireMessage>(msgs: T[
             result.filesNote = 'File list omitted here; the latest workspace result for this workspace lists the current files.'
             changed = true
           }
-          if (fileKey && args.action === 'read' && typeof result.content === 'string' && !isLatest(latestRead.get(fileKey), m, r, c)) {
-            result.contentNote = staleReads.has(key)
-              ? `[earlier read omitted: ${result.content.length.toLocaleString()} characters. The file changed after this read; call action read for its current text.]`
-              : `[earlier read omitted: ${result.content.length.toLocaleString()} characters. A later read in this transcript is current.]`
-            delete result.content
+          if (args.action === 'list' && typeof result.tree === 'string' && !isLatest(latestList.get(listKeyOf(info.ws, args)), m, r, c)) {
+            result.treeNote = 'An earlier file tree was omitted; the newest list result for the same filter is later in this transcript.'
+            delete result.tree
             changed = true
+          }
+          if (args.action === 'search' && Array.isArray(result.matches) && !isLatest(latestSearch.get(searchKeyOf(info.ws, args, info.rawArgs)), m, r, c)) {
+            const found = result.matches.length
+            result.matchesNote = `Earlier results of the same search omitted (${found} match${found === 1 ? '' : 'es'}); the newest search for this query is later in this transcript.`
+            delete result.matches
+            changed = true
+          }
+          if (fileKey && args.action === 'diff' && typeof result.diff === 'string' && !isLatest(latestDiff.get(fileKey), m, r, c)) {
+            result.diffNote = 'An earlier diff was omitted; the newest diff for this file is later in this transcript.'
+            delete result.diff
+            changed = true
+          }
+          if (fileKey && args.action === 'read' && typeof result.content === 'string') {
+            // A paged read is not a replacement for a whole-file read: keep
+            // both, so the context never loses lines the model already paid
+            // for just because it inspected a later window.
+            const paged = result.startLine !== undefined
+              && (Number(result.startLine) > 1 || result.hasMore === true)
+            const stale = staleReads.has(key)
+            if (stale || (!paged && !isLatest(latestRead.get(fileKey), m, r, c))) {
+              result.contentNote = stale
+                ? `[earlier read omitted: ${result.content.length.toLocaleString()} characters. The file changed after this read; call action read for its current text.]`
+                : `[earlier read omitted: ${result.content.length.toLocaleString()} characters. A later read in this transcript is current.]`
+              delete result.content
+              changed = true
+            }
           }
           if (changed) next = { ...next, result: JSON.stringify(result) }
         }
@@ -412,7 +489,7 @@ export function migrateLegacyCanvasGroups(chats: { msgs: any[] }[]): { workspace
         path: g.path,
         language: g.versions[g.versions.length - 1].language,
         content: g.versions[g.versions.length - 1].content,
-        truncated: g.versions[g.versions.length - 1].content.includes(WORKSPACE_TRUNC_MARKER),
+        truncated: isTruncatedContent(g.versions[g.versions.length - 1].content),
       }))
 
       workspaces[workspaceId] = {
@@ -434,11 +511,11 @@ export function migrateLegacyCanvasGroups(chats: { msgs: any[] }[]): { workspace
 }
 
 /* ---- Which workspace does a workspace_upsert call target? ----------------
- * The model often omits the workspace id (it is not in its context between
- * replies) or repeats createNew for what is really the same project. Both
- * used to spawn a second, nearly empty workspace, so the files the user was
- * looking at appeared to vanish. The active workspace of the chat is the
- * fallback. */
+ * The model can omit the workspace id (older replies carry a `<Workspace:id>`
+ * tag, but the model may still forget it) or repeat createNew for what is
+ * really the same project. Both used to spawn a second, nearly empty
+ * workspace, so the files the user was looking at appeared to vanish. The
+ * active workspace of the chat is the fallback. */
 
 export type WorkspaceTargetInput = { workspaceId?: string; createNew?: boolean; workspaceName?: string }
 
@@ -448,6 +525,38 @@ export type WorkspaceTarget = {
   workspaceName?: string
   /** Set when the call was redirected away from what the model asked for. */
   fallback?: 'active' | 'new'
+}
+
+/* ---- Keeping the workspace id in the model's transcript -----------------
+ * A completed reply's tool calls are dropped before the next request, and the
+ * workspace id lived only inside them. The system prompt names the active
+ * workspace, but an older one became unreachable, and a reply that only used
+ * a tool had no text at all. Each assistant turn that touched a workspace now
+ * carries a compact `<Workspace:id>` tag in the request copy (never in the
+ * stored message), so the model can still find and return to it. */
+
+const cleanWorkspaceId = (raw: unknown) => String(raw ?? '').trim().replace(/[^A-Za-z0-9._-]/g, '').slice(0, 80)
+
+/** One marker per distinct workspace id, in the order the reply used them. */
+export function workspaceTags(ids?: string[]): string {
+  const seen = new Set<string>()
+  const tags: string[] = []
+  for (const raw of ids ?? []) {
+    const id = cleanWorkspaceId(raw)
+    if (!id || seen.has(id)) continue
+    seen.add(id)
+    tags.push(`<Workspace:${id}>`)
+  }
+  return tags.join(' ')
+}
+
+/** Append this reply's workspace tags unless the text already carries them. */
+export function withWorkspaceTags(text: string, ids?: string[]): string {
+  const raw = String(text ?? '')
+  const body = raw.trimEnd()
+  const tags = workspaceTags((ids ?? []).filter((id) => !body.includes(`<Workspace:${cleanWorkspaceId(id)}>`)))
+  if (!tags) return raw
+  return `${body}${body ? '\n\n' : ''}${tags}`
 }
 
 /** The workspace a chat is working in: the last one touched by any message. */
@@ -538,6 +647,329 @@ export function changedFilesBetween(prev: { path: string; content: string }[], n
     path,
     status: !a.has(path) ? 'added' : !b.has(path) ? 'removed' : a.get(path) === b.get(path) ? 'same' : 'modified',
   }))
+}
+
+/* ----------------------------------------------------------------------------
+ * Inspection helpers: ranged reads, grep, folder tree, unified diffs.
+ * All pure and DOM-free, so every one of them is unit-testable and safe to use
+ * from the request planner.
+ * -------------------------------------------------------------------------- */
+
+const clampInt = (value: unknown, min: number, max: number, fallback: number): number => {
+  const n = Math.floor(Number(value))
+  if (!Number.isFinite(n)) return fallback
+  return Math.max(min, Math.min(max, n))
+}
+
+/** Normalize a folder prefix the model passed ("src", "/src/", "") to `src`. */
+export function folderPrefix(raw: unknown): string {
+  const text = typeof raw === 'string' ? raw.trim() : ''
+  if (!text || text === '/' || text === '.') return ''
+  const clean = sanitizePath(text)
+  return clean === 'file.txt' ? '' : clean.replace(/\/+$/, '')
+}
+
+export type WorkspaceReadRange = {
+  text: string
+  /** 1-based, inclusive, and already clamped to the file. */
+  startLine: number
+  endLine: number
+  totalLines: number
+  returnedLines: number
+  hasMore: boolean
+  nextStartLine?: number
+}
+
+/** One page of a file. Without a range the first page is returned, so a huge
+ *  file can never swallow the context in a single read. */
+export function readWorkspaceRange(
+  content: string,
+  opts: { startLine?: number; endLine?: number; maxLines?: number; maxChars?: number } = {},
+): WorkspaceReadRange {
+  const source = String(content ?? '')
+  const lines = source.split('\n')
+  const totalLines = source === '' ? 0 : lines.length
+  if (!totalLines) return { text: '', startLine: 1, endLine: 0, totalLines: 0, returnedLines: 0, hasMore: false }
+  const maxLines = clampInt(opts.maxLines, 1, 2000, WORKSPACE_READ_MAX_LINES)
+  const maxChars = clampInt(opts.maxChars, 1000, 200000, WORKSPACE_READ_MAX_CHARS)
+  const startLine = clampInt(opts.startLine, 1, totalLines, 1)
+  const lastAllowed = Math.min(totalLines, startLine + maxLines - 1)
+  const endLimit = Math.min(clampInt(opts.endLine, startLine, totalLines, lastAllowed), lastAllowed)
+  const out: string[] = []
+  let chars = 0
+  for (let i = startLine - 1; i < endLimit; i++) {
+    const line = lines[i]
+    if (out.length && chars + line.length + 1 > maxChars) break
+    out.push(line)
+    chars += line.length + 1
+  }
+  const endLine = out.length ? startLine + out.length - 1 : startLine
+  const hasMore = out.length > 0 && endLine < totalLines
+  return {
+    text: out.join('\n'),
+    startLine,
+    endLine,
+    totalLines,
+    returnedLines: out.length,
+    hasMore,
+    ...(hasMore ? { nextStartLine: endLine + 1 } : {}),
+  }
+}
+
+/** Folders whose contents are noise in a manifest: dependency, build, cache
+ *  and VCS directories. They are still shown as a folder with a file count. */
+export const WORKSPACE_HIDDEN_DIRS = new Set([
+  'node_modules', '.git', '.svn', '.hg', 'dist', 'build', 'out', '.next', '.nuxt',
+  '.svelte-kit', '.turbo', '.cache', '.parcel-cache', '.wrangler', '.output',
+  'coverage', 'vendor', 'venv', '.venv', '__pycache__', '.pytest_cache',
+  '.mypy_cache', 'target', 'Pods', '.gradle', '.idea', '.vscode',
+])
+
+/** Glob (supports `*`, `**` and `?`) to an anchored path regex. */
+export function workspaceGlob(glob: string): RegExp {
+  const source = String(glob ?? '').trim().replace(/^\.\//, '').replace(/^\//, '')
+  let out = ''
+  for (let i = 0; i < source.length; i++) {
+    const c = source[i]
+    if (c === '*') {
+      if (source[i + 1] === '*') {
+        i++
+        if (source[i + 1] === '/') { i++; out += '(?:.*/)?' } else out += '.*'
+      } else out += '[^/]*'
+    } else if (c === '?') out += '[^/]'
+    else out += c.replace(/[.+^${}()|[\]\\]/g, '\\$&')
+  }
+  return new RegExp(`(^|/)${out}$`, 'i')
+}
+
+/** Does a workspace path match a folder prefix and/or glob? */
+export function workspacePathMatches(path: string, opts: { path?: string; glob?: string } = {}): boolean {
+  const prefix = folderPrefix(opts.path)
+  if (prefix && path !== prefix && !path.startsWith(prefix + '/')) return false
+  const glob = String(opts.glob ?? '').trim()
+  return !glob || workspaceGlob(glob).test(path)
+}
+
+export type WorkspaceMatch = { path: string; line: number; text: string; before?: string[]; after?: string[] }
+export type WorkspaceSearchResult = {
+  query: string
+  matches: WorkspaceMatch[]
+  /** Matches returned (<= maxResults). */
+  matchCount: number
+  /** Matches found, including the ones cut by maxResults. */
+  totalMatches: number
+  filesMatched: number
+  filesSearched: number
+  truncated: boolean
+}
+
+/** Grep across workspace files. Literal by default; `regex` switches to a
+ *  pattern. Always bounded, so a broad query cannot fill the context. */
+export function searchWorkspaceFiles(
+  files: { path: string; content: string }[],
+  query: string,
+  opts: { regex?: boolean; caseSensitive?: boolean; path?: string; glob?: string; contextLines?: number; maxResults?: number; maxTextChars?: number } = {},
+): WorkspaceSearchResult {
+  const needle = String(query ?? '')
+  if (!needle.length) throw Error('search needs a query: the text or pattern to find.')
+  if (needle.length > 500) throw Error('search query is too long (keep it under 500 characters).')
+  // A nested quantifier such as `(a+)+` can backtrack for minutes on one long
+  // line and freeze the tab. Refuse the obvious cases instead of risking it.
+  if (opts.regex && /\((?:\?:)?[^()]*[*+][^()]*\)\s*[*+]/.test(needle)) {
+    throw Error('That regular expression nests a quantifier inside a repeated group, which can hang the search. Simplify the pattern or use a literal search.')
+  }
+  const flags = opts.caseSensitive ? '' : 'i'
+  let matcher: RegExp
+  try {
+    matcher = new RegExp(opts.regex ? needle : needle.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), flags)
+  } catch (error) {
+    throw Error(`Invalid regular expression: ${(error as Error).message}`)
+  }
+  const maxResults = clampInt(opts.maxResults, 1, 200, 50)
+  const contextLines = clampInt(opts.contextLines, 0, 3, 0)
+  const maxText = clampInt(opts.maxTextChars, 60, 500, 200)
+  const clip = (line: string) => (line.length > maxText ? `${line.slice(0, maxText)}…` : line)
+  const included = files.filter((f) => workspacePathMatches(String(f.path ?? ''), opts))
+  const matches: WorkspaceMatch[] = []
+  const matchedFiles = new Set<string>()
+  let totalMatches = 0
+  // Bounded overall work: a workspace can hold arbitrarily many files, and a
+  // search must not stall the reply for seconds.
+  const deadline = performance.now() + 1500
+  let timedOut = false
+  for (const file of included) {
+    if (performance.now() > deadline) { timedOut = true; break }
+    const lines = String(file.content ?? '').split('\n')
+    for (let i = 0; i < lines.length; i++) {
+      if (!matcher.test(lines[i])) continue
+      totalMatches++
+      matchedFiles.add(file.path)
+      if (matches.length >= maxResults) continue
+      matches.push({
+        path: file.path,
+        line: i + 1,
+        text: clip(lines[i]),
+        ...(contextLines ? {
+          before: lines.slice(Math.max(0, i - contextLines), i).map(clip),
+          after: lines.slice(i + 1, i + 1 + contextLines).map(clip),
+        } : {}),
+      })
+    }
+  }
+  return {
+    query: needle,
+    matches,
+    matchCount: matches.length,
+    totalMatches,
+    filesMatched: matchedFiles.size,
+    filesSearched: included.length,
+    truncated: totalMatches > matches.length || timedOut,
+  }
+}
+
+type TreeDir = { folders: Map<string, TreeDir>; files: { name: string; lines: number }[] }
+
+/** Compact, human-readable folder tree for the system prompt and `list`.
+ *  Dependency/build folders are shown once with a file count and no children,
+ *  so `node_modules` never floods the context but its existence is visible. */
+export function workspaceTree(
+  files: { path: string; content?: string }[],
+  opts: { maxEntries?: number; maxChars?: number } = {},
+): { text: string; fileCount: number; folderCount: number; hiddenFiles: number; hiddenFolders: number; truncated: boolean; omittedFiles: number } {
+  const maxEntries = clampInt(opts.maxEntries, 5, 500, 80)
+  const maxChars = clampInt(opts.maxChars, 200, 20000, 3000)
+  const root: TreeDir = { folders: new Map(), files: [] }
+  const folderPrefixes = new Set<string>()
+  const hiddenCounts = new Map<string, number>()
+  let hiddenFiles = 0
+  let fileCount = 0
+  for (const file of files) {
+    const path = String(file.path ?? '')
+    if (!path) continue
+    fileCount++
+    const parts = path.split('/')
+    let hiddenAt = -1
+    for (let i = 0; i < parts.length - 1; i++) {
+      if (WORKSPACE_HIDDEN_DIRS.has(parts[i])) { hiddenAt = i; break }
+    }
+    if (hiddenAt >= 0) {
+      const prefix = parts.slice(0, hiddenAt + 1).join('/')
+      hiddenCounts.set(prefix, (hiddenCounts.get(prefix) ?? 0) + 1)
+      hiddenFiles++
+      // Keep folder nodes down to the hidden folder so it renders in place.
+      // Parent folders are still part of the visible structure; the hidden
+      // folder itself is counted separately.
+      let node = root
+      for (let i = 0; i <= hiddenAt; i++) {
+        const name = parts[i]
+        if (!node.folders.has(name)) node.folders.set(name, { folders: new Map(), files: [] })
+        if (i < hiddenAt) folderPrefixes.add(parts.slice(0, i + 1).join('/'))
+        node = node.folders.get(name)!
+      }
+      continue
+    }
+    let node = root
+    for (let i = 0; i < parts.length - 1; i++) {
+      const name = parts[i]
+      node.folders.set(name, node.folders.get(name) ?? { folders: new Map(), files: [] })
+      folderPrefixes.add(parts.slice(0, i + 1).join('/'))
+      node = node.folders.get(name)!
+    }
+    node.files.push({ name: parts[parts.length - 1], lines: workspaceLines(String(file.content ?? '')) })
+  }
+
+  const out: string[] = []
+  let chars = 0
+  let truncated = false
+  let renderedFiles = 0
+  const push = (line: string): boolean => {
+    if (out.length >= maxEntries || chars + line.length + 1 > maxChars) { truncated = true; return false }
+    out.push(line)
+    chars += line.length + 1
+    return true
+  }
+  const render = (dir: TreeDir, depth: number, prefix: string) => {
+    for (const name of [...dir.folders.keys()].sort()) {
+      if (truncated) return
+      const childPrefix = prefix ? `${prefix}/${name}` : name
+      const hidden = hiddenCounts.get(childPrefix) ?? 0
+      const line = hidden
+        ? `${'  '.repeat(depth)}${name}/ (contents hidden — ${hidden} file${hidden === 1 ? '' : 's'})`
+        : `${'  '.repeat(depth)}${name}/`
+      if (!push(line)) return
+      if (!hidden) render(dir.folders.get(name)!, depth + 1, childPrefix)
+    }
+    if (truncated) return
+    for (const file of [...dir.files].sort((a, b) => a.name.localeCompare(b.name))) {
+      const line = `${'  '.repeat(depth)}${file.name}${file.lines ? ` (${file.lines} line${file.lines === 1 ? '' : 's'})` : ''}`
+      if (!push(line)) return
+      renderedFiles++
+    }
+  }
+  render(root, 0, '')
+  const omittedFiles = Math.max(0, fileCount - renderedFiles)
+  if (truncated) out.push(`… ${omittedFiles} more file${omittedFiles === 1 ? '' : 's'} not shown`)
+  return {
+    text: out.join('\n'),
+    fileCount,
+    folderCount: folderPrefixes.size,
+    hiddenFiles,
+    hiddenFolders: hiddenCounts.size,
+    truncated,
+    omittedFiles,
+  }
+}
+
+export type UnifiedDiffResult = { diff: string; added: number; removed: number; truncated: boolean }
+
+/** Unified diff text for a file, with `context` unchanged lines around each
+ *  hunk and a hard output cap. Added/removed are the full counts. */
+export function unifiedDiffFor(
+  path: string,
+  oldText: string,
+  newText: string,
+  opts: { context?: number; maxLines?: number } = {},
+): UnifiedDiffResult {
+  const lines = diffLines(String(oldText ?? ''), String(newText ?? ''))
+  const { added, removed } = diffStat(lines)
+  if (!added && !removed) return { diff: '', added: 0, removed: 0, truncated: false }
+  const context = clampInt(opts.context, 0, 20, 3)
+  const maxLines = clampInt(opts.maxLines, 20, 5000, 600)
+  const oldNum: number[] = [], newNum: number[] = []
+  let ol = 1, nl = 1
+  for (let i = 0; i < lines.length; i++) {
+    oldNum[i] = ol; newNum[i] = nl
+    if (lines[i].type === 'same') { ol++; nl++ }
+    else if (lines[i].type === 'del') ol++
+    else nl++
+  }
+  const ranges: [number, number][] = []
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i].type === 'same') continue
+    const last = ranges[ranges.length - 1]
+    if (last && i <= last[1] + context * 2 + 1) last[1] = i
+    else ranges.push([i, i])
+  }
+  const out: string[] = [`--- a/${path}`, `+++ b/${path}`]
+  let truncated = false
+  for (const [first, last] of ranges) {
+    const from = Math.max(0, first - context)
+    const to = Math.min(lines.length - 1, last + context)
+    let oldCount = 0, newCount = 0
+    for (let i = from; i <= to; i++) {
+      if (lines[i].type !== 'add') oldCount++
+      if (lines[i].type !== 'del') newCount++
+    }
+    const oldStart = oldCount ? oldNum[from] : Math.max(1, oldNum[from] - 1)
+    const newStart = newCount ? newNum[from] : Math.max(1, newNum[from] - 1)
+    if (out.length + 2 + (to - from + 1) > maxLines) { truncated = true; break }
+    out.push(`@@ -${oldStart},${oldCount} +${newStart},${newCount} @@`)
+    for (let i = from; i <= to; i++) {
+      out.push(`${lines[i].type === 'add' ? '+' : lines[i].type === 'del' ? '-' : ' '}${lines[i].text}`)
+    }
+  }
+  if (truncated) out.push('[diff truncated — the full change is larger than the display cap]')
+  return { diff: out.join('\n'), added, removed, truncated }
 }
 
 export type PatchResult = { text: string; applied: boolean; added: number; removed: number; error?: string; warnings?: string[] }
@@ -1035,39 +1467,87 @@ export const templateById = (id: string): WorkspaceTemplate | null => {
  *  input; callers surface the message. Same-message calls fold into one
  *  revision; otherwise a new revision is appended. */
 
-export type WorkspaceFileOp = { action: string; path: string; language?: string; content?: string }
+export type WorkspaceFileOp = { action: string; path: string; language?: string; content?: string; to?: string }
 
 export type WorkspaceCallInput = {
   workspaceId?: string
   createNew?: boolean
   workspaceName?: string
-  revisionName: string
+  /** Required for actions that change files; ignored by inspections. */
+  revisionName?: string
   action: string
-  path: string
+  path?: string
   language?: string
   content?: string
   template?: string
+  /** read: 1-based inclusive line window. */
+  startLine?: number
+  endLine?: number
+  /** search */
+  query?: string
+  regex?: boolean
+  caseSensitive?: boolean
+  glob?: string
+  contextLines?: number
+  maxResults?: number
+  /** move / diff */
+  to?: string
+  against?: string
+  /** patch: return the diff without saving anything. */
+  dryRun?: boolean
 }
 
 export type WorkspaceCallResult = {
   workspaceId: string
   path: string
   action: string
-  revisionName: string
+  revisionName?: string
   changes: string[]
   scaffolded?: number
-  /** The paths the workspace holds after this call, so the model can see what
-   *  already exists before it writes the next file. */
-  files: string[]
-  /** Only for action "read": the file's current text, so the model can patch
-   *  it accurately without resending the whole file. */
+  /** The paths the workspace holds after a write, so the model can see what
+   *  already exists before it writes the next file. Inspections omit it (they
+   *  return their own, smaller result). */
+  files?: string[]
+  fileCount: number
+  /** read */
   content?: string
   lines?: number
+  startLine?: number
+  endLine?: number
+  returnedLines?: number
+  hasMore?: boolean
+  nextStartLine?: number
+  note?: string
+  /** list */
+  tree?: string
+  matchedFiles?: number
+  folderCount?: number
+  hiddenFiles?: number
+  /** search */
+  query?: string
+  matches?: WorkspaceMatch[]
+  matchCount?: number
+  totalMatches?: number
+  filesMatched?: number
+  filesSearched?: number
+  /** diff */
+  diff?: string
+  added?: number
+  removed?: number
+  against?: string
+  dryRun?: boolean
+  /** move */
+  to?: string
   truncated?: boolean
 }
 
-const WORKSPACE_ACTIONS = ['create', 'update', 'delete', 'continue', 'patch', 'read']
-const truncSuffixRe = new RegExp(WORKSPACE_TRUNC_MARKER.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$')
+const truncSuffixRe = WORKSPACE_TRUNC_RE
+
+/** A write that would exceed the per-file limit is refused, not stored cut:
+ *  a truncated file is corrupt, and the model must split it into modules. */
+const oversizeError = (p: string, chars: number) => Error(
+  `${p} would be ${chars.toLocaleString()} characters, over the ${WORKSPACE_MAX_CONTENT.toLocaleString()}-character per-file limit. Split it into smaller modules and write each file separately (or shorten it); nothing was stored.`,
+)
 
 function applyOneFileOp(files: WorkspaceFile[], op: WorkspaceFileOp): { files: WorkspaceFile[]; note: string } {
   const p = sanitizePath(op.path)
@@ -1075,6 +1555,14 @@ function applyOneFileOp(files: WorkspaceFile[], op: WorkspaceFileOp): { files: W
   if (op.action === 'delete') {
     if (!files.some((f) => f.path === p)) throw Error(`File not found for delete: ${p}`)
     return { files: files.filter((f) => f.path !== p), note: `${p} deleted` }
+  }
+  if (op.action === 'move') {
+    const to = sanitizePath(op.to ?? '')
+    if (!String(op.to ?? '').trim()) throw Error('move needs "to": the new path for the file.')
+    if (!files.some((f) => f.path === p)) throw Error(`File not found for move: ${p}`)
+    if (to === p) throw Error(`move needs a different path: ${p} is already there.`)
+    if (files.some((f) => f.path === to)) throw Error(`A file already exists at ${to}. Delete it or choose another path.`)
+    return { files: files.map((f) => (f.path === p ? { ...f, path: to } : f)), note: `${p} moved to ${to}` }
   }
   // A create/update without a content string used to blank the file (a
   // truncated stream or a forgotten argument silently wiped it).
@@ -1084,25 +1572,34 @@ function applyOneFileOp(files: WorkspaceFile[], op: WorkspaceFileOp): { files: W
   if (op.action === 'continue') {
     const existing = files.find((f) => f.path === p)
     if (!existing) throw Error(`File not found for continue: ${p}`)
+    // Strip either the current or the old marker first, so continuing a file
+    // cut by an earlier version appends after its real text. The total must fit
+    // the limit; a continue cannot grow past it.
     const appended = existing.content.replace(truncSuffixRe, '') + (op.content ?? '')
-    const { text, truncated } = truncateWorkspaceContent(appended)
-    return { files: files.map((f) => (f.path === p ? { ...f, content: text, truncated } : f)), note: `${p} continued` }
+    if (appended.length > WORKSPACE_MAX_CONTENT) throw oversizeError(p, appended.length)
+    return { files: files.map((f) => (f.path === p ? { ...f, content: appended, truncated: false } : f)), note: `${p} continued` }
   }
   if (op.action === 'patch') {
     const existing = files.find((f) => f.path === p)
     if (!existing) throw Error(`File not found for patch: ${p}. Use create with full content for new files.`)
+    // Patching an incomplete file would leave the truncation marker in the
+    // middle of the result. Finish or replace it first.
+    if (existing.truncated === true || isTruncatedContent(existing.content)) {
+      throw Error(`File is incomplete: ${p} was cut at the per-file limit. Finish it with action "continue" (the missing text only) or replace it with action "update", then patch it.`)
+    }
     const patched = applyUnifiedDiff(existing.content, op.content ?? '')
     if (!patched.applied) throw Error(`Patch rejected for ${p}: ${patched.error}\nRead the current file with action "read" if you need the exact text, then retry with only the changed lines.`)
-    const { text, truncated } = truncateWorkspaceContent(patched.text)
+    if (patched.text.length > WORKSPACE_MAX_CONTENT) throw oversizeError(p, patched.text.length)
     const warning = patched.warnings?.length ? ` (${patched.warnings.join(' ')})` : ''
-    return { files: files.map((f) => (f.path === p ? { ...f, content: text, language: op.language ?? f.language, truncated } : f)), note: `${p} patched (+${patched.added}/-${patched.removed})${warning}` }
+    return { files: files.map((f) => (f.path === p ? { ...f, content: patched.text, language: op.language ?? f.language, truncated: false } : f)), note: `${p} patched (+${patched.added}/-${patched.removed})${warning}` }
   }
-  const { text, truncated } = truncateWorkspaceContent(op.content ?? '')
+  const body = op.content ?? ''
+  if (body.length > WORKSPACE_MAX_CONTENT) throw oversizeError(p, body.length)
   const at = files.findIndex((f) => f.path === p)
   if (at >= 0) {
-    return { files: files.map((f, i) => (i === at ? { ...f, content: text, language: op.language ?? f.language, truncated } : f)), note: `${p} updated` }
+    return { files: files.map((f, i) => (i === at ? { ...f, content: body, language: op.language ?? f.language, truncated: false } : f)), note: `${p} updated` }
   }
-  return { files: [...files, { path: p, language: op.language ?? '', content: text, truncated }], note: `${p} created` }
+  return { files: [...files, { path: p, language: op.language ?? '', content: body, truncated: false }], note: `${p} created` }
 }
 
 export function applyWorkspaceCall(
@@ -1111,42 +1608,167 @@ export function applyWorkspaceCall(
   ctx: { msgId: string; uid: () => string; now?: number },
 ): { workspaces: Record<string, Workspace>; selectedRevisionId: string; result: WorkspaceCallResult } {
   const now = ctx.now ?? Date.now()
-  const safeName = String(input.revisionName ?? '').trim().slice(0, 200) || 'Revision'
-  if (!WORKSPACE_ACTIONS.includes(String(input.action))) throw Error('action must be create, update, delete, continue, patch, or read')
+  const action = String(input.action ?? '')
+  if (!(WORKSPACE_ACTIONS as readonly string[]).includes(action)) {
+    throw Error(`action must be one of: ${WORKSPACE_ACTIONS.join(', ')}`)
+  }
   let next = { ...workspaces }
   let targetId = input.workspaceId
   let scaffolded = 0
-  // Reading never creates or changes a workspace: it returns the current text
-  // of one file so the model can patch it without sending a whole-file update.
-  if (input.action === 'read') {
-    if (input.template) throw Error('template cannot be used with action read.')
-    if (input.createNew || !targetId) throw Error('action read needs an existing workspaceId.')
+
+  /* ---- Inspections: never create a workspace, a revision or a file. ---- */
+  if (isWorkspaceReadAction(action)) {
+    if (input.template) throw Error(`template cannot be used with action ${action}.`)
+    if (input.createNew || !targetId) throw Error(`action ${action} needs an existing workspaceId.`)
     const readWorkspace = next[targetId]
     if (!readWorkspace) throw Error(`Workspace not found: ${targetId}`)
     const latestRead = readWorkspace.revisions[readWorkspace.revisions.length - 1]
+    const files = latestRead?.files ?? []
+    const base = {
+      workspaceId: targetId,
+      action: action === 'list' ? 'listed' : action === 'search' ? 'searched' : action === 'diff' ? 'diffed' : 'read',
+      changes: [] as string[],
+      fileCount: files.length,
+    }
+
+    if (action === 'list') {
+      const filtered = files.filter((f) => workspacePathMatches(f.path, { path: input.path, glob: input.glob }))
+      const tree = workspaceTree(filtered, { maxEntries: 150, maxChars: 8000 })
+      return {
+        workspaces,
+        selectedRevisionId: latestRead?.id ?? '',
+        result: {
+          ...base,
+          path: folderPrefix(input.path),
+          tree: tree.text || '(no files match this filter)',
+          matchedFiles: filtered.length,
+          folderCount: tree.folderCount,
+          hiddenFiles: tree.hiddenFiles,
+          ...(tree.truncated ? { truncated: true } : {}),
+        },
+      }
+    }
+
+    if (action === 'search') {
+      const found = searchWorkspaceFiles(files, String(input.query ?? ''), {
+        regex: input.regex === true,
+        caseSensitive: input.caseSensitive === true,
+        path: input.path,
+        glob: input.glob,
+        contextLines: input.contextLines,
+        maxResults: input.maxResults,
+      })
+      return {
+        workspaces,
+        selectedRevisionId: latestRead?.id ?? '',
+        result: {
+          ...base,
+          path: folderPrefix(input.path),
+          query: found.query,
+          matches: found.matches,
+          matchCount: found.matchCount,
+          totalMatches: found.totalMatches,
+          filesMatched: found.filesMatched,
+          filesSearched: found.filesSearched,
+          ...(found.truncated ? { truncated: true } : {}),
+        },
+      }
+    }
+
     if (!latestRead) throw Error(`Workspace has no files yet: ${targetId}`)
-    const wanted = sanitizePath(input.path)
+    if (!String(input.path ?? '').trim()) throw Error(`path is required for action ${action}.`)
+    const wanted = sanitizePath(input.path ?? '')
     const file = latestRead.files.find((f) => f.path === wanted)
     if (!file) {
       const available = latestRead.files.map((f) => f.path).slice(-20)
-      throw Error(`File not found for read: ${wanted}${available.length ? `. Available files: ${available.join(', ')}` : ''}`)
+      throw Error(`File not found for ${action}: ${wanted}${available.length ? `. Available files: ${available.join(', ')}` : ''}`)
     }
+
+    if (action === 'read') {
+      const truncatedFile = file.truncated === true || isTruncatedContent(file.content)
+      const range = readWorkspaceRange(file.content, { startLine: input.startLine, endLine: input.endLine })
+      const rangeText = range.startLine === range.endLine
+        ? `line ${range.startLine}`
+        : `lines ${range.startLine}–${range.endLine}`
+      const note = range.totalLines === 0
+        ? 'The file is empty.'
+        : range.hasMore
+          ? `Showing ${rangeText} of ${range.totalLines}. Call read again with startLine ${range.nextStartLine} for the rest.`
+          : range.startLine === 1
+            ? `Whole file: ${range.totalLines} line${range.totalLines === 1 ? '' : 's'}.`
+            : `${rangeText[0].toUpperCase()}${rangeText.slice(1)} of ${range.totalLines}.`
+      return {
+        workspaces,
+        selectedRevisionId: latestRead.id,
+        result: {
+          ...base,
+          path: file.path,
+          content: range.text,
+          lines: range.totalLines,
+          startLine: range.startLine,
+          endLine: range.endLine,
+          returnedLines: range.returnedLines,
+          hasMore: range.hasMore,
+          ...(range.nextStartLine ? { nextStartLine: range.nextStartLine } : {}),
+          note: `${note}${truncatedFile ? ' This file is incomplete: it was cut at the per-file limit. Finish it with action "continue" or replace it with "update".' : ''}`,
+          ...(truncatedFile ? { truncated: true } : {}),
+        },
+      }
+    }
+
+    // diff: current file against a previous revision (default), another file,
+    // or a proposed body that has not been saved.
+    let oldText = ''
+    let newText = file.content
+    let against = ''
+    if (typeof input.content === 'string') {
+      oldText = file.content
+      newText = input.content
+      against = 'proposed content'
+    } else if (String(input.against ?? '').trim()) {
+      const otherPath = sanitizePath(input.against ?? '')
+      const other = latestRead.files.find((f) => f.path === otherPath)
+      if (!other) throw Error(`File not found for diff against: ${otherPath}. Available files: ${latestRead.files.slice(0, 20).map((f) => f.path).join(', ')}`)
+      oldText = other.content
+      against = other.path
+    } else {
+      const revIndex = readWorkspace.revisions.indexOf(latestRead)
+      let previous: WorkspaceRevision | undefined
+      for (let i = revIndex - 1; i >= 0; i--) {
+        if (readWorkspace.revisions[i].files.some((f) => f.path === file.path)) { previous = readWorkspace.revisions[i]; break }
+      }
+      if (!previous) {
+        return {
+          workspaces,
+          selectedRevisionId: latestRead.id,
+          result: { ...base, path: file.path, diff: '', added: 0, removed: 0, against: 'no earlier version', note: 'This file has only one version. Pass against (another path) or content (a proposed version) to compare.' },
+        }
+      }
+      oldText = previous.files.find((f) => f.path === file.path)!.content
+      against = `revision "${previous.name}"`
+    }
+    const unified = unifiedDiffFor(file.path, oldText, newText)
     return {
       workspaces,
       selectedRevisionId: latestRead.id,
       result: {
-        workspaceId: targetId,
+        ...base,
         path: file.path,
-        action: 'read',
-        revisionName: safeName,
-        changes: [],
-        files: latestRead.files.map((f) => f.path),
-        content: file.content,
-        lines: workspaceLines(file.content),
-        ...(file.truncated ? { truncated: true } : {}),
+        diff: unified.diff,
+        added: unified.added,
+        removed: unified.removed,
+        against,
+        ...(unified.diff ? {} : { note: `No differences between ${file.path} and ${against}.` }),
+        ...(unified.truncated ? { truncated: true } : {}),
       },
     }
   }
+
+  /* ---- Writes ---- */
+  if (!String(input.path ?? '').trim()) throw Error(`path is required for action ${action}.`)
+  const revisionName = String(input.revisionName ?? '').trim()
+  if (!revisionName) throw Error(`revisionName is required to ${action} a file (a short label such as "Add auth form").`)
+  const safeName = revisionName.slice(0, 200)
   if (input.createNew || !targetId) {
     if (!input.workspaceName) throw Error('workspaceName required when createNew:true')
     targetId = ctx.uid()
@@ -1176,9 +1798,38 @@ export function applyWorkspaceCall(
   const latest = ws.revisions[ws.revisions.length - 1]
   const sameMessage = latest?.msgId === ctx.msgId
   let files = sameMessage ? latest.files : (latest?.files ?? [])
+
+  // A dry-run patch proves the diff applies and shows the result without
+  // touching the workspace or adding a revision. This is the safe way to
+  // preview a risky edit before committing it.
+  if (action === 'patch' && input.dryRun === true) {
+    const p = sanitizePath(input.path ?? '')
+    const existing = files.find((f) => f.path === p)
+    if (!existing) throw Error(`File not found for patch: ${p}. Use create with full content for new files.`)
+    const patched = applyUnifiedDiff(existing.content, input.content ?? '')
+    if (!patched.applied) throw Error(`Patch rejected for ${p}: ${patched.error}\nRead the current file with action "read" if you need the exact text, then retry with only the changed lines.`)
+    const unified = unifiedDiffFor(p, existing.content, patched.text)
+    return {
+      workspaces,
+      selectedRevisionId: latest?.id ?? '',
+      result: {
+        workspaceId: targetId,
+        path: p,
+        action: 'diffed',
+        changes: [`${p} would be patched (+${patched.added}/-${patched.removed})`],
+        fileCount: files.length,
+        diff: unified.diff,
+        added: unified.added,
+        removed: unified.removed,
+        dryRun: true,
+        ...(patched.warnings?.length ? { note: patched.warnings.join(' ') } : {}),
+      },
+    }
+  }
+
   const notes: string[] = []
   {
-    const r = applyOneFileOp(files, { action: input.action, path: input.path, language: input.language, content: input.content })
+    const r = applyOneFileOp(files, { action, path: input.path ?? '', language: input.language, content: input.content, to: input.to })
     files = r.files
     notes.push(r.note)
   }
@@ -1198,12 +1849,14 @@ export function applyWorkspaceCall(
     selectedRevisionId: revision.id,
     result: {
       workspaceId: targetId,
-      path: sanitizePath(input.path),
-      action: input.action === 'delete' ? 'deleted' : 'ready',
+      path: sanitizePath(input.path ?? ''),
+      action: action === 'delete' ? 'deleted' : action === 'move' ? 'moved' : 'ready',
       revisionName: safeName,
       changes: notes,
       ...(scaffolded ? { scaffolded } : {}),
+      ...(action === 'move' ? { to: sanitizePath(input.to ?? '') } : {}),
       files: files.map((f) => f.path),
+      fileCount: files.length,
     },
   }
 }

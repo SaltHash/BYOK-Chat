@@ -68,24 +68,18 @@ export function shapeChatForSync(c: unknown): unknown {
   return { ...x, msgs: arr(x.msgs).map(shapeMsg) }
 }
 
-/** Workspaces are generated project files, so they are user-facing, but only
- *  the latest revision is worth syncing and each file body is capped. */
+/** Workspaces are generated project files, so they are user-facing. Only the
+ *  latest revision is synced (older history stays local), but its file bodies
+ *  are sent whole: silently clipping a workspace file makes a synced copy look
+ *  complete while it will not build. If the full payload exceeds the transport
+ *  limit the push fails loudly instead of storing a damaged file. */
 export function shapeWorkspacesForSync(value: unknown): Obj {
   const out: Obj = {}
   for (const [id, ws] of Object.entries(obj(value))) {
     const w = obj(ws)
     const revisions = arr(w.revisions)
     const latest = revisions.length ? revisions[revisions.length - 1] : undefined
-    out[id] = latest ? {
-      ...w,
-      revisions: [{
-        ...obj(latest),
-        files: arr(obj(latest).files).map((file) => {
-          const f = obj(file)
-          return { ...f, content: clip(f.content, 20000) }
-        }),
-      }],
-    } : { ...w, revisions: [] }
+    out[id] = latest ? { ...w, revisions: [{ ...obj(latest), files: arr(obj(latest).files) }] } : { ...w, revisions: [] }
   }
   return out
 }

@@ -3,7 +3,7 @@ import './index.css'
 import App from './App'
 import { useS } from './store'
 import { hydrateDurable, mirrorToDurable } from './storage/boot'
-import { startSyncRuntime } from './storage/syncRuntime'
+import { startSyncRuntime, DEVICE_SYNC_ENABLED } from './storage/syncRuntime'
 import { withoutExpiredTemps } from './persistence'
 import { setProxyMode } from './net'
 
@@ -25,8 +25,9 @@ if (import.meta.env.PROD && 'serviceWorker' in navigator) {
 }
 
 // Device sync background loops: pull + smart-merge on open, on focus and on a
-// slow interval; push local changes automatically. A no-op without a token.
-startSyncRuntime()
+// slow interval; push local changes automatically. Incremental, so these loops
+// pull only changes since the last sync and push deltas. A no-op without a token.
+if (DEVICE_SYNC_ENABLED) startSyncRuntime()
 
 // Durable overflow: settings stay in localStorage; chats/workspaces mirror to
 // IndexedDB/OPFS. Hydrate once (automatic in-place migration), then mirror.

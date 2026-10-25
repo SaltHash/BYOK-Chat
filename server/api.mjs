@@ -234,8 +234,13 @@ export async function apiReader(req, env = process.env, opts = {}) {
 export function syncFailureResult(error) {
   const status = typeof error?.status === 'number' ? error.status : 503
   const code = error?.code || 'sync_unavailable'
-  if (status >= 500) return jsonResult(status, { error: 'Sync storage is unavailable. Try again in a moment.', code })
-  return jsonResult(status, { error: error?.message || 'Sync failed.', code })
+  // A delta conflict carries the sequence the client must sync to before it
+  // can retry; keep it on both the generic and the detailed responses.
+  const extra = {}
+  if (Number.isInteger(error?.seq)) extra.seq = error.seq
+  if (Number.isInteger(error?.baseSeq)) extra.baseSeq = error.baseSeq
+  if (status >= 500) return jsonResult(status, { error: 'Sync storage is unavailable. Try again in a moment.', code, ...extra })
+  return jsonResult(status, { error: error?.message || 'Sync failed.', code, ...extra })
 }
 
 export async function apiSync(req, env = process.env) {

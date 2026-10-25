@@ -120,7 +120,7 @@ export const BUILTIN_SKILLS: SkillDef[] = [
       'Preserve working behavior unless asked to change it, and make the smallest complete implementation that satisfies the request.',
       'Follow the project\'s existing architecture, naming, and patterns instead of introducing new ones.',
       'Handle errors and edge cases, keep types accurate, and avoid speculative abstractions.',
-      'Make targeted edits. When the workspace tool is available, use action patch with only the changed lines and a little surrounding context, and call action read first if you do not have the file\'s exact current text. Send a whole file only when creating it or when a rewrite is genuinely smaller than the diff. The workspace already displays the files, so do not paste a whole file into the chat reply unless the user asks to see it; summarize the change instead.',
+      'Make targeted edits. When the workspace tool is available, inspect first (list for the layout, search to find the code, read for the exact lines or a line range), then use patch with only the changed lines and a little surrounding context; diff shows what changed. Send a whole file only when creating it or when a rewrite is genuinely smaller than the diff. The workspace already displays the files, so do not paste a whole file into the chat reply unless the user asks to see it; summarize the change instead.',
       'Explain important tradeoffs briefly, and report what changed plus what remains uncertain.',
       'End with a file summary under three headings — Changed, Added, Removed — listing every file in each group. If a group is empty, state it explicitly (e.g. "No files have been removed.").',
     ].join('\n'),

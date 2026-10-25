@@ -13,9 +13,18 @@ create table if not exists public.sync_states (
   payload jsonb not null default '{}'::jsonb,
   store_version integer not null default 18,
   export_version integer not null default 4,
+  -- The full snapshot is at base_seq; seq is the newest change sequence and
+  -- deltas holds the encrypted changes between the two.
+  seq bigint not null default 0,
+  base_seq bigint not null default 0,
+  deltas jsonb not null default '[]'::jsonb,
   updated_at timestamptz not null default now(),
   created_at timestamptz not null default now()
 );
+
+alter table public.sync_states add column if not exists seq bigint not null default 0;
+alter table public.sync_states add column if not exists base_seq bigint not null default 0;
+alter table public.sync_states add column if not exists deltas jsonb not null default '[]'::jsonb;
 
 alter table public.sync_states enable row level security;
 

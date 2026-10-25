@@ -54,7 +54,7 @@ export const TAB_KEYWORDS: Record<SettingsTabId, string> = {
   voice: 'voice dictation microphone speech recognition read aloud speech synthesis language rate auto read',
   keys: 'shortcuts keybinds keyboard reset bindings',
   stats: 'stats usage tokens cost messages chats reset totals',
-  data: 'data import backup privacy export erase sync encrypted history storage compact',
+  data: 'data import backup privacy export erase encrypted history storage compact',
   adv: 'advanced debugging verbose errors additional capabilities system prompt payloads token counts model parameters temperature top p max tokens',
 }
 
@@ -242,8 +242,6 @@ export const SETTING_LINKS: SettingLink[] = [
   { tab: 'stats', anchor: 'reset-stats', title: 'Reset stats', keywords: 'reset zero totals' },
 
   // Data
-  { tab: 'data', anchor: 'device-sync', title: 'Device sync', keywords: 'sync token push pull devices neon auto' },
-  { tab: 'data', anchor: 'sync-conflicts', title: 'Sync conflicts', keywords: 'sync conflict merge both sides local remote fork restore' },
   { tab: 'data', anchor: 'local-backups', title: 'Local backups', keywords: 'backup backups automatic daily local indexeddb restore snapshot' },
   { tab: 'data', anchor: 'export', title: 'Export data', keywords: 'export json data backup categories include keys encrypted password aes' },
   { tab: 'data', anchor: 'import', title: 'Import data', keywords: 'import json data file merge replace categories encrypted password' },

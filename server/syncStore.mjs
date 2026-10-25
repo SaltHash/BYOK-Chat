@@ -42,7 +42,9 @@ function memStore() {
     },
     async put(row) {
       forget(row.id)
-      const bytes = payloadBytes(row.payload)
+      // Deltas are part of the stored save; count them too so a client cannot
+      // grow a row past the memory budget by pushing many small deltas.
+      const bytes = payloadBytes(row.payload) + payloadBytes(row.deltas)
       mem.set(row.id, { row, bytes })
       memBytes += bytes
       while (mem.size > MEM_MAX_ROWS || (memBytes > MEM_MAX_BYTES && mem.size > 1)) forget(mem.keys().next().value)
@@ -50,6 +52,12 @@ function memStore() {
     },
     async del(id) {
       forget(id)
+    },
+    // TTL keep-alive only. Never rewrite the whole row from a stale read: a
+    // pull must not be able to erase a delta that landed while it was reading.
+    async touch(id, at = Date.now()) {
+      const entry = mem.get(id)
+      if (entry) entry.row.updatedAt = at
     },
   }
 }
@@ -72,20 +80,26 @@ async function neonStore(env = process.env) {
   neonClient = {
     kind: 'neon',
     async get(id) {
-      const rows = await sql`select id, secret_hash, payload, store_version, export_version, updated_at from sync_states where id = ${id} limit 1`
+      const rows = await sql`select id, secret_hash, payload, store_version, export_version, seq, base_seq, deltas, updated_at from sync_states where id = ${id} limit 1`
       const r = rows[0]
       if (!r) return null
-      return { id: r.id, secretHash: r.secret_hash, payload: r.payload, storeVersion: r.store_version, exportVersion: r.export_version, updatedAt: new Date(r.updated_at).getTime() }
+      let deltas = r.deltas
+      if (typeof deltas === 'string') { try { deltas = JSON.parse(deltas) } catch { deltas = [] } }
+      return { id: r.id, secretHash: r.secret_hash, payload: r.payload, storeVersion: r.store_version, exportVersion: r.export_version, seq: Number(r.seq) || 0, baseSeq: Number(r.base_seq) || 0, deltas: Array.isArray(deltas) ? deltas : [], updatedAt: new Date(r.updated_at).getTime() }
     },
     async put(row) {
-      await sql`insert into sync_states (id, secret_hash, payload, store_version, export_version, updated_at)
-        values (${row.id}, ${row.secretHash}, ${JSON.stringify(row.payload ?? {})}, ${row.storeVersion ?? 18}, ${row.exportVersion ?? 4}, to_timestamp(${Math.floor((row.updatedAt ?? Date.now()) / 1000)}))
+      await sql`insert into sync_states (id, secret_hash, payload, store_version, export_version, seq, base_seq, deltas, updated_at)
+        values (${row.id}, ${row.secretHash}, ${JSON.stringify(row.payload ?? {})}, ${row.storeVersion ?? 18}, ${row.exportVersion ?? 4}, ${row.seq ?? 0}, ${row.baseSeq ?? 0}, ${JSON.stringify(row.deltas ?? [])}, to_timestamp(${Math.floor((row.updatedAt ?? Date.now()) / 1000)}))
         on conflict (id) do update set secret_hash = excluded.secret_hash, payload = excluded.payload,
-          store_version = excluded.store_version, export_version = excluded.export_version, updated_at = excluded.updated_at`
+          store_version = excluded.store_version, export_version = excluded.export_version,
+          seq = excluded.seq, base_seq = excluded.base_seq, deltas = excluded.deltas, updated_at = excluded.updated_at`
       return row
     },
     async del(id) {
       await sql`delete from sync_states where id = ${id}`
+    },
+    async touch(id, at = Date.now()) {
+      await sql`update sync_states set updated_at = to_timestamp(${Math.floor(at / 1000)}) where id = ${id}`
     },
   }
   return neonClient

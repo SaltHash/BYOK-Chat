@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-const { sanitizePath, parseWorkspaceArgsPartial, truncateWorkspaceContent, groupWorkspaceVersions, countWorkspaceFiles, compactWorkspaceHistory, buildZipEntries, zipFilename, WORKSPACE_MAX_CONTENT, migrateLegacyCanvasGroups, applyUnifiedDiff, diffLines, diffStat, changedFilesBetween, sanitizeHtmlPreview, previewKindFor, parseCsvPreview, WORKSPACE_TEMPLATES, templateById, pendingLiveCalls, findWritingPath } = await import('./workspace.ts')
+const { sanitizePath, parseWorkspaceArgsPartial, truncateWorkspaceContent, groupWorkspaceVersions, countWorkspaceFiles, compactWorkspaceHistory, buildZipEntries, zipFilename, WORKSPACE_MAX_CONTENT, migrateLegacyCanvasGroups, applyUnifiedDiff, diffLines, diffStat, changedFilesBetween, sanitizeHtmlPreview, previewKindFor, parseCsvPreview, WORKSPACE_TEMPLATES, templateById, pendingLiveCalls, findWritingPath, readWorkspaceRange, searchWorkspaceFiles, workspaceTree, workspacePathMatches, unifiedDiffFor, isWorkspaceReadAction, WORKSPACE_READ_MAX_LINES } = await import('./workspace.ts')
 
 test('sanitizePath keeps valid relative paths and never throws', () => {
   assert.equal(sanitizePath('src/app.py'), 'src/app.py')
@@ -92,8 +92,11 @@ test('findWritingPath reports only a real, still-pending file path', () => {
   assert.equal(findWritingPath([{ id: 's', name: '', arguments: '{"query":"hello"}' }], []), null)
   // A workspace call whose path has not streamed yet must not become "file.txt".
   assert.equal(findWritingPath([{ id: 'w', name: 'workspace_upsert', arguments: '{"action":"create"' }], []), null)
-  // Once a path and the name are present, it is reported.
-  assert.equal(findWritingPath([{ id: 'w', name: 'workspace_upsert', arguments: JSON.stringify({ path: 'src/app.py' }) }], []), 'src/app.py')
+  // A path alone is not a write: the action decides whether it changes a file.
+  assert.equal(findWritingPath([{ id: 'w', name: 'workspace_upsert', arguments: JSON.stringify({ path: 'src/app.py' }) }], []), null)
+  // Once a write action and a path are present, it is reported.
+  assert.equal(findWritingPath([{ id: 'w', name: 'workspace_upsert', arguments: JSON.stringify({ action: 'create', path: 'src/app.py' }) }], []), 'src/app.py')
+  assert.equal(findWritingPath([{ id: 'w', name: 'workspace_upsert', arguments: JSON.stringify({ action: 'read', path: 'src/app.py' }) }], []), null)
   // A call already committed to a completed round is no longer pending.
   assert.equal(findWritingPath([{ id: 'w', name: 'workspace_upsert', arguments: JSON.stringify({ path: 'src/app.py' }) }], [{ calls: [{ id: 'w', name: 'workspace_upsert', arguments: '' }] }]), null)
 })
@@ -327,6 +330,54 @@ test('applyWorkspaceCall scaffolds templates and holds any number of files', asy
   assert.throws(() => applyWorkspaceCall(r.workspaces, {
     workspaceId: r.result.workspaceId, revisionName: 'R', action: 'patch', path: 'ghost.txt', content: '@@ -1,1 +1,1 @@\n-a\n+b\n',
   }, { msgId: 'm2', uid }), /File not found for patch/)
+})
+
+test('a write over the per-file limit is refused instead of stored truncated', async () => {
+  const { applyWorkspaceCall, WORKSPACE_MAX_CONTENT, isTruncatedContent } = await import('./workspace.ts')
+  let n = 0
+  const uid = () => `id-${++n}`
+
+  // Refused, not cut: a truncated file is corrupt and the model must split it.
+  assert.throws(() => applyWorkspaceCall({}, {
+    createNew: true, workspaceName: 'Huge', revisionName: 'Huge', action: 'create', path: 'huge.js',
+    content: 'x'.repeat(WORKSPACE_MAX_CONTENT + 1),
+  }, { msgId: 'm1', uid }), /per-file limit/i)
+
+  // A file exactly at the limit is stored whole and is not marked incomplete.
+  const exact = applyWorkspaceCall({}, {
+    createNew: true, workspaceName: 'Exact', revisionName: 'Exact', action: 'create', path: 'exact.js',
+    content: 'y'.repeat(WORKSPACE_MAX_CONTENT),
+  }, { msgId: 'm2', uid })
+  const exactFile = exact.workspaces[exact.result.workspaceId].revisions[0].files[0]
+  assert.equal(exactFile.content.length, WORKSPACE_MAX_CONTENT)
+  assert.equal(exactFile.truncated, false)
+  assert.ok(!exactFile.content.includes('truncated'))
+
+  // A file cut by an earlier version keeps its old 50,000 marker; continue
+  // strips that marker and appends the missing text.
+  const legacyMarker = '\n\n[truncated: content exceeded 50,000 characters]'
+  assert.equal(isTruncatedContent('head\n' + legacyMarker), true)
+  assert.equal(isTruncatedContent('plain text'), false)
+  const legacy = {
+    'ws-old': { id: 'ws-old', name: 'Old', revisions: [{ id: 'r1', name: 'Old', msgId: 'm0', createdAt: 0, files: [
+      { path: 'site.js', language: 'js', content: 'head\n' + legacyMarker, truncated: true },
+    ] }] },
+  }
+  const finished = applyWorkspaceCall(legacy, {
+    workspaceId: 'ws-old', revisionName: 'Finish', action: 'continue', path: 'site.js', content: 'tail\n',
+  }, { msgId: 'm3', uid })
+  const done = finished.workspaces['ws-old'].revisions.at(-1).files[0]
+  assert.equal(done.content, 'head\ntail\n')
+  assert.equal(done.truncated, false)
+
+  // Continuing past the limit is refused, and a patch on an incomplete file
+  // points at continue/update instead of leaving the marker in the middle.
+  assert.throws(() => applyWorkspaceCall(legacy, {
+    workspaceId: 'ws-old', revisionName: 'Too big', action: 'continue', path: 'site.js', content: 'z'.repeat(WORKSPACE_MAX_CONTENT),
+  }, { msgId: 'm4', uid }), /per-file limit/i)
+  assert.throws(() => applyWorkspaceCall(legacy, {
+    workspaceId: 'ws-old', revisionName: 'Patch', action: 'patch', path: 'site.js', content: '@@ -1,1 +1,1 @@\n-head\n+HEAD\n',
+  }, { msgId: 'm4', uid }), /incomplete/i)
 })
 
 test('applyUnifiedDiff accepts apply_patch hunks without line numbers', () => {
@@ -614,4 +665,274 @@ test('resolveWorkspaceTarget keeps the files in the workspace the user is lookin
   assert.equal(resolveWorkspaceTarget({ createNew: true, workspaceName: 'Second Project' }, { workspaces, activeId: 'ws1' }).createNew, true)
   // createNew repeating the active workspace name is the same project.
   assert.deepEqual(resolveWorkspaceTarget({ createNew: true, workspaceName: 'habit tracker' }, { workspaces, activeId: 'ws1' }), { workspaceId: 'ws1', fallback: 'active' })
+})
+
+/* ---- Inspection actions: ranged reads, grep, tree, diff, move ---------- */
+
+test('grouping ignores inspections and treats move as a write', () => {
+  const call = (id, args) => ({ id, name: 'workspace_upsert', arguments: JSON.stringify(args) })
+  const calls = [
+    call('1', { action: 'create', path: 'a.txt', language: 'text', content: 'one' }),
+    call('2', { action: 'read', path: 'a.txt' }),
+    call('3', { action: 'list' }),
+    call('4', { action: 'search', query: 'one' }),
+    call('5', { action: 'diff', path: 'a.txt' }),
+    call('6', { action: 'move', path: 'a.txt', to: 'src/a.txt' }),
+  ]
+  const groups = groupWorkspaceVersions(calls)
+  // A move is a write to the same path, so it is a second version of it.
+  assert.deepEqual(groups.map((g) => g.path), ['a.txt'])
+  assert.deepEqual(groups[0].versions.map((v) => v.action), ['create', 'move'])
+  for (const action of ['read', 'list', 'search', 'diff']) assert.equal(isWorkspaceReadAction(action), true)
+  for (const action of ['create', 'update', 'patch', 'continue', 'move', 'delete']) assert.equal(isWorkspaceReadAction(action), false)
+})
+
+test('readWorkspaceRange pages a long file and clamps impossible ranges', () => {
+  const content = Array.from({ length: 1000 }, (_, i) => `line ${i + 1}`).join('\n')
+  const first = readWorkspaceRange(content)
+  assert.equal(first.startLine, 1)
+  assert.equal(first.endLine, WORKSPACE_READ_MAX_LINES)
+  assert.equal(first.returnedLines, WORKSPACE_READ_MAX_LINES)
+  assert.equal(first.hasMore, true)
+  assert.equal(first.nextStartLine, WORKSPACE_READ_MAX_LINES + 1)
+  assert.ok(first.text.startsWith('line 1\nline 2'))
+  assert.ok(first.text.endsWith(`line ${WORKSPACE_READ_MAX_LINES}`))
+
+  const page = readWorkspaceRange(content, { startLine: 90, endLine: 92 })
+  assert.equal(page.text, 'line 90\nline 91\nline 92')
+  assert.equal(page.totalLines, 1000)
+  assert.equal(page.hasMore, true)
+  assert.equal(page.nextStartLine, 93)
+
+  const last = readWorkspaceRange(content, { startLine: 999, endLine: 5000 })
+  assert.equal(last.text, 'line 999\nline 1000')
+  assert.equal(last.hasMore, false)
+  assert.equal(last.nextStartLine, undefined)
+
+  // An end before the start collapses to one line instead of returning junk.
+  const backward = readWorkspaceRange(content, { startLine: 10, endLine: 2 })
+  assert.equal(backward.text, 'line 10')
+  // A start past the end clamps to the last line.
+  const past = readWorkspaceRange(content, { startLine: 5000 })
+  assert.equal(past.text, 'line 1000')
+  // Empty files are readable and report zero lines.
+  assert.deepEqual(readWorkspaceRange(''), { text: '', startLine: 1, endLine: 0, totalLines: 0, returnedLines: 0, hasMore: false })
+  // The line cap is per call, even for a large endLine.
+  assert.equal(readWorkspaceRange(content, { startLine: 1, endLine: 900 }).returnedLines, WORKSPACE_READ_MAX_LINES)
+})
+
+test('searchWorkspaceFiles greps literally and by regex with path, glob and caps', () => {
+  const files = [
+    { path: 'src/app.ts', content: 'const a = 1\n// TODO: fix this\nfunction add(a, b) { return a + b }\n' },
+    { path: 'src/lib/util.ts', content: 'export const TODO = 2\nexport function noop() {}\n' },
+    { path: 'README.md', content: '# Notes\nTODO: write docs\n' },
+    { path: 'src/legacy.js', content: 'var todo = 3\n' },
+  ]
+  // Literal, case-insensitive by default.
+  const literal = searchWorkspaceFiles(files, 'TODO')
+  assert.equal(literal.totalMatches, 4)
+  assert.equal(literal.matchCount, 4)
+  assert.equal(literal.filesMatched, 4)
+  assert.deepEqual(literal.matches[0], { path: 'src/app.ts', line: 2, text: '// TODO: fix this' })
+  // A literal query is not a regex.
+  assert.equal(searchWorkspaceFiles(files, 'a + b').totalMatches, 1)
+  // Case-sensitive and regex modes.
+  assert.equal(searchWorkspaceFiles(files, 'TODO', { caseSensitive: true }).totalMatches, 3)
+  const regex = searchWorkspaceFiles(files, '^export (const|function)', { regex: true })
+  assert.equal(regex.totalMatches, 2)
+  assert.throws(() => searchWorkspaceFiles(files, '([', { regex: true }), /Invalid regular expression/)
+  assert.throws(() => searchWorkspaceFiles(files, '(a+)+$', { regex: true }), /nests a quantifier/)
+  assert.throws(() => searchWorkspaceFiles(files, 'x'.repeat(501)), /too long/)
+  assert.throws(() => searchWorkspaceFiles(files, ''), /needs a query/)
+  // Glob and folder filters, including **.
+  assert.deepEqual(searchWorkspaceFiles(files, 'TODO', { glob: '*.md' }).matches.map((m) => m.path), ['README.md'])
+  assert.deepEqual(searchWorkspaceFiles(files, 'TODO', { path: 'src' }).matches.map((m) => m.path), ['src/app.ts', 'src/lib/util.ts', 'src/legacy.js'])
+  assert.deepEqual(searchWorkspaceFiles(files, 'TODO', { glob: 'src/**/*.ts' }).matches.map((m) => m.path), ['src/app.ts', 'src/lib/util.ts'])
+  assert.equal(workspacePathMatches('src/lib/util.ts', { path: 'src/lib' }), true)
+  assert.equal(workspacePathMatches('src/libx/util.ts', { path: 'src/lib' }), false)
+  // Context lines sit around the match, and results are capped while the
+  // total keeps counting.
+  const contextual = searchWorkspaceFiles(files, 'fix this', { contextLines: 1 })
+  assert.deepEqual(contextual.matches[0].before, ['const a = 1'])
+  assert.deepEqual(contextual.matches[0].after, ['function add(a, b) { return a + b }'])
+  const capped = searchWorkspaceFiles(files, 'TODO', { maxResults: 2 })
+  assert.equal(capped.matchCount, 2)
+  assert.equal(capped.totalMatches, 4)
+  assert.equal(capped.truncated, true)
+})
+
+test('workspaceTree groups folders and collapses dependency directories', () => {
+  const lines = (n) => Array.from({ length: n }, (_, i) => `line ${i + 1}`).join('\n')
+  const files = [
+    { path: 'README.md', content: '# hi' },
+    { path: 'src/app.ts', content: lines(10) },
+    { path: 'src/lib/util.ts', content: lines(3) },
+    { path: 'node_modules/react/index.js', content: 'module.exports = 1' },
+    { path: 'node_modules/react/package.json', content: '{}' },
+    { path: 'packages/ui/node_modules/left-pad/index.js', content: '' },
+  ]
+  const tree = workspaceTree(files)
+  assert.equal(tree.fileCount, 6)
+  assert.equal(tree.folderCount, 4, 'src, src/lib, packages, packages/ui')
+  assert.equal(tree.hiddenFiles, 3)
+  assert.equal(tree.hiddenFolders, 2)
+  assert.match(tree.text, /\nREADME\.md \(1 line\)$/)
+  assert.match(tree.text, /src\/\n {2}lib\/\n {4}util\.ts \(3 lines\)\n {2}app\.ts \(10 lines\)/)
+  assert.match(tree.text, /^node_modules\/ \(contents hidden — 2 files\)/)
+  assert.match(tree.text, /node_modules\/ \(contents hidden — 2 files\)/)
+  assert.match(tree.text, / {4}node_modules\/ \(contents hidden — 1 file\)/)
+  assert.ok(!tree.text.includes('react'), 'hidden folder children are not listed')
+  assert.ok(!tree.text.includes('index.js'))
+  assert.equal(tree.truncated, false)
+  // A tight budget truncates and says how many files are missing.
+  const tight = workspaceTree(files, { maxEntries: 6 })
+  assert.equal(tight.truncated, true)
+  assert.match(tight.text, /more files? not shown/)
+  assert.ok(tight.omittedFiles > 0)
+})
+
+test('unifiedDiffFor writes readable hunks and keeps full counts', () => {
+  const before = ['one', 'two', 'three', 'four', 'five', 'six'].join('\n') + '\n'
+  const after = ['one', 'TWO', 'three', 'four', 'five', 'six', 'seven'].join('\n') + '\n'
+  const d = unifiedDiffFor('src/a.txt', before, after)
+  assert.equal(d.added, 2)
+  assert.equal(d.removed, 1)
+  assert.match(d.diff, /^--- a\/src\/a\.txt\n\+\+\+ b\/src\/a\.txt\n@@ /)
+  assert.match(d.diff, /\n-two\n\+TWO\n/)
+  assert.match(d.diff, /\+seven/)
+  assert.equal(unifiedDiffFor('x.txt', 'same', 'same').diff, '')
+})
+
+test('applyWorkspaceCall supports list, search, diff, move and dry-run patches', async () => {
+  const { applyWorkspaceCall } = await import('./workspace.ts')
+  let n = 0
+  const uid = () => `id-${++n}`
+  const first = applyWorkspaceCall({}, {
+    createNew: true, workspaceName: 'Demo', revisionName: 'Start',
+    action: 'create', path: 'a.txt', language: 'text', content: 'one\ntwo\nthree\n',
+  }, { msgId: 'm1', uid })
+  const wsId = first.result.workspaceId
+  const withB = applyWorkspaceCall(first.workspaces, {
+    workspaceId: wsId, revisionName: 'Add b', action: 'create', path: 'src/b.txt', content: 'alpha\nbeta\n',
+  }, { msgId: 'm2', uid })
+
+  // read honours the line window and reports where it stopped.
+  const read = applyWorkspaceCall(withB.workspaces, { workspaceId: wsId, action: 'read', path: 'a.txt', startLine: 2, endLine: 2 }, { msgId: 'm2', uid })
+  assert.equal(read.result.content, 'two')
+  assert.equal(read.result.startLine, 2)
+  assert.equal(read.result.endLine, 2)
+  assert.equal(read.result.lines, 4, 'the trailing newline is its own (empty) line')
+  assert.equal(read.result.hasMore, true)
+  assert.equal(read.result.nextStartLine, 3)
+  assert.match(read.result.note, /startLine 3/)
+  assert.equal(read.workspaces[wsId].revisions.length, 2, 'a read never adds a revision')
+
+  // list is a tree, optionally filtered.
+  const listed = applyWorkspaceCall(withB.workspaces, { workspaceId: wsId, action: 'list', revisionName: undefined }, { msgId: 'm2', uid })
+  assert.equal(listed.result.action, 'listed')
+  assert.match(listed.result.tree, /src\/\n {2}b\.txt/)
+  assert.equal(listed.result.matchedFiles, 2)
+  const filtered = applyWorkspaceCall(withB.workspaces, { workspaceId: wsId, action: 'list', path: 'src' }, { msgId: 'm2', uid })
+  assert.equal(filtered.result.matchedFiles, 1)
+  assert.ok(!filtered.result.tree.includes('a.txt'))
+
+  // search reports matches and never changes anything.
+  const searched = applyWorkspaceCall(withB.workspaces, { workspaceId: wsId, action: 'search', query: 'beta' }, { msgId: 'm2', uid })
+  assert.equal(searched.result.action, 'searched')
+  assert.deepEqual(searched.result.matches, [{ path: 'src/b.txt', line: 2, text: 'beta' }])
+  assert.equal(searched.result.filesSearched, 2)
+  assert.equal(searched.workspaces[wsId].revisions.length, 2)
+
+  // diff against the previous revision, another file and proposed content.
+  const updated = applyWorkspaceCall(withB.workspaces, {
+    workspaceId: wsId, revisionName: 'Change two', action: 'update', path: 'a.txt', content: 'one\nTWO\nthree\n',
+  }, { msgId: 'm3', uid })
+  const diff = applyWorkspaceCall(updated.workspaces, { workspaceId: wsId, action: 'diff', path: 'a.txt' }, { msgId: 'm4', uid })
+  assert.equal(diff.result.action, 'diffed')
+  assert.match(diff.result.diff, /-two\n\+TWO/)
+  assert.equal(diff.result.added, 1)
+  assert.equal(diff.result.removed, 1)
+  assert.equal(diff.result.against, 'revision "Add b"')
+  const vsFile = applyWorkspaceCall(updated.workspaces, { workspaceId: wsId, action: 'diff', path: 'a.txt', against: 'src/b.txt' }, { msgId: 'm4', uid })
+  assert.equal(vsFile.result.against, 'src/b.txt')
+  const proposed = applyWorkspaceCall(updated.workspaces, { workspaceId: wsId, action: 'diff', path: 'a.txt', content: 'one\nTWO\nthree\nfour\n' }, { msgId: 'm4', uid })
+  assert.equal(proposed.result.against, 'proposed content')
+  assert.equal(proposed.result.added, 1)
+
+  // A dry-run patch proves the diff and returns it without saving.
+  const dry = applyWorkspaceCall(updated.workspaces, {
+    workspaceId: wsId, revisionName: 'Preview', action: 'patch', path: 'a.txt', dryRun: true,
+    content: '@@ -1,1 +1,1 @@\n-one\n+ONE\n',
+  }, { msgId: 'm4', uid })
+  assert.equal(dry.result.action, 'diffed')
+  assert.equal(dry.result.dryRun, true)
+  assert.match(dry.result.diff, /-one\n\+ONE/)
+  assert.equal(dry.workspaces[wsId].revisions.length, updated.workspaces[wsId].revisions.length, 'dry run stores nothing')
+  assert.equal(dry.workspaces[wsId].revisions.at(-1).files.find((f) => f.path === 'a.txt').content, 'one\nTWO\nthree\n')
+
+  // move repaths one file and keeps its body.
+  const moved = applyWorkspaceCall(updated.workspaces, {
+    workspaceId: wsId, revisionName: 'Move', action: 'move', path: 'a.txt', to: 'src/a.txt',
+  }, { msgId: 'm5', uid })
+  assert.equal(moved.result.action, 'moved')
+  assert.equal(moved.result.to, 'src/a.txt')
+  assert.ok(moved.result.files.includes('src/a.txt'))
+  assert.ok(!moved.result.files.includes('a.txt'))
+  assert.equal(moved.workspaces[wsId].revisions.at(-1).files.find((f) => f.path === 'src/a.txt').content, 'one\nTWO\nthree\n')
+
+  assert.throws(() => applyWorkspaceCall(updated.workspaces, {
+    workspaceId: wsId, revisionName: 'Move', action: 'move', path: 'a.txt', to: 'src/b.txt',
+  }, { msgId: 'm5', uid }), /already exists/)
+  assert.throws(() => applyWorkspaceCall(moved.workspaces, { workspaceId: wsId, action: 'read', path: 'a.txt' }, { msgId: 'm6', uid }), /not found for read/i)
+})
+
+test('compactWorkspaceHistory does not treat inspections as writes or hide full reads behind a page', () => {
+  const read = (id, result) => ({ id, name: 'workspace_upsert', arguments: JSON.stringify({ action: 'read', workspaceId: 'ws', revisionName: id, path: 'app.js' }), result: JSON.stringify(result) })
+  const inspection = (id, action) => ({ id, name: 'workspace_upsert', arguments: JSON.stringify({ action, workspaceId: 'ws', revisionName: id, path: 'app.js', query: 'x' }), result: JSON.stringify({ workspaceId: 'ws', action, fileCount: 1 }) })
+  const full = { workspaceId: 'ws', path: 'app.js', action: 'read', files: ['app.js'], content: 'full body', startLine: 1, hasMore: false }
+  const page = { workspaceId: 'ws', path: 'app.js', action: 'read', files: ['app.js'], content: 'lines 10-20', startLine: 10, endLine: 20, hasMore: true }
+  const rounds = [{ text: '', calls: [
+    read('r1', full),
+    inspection('l1', 'list'), inspection('s1', 'search'), inspection('d1', 'diff'),
+    read('r2', page),
+  ] }]
+  const out = compactWorkspaceHistory([{ id: 'm', r: 'assistant', toolRounds: rounds }])
+  assert.equal(JSON.parse(out[0].toolRounds[0].calls[0].result).content, 'full body', 'a paged read must not elide a full read')
+  assert.equal(JSON.parse(out[0].toolRounds[0].calls[1].result).content, undefined)
+  assert.equal(JSON.parse(out[0].toolRounds[0].calls[4].result).content, 'lines 10-20')
+  // A real write still makes every earlier read stale.
+  const write = { id: 'w1', name: 'workspace_upsert', arguments: JSON.stringify({ action: 'move', workspaceId: 'ws', revisionName: 'Move', path: 'app.js', to: 'src/app.js' }), result: JSON.stringify({ workspaceId: 'ws', action: 'moved', fileCount: 1 }) }
+  const after = compactWorkspaceHistory([{ id: 'm', r: 'assistant', toolRounds: [{ text: '', calls: [read('r1', full), write, read('r2', page)] }] }])
+  assert.equal(JSON.parse(after[0].toolRounds[0].calls[0].result).content, undefined)
+  assert.match(JSON.parse(after[0].toolRounds[0].calls[0].result).contentNote, /changed after this read/)
+})
+
+test('compactWorkspaceHistory drops duplicate inspection snapshots only', () => {
+  const call = (id, args, result) => ({ id, name: 'workspace_upsert', arguments: JSON.stringify({ workspaceId: 'ws', revisionName: id, ...args }), result: JSON.stringify({ workspaceId: 'ws', fileCount: 1, ...result }) })
+  const search = (id, query, match) => call(id, { action: 'search', query }, { action: 'searched', totalMatches: 1, matches: [match] })
+  const list = (id, tree) => call(id, { action: 'list' }, { action: 'listed', tree })
+  const diff = (id, text) => call(id, { action: 'diff', path: 'app.js' }, { action: 'diffed', diff: text })
+  const rounds = [{ text: '', calls: [
+    search('s1', 'todo', { path: 'a.js', line: 1, text: 'TODO' }),
+    search('s2', 'todo', { path: 'b.js', line: 2, text: 'TODO' }),
+    search('s3', 'fix', { path: 'c.js', line: 3, text: 'fix' }),
+    list('l1', 'old tree'),
+    list('l2', 'new tree'),
+    diff('d1', '-a\n+b'),
+    diff('d2', '-c\n+d'),
+  ] }]
+  const out = compactWorkspaceHistory([{ id: 'm', r: 'assistant', toolRounds: rounds }])
+  const calls = out[0].toolRounds[0].calls.map((c) => JSON.parse(c.result))
+  assert.equal(calls[0].matches, undefined)
+  assert.match(calls[0].matchesNote, /same search omitted/)
+  assert.deepEqual(calls[1].matches, [{ path: 'b.js', line: 2, text: 'TODO' }])
+  assert.deepEqual(calls[2].matches, [{ path: 'c.js', line: 3, text: 'fix' }], 'a different query is not a duplicate')
+  assert.equal(calls[3].tree, undefined)
+  assert.match(calls[3].treeNote, /earlier file tree/)
+  assert.equal(calls[4].tree, 'new tree')
+  assert.equal(calls[5].diff, undefined)
+  assert.match(calls[5].diffNote, /earlier diff/)
+  assert.equal(calls[6].diff, '-c\n+d')
+  // The stored history keeps everything.
+  assert.deepEqual(JSON.parse(rounds[0].calls[0].result).matches, [{ path: 'a.js', line: 1, text: 'TODO' }])
 })

@@ -131,7 +131,7 @@ const ACTIVITY: Record<string, readonly string[]> = {
   search: ['Searching the web…'],
   fetch_page: ['Reading the page…'],
   use_skill: ['Loading skill…'],
-  workspace_upsert: ['Writing file…'],
+  workspace_upsert: ['Working with files…'],
   prompt_chip: ['Preparing follow-up…'],
   inline_poll: ['Preparing choices…'],
   time: ['Checking the time…'],

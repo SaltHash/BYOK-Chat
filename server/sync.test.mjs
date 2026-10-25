@@ -112,3 +112,157 @@ test('connection strings are redacted before they can reach logs', () => {
   assert.equal(redact('plain message'), 'plain message')
   assert.ok(!redact('x'.repeat(2000)).includes('x'.repeat(400)))
 })
+
+/* ---- incremental sync ---- */
+
+const pullReq = (token, since) => ({
+  method: 'GET',
+  url: `/api/sync/pull${since == null ? '' : `?since=${since}`}`,
+  headers: { authorization: `Bearer ${token}` },
+})
+
+const tokenFor = (id, secret = 's'.repeat(43)) => `byok1-${id}-${secret}`
+
+async function seed(backend, token, payload = { v: 4, storeVersion: 18, settings: { themeMode: 'dark' }, chats: [], workspaces: {}, selectedRevision: {} }) {
+  const { id, secret } = parseToken(token)
+  assert.ok(secret)
+  return handleSyncPush(req({ token, payload }), backend)
+}
+
+test('a delta write appends a change and an up-to-date pull returns no payload', async () => {
+  const backend = memStore()
+  const token = tokenFor('d'.repeat(16))
+  const full = await seed(backend, token)
+  assert.equal(full.seq, 1)
+
+  const first = await handleSyncPull(pullReq(token), backend)
+  assert.equal(first.full, true)
+  assert.equal(first.seq, 1)
+  assert.deepEqual(first.payload.settings, { themeMode: 'dark' })
+
+  // The common idle poll after that pull must carry no save data at all.
+  const idle = await handleSyncPull(pullReq(token, 1), backend)
+  assert.equal(idle.upToDate, true)
+  assert.equal(idle.payload, undefined)
+  assert.equal(idle.deltas, undefined)
+
+  const delta = { v: 1, at: Date.now(), settings: { set: { themeMode: 'light' } } }
+  const pushed = await handleSyncPush(req({ token, delta, baseSeq: 1 }), backend)
+  assert.equal(pushed.seq, 2)
+
+  const since = await handleSyncPull(pullReq(token, 1), backend)
+  assert.equal(since.seq, 2)
+  assert.equal(since.full, undefined)
+  assert.equal(since.payload, undefined)
+  assert.deepEqual(since.deltas, [{ seq: 2, delta }])
+
+  const stale = { v: 1, at: Date.now(), settings: { set: { themeMode: 'sepia' } } }
+  await assert.rejects(() => handleSyncPush(req({ token, delta: stale, baseSeq: 1 }), backend), (e) => {
+    assert.equal(e.status, 409)
+    assert.equal(e.code, 'sync_conflict')
+    assert.equal(e.seq, 2)
+    return true
+  })
+
+  // A device that is behind the compacted base gets the snapshot plus the
+  // deltas layered on it, so every part of the save can be reconstructed.
+  const rebuild = await handleSyncPull(pullReq(token, 0), backend)
+  assert.equal(rebuild.full, true)
+  assert.equal(rebuild.seq, 2)
+  assert.equal(rebuild.baseSeq, 1)
+  assert.deepEqual(rebuild.payload.settings, { themeMode: 'dark' })
+  assert.deepEqual(rebuild.deltas, [{ seq: 2, delta }])
+})
+
+test('simultaneous delta pushes are serialized so one cannot overwrite the other', async () => {
+  const backend = memStore()
+  const token = tokenFor('j'.repeat(16))
+  await seed(backend, token)
+  // Both devices read sequence 1 and race to claim 2. Serializing the write
+  // makes the loser a conflict (it then pulls and retries) instead of letting
+  // the second write silently replace the first one's change.
+  const settle = (p) => p.then((value) => ({ ok: true, value }), (error) => ({ ok: false, error }))
+  const results = await Promise.all([
+    settle(handleSyncPush(req({ token, delta: { v: 1, at: 1, settings: { set: { a: 1 } } }, baseSeq: 1 }), backend)),
+    settle(handleSyncPush(req({ token, delta: { v: 1, at: 2, settings: { set: { b: 2 } } }, baseSeq: 1 }), backend)),
+  ])
+  assert.equal(results.filter((r) => r.ok).length, 1, 'exactly one push may claim a sequence')
+  const loser = results.find((r) => !r.ok)
+  assert.equal(loser.error.status, 409)
+  assert.equal(loser.error.seq, 2)
+  const pulled = await handleSyncPull(pullReq(token, 1), backend)
+  assert.equal(pulled.seq, 2)
+  assert.equal(pulled.deltas.length, 1, 'the log must hold one change per sequence')
+})
+
+test('a full push compacts the log and resets the base sequence', async () => {
+  const backend = memStore()
+  const token = tokenFor('e'.repeat(16))
+  await seed(backend, token)
+  await handleSyncPush(req({ token, delta: { v: 1, at: 1, settings: { set: { a: 1 } } }, baseSeq: 1 }), backend)
+
+  const full = await handleSyncPush(req({
+    token,
+    payload: { v: 4, storeVersion: 18, settings: { themeMode: 'light' }, chats: [], workspaces: {}, selectedRevision: {} },
+    baseSeq: 2,
+  }), backend)
+  assert.equal(full.seq, 3)
+
+  const pulled = await handleSyncPull(pullReq(token), backend)
+  assert.equal(pulled.full, true)
+  assert.equal(pulled.baseSeq, 3)
+  assert.deepEqual(pulled.deltas, [])
+  assert.deepEqual(pulled.payload.settings, { themeMode: 'light' })
+
+  // The old sequence is behind the new base: a full snapshot is required.
+  const old = await handleSyncPull(pullReq(token, 2), backend)
+  assert.equal(old.full, true)
+  assert.equal(old.payload.settings.themeMode, 'light')
+})
+
+test('a delta push requires a base sequence and a non-empty slot', async () => {
+  const backend = memStore()
+  const emptyToken = tokenFor('f'.repeat(16))
+  await assert.rejects(() => handleSyncPull(pullReq(emptyToken), backend), (e) => {
+    assert.equal(e.status, 404)
+    assert.equal(e.code, 'empty')
+    return true
+  })
+
+  const token = tokenFor('g'.repeat(16))
+  await seed(backend, token)
+  await assert.rejects(() => handleSyncPush(req({ token, delta: { v: 1, at: 1 } }), backend), (e) => {
+    assert.equal(e.status, 400)
+    assert.equal(e.code, 'bad_payload')
+    return true
+  })
+})
+
+test('a legacy full push without baseSeq still replaces the slot', async () => {
+  const backend = memStore()
+  const token = tokenFor('h'.repeat(16))
+  await seed(backend, token)
+  const replaced = await handleSyncPush(req({
+    token,
+    payload: { v: 4, storeVersion: 18, settings: { themeMode: 'sepia' }, chats: [], workspaces: {}, selectedRevision: {} },
+  }), backend)
+  assert.equal(replaced.seq, 2)
+  const pulled = await handleSyncPull(pullReq(token), backend)
+  assert.equal(pulled.payload.settings.themeMode, 'sepia')
+})
+
+test('the server asks the client to compact before the delta log grows unbounded', async () => {
+  const backend = memStore()
+  const token = tokenFor('i'.repeat(16))
+  await seed(backend, token)
+  let seq = 1
+  let compact = false
+  for (let i = 0; i < 120; i++) {
+    const result = await handleSyncPush(req({ token, delta: { v: 1, at: i, settings: { set: { n: i } } }, baseSeq: seq }), backend)
+    seq = result.seq
+    compact = result.compact
+  }
+  assert.equal(compact, true)
+  const pulled = await handleSyncPull(pullReq(token, 1), backend)
+  assert.equal(pulled.deltas.length, 120)
+})

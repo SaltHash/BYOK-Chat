@@ -74,6 +74,39 @@ test('a new turn does not resend the previous reply tool rounds', () => {
   ])
 })
 
+test('completed replies keep a compact workspace marker after their tool calls are dropped', async () => {
+  const { withWorkspaceTags } = await import('./workspace.ts')
+  const old = { id: 'a1', r: 'assistant', t: 'Added the form.', toolFinal: 'Added the form.', workspaceIds: ['ws-1'], toolRounds: [
+    { text: '', calls: [{ id: 'w1', name: 'workspace_upsert', arguments: JSON.stringify({ action: 'create', workspaceId: 'ws-1', revisionName: 'Form', path: 'form.tsx', content: 'x' }), result: JSON.stringify({ workspaceId: 'ws-1', action: 'ready', files: ['form.tsx'] }) }] },
+  ] }
+  const live = { id: 'a2', r: 'assistant', t: '', toolRounds: [] }
+  const ow = wire(openai, [old, { id: 'u', r: 'user', t: 'Now add a button.' }, live])
+  assert.deepEqual(ow[0], { role: 'assistant', content: 'Added the form.\n\n<Workspace:ws-1>' })
+  assert.deepEqual(ow[1], { role: 'user', content: 'Now add a button.' })
+  // A quota-compacted message has no rounds left at all; its id still travels.
+  assert.deepEqual(wire(openai, [{ id: 'a3', r: 'assistant', t: 'Done.', workspaceIds: ['ws-1', 'ws-2'] }]), [
+    { role: 'assistant', content: 'Done.\n\n<Workspace:ws-1> <Workspace:ws-2>' },
+  ])
+  // The running tool loop already sends the id inside its calls, so it gets no marker.
+  const running = { id: 'a4', r: 'assistant', t: 'Working.', workspaceIds: ['ws-1'], toolRounds: [
+    { text: '', calls: [{ id: 'w2', name: 'workspace_upsert', arguments: JSON.stringify({ action: 'read', workspaceId: 'ws-1', path: 'form.tsx' }), result: '{}' }] },
+  ] }
+  const liveWire = wire(openai, [running])
+  assert.equal(liveWire[liveWire.length - 1].content, 'Working.')
+  assert.match(liveWire[0].tool_calls[0].function.arguments, /ws-1/)
+  // A completed reply that only called tools keeps just the tag.
+  const silent = { id: 'a5', r: 'assistant', t: '', workspaceIds: ['ws-9'], toolRounds: [
+    { text: '', calls: [{ id: 'w3', name: 'workspace_upsert', arguments: JSON.stringify({ action: 'update', workspaceId: 'ws-9', path: 'a.ts', content: 'x' }), result: '{}' }] },
+  ] }
+  assert.deepEqual(wire(openai, [silent, { id: 'u2', r: 'user', t: 'next' }]), [
+    { role: 'assistant', content: '<Workspace:ws-9>' },
+    { role: 'user', content: 'next' },
+  ])
+  // Tags are deduped, sanitized, and never doubled when the reply already has one.
+  assert.equal(withWorkspaceTags('Done. <Workspace:ws-1>', ['ws-1']), 'Done. <Workspace:ws-1>')
+  assert.equal(withWorkspaceTags('Done.', ['ws 1', 'ws-1', 'ws-1', '']), 'Done.\n\n<Workspace:ws1> <Workspace:ws-1>')
+})
+
 test('provider wire history retains multiple rounds, arguments, results and call IDs', () => {
   const msg = { id: 'a', r: 'assistant', t: 'The answer is 14.', toolFinal: 'The answer is 14.', toolRounds: [
     { text: '', calls: [{ id: 'c1', name: 'calc', arguments: '{"expression":"2*7"}', result: '14' }] },
@@ -332,8 +365,7 @@ test('provider rejection of tool definitions surfaces an explicit error', async 
   finally { globalThis.fetch = original }
 })
 
-test('workspace_upsert executes locally, coerces bad paths, and truncates oversized content', async () => {
-  const { WORKSPACE_MAX_CONTENT } = await import('./workspace.ts')
+test('workspace_upsert executes locally and coerces bad paths', async () => {
   const ok = await executeTool({ id: 'ws-1', name: 'workspace_upsert', arguments: JSON.stringify({ action: 'create', workspaceId: 'ws-1', revisionName: 'Initial', path: 'src/app.py', language: 'python', content: 'print(1)' }) }, enabled)
   assert.equal(JSON.parse(ok.result).status, 'ready')
   assert.equal(JSON.parse(ok.result).path, 'src/app.py')
@@ -344,11 +376,8 @@ test('workspace_upsert executes locally, coerces bad paths, and truncates oversi
   const gone = await executeTool({ id: 'ws-3', name: 'workspace_upsert', arguments: JSON.stringify({ action: 'delete', workspaceId: 'ws-1', revisionName: 'Delete', path: '/tmp/old.txt' }) }, enabled)
   assert.equal(JSON.parse(gone.result).status, 'deleted')
   assert.equal(JSON.parse(gone.result).path, 'tmp/old.txt')
-  const big = await executeTool({ id: 'ws-4', name: 'workspace_upsert', arguments: JSON.stringify({ action: 'create', workspaceId: 'ws-1', revisionName: 'Big', path: 'big.txt', content: 'x'.repeat(WORKSPACE_MAX_CONTENT + 5) }) }, enabled)
-  assert.match(big.result, /"status":"ready"/)
-  assert.match(big.result, /"path":"big\.txt"/)
   assert.match((await executeTool({ id: 'ws-5', name: 'workspace_upsert', arguments: JSON.stringify({ action: 'explode', workspaceId: 'ws-1', revisionName: 'Test', path: 'a.txt' }) }, enabled)).result, /action must be/)
-  assert.match((await executeTool({ id: 'ws-6', name: 'workspace_upsert', arguments: JSON.stringify({ action: 'create', workspaceId: 'ws-1', revisionName: 'Test' }) }, enabled)).result, /Missing required argument: path/)
+  assert.match((await executeTool({ id: 'ws-6', name: 'workspace_upsert', arguments: JSON.stringify({ action: 'create', workspaceId: 'ws-1', revisionName: 'Test' }) }, enabled)).result, /path is required for action create/)
   assert.match((await executeTool({ id: 'ws-7', name: 'workspace_upsert', arguments: '{}' }, {})).result, /disabled/)
 })
 

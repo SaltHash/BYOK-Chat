@@ -49,7 +49,7 @@ const chatRecency = (c: AnyChat): number => {
 /** A chat is a duplicate of another only when it is non-empty and its message
  *  sequence is identical. Empty chats share the title "New chat" and must never
  *  be collapsed. */
-const chatFingerprint = (c: AnyChat): string | null => {
+export const chatFingerprint = (c: AnyChat): string | null => {
   const msgs = asArr(c.msgs)
   if (!msgs.length) return null
   const ids = msgs.map((m) => String((m as { id?: unknown })?.id ?? ''))
@@ -57,7 +57,7 @@ const chatFingerprint = (c: AnyChat): string | null => {
   return `${String(c.title ?? '')}|${ids.join(',')}`
 }
 
-function mergeChats(localChats: unknown[], remoteChats: unknown[]): unknown[] {
+export function mergeChats(localChats: unknown[], remoteChats: unknown[]): unknown[] {
   const byId = new Map<string, AnyChat>()
   const order: string[] = []
   const add = (c: unknown, allowReplace: boolean) => {
@@ -146,7 +146,7 @@ const remapChatProjects = (chats: unknown[], remap: Map<string, string>): unknow
 
 /* ---- workspaces ---- */
 
-function mergeWorkspace(l: Obj, r: Obj): Obj {
+export function mergeWorkspace(l: Obj, r: Obj): Obj {
   const revisions: unknown[] = []
   const seen = new Set<string>()
   const push = (rev: unknown) => {
@@ -160,7 +160,7 @@ function mergeWorkspace(l: Obj, r: Obj): Obj {
   return { ...r, ...l, revisions }
 }
 
-function mergeWorkspaces(local: unknown, remote: unknown): Record<string, unknown> {
+export function mergeWorkspaces(local: unknown, remote: unknown): Record<string, unknown> {
   const l = asObj(local), r = asObj(remote)
   const out: Record<string, unknown> = {}
   const ids = [...Object.keys(l), ...Object.keys(r).filter((k) => !(k in l))]
@@ -195,13 +195,27 @@ const ID_COLLECTIONS = ['eps', 'pls', 'prompts', 'cmds', 'skills', 'todos', 'mem
 /** Flat record maps whose keys should union so neither device loses an entry. */
 const MAP_FIELDS = ['keys', 'widgets', 'features', 'libraryShow', 'effort', 'routeStats'] as const
 
-function mergeSettings(local: Obj, remote: Obj, projects: Obj[]): Obj {
+export function mergeSettings(local: Obj, remote: Obj, projects: Obj[]): Obj {
   const out: Obj = { ...local, ...remote }
   // Recurse one level into plain objects both sides own (prefs, params,
   // widgetPrefs, search, custom colors, …) so a key set on one device is not
   // wiped by the other device's whole-object value.
   for (const k of new Set([...Object.keys(local), ...Object.keys(remote)])) {
     if (isObj(local[k]) && isObj(remote[k])) out[k] = { ...local[k], ...remote[k] }
+  }
+  // Search credentials are blanked in the remote shape, so a remote `{}` must
+  // not wipe this device's keys. Merge the maps and keep a local key when the
+  // incoming copy is blank (a blank here means "not sent", not "cleared").
+  if (isObj(local.search) || isObj(remote.search)) {
+    const l = asObj(local.search)
+    const r = asObj(remote.search)
+    const keys = { ...asObj(l.keys) }
+    for (const [id, value] of Object.entries(asObj(r.keys))) if (value) keys[id] = value
+    const search: Obj = { ...l, ...r, keys }
+    const readerKey = String(r.readerKey ?? '') || String(l.readerKey ?? '')
+    if (readerKey) search.readerKey = readerKey
+    else delete search.readerKey
+    out.search = search
   }
   const dedupeByText = (list: unknown[]): unknown[] => {
     const seen = new Set<string>()
@@ -239,7 +253,7 @@ function mergeSettings(local: Obj, remote: Obj, projects: Obj[]): Obj {
 
 /* ---- selected revision ---- */
 
-function mergeSelectedRevision(local: unknown, remote: unknown, workspaces: Record<string, unknown>): Record<string, unknown> {
+export function mergeSelectedRevision(local: unknown, remote: unknown, workspaces: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = { ...asObj(remote), ...asObj(local) }
   for (const k of Object.keys(out)) {
     const ws = workspaces[k]

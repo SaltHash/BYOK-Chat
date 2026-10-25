@@ -10,6 +10,9 @@ export const DURABLE_WORKSPACES_KEY = 'workspaces'
 export const DURABLE_BLOBS_PREFIX = 'blob:'
 export const DURABLE_META_KEY = 'meta'
 export const DURABLE_BACKUPS_KEY = 'backups'
+/** Content hashes + server sequence for incremental sync. Never a second full
+ *  copy of the store, so it stays small. */
+export const DURABLE_SYNC_BASE_KEY = 'sync:base:v2'
 
 export type DurableMeta = { migratedAt?: number; storeVersion?: number; backend?: 'opfs' | 'idb' | 'memory' }
 
@@ -178,6 +181,18 @@ export async function durableGetMeta(): Promise<DurableMeta | null> {
 
 export async function durableSetMeta(m: DurableMeta): Promise<void> {
   await idbSet(DURABLE_META_KEY, m)
+}
+
+export async function durablePutSyncBase(value: unknown): Promise<void> {
+  await idbSet(DURABLE_SYNC_BASE_KEY, value)
+}
+
+export async function durableGetSyncBase<T>(): Promise<T | null> {
+  return idbGet<T>(DURABLE_SYNC_BASE_KEY)
+}
+
+export async function durableDelSyncBase(): Promise<void> {
+  await idbDel(DURABLE_SYNC_BASE_KEY)
 }
 
 /* ---- local scheduled backups ----

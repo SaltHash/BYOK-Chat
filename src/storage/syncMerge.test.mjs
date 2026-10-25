@@ -109,6 +109,19 @@ test('the open-chat pointer is repaired when the chat is gone', () => {
   assert.equal(out.settings.chat, 'a')
 })
 
+test('blanked remote search credentials never erase this device\'s keys', () => {
+  const local = empty({
+    settings: { search: { provider: 'exa', keys: { exa: 'local-secret' }, readerKey: 'local-reader' } },
+  })
+  const remote = empty({
+    settings: { search: { provider: 'tinyfish', keys: {}, readerKey: '' } },
+  })
+  const out = mergeSyncData(local, remote)
+  assert.equal(out.settings.search.provider, 'tinyfish')
+  assert.equal(out.settings.search.keys.exa, 'local-secret')
+  assert.equal(out.settings.search.readerKey, 'local-reader')
+})
+
 test('the local open chat survives the merge even when the remote had a different one open', () => {
   // The app opened to a freshly-created temporary chat; a sync pull arrives
   // moments later. The view must stay on the local chat, not jump to the

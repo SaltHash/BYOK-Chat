@@ -25,7 +25,7 @@ let workspaceWritesPending = false
 let sendPause = false
 import { usable, modelsOf, modelNameOf } from './models'
 import { splitEntry, playlistEntries, applyCommandTemplate, composeFullInput, planRequest } from './chatPlan'
-import { migrateLegacyCanvasGroups, applyWorkspaceCall, activeWorkspaceId, resolveWorkspaceTarget, extractWorkspaceIds, WORKSPACE_RESULT_FILES, type Workspace, type WorkspaceRevision } from './workspace'
+import { migrateLegacyCanvasGroups, applyWorkspaceCall, activeWorkspaceId, resolveWorkspaceTarget, extractWorkspaceIds, isWorkspaceReadAction, workspaceTree, WORKSPACE_RESULT_FILES, type Workspace, type WorkspaceRevision } from './workspace'
 import { BLANK_DOCS, normDocs, type DocPrefs } from './docs'
 export { BLANK_DOCS, normDocs, type DocPrefs }
 import { rankMemories, mergeMemory, RouteCache, orderEndpoints, recordRoute, type RouteStat, type RoutingMode } from './recall'
@@ -1609,12 +1609,17 @@ export const useS = create<S>()(
             }
             if (shared.id && ws) {
               const latest = ws.revisions[ws.revisions.length - 1]
-              const paths = latest?.files.map((f) => f.path) ?? []
-              const shown = paths.slice(-40)
+              const files = latest?.files ?? []
+              const paths = files.map((f) => f.path)
+              // A folder map beats a long flat list: the model can see where its
+              // next file belongs before writing it, while dependency and build
+              // folders stay collapsed to a single countable line.
+              const tree = workspaceTree(files, { maxEntries: 60, maxChars: 2600 })
               const manifest = paths.length
-                ? ` It holds ${paths.length} file${paths.length === 1 ? '' : 's'}: ${shown.join(', ')}${paths.length > shown.length ? `, plus ${paths.length - shown.length} earlier` : ''}.`
+                ? ` It holds ${paths.length} file${paths.length === 1 ? '' : 's'}${tree.folderCount ? ` in ${tree.folderCount} folder${tree.folderCount === 1 ? '' : 's'}` : ''}. Project structure:\n${tree.text}`
                 : ' It is empty.'
-              system += `${system ? '\n\n' : ''}Active workspace: "${ws.name}" (workspaceId: ${shared.id}).${manifest}${shared.shared ? ` It is shared with the project's other chats, so files written here are already in context there.` : ''} Write every file of this project into it with workspace_upsert, one file per call, reusing that workspaceId (several calls may go in one response when they are independent). Prefer action patch for edits, and call action read first when you do not have a file's exact current lines; use action update only for a genuine whole-file replacement. Never paste a file's full contents into your reply; describe the change instead, because the file is already visible in the panel. Only pass createNew:true when the user asks for a separate project.`
+              system += `${system ? '\n\n' : ''}Active workspace: "${ws.name}" (workspaceId: ${shared.id}).${manifest}${shared.shared ? ` It is shared with the project's other chats, so files written here are already in context there.` : ''} Earlier replies carry a <Workspace:id> tag when they used a workspace; pass that id to continue in it, and never write the tag in your own reply. Inspect it with workspace_upsert actions list, read (startLine/endLine), search and diff; change it with create, patch, update, continue, move or delete, one file per call, reusing that workspaceId (independent calls may share one response). Prefer patch for edits, and read the exact lines first when you do not have them. Never paste a file's full contents into your reply; describe the change instead, because the file is already visible in the panel. Only pass createNew:true when the user asks for a separate project.`
+              log.push({ n: 'Workspace map', m: '', detail: `Sent the structure of "${ws.name}" (${paths.length} file${paths.length === 1 ? '' : 's'}, ${tree.folderCount} folder${tree.folderCount === 1 ? '' : 's'}${tree.hiddenFiles ? `, ${tree.hiddenFiles} in collapsed folders` : ''}${tree.truncated ? '; shortened to fit' : ''}) with the request.`, at: Date.now() })
             }
           }
         }
@@ -1799,34 +1804,45 @@ export const useS = create<S>()(
                 if (typeof code !== 'string' || !code.trim()) throw Error('Provide code to run')
                 return formatCodeResult(language, await runCode(language, code, prefs))
               },
-              workspace_upsert: async ({ workspaceId, createNew, workspaceName, revisionName, action, path, language, content, template }: {
-                workspaceId?: string; createNew?: boolean; workspaceName?: string; revisionName: string;
-                action: 'create' | 'update' | 'delete' | 'continue' | 'patch' | 'read'; path: string; language?: string; content?: string;
-                template?: string
+              workspace_upsert: async ({
+                workspaceId, createNew, workspaceName, revisionName, action, path, language, content, template,
+                startLine, endLine, query, regex, caseSensitive, glob, contextLines, maxResults, to, against, dryRun,
+              }: {
+                workspaceId?: string; createNew?: boolean; workspaceName?: string; revisionName?: string;
+                action: string; path?: string; language?: string; content?: string; template?: string;
+                startLine?: number; endLine?: number; query?: string; regex?: boolean; caseSensitive?: boolean;
+                glob?: string; contextLines?: number; maxResults?: number; to?: string; against?: string; dryRun?: boolean
               }) => {
                 // All file semantics live in applyWorkspaceCall (pure,
                 // unit-tested); this handler only commits the result.
                 const st = get()
-                // The model often has no workspace id in context (it is not
-                // resent between replies) or repeats createNew for the same
-                // project. Resolving the target here keeps every file in the
-                // workspace the user is looking at. The active workspace falls
-                // back to the project's shared workspace when this chat has
-                // not used one yet and the project shares workspaces.
+                // The model can still miss the workspace id (it travels as a
+                // `<Workspace:id>` tag in older replies) or repeat createNew
+                // for the same project. Resolving the target here keeps every
+                // file in the workspace the user is looking at. The active
+                // workspace falls back to the project's shared workspace when
+                // this chat has not used one yet and the project shares
+                // workspaces.
                 const target = resolveWorkspaceTarget(
                   { workspaceId, createNew, workspaceName },
                   { workspaces: st.workspaces, activeId: activeWorkspaceForChat(st, id).id },
                 )
-                // A read is not a write: never let the target resolver create
-                // an empty workspace just because the chat has none yet.
-                if (action === 'read' && target.createNew) throw Error('There is no workspace to read from yet. Create a file first, or pass an existing workspaceId.')
+                // Inspections (and a dry-run patch, which only previews a
+                // change) never create or commit a workspace just because the
+                // chat has none yet.
+                const inspection = isWorkspaceReadAction(action) || (action === 'patch' && dryRun === true)
+                if (inspection && target.createNew) throw Error(`There is no workspace to ${action === 'patch' ? 'preview' : action} yet. Create a file first, or pass an existing workspaceId.`)
                 const { workspaces, selectedRevisionId, result } = applyWorkspaceCall(
                   st.workspaces,
-                  { workspaceId: target.workspaceId, createNew: target.createNew, workspaceName: target.workspaceName, revisionName, action, path, language, content, template },
+                  {
+                    workspaceId: target.workspaceId, createNew: target.createNew, workspaceName: target.workspaceName,
+                    revisionName, action, path, language, content, template,
+                    startLine, endLine, query, regex, caseSensitive, glob, contextLines, maxResults, to, against, dryRun,
+                  },
                   { msgId: mid, uid },
                 )
                 const wid = result.workspaceId
-                if (action !== 'read') {
+                if (!inspection) {
                   set((s) => ({
                     workspaces: { ...s.workspaces, [wid]: workspaces[wid] },
                     selectedRevision: { ...s.selectedRevision, [wid]: selectedRevisionId },
@@ -1835,18 +1851,18 @@ export const useS = create<S>()(
                   // panel needs the id while the reply is still streaming, and
                   // a reply that fails later must still show its files.
                   edit(id, mid, (m) => (m.workspaceIds?.includes(wid) ? m : { ...m, workspaceIds: [...(m.workspaceIds ?? []), wid] }))
+                  if (action !== 'delete') workspaceWritesPending = true
                 }
-                if (action !== 'delete' && action !== 'read') workspaceWritesPending = true
-                // The file list tells the model what the workspace already
-                // holds, so it can update or patch instead of rewriting, and
-                // create only what is missing. The list is capped: a long
-                // project must not push the whole manifest into the context
-                // on every call.
-                const paths = result.files
+                // A write reports the file list so the model can see what the
+                // workspace holds and only create what is missing. That list is
+                // capped; a long project must not push the whole manifest into
+                // the context on every call. Inspections carry their own,
+                // smaller result and skip the list entirely.
+                const paths = result.files ?? []
+                if (!paths.length) return JSON.stringify(result)
                 const shown = paths.slice(-WORKSPACE_RESULT_FILES)
                 return JSON.stringify({
                   ...result,
-                  action: action === 'delete' ? 'deleted' : action === 'read' ? 'read' : 'ready',
                   files: shown,
                   fileCount: paths.length,
                   ...(shown.length < paths.length ? { filesNote: `showing the ${shown.length} most recent of ${paths.length} files` } : {}),

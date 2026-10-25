@@ -21,7 +21,7 @@ export function SyncBox() {
   const [copied, setCopied] = useState(false)
   const [busy, setBusy] = useState(false)
   // A pasted token whose remote data is fetched and awaiting a merge choice.
-  const [linked, setLinked] = useState<{ token: string; data: SyncData; updatedAt: number } | null>(null)
+  const [linked, setLinked] = useState<{ token: string; data: SyncData; updatedAt: number; seq: number } | null>(null)
   useEffect(() => { void syncStatus().then((s) => { setBackend(s.configured ? 'Neon' : s.backend); setShared(s.shared !== false) }).catch(() => { setBackend('unreachable'); setShared(false) }) }, [])
   useEffect(() => { setAutoSync(auto) }, [auto])
   const last = getLastSync()
@@ -40,7 +40,7 @@ export function SyncBox() {
     try { parseSyncToken(input); t = input.trim() } catch (e) { setStatus((e as Error).message); return }
     setBusy(true); setStatus('Fetching the other device’s data…')
     void fetchRemote(t)
-      .then(({ data, updatedAt }) => { setLinked({ token: t, data, updatedAt }) })
+      .then(({ data, updatedAt, seq }) => { setLinked({ token: t, data, updatedAt, seq }) })
       .catch((e) => {
         const msg = String((e as Error).message ?? '')
         // An empty slot means the other device has not pushed yet: link and
@@ -56,9 +56,9 @@ export function SyncBox() {
 
   const applyMode = (mode: SyncMergeMode) => {
     if (!linked) return
-    const { token: t, data } = linked
+    const { token: t, data, seq } = linked
     setBusy(true); setStatus(`${LINK_LABEL[mode]}…`)
-    void linkAndMerge(t, mode, data)
+    void linkAndMerge(t, mode, data, seq)
       .then((r) => {
         setSyncToken(t); setAutoSync(true); setToken(t); setAuto(true); startSyncRuntime(); setLinked(null)
         setStatus(`Linked and merged at ${new Date(r.updatedAt).toLocaleTimeString()} via ${r.backend}. Automatic sync is on.`)
@@ -70,7 +70,7 @@ export function SyncBox() {
   const push = () => {
     if (!token) { setStatus('Generate or paste a token first.'); return }
     setBusy(true); setStatus('Encrypting and pushing…')
-    void pushNow(token).then((r) => setStatus(`Pushed ${new Date(r.updatedAt).toLocaleTimeString()} via ${r.backend}.`))
+    void pushNow(token).then((r) => setStatus(r.backend === 'up-to-date' ? 'Already up to date.' : `Pushed ${new Date(r.updatedAt).toLocaleTimeString()} via ${r.backend}.`))
       .catch((e) => setStatus(`Push failed: ${(e as Error).message}`)).finally(() => setBusy(false))
   }
 

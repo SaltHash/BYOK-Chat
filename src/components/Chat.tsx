@@ -46,14 +46,46 @@ function toolStep(name: string, rawArgs: string, result?: string) {
   }
   if (name === 'workspace_upsert') {
     const action = typeof args.action === 'string' ? args.action : 'file'
-    const path = typeof args.path === 'string' ? args.path : 'file'
+    const path = typeof args.path === 'string' ? args.path : ''
     const workspaceId = typeof args.workspaceId === 'string' ? args.workspaceId : ''
     const wsLabel = workspaceId ? ` (ws:${workspaceId.slice(0, 8)})` : ''
     // One file per call: a tool call that still carries a list is shown as
     // such, because the tool refuses it.
     const batch = Array.isArray(args.files) ? args.files.length : 0
-    const what = batch ? `batch of ${batch} refused: ${action} ${clip(path, 60)}` : `${action}: ${clip(path, 80)}`
-    return `Workspace file · ${what}${wsLabel}`
+    let info: Record<string, unknown> | null = null
+    try { info = result ? JSON.parse(result) : null } catch { /* error text has no fields */ }
+    const num = (key: string) => (typeof info?.[key] === 'number' ? info[key] as number : null)
+    if (batch) return `Workspace file · batch of ${batch} refused: ${action} ${clip(path, 60)}${wsLabel}`
+    if (action === 'list') {
+      const n = num('matchedFiles') ?? num('fileCount') ?? 0
+      return `Workspace · listed ${n} file${n === 1 ? '' : 's'}${wsLabel}`
+    }
+    if (action === 'search') {
+      const q = typeof args.query === 'string' ? args.query : ''
+      const n = num('totalMatches')
+      return `Workspace search · “${clip(q || 'missing query', 60)}”${n == null ? '' : ` · ${n} match${n === 1 ? '' : 'es'}`}${wsLabel}`
+    }
+    if (action === 'read') {
+      const from = typeof args.startLine === 'number' ? args.startLine : null
+      const to = typeof args.endLine === 'number' ? args.endLine : null
+      const range = from == null && to == null
+        ? ''
+        : from != null && to != null && from === to
+          ? ` (line ${from})`
+          : ` (lines ${from ?? 1}–${to ?? 'end'})`
+      return `Workspace read · ${clip(path || 'file', 80)}${range}${wsLabel}`
+    }
+    if (action === 'diff') {
+      const added = num('added'), removed = num('removed')
+      const stat = added == null && removed == null ? '' : ` (+${added ?? 0} −${removed ?? 0})`
+      return `Workspace diff · ${clip(path || 'file', 70)}${stat}${wsLabel}`
+    }
+    if (action === 'move') {
+      const to = typeof args.to === 'string' ? args.to : ''
+      return `Workspace file · move ${clip(path || 'file', 50)} → ${clip(to || 'missing path', 50)}${wsLabel}`
+    }
+    if (action === 'patch' && args.dryRun === true) return `Workspace preview · ${clip(path || 'file', 80)}${wsLabel}`
+    return `Workspace file · ${action}: ${clip(path || 'file', 80)}${wsLabel}`
   }
   if (name === 'search') {
     const responses = result?.match(/\[Source [^\]]+\]/g)?.length

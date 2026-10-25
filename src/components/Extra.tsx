@@ -18,6 +18,7 @@ import { getAutoBackup, setAutoBackup, runLocalBackup, listLocalBackups, readLoc
 import { readSyncConflicts, dismissSyncConflict, clearSyncConflicts, conflictChat, type SyncConflict } from '../storage/syncConflicts'
 import { encryptBackup, decryptBackup, isEncryptedBackup } from '../storage/backupCrypto'
 import { SyncBox } from './SyncBox'
+import { DEVICE_SYNC_ENABLED } from '../storage/syncRuntime'
 
 export function Notice({ cfg }: { cfg: (t: string) => void }) {
   const n = useS((s) => s.notice), patch = useS((s) => s.patch)
@@ -347,7 +348,7 @@ function LocalBackups({ onRestore }: { onRestore: (j: Record<string, any>) => vo
   return (
     <div className="space-y-3 rounded-xl bg-surf p-4">
       <div className="flex flex-wrap items-center gap-2 text-sm font-medium"><DatabaseBackup size={16} className="text-ac" />Local backups <span className="text-xs font-normal text-mu">on this device only{last ? ` · last ${new Date(last).toLocaleString()}` : ''}</span></div>
-      <p className="text-xs text-mu">A rolling snapshot of settings, prompts, projects and chats, written to this browser&rsquo;s IndexedDB. No API keys and no uploaded file bytes are included, and nothing is sent to the sync server. Automatic backups run at most once a day while the app is open.</p>
+      <p className="text-xs text-mu">A rolling snapshot of settings, prompts, projects and chats, written to this browser&rsquo;s IndexedDB. No API keys and no uploaded file bytes are included, and nothing is sent to a remote server. Automatic backups run at most once a day while the app is open.</p>
       <div className="flex flex-wrap items-center gap-2">
         <Checkbox checked={auto} set={(v) => { setAuto(v); setAutoBackup(v) }} label="Daily automatic backup" />
         <Btn v="solid" icon={DatabaseBackup} disabled={busy} onClick={() => void make()}>{busy ? 'Backing up…' : 'Back up now'}</Btn>
@@ -577,9 +578,9 @@ export function DataTab() {
   }
   return (
     <Panel id="data">
-      <Section title="Sync and transfer" desc="Keep this browser in sync, or move your setup somewhere else.">
-      <Anchor id="device-sync"><SyncBox /></Anchor>
-      <Anchor id="sync-conflicts"><ConflictsBox /></Anchor>
+      <Section title="Transfer and backups" desc="Back up or move your setup somewhere else.">
+      {DEVICE_SYNC_ENABLED && <Anchor id="device-sync"><SyncBox /></Anchor>}
+      {DEVICE_SYNC_ENABLED && <Anchor id="sync-conflicts"><ConflictsBox /></Anchor>}
       <Anchor id="local-backups"><LocalBackups onRestore={restoreParsed} /></Anchor>
       <Anchor id="export">
       <Box icon={Download} t="Export data" d="Choose which data to include in a JSON file. Add a password to encrypt it.">

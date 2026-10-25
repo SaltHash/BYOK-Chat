@@ -6,7 +6,7 @@ import { clampWorkspaceSplit } from '../layout'
 import type { ToolCall } from '../engine'
 import { Md } from './Md'
 import { Btn, Confirm, Field, Input, Toggle, cx } from './ui'
-import { buildZipEntries, workspaceLines, workspaceSize, buildFolderTree, expandedFoldersForPath, extractWorkspaceIds, findWritingPath, groupWorkspaceVersions, countWorkspaceFiles, sanitizePath, zipFilename, diffLines, diffStat, changedFilesBetween, sanitizeHtmlPreview, previewKindFor, highlightLanguageFor, parseCsvPreview, type Workspace, type WorkspaceRevision } from '../workspace'
+import { buildZipEntries, workspaceLines, workspaceSize, buildFolderTree, expandedFoldersForPath, extractWorkspaceIds, findWritingPath, groupWorkspaceVersions, sanitizePath, zipFilename, diffLines, diffStat, changedFilesBetween, sanitizeHtmlPreview, previewKindFor, highlightLanguageFor, parseCsvPreview, isTruncatedContent, type Workspace, type WorkspaceRevision } from '../workspace'
 
 const fence = (lang: string, code: string) => {
   const runs = code.match(/`{3,}/g)
@@ -53,13 +53,8 @@ export function useWorkspaceFiles(msg: Msg, live?: ToolCall[], workspace?: Works
     const pending = liveCalls.filter((c) => !c.id || !done.has(c.id))
     return groupWorkspaceVersions([...finalCalls, ...pending.map((c) => ({ ...c }))])
   }, [finalCalls, liveCalls])
-  const total = useMemo(() => {
-    const done = new Set(finalCalls.map((c) => c.id))
-    const pending = liveCalls.filter((c) => !c.id || !done.has(c.id))
-    return countWorkspaceFiles([...finalCalls, ...pending.map((c) => ({ ...c }))])
-  }, [finalCalls, liveCalls])
   const isLive = liveCalls.length > 0
-  return { groups, total, isLive }
+  return { groups, isLive }
 }
 
 export function downloadAllFiles(groups: { path: string; versions: { action: string; content: string }[] }[], edits: Record<string, { content: string }[]>, workspaceName?: string) {
@@ -226,7 +221,7 @@ export function WorkspaceTile({ msg, live, workspace, selectedRevisionId, onOpen
   msg: Msg; live?: ToolCall[]; workspace: Workspace; selectedRevisionId: string | null;
   onOpen?: (filePath?: string) => void; onSelectRevision?: (revId: string) => void
 }) {
-  const { groups, total, isLive } = useWorkspaceFiles(msg, live)
+  const { groups, isLive } = useWorkspaceFiles(msg, live)
   // Guard against empty placeholder workspace objects
   if (!groups.length && (!workspace || !workspace.id || !workspace.revisions?.length)) return null
 
@@ -241,6 +236,7 @@ export function WorkspaceTile({ msg, live, workspace, selectedRevisionId, onOpen
 
   const revIdx = workspace.revisions.findIndex((r) => r.id === revision.id)
   const prevRev = revIdx > 0 ? workspace.revisions[revIdx - 1] : null
+  const incompleteFiles = revision.files.filter((f) => f.truncated === true || isTruncatedContent(f.content))
   const changeStat = useMemo(() => {
     if (!prevRev) return null
     const prevMap = new Map(prevRev.files.map((f) => [f.path, f.content]))
@@ -289,8 +285,8 @@ export function WorkspaceTile({ msg, live, workspace, selectedRevisionId, onOpen
             <button title="Rename workspace" onClick={() => { setNameDraft(workspace.name); setRenaming(true) }} className="grid size-6 shrink-0 place-items-center rounded-md text-mu hover:bg-hov hover:text-tx"><Pencil size={12} /></button>
           </>
         )}
-        <span className="text-xs text-mu">· {total} file{total === 1 ? '' : 's'}</span>
-        <span className="text-xs text-mu">· {revision.name}</span>
+        <span className="text-xs text-mu">· {revision.files.length} file{revision.files.length === 1 ? '' : 's'}</span>
+        <span className="max-w-48 truncate text-xs text-mu">· {revision.name}</span>
         {changeStat && <span className="shrink-0 font-mono text-xs text-mu" title="Changed lines vs the previous revision">+{changeStat.added} −{changeStat.removed}</span>}
         {isLive && writingPath && (
           <span className="inline-flex min-w-0 shrink items-center gap-1.5 text-xs text-mu ml-auto">
@@ -299,6 +295,11 @@ export function WorkspaceTile({ msg, live, workspace, selectedRevisionId, onOpen
           </span>
         )}
       </div>
+      {incompleteFiles.length > 0 && (
+        <p role="status" className="break-words rounded-lg bg-er/10 px-3 py-2 text-xs text-er">
+          {incompleteFiles.length === 1 ? incompleteFiles[0].path : `${incompleteFiles.length} files`} {incompleteFiles.length === 1 ? 'is' : 'are'} incomplete — cut at the per-file limit. Ask the AI to continue {incompleteFiles.length === 1 ? 'it' : 'them'} before downloading or running the project.
+        </p>
+      )}
       <div className="max-h-200 overflow-y-auto space-y-1 border-t border-bor pt-2 mt-1">
         <WorkspaceFileTree
           tree={folderTree}
@@ -397,7 +398,6 @@ export function WorkspacePanel({ msg, live, workspace, selectedRevisionId, setSe
     ?? workspace.revisions[workspace.revisions.length - 1]
     ?? { id: '', name: '', msgId: msg.id, files: [], createdAt: 0 }
   const revIdx = workspace.revisions.findIndex(r => r.id === revision.id)
-  const { total } = useWorkspaceFiles(msg, live)
 
   // Determine the file currently being written by the AI
   const writingPath = useMemo(() => findWritingPath(live, msg.toolRounds), [msg.toolRounds, live])
@@ -451,6 +451,9 @@ export function WorkspacePanel({ msg, live, workspace, selectedRevisionId, setSe
     ?? files.find(f => f.path === writingPath)
     ?? files[0]
   const selectedFilePath = selectedFile?.path ?? null
+  // A file over the per-file cap is stored incomplete; make that visible before
+  // the user downloads and runs a project that cannot build.
+  const incomplete = !!selectedFile && (selectedFile.truncated === true || isTruncatedContent(selectedFile.content))
   const copy = (s: string) => { navigator.clipboard?.writeText(s) }
   const downloadOne = (p: string, content: string) => saveBlob(base(p), new Blob([content], { type: 'text/plain;charset=utf-8' }))
 
@@ -549,7 +552,7 @@ export function WorkspacePanel({ msg, live, workspace, selectedRevisionId, setSe
           <input autoFocus value={nameDraft} onChange={(e) => setNameDraft(e.target.value)} onBlur={saveName} onKeyDown={(e) => { if (e.key === 'Enter') saveName(); if (e.key === 'Escape') setRenaming(false) }} className="min-w-0 flex-1 rounded-md bg-bg px-2 py-1 text-sm outline-none focus:ring-2 focus:ring-ac/40" />
         ) : (
           <>
-            <span className="min-w-0 flex-1 truncate text-sm font-medium">{workspace.name} · {total} file{total === 1 ? '' : 's'}</span>
+            <span className="min-w-0 flex-1 truncate text-sm font-medium">{workspace.name} · {files.length} file{files.length === 1 ? '' : 's'}</span>
             <Btn sm icon={Pencil} title="Rename workspace" onClick={() => { setNameDraft(workspace.name); setRenaming(true) }} />
         {sharedOf != null && <span title={`Shared across the chats of the project "${sharedOf}"`} className="hidden shrink-0 rounded-full border border-dashed border-bor px-2 py-0.5 text-xs text-mu sm:inline">Shared project</span>}
           </>
@@ -609,6 +612,11 @@ export function WorkspacePanel({ msg, live, workspace, selectedRevisionId, setSe
               <Btn sm icon={Send} title="Ask about this file in chat" onClick={askAboutFile} />
               <Btn sm icon={Trash2} title="Delete file" onClick={() => setConfirmDelete(true)} />
             </div>
+            {incomplete && (
+              <p role="status" className="mx-4 mt-2 rounded-lg bg-er/10 px-3 py-2 text-xs text-er">
+                This file is incomplete: it was cut at the per-file limit. Ask the AI to continue it before downloading or running the project.
+              </p>
+            )}
             {view === 'diff' && (
               <div className="flex flex-wrap items-center gap-2 px-4 pt-2 text-xs text-mu">
                 <DiffIcon size={13} className="shrink-0" />
