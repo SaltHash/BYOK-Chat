@@ -9,7 +9,7 @@ import { normSkills, resolveSkill } from '../skills'
 import { CI, WIDGETS, KEYS, orderTools } from '../meta'
 import { WORKSPACE_TEMPLATES } from '../workspace'
 import { pickFortune } from '../flair'
-import { Modal, cx, type Ic } from './ui'
+import { Confirm, Modal, cx, type Ic } from './ui'
 
 const TAB_FEATURE: Record<string, FeatureId> = {
   prompts: 'prompts', skills: 'skills', pls: 'playlists', cmds: 'commands',
@@ -33,6 +33,7 @@ export function Palette({ close, cfg, toggleSide }: { close: () => void; cfg: (t
   })))
   const [q, setQ] = useState('')
   const [i, setI] = useState(0)
+  const [clearChat, setClearChat] = useState('')
   const refs = useRef<(HTMLButtonElement | null)[]>([])
   type Action = { icon: Ic; t: string; h: string; words: string; run: () => void }
   const action = (icon: Ic, t: string, h: string, words: string, run: () => void): Action => ({ icon, t, h, words, run })
@@ -54,7 +55,7 @@ export function Palette({ close, cfg, toggleSide }: { close: () => void; cfg: (t
     action(Sparkles, 'Surprise me', 'Action', 'random theme shuffle surprise fun', () => { const keys = (Object.keys(THEMES) as (keyof typeof THEMES)[]).filter((k) => k !== 'custom'); s.patch(themePatch(s, keys[Math.floor(Math.random() * keys.length)])) }),
     action(Sparkles, 'Fortune cookie', 'Action', 'fortune cookie tip luck random', () => s.patch({ notice: { t: pickFortune() } })),
     action(Trash2, 'Clear model selection', 'Action', 'reset automatic endpoints models', () => s.patch({ sel: null })),
-    action(Eraser, 'Clear this chat’s messages', 'Action', 'clear wipe empty erase conversation messages history', () => { const st = useS.getState(); st.patch({ chats: st.chats.map((c) => (c.id === st.chat ? { ...c, msgs: [] } : c)) }) }),
+    action(Eraser, 'Clear this chat’s messages', 'Action', 'clear wipe empty erase conversation messages history', () => { const st = useS.getState(); if (st.chats.some(c => c.id === st.chat && c.msgs.length)) setClearChat(st.chat) }),
     ...(featOn(s, 'prompts') ? [action(Type, 'Clear prompt selection', 'Action', 'reset system instructions', () => s.patch({ pr: '' }))] : []),
     ...(featOn(s, 'commands') ? s.cmds.filter((c) => c.on).map((c) => action(CI[c.in], '/' + c.name, c.desc || 'Command', `command slash ${c.name} ${c.desc}`, () => s.patch({ draft: '/' + c.name + ' ' }))) : []),
     // Every settings tab (single source of truth — no hardcoded subset).
@@ -98,7 +99,7 @@ export function Palette({ close, cfg, toggleSide }: { close: () => void; cfg: (t
     if (queryWords.length && queryWords.every((w) => (title + ' ' + words + ' ' + x.h.toLowerCase()).includes(w))) score = Math.max(score, 200)
     return { ...x, score, order }
   }).filter((x) => x.score > 0).sort((a, b) => b.score - a.score || a.order - b.order).slice(0, 60)
-  const run = (n: number) => { L[n]?.run(); close() }
+  const run = (n: number) => { const selected = L[n]; selected?.run(); if (selected?.t !== 'Clear this chat’s messages') close() }
   const m = Math.max(L.length, 1)
   useEffect(() => { refs.current[i]?.scrollIntoView({ block: 'nearest' }) }, [i, L.length])
   return (
@@ -129,6 +130,7 @@ export function Palette({ close, cfg, toggleSide }: { close: () => void; cfg: (t
           {!L.length && <p className="px-3 py-6 text-center text-sm text-mu">No matches. Try a shorter search.</p>}
         </div>
       </div>
+      {clearChat && <Confirm title="Clear this chat’s messages?" text="All messages in this chat will be permanently removed. The chat itself will remain." ok="Clear messages" close={() => setClearChat('')} run={() => { const st = useS.getState(); st.patch({ chats: st.chats.map(c => c.id === clearChat ? { ...c, msgs: [] } : c) }); close() }} />}
     </Modal>
   )
 }

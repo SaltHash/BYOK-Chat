@@ -15,6 +15,8 @@ npm run dev
 
 There are no committed environment files. Search tuning lives in the app under Settings → Tools → Web search and grounding (results per search, request timeout, text per result, total text per search, retries, retry delay) and is sent with each search request; the server only enforces hard caps (10 results, 3000 characters per result, 24000 total characters per search, 1–30s timeout, 0–4 retries). The page reader has its own API, key, timeout, text limit, retries and retry delay under the Page reader tool, next to the reader settings they belong to.
 
+On first launch, **Add an endpoint** opens a ready-to-configure endpoint; **Customize first** retains the optional appearance and tool setup, and **Skip setup** leaves the connection action available in chat. Settings groups sections by task and searches both sections and individual settings. Disabled feature sections remain listed as **Off** with a link to Features; existing settings links keep their original IDs. The chat header’s **Actions** menu contains sharing, export, the command palette and other secondary actions on desktop and mobile.
+
 Every settings page is grouped into labelled sections (for example Chats → Replies, Temporary chats, Behavior, Documents), so related settings sit together. In Settings → Tools the tool list is ordered by relevance, and enabled tools are pinned to the top of the list while keeping that order. Turning a tool on takes effect right away — there is no permission popup — and the card shows *Allowed*. The per-tool **Do not ask again** toggle (a "?" hover tip explains it) is kept for the tools that were allowed for good earlier.
 
 ## Inference providers per model
@@ -23,7 +25,7 @@ For OpenRouter endpoints each model row under Settings → Endpoints has a low-k
 
 ## Adding any provider from cURL
 
-Settings → Endpoints shows **OpenAI-compatible**, **Anthropic-compatible**, and **Add provider from cURL** at the top of the endpoint list and again below it, so a new provider does not require scrolling through the existing cards. The cURL importer reads the URL, `Authorization`/`x-api-key` header, JSON body, and `model` locally, previews the base URL and API format, and lets you correct the name or switch between OpenAI-compatible and Anthropic Messages before adding it. Nothing from the pasted command is sent during parsing.
+Settings → Endpoints puts **Add endpoint** and **Add provider from cURL** above the endpoint list. The arrow next to Add endpoint chooses OpenAI-compatible or Anthropic-compatible format; helper-model and pricing controls follow the list. The cURL importer reads the URL, `Authorization`/`x-api-key` header, JSON body, and `model` locally, previews the base URL and API format, and lets you correct the name or switch between OpenAI-compatible and Anthropic Messages before adding it. Nothing from the pasted command is sent during parsing.
 
 After a provider is added, the app probes common catalog locations such as `/models`, `/v1/models`, `/api/models`, `/api/v1/models`, and Ollama's `/api/tags`. The first URL that returns models is remembered, as are permanent failures (404/405/400/501 and empty catalogs), so later **Load available models** requests skip dead locations instead of repeating them. The cache is keyed by base URL plus a non-reversible fingerprint of the API key; changing the key clears cached auth-sensitive attempts, and network/5xx failures are retried rather than cached. **Retry model-list checks** in the model picker clears that endpoint's cached URLs and probes them again.
 
@@ -108,7 +110,7 @@ Without any keys, You.com and Exa answer with HTTP 402 (billing/payment required
 Skills are reusable instruction packs the model loads itself. Each skill has an id, name, when-to-use description, and instructions. Open Settings → Skills to enable, disable, reset, edit, add, or remove skills.
 
 - The system prompt lists each enabled skill's id and description; the model calls the hidden `use_skill` tool with an id to load the full instructions before answering. There is no keyword matching, and `use_skill` never appears under Tools.
-- Built-ins: `frontend-design` (Anthropic's official skill, included verbatim), `software-engineering`, `debugging`, `testing`, `code-review`, and `writing`. Coding expertise lives in these skills, not in the default system prompts.
+- Built-ins: `frontend-design` (Anthropic's official skill, included verbatim), `software-engineering`, `debugging`, `testing`, `code-review`, `writing` (creative prose), and `prompt-writing` (writing and revising prompts). Coding expertise lives in these skills, not in the default system prompts.
 - Custom skills validate their id and instructions before they are stored; malformed stored skills are skipped with a warning instead of breaking requests.
 
 Default system prompts are `General` (general assistant behavior: follow instructions, be clear and accurate, reason when needed), `Creativity` (original, expressive, experimental ideas without fabricating facts), and `Concise`. Pick one from the prompt menu under the chat box.
@@ -125,7 +127,20 @@ Every user-facing system prompt (the global prompt, a chat prompt, a playlist pr
 
 Settings → Prompts offers the variables as buttons that append the placeholder to the prompt you are editing. Independently of the prompt, every request also carries one line of context with the current UTC date and time, so the model never has to guess which day it is.
 
-The stats tab splits **Tokens sent** into what you wrote (explicitly sent) and everything that travelled with it (history + tool calls: the system prompt, earlier messages, and any tool calls and their results).
+## Usage dashboard
+
+Settings → Stats (visible only while the Stats feature is on) is a local-first usage dashboard built from the attempt logs saved with each reply and the endpoint price tables. It does not call the backend and it does not use the all-time counters for its windowed numbers.
+
+- **Overview** — total cost, total tokens, average cost per million priced tokens, most-used model, token mix, a compact trend and the top five models. The average card carries a model selector scoped to the selected period.
+- **Models** — the full per-model ranking, searchable and sortable, with share bars, token breakdowns, costs, averages, last-used times and row drill-downs. A model is keyed by endpoint + model id, because the same model can have different prices on two endpoints.
+- **Over time** — dependency-free SVG charts for cost or tokens, grouped by category or model, with hourly/daily/weekly/monthly buckets, a legend and an accessible data table.
+- **Activity** — the most recent attempts grouped by day, filterable by model and status; clicking a successful attempt jumps to that message in its chat.
+
+The period control (`Session`, `Last 24 hours`, `Last 7 days`, `Last 30 days`, `All time`, `Custom`) writes the same `widgetPrefs.usagePeriod`, `usageFrom` and `usageTo` values as the Usage widget, so the two always agree. Custom ranges include the whole “Through” day and show an inline error instead of silently rendering misleading data. The readable boundary line under the controls always names the window being shown.
+
+Costs prefer the provider-reported charge. When none was reported, the endpoint price table is used (cache reads and writes bill at their own rates when configured, otherwise at the input rate) and the value is marked as an estimate. Attempts with neither source stay unpriced: they show as “—” and are excluded from the average, never as free usage. Failed attempts are excluded from every metric but counted and labelled in Activity and model details. Cached tokens are counted once: uncached input already excludes cache reads and writes.
+
+The lifetime counters at the bottom are separate all-time totals (`s.stats`) and survive deleting chats; deleting a chat removes only its detailed usage history. Statistics logic and its tests live in `src/usageStats.ts` and `src/usageStats.test.mjs`.
 
 ## MCP servers (external tools)
 
@@ -202,7 +217,9 @@ Workers Free plan notes: 100,000 Worker requests/day, 10 ms CPU per invocation, 
 
 ## Durable storage and device sync
 
-Settings stay in `localStorage` (`byok.v1`). Chats, workspaces, and attachment bytes mirror to IndexedDB, with large blobs in OPFS where available (`src/storage/durable.ts`). Migration is automatic in place: the first boot copies existing history to durable storage, restores attachment bytes after reload, and keeps working when `localStorage` was quota-pruned. The storage meter in Settings → Data controls shows settings vs durable usage with Compact actions, plus background compaction every 5 minutes and per-chat `.md` + `.json` export from the sidebar.
+Settings stay in `localStorage` (`byok.v1`); chats are sharded by ID. Chats, workspaces, and attachment bytes mirror to IndexedDB, with large blobs in OPFS where available (`src/storage/durable.ts`). Migration reconstructs the shards before copying them. Boot restores attachment bytes before the app becomes interactive. Missing indexed chat shards are recovered from the durable mirror when possible; otherwise startup stops rather than overwrite the remaining data. A corrupt or unreadable local snapshot also stops startup instead of treating it as a fresh installation; leave browser data intact and retry after restoring storage access. After an interrupted or quota-limited local write, recovery can use a richer durable copy of a chat still present in the local index, without resurrecting unrelated deleted chats. Interrupted writes can still leave a stale copy: these stores do not yet share an atomic generation or deletion journal, and background writes may not complete when a tab closes. Export backups regularly. A storage failure displays a warning with an export action; free space or check browser storage permissions before reloading. The storage meter in Settings → Data controls shows storage usage and Compact actions, plus background compaction every 5 minutes and per-chat `.md` + `.json` export from the sidebar.
+
+Settings → Chats → Open on load controls startup. The default restores the last selected chat on this device (including a new-chat draft); the other choices open the latest permanent chat, a new chat, or a temporary chat. Sync keeps the open view and draft device-local, including when receiving older snapshots.
 
 Token sync links two devices with one super-long token (`byok1-<id>-<secret>`, `src/storage/sync.ts`). Generate it on device A, link it on device B (only the masked `byok1-abc…xyz` form is shown; Copy takes the full token).
 
@@ -264,6 +281,10 @@ Memory recall runs on-device by default (`src/recall.ts`, BM25 ranking, no model
 The sidebar search ranks every chat with the same engine — title hits first, then the best matching message with a snippet — and jumping to a result opens the chat, scrolls to the message, and highlights it briefly.
 
 Routing learns from experience: every attempt records latency and failures per endpoint + model (Settings → Playlists shows the table, resettable, backed up with stats). The routing mode orders candidates by list order (default), observed speed (untried models go first), or input price (unpriced last); a playlist classifier, when set, still picks first and its decisions are cached per request for an hour. The process log notes reorderings and cache hits.
+
+## UI contract
+
+Use `Btn` for actions (solid primary, soft secondary, ghost tertiary, danger destructive), and give icon-only actions a name and tooltip. Model favorites are separate keyboard-focusable controls; pending attachments can be moved with the earlier/later buttons as well as by dragging. Use `Modal`, `Pop`, `Surface`, `Field` and `Section` rather than new one-off containers; name dialogs, preserve focus, and close only the topmost layer. Organize settings by user task and keep disabled features discoverable; keep existing tab IDs and deep links stable. Prefer one page surface and one section/row level, concise sentence-case labels, a 4/8/12/16/24 spacing rhythm, and one primary action. Keep controls keyboard- and touch-accessible, support reduced motion, and show a clear next step for errors and destructive actions. This is the target for new and touched UI, not a claim that every legacy surface has been converted.
 
 ## Checks
 

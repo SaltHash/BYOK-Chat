@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
-import { Plus, FileUp, FileText, Image as ImageIcon, ArrowUp, Square, CornerDownRight, ChevronRight, ListMusic, Cpu, ScrollText, Settings, Search, BookOpen, X, TriangleAlert, Wrench, Link as LinkIcon, ScanText, Mic, Star, GripVertical } from 'lucide-react'
+import { Plus, FileUp, FileText, Image as ImageIcon, ArrowUp, ArrowLeft, ArrowRight, Square, CornerDownRight, ChevronRight, ListMusic, Cpu, ScrollText, Settings, Search, BookOpen, X, TriangleAlert, Wrench, Link as LinkIcon, ScanText, Mic, Star, GripVertical } from 'lucide-react'
 import { useS, usable, modelsOf, modelNameOf, featOn, normDocs, normSearch, fetchOptsOf, effortClassifierOf, helperRef, splitHelperRef, toggleFavRef, type Att, type Ep } from '../store'
 import { CI, orderTools } from '../meta'
 import { composerWidth } from '../layout'
@@ -214,7 +214,7 @@ function ModelMenu({ close, cfg }: { close: () => void; cfg: (t: string) => void
       {plsOn && <Seg v={t} set={setT} opts={[['ep', 'Models', Cpu], ['pl', 'Playlists', ListMusic]]} />}
       <div className="relative my-2">
         <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-mu" />
-        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search" className="h-9 w-full rounded-lg bg-surf pl-9 pr-3 text-sm outline-none" />
+        <input aria-label="Search models and playlists" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search" className="h-9 w-full rounded-lg bg-surf pl-9 pr-3 text-sm outline-none" />
       </div>
       {activeModel && effortChoices.length > 0 && <div className="shrink-0 border-b border-bor px-2.5 py-3" onClick={(e) => e.stopPropagation()}>
         <div className="mb-1 flex items-center justify-between text-xs"><span className="truncate pr-2 font-medium text-tx">Effort · {modelNameOf(activeEp!, activeModel).replace(/^~+/, '')}</span><span className="text-ac capitalize">{activeEffort}</span></div>
@@ -244,7 +244,7 @@ function ModelMenu({ close, cfg }: { close: () => void; cfg: (t: string) => void
           {!isCollapsed && models.map((model) => modelRow(x, model))}
         </div>
       })}
-      {!L.length && <p className="px-2.5 py-3 text-sm text-mu">Nothing here yet. Suspiciously quiet.</p>}
+      {!L.length && <p className="px-2.5 py-3 text-sm text-mu">{query ? 'No matches. Try another search.' : 'No models available. Add an endpoint in Settings.'}</p>}
       </div>
       <div className="shrink-0 border-t border-bor px-1 pt-2">
         <Item icon={Settings} className="bg-surf/70 hover:bg-surf" onClick={() => { close(); cfg(t === 'pl' && plsOn ? 'pls' : 'eps') }}>Manage…</Item>
@@ -412,6 +412,8 @@ export function Composer({ cfg }: { cfg: (t: string) => void }) {
    * model reads them in the order they are listed), and there was no way to
    * change it before sending. */
   const [dragAtt, setDragAtt] = useState<number | null>(null)
+  const [attachmentStatus, setAttachmentStatus] = useState('')
+  const moveAttachment = (from: number, to: number) => { const item = att[from]; if (!item || to < 0 || to >= att.length) return; reorderAtt(from, to); setAttachmentStatus(`${item.name} moved to position ${to + 1} of ${att.length}.`) }
   const reorderAtt = (from: number, to: number) => setAtt((list) => {
     if (from === to || from < 0 || to < 0 || from >= list.length || to >= list.length) return list
     const next = [...list]
@@ -620,20 +622,23 @@ export function Composer({ cfg }: { cfg: (t: string) => void }) {
           </div>
         )}
         {att.length > 0 && (
-          <div className="mb-2 flex flex-wrap gap-2">
+          <div className="mb-2 flex flex-wrap gap-2" role="group" aria-label="Attachments">
+            <span className="sr-only" aria-live="polite">{attachmentStatus}</span>
             {att.map((a, i) => a.kind === 'img' && a.data ? (
               <div key={i} draggable onDragStart={(e) => { setDragAtt(i); e.dataTransfer.effectAllowed = 'move' }} onDragOver={(e) => { if (dragAtt != null) { e.preventDefault(); e.dataTransfer.dropEffect = 'move' } }} onDrop={(e) => { e.preventDefault(); if (dragAtt != null) reorderAtt(dragAtt, i); setDragAtt(null) }} onDragEnd={() => setDragAtt(null)} title={`${a.text ? `${a.name} · transcribed text attached` : a.name} · drag to reorder`} className={cx('group/preview relative flex h-24 w-28 cursor-grab flex-col overflow-hidden rounded-lg bg-hov p-1.5 ring-1 ring-hov', bad(a) && 'ring-er', dragAtt === i && 'opacity-50')}>
                 <img src={`data:${a.mime || 'image/*'};base64,${a.data}`} alt={a.name} className="min-h-0 flex-1 rounded-sm object-contain p-1" />
                 <span className="truncate px-1 text-xs text-mu" title={a.name}>{a.text ? '✓ ' : ''}{a.name}</span>
                 <span aria-hidden="true" className="absolute left-1 top-1 grid size-5 place-items-center rounded-full bg-black/60 text-white opacity-100 md:opacity-0 md:group-hover/preview:opacity-100"><GripVertical size={12} /></span>
                 {!a.text && <button aria-label={`Transcribe text from ${a.name}`} title="Transcribe image text with a vision model" onClick={() => { void ocrOne(a) }} disabled={ocrBusy != null} className="absolute bottom-6 left-1 grid size-5 place-items-center rounded-full bg-black/70 text-white opacity-100 transition-opacity md:opacity-0 md:group-hover/preview:opacity-100 md:focus:opacity-100 disabled:opacity-40"><ScanText size={12} /></button>}
-                <button aria-label={`Remove ${a.name}`} onClick={() => setAtt(att.filter((_, j) => j !== i))} className="absolute right-1 top-1 grid size-5 place-items-center rounded-full bg-black/70 text-white opacity-100 transition-opacity md:opacity-0 md:group-hover/preview:opacity-100 md:focus:opacity-100"><X size={12} /></button>
+                <button aria-label={`Remove ${a.name}`} title={`Remove ${a.name}`} onClick={() => setAtt(att.filter((_, j) => j !== i))} className="absolute right-1 top-1 grid size-5 place-items-center rounded-full bg-black/70 text-white opacity-100 transition-opacity md:opacity-0 md:group-hover/preview:opacity-100 md:focus:opacity-100"><X size={12} /></button>
+                {att.length > 1 && <span className="absolute bottom-1 right-1 flex gap-0.5"><Btn sm icon={ArrowLeft} title={`Move ${a.name} earlier`} disabled={i === 0} onClick={() => moveAttachment(i, i - 1)} className="!size-7 bg-black/70 text-white" /><Btn sm icon={ArrowRight} title={`Move ${a.name} later`} disabled={i === att.length - 1} onClick={() => moveAttachment(i, i + 1)} className="!size-7 bg-black/70 text-white" /></span>}
                 {bad(a) && <span className="absolute left-1 right-1 top-7 rounded-sm bg-er/90 px-1 py-0.5 text-center text-xs text-white"><TriangleAlert size={11} className="inline" /> Unsupported</span>}
               </div>
             ) : (
               <span key={i} draggable onDragStart={(e) => { setDragAtt(i); e.dataTransfer.effectAllowed = 'move' }} onDragOver={(e) => { if (dragAtt != null) { e.preventDefault(); e.dataTransfer.dropEffect = 'move' } }} onDrop={(e) => { e.preventDefault(); if (dragAtt != null) reorderAtt(dragAtt, i); setDragAtt(null) }} onDragEnd={() => setDragAtt(null)} title={bad(a) ? 'The selected model cannot process this file' : (a.source ? `${a.name} · ${a.source}${a.pages ? ` · ${a.pages} pages` : ''}${a.text ? ` · ${Math.round(a.text.length / 1024)} KB text` : ''} · drag to reorder` : 'Drag to reorder')} className={cx('inline-flex cursor-grab items-center gap-1.5 rounded-lg bg-hov py-1 pl-2 pr-1 text-xs', bad(a) && 'text-er', dragAtt === i && 'opacity-50')}>
                 <GripVertical size={12} className="text-mu" aria-hidden="true" />{bad(a) ? <TriangleAlert size={13} /> : <FileText size={13} />}{a.text && a.kind !== 'txt' ? '✓ ' : ''}{a.name}<span className="text-mu">{a.size}</span>
-                <button onClick={() => setAtt(att.filter((_, j) => j !== i))} className="grid size-5 place-items-center rounded-sm hover:bg-surf"><X size={12} /></button>
+                {att.length > 1 && <><Btn sm icon={ArrowLeft} title={`Move ${a.name} earlier`} disabled={i === 0} onClick={() => moveAttachment(i, i - 1)} /><Btn sm icon={ArrowRight} title={`Move ${a.name} later`} disabled={i === att.length - 1} onClick={() => moveAttachment(i, i + 1)} /></>}
+                <Btn sm icon={X} title={`Remove ${a.name}`} onClick={() => setAtt(att.filter((_, j) => j !== i))} />
               </span>
             ))}
           </div>
@@ -815,14 +820,13 @@ export function Composer({ cfg }: { cfg: (t: string) => void }) {
               onClick={toggleDict}
               aria-pressed={listening}
               title={listening ? 'Stop dictation' : 'Dictate a message'}
+              aria-label={listening ? 'Stop dictation' : 'Dictate a message'}
               className={cx('grid size-9 place-items-center rounded-full transition-colors', listening ? 'bg-er text-white' : 'text-mu hover:bg-hov hover:text-tx')}
             >
               <Mic size={18} />
             </button>
           )}
-          <button onClick={s.busy ? s.stop : submit} title={s.busy ? 'Stop' : 'Send'} className={cx('grid size-9 place-items-center rounded-full transition-colors', s.busy || ready ? 'bg-ac text-acx' : 'bg-hov text-mu')}>
-            {s.busy ? <Square size={14} fill="currentColor" /> : <ArrowUp size={18} />}
-          </button>
+          <Btn icon={s.busy ? Square : ArrowUp} v={s.busy || ready ? 'solid' : 'soft'} onClick={s.busy ? s.stop : submit} title={s.busy ? 'Stop' : 'Send'} className="rounded-full" />
         </div>
       </div>
       </div>

@@ -197,10 +197,11 @@ test('project deltas rename in place and keep local-only projects', () => {
 })
 
 test('a first delta reconstructs every part of the save', () => {
+  // The open-chat pointer is device-local and never travels, so it is not part
+  // of the save a delta rebuilds.
   const data = {
     settings: {
       themeMode: 'dark',
-      chat: 'c1',
       prefs: { showBy: true },
       eps: [{ id: 'e1', name: 'E' }],
       keys: { send: 'Mod+Enter' },
@@ -220,6 +221,12 @@ test('a first delta reconstructs every part of the save', () => {
   assert.deepEqual(rebuilt, data)
 })
 
+test('a legacy delta cannot hand this device the sender\'s open chat', () => {
+  const local = { settings: { themeMode: 'light' }, chats: [chat('c1', 'A', [msg('m1', 'hi')])], workspaces: {}, selectedRevision: {} }
+  const applied = applySyncDelta(local, { v: 1, at: 5, settings: { set: { chat: 'c1' } } })
+  assert.equal('chat' in applied.settings, false)
+})
+
 test('advancing the baseline with a delta makes the same change a no-op', () => {
   const data = {
     settings: { themeMode: 'dark', chat: 'c1' },
@@ -237,6 +244,32 @@ test('advancing the baseline with a delta makes the same change a no-op', () => 
   const applied = applySyncDelta(data, delta)
   const advanced = { ...applyDeltaToBaseline(base, delta), seq: 2 }
   assert.equal(computeSyncDelta(advanced, applied), null)
+})
+
+test('a pulled change never moves the open chat or switches the search provider', () => {
+  const local = {
+    ...empty(),
+    settings: {
+      chat: '',
+      search: { provider: 'exa', keys: { exa: 'local-secret' }, readerKey: '' },
+    },
+    chats: [chat('c1', 'A', [msg('m1', 'hi')]), chat('c2', 'B', [msg('m2', 'yo', 2)])],
+  }
+  // A peer still syncing its view pointer and its credential-blanked search.
+  const delta = {
+    v: 1,
+    at: 9,
+    settings: { set: { chat: 'c2', search: { provider: 'tinyfish', keys: {}, readerKey: '' } } },
+  }
+  const applied = applySyncDelta(local, delta)
+  assert.equal(applied.settings.chat, '', 'the new chat stays open')
+  assert.equal(applied.settings.search.provider, 'exa')
+  assert.equal(applied.settings.search.keys.exa, 'local-secret')
+})
+
+test('a dead open-chat pointer is still repaired after a delete', () => {
+  const local = { ...empty(), settings: { chat: 'gone' }, chats: [chat('c1', 'A', [msg('m1', 'hi')])] }
+  assert.equal(applySyncDelta(local, { v: 1, at: 4, settings: { set: { themeMode: 'dark' } } }).settings.chat, 'c1')
 })
 
 test('a delta only collapses a chat duplicate it actually introduces', () => {

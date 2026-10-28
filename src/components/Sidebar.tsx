@@ -43,19 +43,19 @@ function RowBody({ c, mv, del, dnd, container, index }: RowProps) {
           <span className="truncate">{c.title}{c.temporary ? ' · temporary' : ''}</span>
         </button>
       )}
-      <span className="dnd-actions hidden shrink-0 max-md:flex md:group-hover:flex">
-        <button title="Rename" onClick={() => setEd(true)} className={act}><Pencil size={14} /></button>
-        <button title="Export this chat (.md + .json)" onClick={() => {
+      <span className="dnd-actions hidden shrink-0 max-md:flex md:group-hover:flex md:group-focus-within:flex">
+        <button aria-label={`Rename ${c.title}`} title="Rename" onClick={() => setEd(true)} className={act}><Pencil size={14} /></button>
+        <button aria-label={`Export ${c.title} (.md and .json)`} title="Export this chat (.md + .json)" onClick={() => {
           const chat = useS.getState().chats.find((x) => x.id === c.id)
           if (!chat) return
           const base = chat.title.replace(/[^\w-]+/g, '_')
           dl(`${base}.md`, chatMd(chat), 'text/markdown')
           dl(`${base}.json`, JSON.stringify({ v: 4, chats: [chat] }, null, 1), 'application/json')
         }} className={act}><Download size={14} /></button>
-        <button title="Move to project" onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); mv(c.id, r.left, r.bottom + 4) }} className={act}><Folder size={14} /></button>
-        <button title={c.pin ? 'Unpin' : 'Pin'} onClick={() => useS.getState().chatOp(c.id, 'pin')} className={act}><Pin size={14} /></button>
-        <button title={c.archived ? 'Restore from archive' : 'Archive chat (kept, hidden from the main list)'} onClick={() => useS.getState().chatOp(c.id, 'archive')} className={act}>{c.archived ? <ArchiveRestore size={14} /> : <Archive size={14} />}</button>
-        <button title="Delete chat (hold Shift to skip confirmation)" onClick={(e) => del(c.id, e.shiftKey)} className={cx(act, 'hover:text-er')}><Trash2 size={14} /></button>
+        <button aria-label={`Move ${c.title} to project`} title="Move to project" onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); mv(c.id, r.left, r.bottom + 4) }} className={act}><Folder size={14} /></button>
+        <button aria-label={`${c.pin ? 'Unpin' : 'Pin'} ${c.title}`} title={c.pin ? 'Unpin' : 'Pin'} onClick={() => useS.getState().chatOp(c.id, 'pin')} className={act}><Pin size={14} /></button>
+        <button aria-label={c.archived ? `Restore ${c.title} from archive` : `Archive ${c.title}`} title={c.archived ? 'Restore from archive' : 'Archive chat (kept, hidden from the main list)'} onClick={() => useS.getState().chatOp(c.id, 'archive')} className={act}>{c.archived ? <ArchiveRestore size={14} /> : <Archive size={14} />}</button>
+        <button aria-label={`Delete ${c.title}`} title="Delete chat (hold Shift to skip confirmation)" onClick={(e) => del(c.id, e.shiftKey)} className={cx(act, 'hover:text-er')}><Trash2 size={14} /></button>
       </span>
     </div>
   )
@@ -463,7 +463,7 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
       </div>
       <div className="relative">
         <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-mu" />
-        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search titles and messages" className="h-9 w-full rounded-lg bg-surf pl-9 pr-3 text-sm outline-none focus:ring-2 focus:ring-ac/40" />
+        <input aria-label="Search titles and messages" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search titles and messages" className="h-9 w-full rounded-lg bg-surf pl-9 pr-3 text-sm outline-none focus:ring-2 focus:ring-ac/40" />
       </div>
       <div role="group" aria-label="Chat filter" className="flex items-center gap-1 rounded-lg bg-surf p-0.5 text-xs">
         <button type="button" aria-pressed={!showArchived} onClick={() => setShowArchived(false)} className={cx('flex flex-1 items-center justify-center rounded-md px-2 py-1 text-center font-medium', !showArchived ? 'bg-hov text-tx' : 'text-mu hover:text-tx')}>Chats</button>
@@ -510,8 +510,8 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
                 <Clock size={15} className="shrink-0 text-mu" /><span className="truncate">{c.title}</span>
               </button>
               <span title={c.expiresAt ? `Deletes in ${timeLeft(c)}` : 'Deletes when you leave'} className="shrink-0 text-xs text-mu">{timeLeft(c)}</span>
-              <button title="Save as a permanent chat" aria-label={`Save ${c.title} as a permanent chat`} onClick={() => s.promoteChat(c.id)} className={cx(act, 'hidden shrink-0 max-md:grid md:group-hover:grid')}><Bookmark size={14} /></button>
-              <button title="Delete chat (hold Shift to skip confirmation)" onClick={(e) => del(c.id, e.shiftKey)} className={cx(act, 'ml-1 hidden shrink-0 hover:text-er max-md:grid md:group-hover:grid')}><Trash2 size={14} /></button>
+              <button title="Save as a permanent chat" aria-label={`Save ${c.title} as a permanent chat`} onClick={() => s.promoteChat(c.id)} className={cx(act, 'hidden shrink-0 max-md:grid md:group-hover:grid md:group-focus-within:grid')}><Bookmark size={14} /></button>
+              <button aria-label={`Delete ${c.title}`} title="Delete chat (hold Shift to skip confirmation)" onClick={(e) => del(c.id, e.shiftKey)} className={cx(act, 'ml-1 hidden shrink-0 hover:text-er max-md:grid md:group-hover:grid md:group-focus-within:grid')}><Trash2 size={14} /></button>
             </div>)}
             {!temporary.length && <p className="px-2.5 py-1 text-sm text-mu">Nothing here yet.</p>}
           </div>
@@ -523,7 +523,7 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
         </div>
         <div className="flex items-center justify-between px-2.5 text-xs font-medium text-mu">
           <span>Projects</span>
-          <button title="New project" onClick={() => setNewModal(true)} className="grid size-6 place-items-center rounded-md hover:text-tx"><FolderPlus size={14} /></button>
+          <button aria-label="New project" title="New project" onClick={() => setNewModal(true)} className="grid size-6 place-items-center rounded-md hover:text-tx"><FolderPlus size={14} /></button>
         </div>
         {s.projects.map((f) => {
           const l = L.filter((c) => c.project === f.id && !c.pin)
@@ -547,9 +547,9 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
                     <ChevronRight size={14} className={cx('shrink-0 text-mu transition-transform', o && 'rotate-90')} />
                   </button>
                 )}
-                <span className="hidden shrink-0 max-md:flex md:group-hover:flex">
-                  <button title="Rename project" onClick={() => setFe(f.id)} className={act}><Pencil size={14} /></button>
-                  <button title="Delete project (its chats are kept)" onClick={() => setProjectId(f.id)} className={cx(act, 'hover:text-er')}><Trash2 size={14} /></button>
+                <span className="hidden shrink-0 max-md:flex md:group-hover:flex md:group-focus-within:flex">
+                  <button aria-label={`Rename ${f.name}`} title="Rename project" onClick={() => setFe(f.id)} className={act}><Pencil size={14} /></button>
+                  <button aria-label={`Delete ${f.name} project`} title="Delete project (its chats are kept)" onClick={() => setProjectId(f.id)} className={cx(act, 'hover:text-er')}><Trash2 size={14} /></button>
                 </span>
               </div>
               {o && <div className="ml-3"><div className="side-rows">{rows(l, f.id)}{!l.length && !dragId && <p className="px-2.5 py-1 text-xs text-mu">Drop chats here.</p>}</div></div>}

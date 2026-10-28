@@ -42,6 +42,30 @@ test('blob memory fallback stores and retrieves', async () => {
   assert.equal(await blobGet('test-id'), 'hello-blob')
 })
 
+test('an aborted IndexedDB write rejects and does not become a successful memory copy', async () => {
+  const original = globalThis.indexedDB
+  const durable = await import('./durable.ts')
+  globalThis.indexedDB = {
+    open() {
+      const request = {}
+      queueMicrotask(() => {
+        request.result = {
+          close() {},
+          transaction() {
+            const tx = { error: Error('quota exceeded'), objectStore() { return { put() { queueMicrotask(() => tx.onabort()) } } } }
+            return tx
+          },
+        }
+        request.onsuccess()
+      })
+      return request
+    },
+  }
+  try {
+    await assert.rejects(durable.durablePutChats([{ id: 'not-saved' }]), /quota exceeded/)
+  } finally { globalThis.indexedDB = original }
+})
+
 test('sync tokens generate/parse and reject junk', () => {
   const t = sync.generateSyncToken()
   assert.match(t, /^byok1-/)

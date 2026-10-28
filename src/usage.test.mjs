@@ -47,9 +47,10 @@ test('usageRange maps periods to windows', () => {
   const now = 10 * 86400000
   assert.deepEqual(usageRange({ period: 'day', now }), { start: now - 86400000, end: Infinity })
   assert.deepEqual(usageRange({ period: 'week', now }), { start: now - 7 * 86400000, end: Infinity })
+  assert.deepEqual(usageRange({ period: 'month', now }), { start: now - 30 * 86400000, end: Infinity })
   assert.deepEqual(usageRange({ period: 'all', now }), { start: 0, end: Infinity })
   assert.deepEqual(usageRange({ period: 'session', now }), { start: SESSION_START, end: Infinity })
-  assert.deepEqual(usageRange({ period: 'custom', from: '1970-01-02', to: '1970-01-03', now }), { start: 86400000, end: 3 * 86400000 })
+  assert.deepEqual(usageRange({ period: 'custom', from: '1970-01-02', to: '1970-01-03', now }), { start: new Date(1970, 0, 2).getTime(), end: new Date(1970, 0, 4).getTime() })
   assert.deepEqual(usageRange({ period: 'custom', from: '', to: '', now }), { start: 0, end: Infinity })
 })
 

@@ -14,6 +14,8 @@ import { Widgets } from './components/Widgets'
 import { Welcome } from './components/Welcome'
 import { ShareView } from './components/ShareView'
 import { shareIdFromHash, shareHash, updateShare } from './share'
+import { getStorageWarning, subscribeStorageWarning } from './persistence'
+import { Btn } from './components/ui'
 
 export default function App() {
   const { themeMode, themeDark, themeLight, customDarkColors, customLightColors, rail, widgets, prefs, setupDone, features } = useS(useShallow((s) => ({
@@ -21,6 +23,8 @@ export default function App() {
     customDarkColors: s.customDarkColors, customLightColors: s.customLightColors,
     rail: s.rail, widgets: s.widgets, prefs: s.prefs, setupDone: s.setupDone, features: s.features,
   })))
+  const [storageWarning, setStorageWarning] = useState(getStorageWarning)
+  useEffect(() => subscribeStorageWarning(() => setStorageWarning(getStorageWarning())), [])
   const [side, setSide] = useState(() => (typeof window !== 'undefined' ? window.innerWidth : 1024) >= 768)
   const [cfg, setCfg] = useState('')
   const [pal, setPal] = useState(false)
@@ -75,21 +79,17 @@ export default function App() {
     window.addEventListener('pagehide', leave)
     return () => { clearInterval(timer); window.removeEventListener('pagehide', leave) }
   }, [])
-  // Where to open on load. Applied on mount and again once durable storage has
-  // hydrated (which can replace the chat list moments later); both passes are
-  // idempotent, so a wiped empty chat is simply recreated.
+  // Durable hydration completes before mounting. Restore this device's last
+  // selected chat for the default mode; explicit startup modes still apply.
   useEffect(() => {
     if (!canUseDOM()) return
-    const apply = () => {
-      const st = useS.getState()
-      const mode = st.prefs.startup ?? 'recent'
-      if (mode === 'new' || mode === 'temporary') { st.newChat(mode === 'temporary'); return }
-      const pick = mode === 'permanent' ? st.chats.find((c) => !c.temporary) : st.chats[0]
-      if (pick && st.chat !== pick.id) st.patch({ chat: pick.id })
-    }
-    apply()
-    window.addEventListener('byok:ready', apply)
-    return () => window.removeEventListener('byok:ready', apply)
+    const st = useS.getState()
+    const mode = st.prefs.startup ?? 'recent'
+    if (mode === 'new' || mode === 'temporary') { st.newChat(mode === 'temporary'); return }
+    const current = st.chats.find(c => c.id === st.chat)
+    if (mode === 'recent' && (current || st.chat === '')) return
+    const pick = mode === 'permanent' ? st.chats.find(c => !c.temporary && !c.archived) : st.chats.find(c => !c.archived)
+    if (st.chat !== (pick?.id ?? '')) st.patch({ chat: pick?.id ?? '' })
   }, [])
   // Auto-updating shares: when a chat with `auto` set changes, refresh its
   // snapshot (debounced). Best-effort; a failure keeps the old hash so the next
@@ -174,6 +174,11 @@ export default function App() {
   if (shareId) return <ShareView id={shareId} />
   return (
     <div className="flex h-dvh overflow-hidden">
+      {storageWarning && <div role="alert" className="fixed inset-x-3 top-3 z-50 flex flex-wrap items-center gap-2 rounded-xl border border-er bg-bg p-3 text-sm shadow-lg">
+        <span className="min-w-0 flex-1">{storageWarning}</span>
+        <Btn v="soft" onClick={() => setCfg('data#export')}>Export data</Btn>
+        <Btn sm onClick={() => setStorageWarning('')}>Dismiss</Btn>
+      </div>}
       {side && <div className="fixed inset-0 z-10 bg-black/50 md:hidden" onClick={() => setSide(false)} />}
       <Sidebar open={side} toggle={() => setSide((v) => !v)} cfg={setCfg} width={clampSidebarWidth(prefs.sidebarWidth)} />
       {side && <div role="separator" aria-orientation="vertical" aria-label="Resize sidebar" onPointerDown={resize('sidebarWidth')} className="hidden w-1 shrink-0 cursor-col-resize bg-transparent hover:bg-ac/50 md:block" />}
@@ -187,7 +192,7 @@ export default function App() {
       )}
       {pal && <Palette close={() => setPal(false)} cfg={setCfg} toggleSide={() => setSide((v) => !v)} />}
       {cfg && <Settings tab={cfg} setTab={setCfg} />}
-      {!setupDone && <Welcome addEndpoint={() => setCfg('eps')} close={() => {}} />}
+      {!setupDone && <Welcome addEndpoint={() => { const s = useS.getState(); if (!s.eps.length) s.add('eps'); setCfg('eps') }} close={() => {}} />}
     </div>
   )
 }

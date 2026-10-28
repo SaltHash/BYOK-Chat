@@ -1,6 +1,7 @@
 import { useMemo } from 'react'
 import { useShallow } from 'zustand/react/shallow'
-import { useS } from '../store'
+import { TrendingUp } from 'lucide-react'
+import { useS, featOn } from '../store'
 import { chatAttemptLogs, deriveUsage, lastReplyBy } from '../usage'
 import { Pop, cx } from './ui'
 
@@ -28,8 +29,9 @@ const Row = ({ k, v }: { k: string; v: string }) => (
  * Subscriptions are deliberately narrow: everything here is derived from
  * attempt logs, and a streamed chunk keeps its message's `log` reference, so
  * the meter does not recompute once per token. */
-export function ContextMeter() {
+export function ContextMeter({ cfg }: { cfg: (t: string) => void }) {
   const show = useS((s) => s.prefs.showContextMeter !== false)
+  const statsOn = useS((s) => featOn(s, 'stats'))
   const logs = useS(useShallow((s) => chatAttemptLogs(s.chats, s.chat)))
   const lastBy = useS((s) => lastReplyBy(s.chats, s.chat))
   const eps = useS((s) => s.eps)
@@ -81,7 +83,7 @@ export function ContextMeter() {
           </button>
         )}
       >
-        {() => (
+        {(close) => (
           <div className="space-y-2 p-2">
             <div className="px-2 pt-1 text-sm font-medium">Context usage</div>
             {hasReply ? (
@@ -105,6 +107,18 @@ export function ContextMeter() {
               <Row k="Cost" v={costLabel} />
               {over && <p className="px-2 text-xs text-er">Over budget: oldest messages are trimmed from requests until it fits.</p>}
             </div>
+            {statsOn && (
+              <div className="border-t border-bor pt-2">
+                <button
+                  type="button"
+                  onClick={() => { close(); cfg('stats') }}
+                  className="flex min-h-10 w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm hover:bg-hov focus-visible:outline-2 focus-visible:outline-ac"
+                >
+                  <TrendingUp size={15} className="shrink-0 text-ac" />
+                  <span className="min-w-0 flex-1">Open usage statistics</span>
+                </button>
+              </div>
+            )}
           </div>
         )}
       </Pop>

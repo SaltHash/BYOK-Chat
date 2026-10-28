@@ -5,7 +5,7 @@ const { BUILTIN_SKILLS, DEFAULT_SKILL_STATE, normSkills, resolveSkill, enabledSk
 
 test('built-in skills cover the required domains with descriptions and instructions', () => {
   const ids = BUILTIN_SKILLS.map((s) => s.id)
-  for (const id of ['frontend-design', 'software-engineering', 'debugging', 'testing']) {
+  for (const id of ['frontend-design', 'software-engineering', 'debugging', 'testing', 'writing', 'prompt-writing']) {
     assert.ok(ids.includes(id), `missing built-in skill: ${id}`)
   }
   for (const skill of BUILTIN_SKILLS) {
@@ -27,6 +27,19 @@ test('frontend-design skill preserves the official Anthropic instructions', () =
   assert.match(skill.instructions, /Let each written element do exactly one job\./)
   assert.equal(skill.source, 'https://github.com/anthropics/skills/tree/main/skills/frontend-design')
   assert.match(skill.license || '', /Apache-2\.0/)
+})
+
+test('prompt-writing skill covers conventions and the writing skill is scoped to creative prose', () => {
+  const promptSkill = BUILTIN_SKILLS.find((s) => s.id === 'prompt-writing')
+  assert.equal(promptSkill.name, 'Prompt writing')
+  assert.match(promptSkill.description, /prompt/i)
+  assert.match(promptSkill.instructions, /^# Prompt writing\n/)
+  assert.match(promptSkill.instructions, /## Definition of done/)
+  assert.match(promptSkill.instructions, /placeholders/)
+  const writing = BUILTIN_SKILLS.find((s) => s.id === 'writing')
+  assert.equal(writing.name, 'Creative writing')
+  assert.match(writing.description, /creative/i)
+  assert.doesNotMatch(writing.description, /README|summaries/)
 })
 
 test('model decides: catalog lists skills, instructions load by id', () => {

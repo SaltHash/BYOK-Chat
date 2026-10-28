@@ -664,6 +664,26 @@ export function Chat({ side, toggle, cfg, pal }: { side: boolean; toggle: () => 
     })
     return () => cancelAnimationFrame(id)
   }, [s.chat, newChatPending])
+
+  // Also focus when switching to an existing chat (clicking a chat in the
+  // sidebar or project overview). This runs on every chat change except the
+  // initial empty string. We allow focus if the active element is the body
+  // (initial load) or a button (sidebar/chat list click), but not if the user
+  // is typing in an input/textarea or a modal is open.
+  const prevChat = useRef<string>(s.chat)
+  useEffect(() => {
+    if (s.chat === '' || s.chat === prevChat.current) return
+    const id = requestAnimationFrame(() => {
+      const ae = document.activeElement
+      const isModalOpen = document.querySelector('[role="dialog"]')
+      const isInputFocused = ae instanceof HTMLInputElement || ae instanceof HTMLTextAreaElement || (ae instanceof HTMLElement && ae.isContentEditable)
+      const isButtonFocused = ae instanceof HTMLButtonElement
+      if (isModalOpen || (isInputFocused && !isButtonFocused)) return
+      ;(document.getElementById('composer') as HTMLElement | null)?.focus({ preventScroll: true })
+    })
+    prevChat.current = s.chat
+    return () => cancelAnimationFrame(id)
+  }, [s.chat])
   const tiles = featOn(s, 'commands') ? s.cmds.filter((k) => k.on).slice(0, 4) : []
   const box = useRef<HTMLDivElement>(null), stick = useRef(true)
   /* Session-only scroll memory per chat, so switching back and forth keeps the

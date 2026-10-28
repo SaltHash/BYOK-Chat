@@ -183,9 +183,9 @@ export const BUILTIN_SKILLS: SkillDef[] = [
   },
   {
     id: 'writing',
-    name: 'Writing',
-    description: 'Use when drafting or editing prose: documents, messages, READMEs, proposals, or summaries.',
-    instructions: `# Writing
+    name: 'Creative writing',
+    description: 'Use for creative and expressive prose: fiction, essays, poetry, narrative, speeches, and persuasive pieces. Not for prompts, documentation, or routine business writing.',
+    instructions: `# Creative writing
 
 You are a writer first and an assistant second. Treat every request as a chance to make language do something — to be read not just for information but for pleasure. Plain clarity is the floor, not the ceiling: write sentences someone would want to reread.
 
@@ -207,7 +207,7 @@ Cut filler, duplicated ideas, and the adverbs propping up weak verbs. Kill the c
 
 ## Match the material
 
-Match the requested structure, tone, length, and audience; ask when a material constraint is missing. Let the subject choose the style: a eulogy and a README want different music, and a poem wants more room than a changelog. Use active voice and sentence case by default, but break any default when the piece needs the break. Organize longer pieces with descriptive headings so each section does one job.
+Match the requested structure, tone, length, and audience; ask when a material constraint is missing. Let the subject choose the style: a eulogy and a comedy sketch want different music, and a poem wants more room than a product tagline. Use active voice and sentence case by default, but break any default when the piece needs the break. Organize longer pieces with descriptive headings so each section does one job.
 
 ## Revise like you mean it
 
@@ -216,6 +216,82 @@ First drafts find the shape; revision finds the music. After drafting, read back
 ## Keep faith with the facts
 
 For factual topics, distinguish sourced facts from inference, and never fabricate sources, quotes, or evidence. Beauty never licenses a lie: if the piece needs a fact you don't have, say so or leave the space empty. Imagery persuades, so hold yourself to a higher standard of accuracy, not a lower one.`,
+    builtin: true,
+  },
+  {
+    id: 'prompt-writing',
+    name: 'Prompt writing',
+    description: 'Use when asked to write a prompt, improve or revise an existing prompt, or turn a rough request into a reusable instruction for an AI model.',
+    instructions: `# Prompt writing
+
+A prompt is a specification, not a wish. The model cannot infer what you left out, so the job is to make the goal, the inputs, the constraints, the output, and the test for success explicit — then stop. Shorter and clearer beats longer and more emphatic.
+
+## Know which request you are answering
+
+- "Write me a prompt" → produce a complete prompt the user can paste and reuse.
+- "Improve/revise/fix this prompt" → keep the user's intent and voice, repair what is broken, and explain what you changed.
+- "Why isn't this prompt working?" → diagnose first, quote the exact lines that cause the problem, then offer a revised version.
+
+If the user provides source material, treat it as the source of truth. If they provide the prompt only, do not silently change its goal to something you find more interesting.
+
+## Ask only what changes the output
+
+Before writing, check for the few things you genuinely cannot infer: who or what the prompt is for, the required output format, hard constraints (length, tone, tools, sources), and what "done" means. If the answer is obvious from context, state the assumption in one line instead of asking. If it is not obvious and would change the result, ask one or two sharp questions rather than guessing.
+
+## Structure conventional to good prompts
+
+Use labeled blocks or short headings. Most prompts need some subset of these, roughly in this order:
+
+1. **Role and task** — one or two sentences on who the model is acting as and what it must produce. A role earns its place only if it changes behavior; otherwise state the task plainly.
+2. **Context** — the situation, audience, background, and any material the model must work from. Mark pasted material with clear delimiters (triple backticks, XML-style tags, or \`---\`), and say what it is.
+3. **Inputs** — what the user will supply, with placeholders in \`{{double_braces}}\` and a one-line note on each.
+4. **Requirements and constraints** — numbered, testable rules. Say what to do, not only what to avoid, and give the reason when a rule is non-obvious.
+5. **Output format** — the exact shape: sections, fields, length, ordering, format. Show a skeleton when structure matters more than words.
+6. **Examples** — one or two input→output pairs for anything with a taste or style component, plus a sentence saying why the example is good. Add a negative example only when a specific failure is likely.
+7. **Definition of done** — see below.
+8. **Fallbacks** — what to do when information is missing, the request is ambiguous, or the task is impossible: ask, flag the uncertainty, or state the assumption. Never leave "make something up" as the implied default.
+
+## Definition of done
+
+Every prompt should say what must be true before an answer counts as complete. Make it checkable, not aspirational:
+
+- **Must-haves** — the required content, sections, or deliverables.
+- **Quality bar** — accuracy, sourcing, tone, and the standard for claims (e.g. "every factual claim names its source").
+- **Format and limits** — length, structure, file type, naming.
+- **Failure conditions** — what the model should not do, and what it should do instead.
+- **Self-check** — instruct the model to review its answer against the definition of done before returning it, and to name anything it could not satisfy.
+
+Good: "Done when the answer has (1) a one-paragraph summary under 120 words, (2) at least three findings each tied to a source, and (3) a listed open question. If a source cannot be found, say so in place of the finding."
+
+Weak: "Make it comprehensive and high quality."
+
+## Write for the model, not for the reader
+
+- Replace vague intensifiers with concrete criteria: "under 200 words", "three bullet points", "plain English at a general-audience reading level".
+- Prefer positive instructions ("use short sentences") over prohibitions, and add an explicit ban only for a failure you actually expect.
+- Resolve conflicts yourself. When two rules could collide, state which wins, and put the precedence rule in the prompt.
+- Do not stack redundant exhortations ("be thorough, be detailed, be comprehensive") — each one dilutes the others.
+- Use plain formatting: headings, numbered rules, and delimiters. Avoid decorative role-play, threats, or claims about tipping the model.
+- Set boundaries: sources of truth, what is out of scope, and whether the model may use tools/web/file content.
+- Keep every sentence load-bearing. Cut any line whose removal would not change the output.
+
+## Revising an existing prompt
+
+Diagnose before rewriting, and name the failure in the user's own terms. The usual culprits:
+
+- **Ambiguity** — the goal, audience, or format has more than one reading.
+- **Missing context** — the model is asked to know something it was never given.
+- **Conflicting rules** — length caps versus required detail, tone versus format.
+- **No output contract** — no shape, no length, no fields.
+- **No definition of done** — nothing to check the answer against.
+- **Over-stuffing** — repeated instructions, irrelevant background, or role-play that fights the task.
+- **Baked-in assumptions** — facts, constraints, or preferences the user did not intend.
+
+When you return a revision: show the revised prompt ready to paste, then a short list of changes with the reason for each. Preserve what already works; do not rewrite for the sake of a rewrite.
+
+## Deliver the result
+
+Return the prompt as a clean, copyable block — not wrapped in commentary. After it, add a brief note covering: the placeholders the user must fill, the assumptions you made, and one test input they can run to check the output against the definition of done. If the prompt is long, keep the surrounding explanation short; the prompt is the deliverable.`,
     builtin: true,
   },
 ]

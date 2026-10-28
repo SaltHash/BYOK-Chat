@@ -13,7 +13,7 @@ const V = {
 
 export function Btn({ icon: I, v = 'ghost', sm, children, className, ...p }: { icon?: Ic; v?: keyof typeof V; sm?: boolean } & ButtonHTMLAttributes<HTMLButtonElement>) {
   return (
-    <button {...p} className={cx('inline-flex shrink-0 items-center justify-center gap-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-40', children ? 'h-9 px-3' : sm ? 'size-7' : 'size-9', V[v], className)}>
+    <button {...p} aria-label={p['aria-label'] ?? (!children ? p.title : undefined)} className={cx('inline-flex shrink-0 items-center justify-center gap-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-40', children ? 'h-9 px-3' : sm ? 'size-7' : 'size-9', V[v], className)}>
       {I && <I size={sm ? 14 : 16} />}
       {children}
     </button>
@@ -133,15 +133,17 @@ export const Sel = ({ value, set, opts, placeholder }: { value: string; set: (v:
 
 export function SearchSelect({ value, set, opts, ariaLabel = 'Choose an option', placeholder = 'Type to search' }: { value: string; set: (v: string) => void; opts: [string, string][]; ariaLabel?: string; placeholder?: string }) {
   const [open, setOpen] = useState(false), [query, setQuery] = useState(''), [active, setActive] = useState(0)
-  const root = useRef<HTMLDivElement>(null), search = useRef<HTMLInputElement>(null)
+  const root = useRef<HTMLDivElement>(null), search = useRef<HTMLInputElement>(null), trigger = useRef<HTMLButtonElement>(null)
+  const dismiss = () => { setOpen(false); setQuery('') }
+  useEscapeClose(() => { dismiss(); trigger.current?.focus() }, open)
   const filtered = opts.filter(([, label]) => label.toLowerCase().includes(query.toLowerCase()))
   useEffect(() => { if (!open) return; const close = (e: PointerEvent) => { if (!root.current?.contains(e.target as Node)) { setOpen(false); setQuery('') } }; addEventListener('pointerdown', close); return () => removeEventListener('pointerdown', close) }, [open])
   useEffect(() => { if (open) search.current?.focus() }, [open])
-  const choose = (item: [string, string]) => { set(item[0]); setOpen(false); setQuery('') }
+  const choose = (item: [string, string]) => { set(item[0]); setOpen(false); setQuery(''); trigger.current?.focus() }
   return <div ref={root} className="relative">
-    <button type="button" aria-label={ariaLabel} aria-haspopup="listbox" aria-expanded={open} onClick={() => setOpen(!open)} onKeyDown={(e) => { if (e.key === 'ArrowDown' || e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setOpen(true) } }} className={cx(IN, 'flex items-center justify-between text-left')}><span className="truncate">{opts.find(([k]) => k === value)?.[1] ?? value}</span><ChevronRight size={14} aria-hidden="true" className={cx('ml-2 shrink-0 text-mu transition-transform', open && 'rotate-90')} /></button>
+    <button ref={trigger} type="button" aria-label={ariaLabel} aria-haspopup="listbox" aria-expanded={open} onClick={() => setOpen(!open)} onKeyDown={(e) => { if (e.key === 'ArrowDown' || e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setOpen(true) } }} className={cx(IN, 'flex items-center justify-between text-left')}><span className="truncate">{opts.find(([k]) => k === value)?.[1] ?? value}</span><ChevronRight size={14} aria-hidden="true" className={cx('ml-2 shrink-0 text-mu transition-transform', open && 'rotate-90')} /></button>
     {open && <div className="absolute z-40 mt-1 w-full"><Menu className="settings-dropdown">
-      <input ref={search} value={query} onChange={(e) => { setQuery(e.target.value); setActive(0) }} onKeyDown={(e) => { if (e.key === 'ArrowDown') { e.preventDefault(); setActive((n) => Math.min(n + 1, filtered.length - 1)) } else if (e.key === 'ArrowUp') { e.preventDefault(); setActive((n) => Math.max(n - 1, 0)) } else if (e.key === 'Enter' && filtered[active]) { e.preventDefault(); choose(filtered[active]) } else if (e.key === 'Escape') { setOpen(false); setQuery('') } }} placeholder={placeholder} aria-label="Search options" className="mb-1 w-full rounded-lg bg-surf px-2.5 py-2 text-sm outline-none focus:ring-2 focus:ring-ac/40" />
+      <input ref={search} value={query} onChange={(e) => { setQuery(e.target.value); setActive(0) }} onKeyDown={(e) => { if (e.key === 'ArrowDown') { e.preventDefault(); setActive((n) => Math.min(n + 1, filtered.length - 1)) } else if (e.key === 'ArrowUp') { e.preventDefault(); setActive((n) => Math.max(n - 1, 0)) } else if (e.key === 'Enter' && filtered[active]) { e.preventDefault(); choose(filtered[active]) } else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); dismiss(); trigger.current?.focus() } }} placeholder={placeholder} aria-label="Search options" className="mb-1 w-full rounded-lg bg-surf px-2.5 py-2 text-sm outline-none focus:ring-2 focus:ring-ac/40" />
       <div role="listbox" aria-label={ariaLabel} className="dd-list max-h-56 overflow-y-auto overscroll-contain">{filtered.map((item, i) => <button type="button" role="option" aria-selected={item[0] === value} key={item[0]} onMouseEnter={() => setActive(i)} onClick={() => choose(item)} className={cx('block w-full rounded-lg px-2.5 py-2 text-left text-sm', active === i ? 'bg-hov text-tx' : 'text-mu')}>{item[1]}</button>)}{!filtered.length && <div className="px-2.5 py-2 text-sm text-mu">No matches</div>}</div>
     </Menu></div>}
   </div>
@@ -172,8 +174,9 @@ export function RangeSlider({ value, set, min, max, step = 1, label, valueText, 
 
 export function Pop({ trigger, children, up, right, w = 'w-72', scroll = true, onOpenChange }: { trigger: (o: boolean) => ReactNode; children: (close: () => void) => ReactNode; up?: boolean; right?: boolean; w?: string; scroll?: boolean; onOpenChange?: (o: boolean) => void }) {
   const [o, setO] = useState(false)
-  const r = useRef<HTMLDivElement>(null)
+  const r = useRef<HTMLDivElement>(null), triggerRef = useRef<HTMLDivElement>(null)
   const flip = (v: boolean) => { setO(v); onOpenChange?.(v) }
+  useEscapeClose(() => { flip(false); triggerRef.current?.querySelector<HTMLElement>('button')?.focus() }, o)
   useEffect(() => {
     if (!o) return
     const f = (e: MouseEvent) => { if (!r.current?.contains(e.target as Node)) flip(false) }
@@ -182,34 +185,28 @@ export function Pop({ trigger, children, up, right, w = 'w-72', scroll = true, o
   }, [o])
   return (
     <div ref={r} className="relative">
-      <div onClick={() => flip(!o)}>{trigger(o)}</div>
-      {o && <div className={cx('absolute z-30 max-w-[calc(100vw-1rem)]', scroll && 'max-h-96 overflow-y-auto', !scroll && 'overflow-hidden', w, up ? 'bottom-full mb-2' : 'top-full mt-2', right ? 'right-0' : 'left-0')}><Menu>{children(() => flip(false))}</Menu></div>}
+      <div ref={triggerRef} onClick={() => flip(!o)} onKeyDown={(e) => { if (e.key === 'ArrowDown' && !o) { e.preventDefault(); flip(true) } }}>{trigger(o)}</div>
+      {o && <div onKeyDown={(e) => { if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return; const target = e.target as HTMLElement; if (target.closest('input,textarea,select,[role="slider"],[contenteditable="true"]')) return; const items = Array.from(e.currentTarget.querySelectorAll<HTMLButtonElement>('button:not([disabled])')).filter(item => item.getClientRects().length > 0); if (!items.length) return; e.preventDefault(); const index = items.indexOf(document.activeElement as HTMLButtonElement); const next = index < 0 ? (e.key === 'ArrowDown' ? 0 : items.length - 1) : (index + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length; items[next].focus() }} className={cx('absolute z-30 max-w-[calc(100vw-1rem)]', scroll && 'max-h-96 overflow-y-auto', !scroll && 'overflow-hidden', w, up ? 'bottom-full mb-2' : 'top-full mt-2', right ? 'right-0' : 'left-0')}><Menu>{children(() => flip(false))}</Menu></div>}
     </div>
   )
 }
 
-export const Item = ({ icon: I, children, sub, on, off, star, ...p }: { icon?: Ic; sub?: string; on?: boolean; off?: boolean; star?: { on: boolean; set: (on: boolean) => void } } & ButtonHTMLAttributes<HTMLButtonElement>) => (
-  <button {...p} className={cx('group flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm hover:bg-surf', off && 'opacity-50')}>
-    {I && <I size={16} className="shrink-0 text-mu" />}
-    <span className="min-w-0 flex-1 truncate">{children}</span>
-    {sub && <span className="max-w-32 truncate text-xs text-mu">{sub}</span>}
-    {star && <span
-      role="button"
-      tabIndex={-1}
-      aria-label={star.on ? 'Remove from favorites' : 'Add to favorites'}
-      aria-pressed={star.on}
-      title={star.on ? 'Remove from favorites' : 'Add to favorites'}
-      onClick={(e) => { e.preventDefault(); e.stopPropagation(); star.set(!star.on) }}
-      className={cx('grid size-7 shrink-0 place-items-center rounded-md hover:bg-hov hover:text-tx', star.on ? 'text-ac' : 'text-mu opacity-0 group-hover:opacity-100')}
-    ><Star size={15} fill={star.on ? 'currentColor' : 'none'} /></span>}
-    {on && <Check size={16} className="shrink-0 text-ac" />}
-  </button>
+export const Item = ({ icon: I, children, sub, on, off, star, className, ...p }: { icon?: Ic; sub?: string; on?: boolean; off?: boolean; star?: { on: boolean; set: (on: boolean) => void } } & ButtonHTMLAttributes<HTMLButtonElement>) => (
+  <div className={cx('group flex items-center rounded-lg hover:bg-surf', off && 'opacity-50', className)}>
+    <button {...p} className="flex min-w-0 flex-1 items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm">
+      {I && <I size={16} className="shrink-0 text-mu" />}
+      <span className="min-w-0 flex-1 truncate">{children}</span>
+      {sub && <span className="max-w-32 truncate text-xs text-mu">{sub}</span>}
+      {on && <Check size={16} className="shrink-0 text-ac" />}
+    </button>
+    {star && <button type="button" aria-label={star.on ? 'Remove from favorites' : 'Add to favorites'} aria-pressed={star.on} title={star.on ? 'Remove from favorites' : 'Add to favorites'} onClick={() => star.set(!star.on)} className={cx('mr-1 grid size-9 shrink-0 place-items-center rounded-md hover:bg-hov hover:text-tx', star.on ? 'text-ac' : 'text-mu')}><Star size={15} fill={star.on ? 'currentColor' : 'none'} /></button>}
+  </div>
 )
 
 /* Focusable elements eligible for the modal tab cycle. */
 const FOCUSABLE = 'a[href],button:not([disabled]),textarea:not([disabled]),input:not([disabled]),select:not([disabled]),[tabindex]:not([tabindex="-1"])'
 
-export function Modal({ children, close, blur = true, opacity = 55, keyboard = true }: { children: ReactNode; close: () => void; blur?: boolean; opacity?: number; keyboard?: boolean }) {
+export function Modal({ children, close, blur = true, opacity = 55, keyboard = true, labelledBy }: { children: ReactNode; close: () => void; blur?: boolean; opacity?: number; keyboard?: boolean; labelledBy?: string }) {
   useEscapeClose(close, keyboard)
   const root = useRef<HTMLDivElement>(null)
   /* Keyboard users must land inside the dialog, Tab must cycle within it, and
@@ -227,20 +224,21 @@ export function Modal({ children, close, blur = true, opacity = 55, keyboard = t
     e.stopPropagation()
     const node = root.current
     if (!node) return
-    const items = node.querySelectorAll<HTMLElement>(FOCUSABLE)
+    const items = Array.from(node.querySelectorAll<HTMLElement>(FOCUSABLE)).filter(item => item.getClientRects().length > 0 && !item.closest('[inert], [aria-hidden="true"]'))
     if (!items.length) { e.preventDefault(); node.focus(); return }
     const first = items[0], last = items[items.length - 1]
     if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus() }
     else if (e.shiftKey && (document.activeElement === first || document.activeElement === node)) { e.preventDefault(); last.focus() }
   }
-  return <div ref={root} role="dialog" aria-modal="true" tabIndex={-1} onKeyDown={onKeyDown} style={{ backgroundColor: `rgb(0 0 0 / ${Math.max(0, Math.min(100, opacity))}%)`, backdropFilter: blur ? 'blur(var(--modal-blur, 12px))' : undefined }} className="fixed inset-0 z-50 grid place-items-center overflow-y-auto overscroll-contain p-4 outline-none" onMouseDown={(e) => e.target === e.currentTarget && close()}>{children}</div>
+  return <div ref={root} role="dialog" aria-modal="true" aria-labelledby={labelledBy} tabIndex={-1} onKeyDown={onKeyDown} style={{ backgroundColor: `rgb(0 0 0 / ${Math.max(0, Math.min(100, opacity))}%)`, backdropFilter: blur ? 'blur(var(--modal-blur, 12px))' : undefined }} className="fixed inset-0 z-50 grid place-items-center overflow-y-auto overscroll-contain p-4 outline-none" onMouseDown={(e) => e.target === e.currentTarget && close()}>{children}</div>
 }
 
 export function Confirm({ title, text, ok, close, run }: { title: string; text: string; ok: string; close: () => void; run: () => void }) {
+  const titleId = useRef(`confirm-title-${++helpTipId}`)
   return (
-    <Modal close={close}>
+    <Modal close={close} labelledBy={titleId.current}>
       <div className="modal-panel w-full max-w-sm space-y-4 rounded-2xl bg-bg p-5">
-        <div className="flex items-center gap-2 font-semibold"><TriangleAlert size={18} className="text-er" />{title}</div>
+        <div id={titleId.current} className="flex items-center gap-2 font-semibold"><TriangleAlert size={18} className="text-er" />{title}</div>
         <p className="text-sm text-mu">{text}</p>
         <div className="flex justify-end gap-2">
           <Btn v="soft" onClick={close}>Cancel</Btn>

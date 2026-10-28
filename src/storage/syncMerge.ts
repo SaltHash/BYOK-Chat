@@ -195,6 +195,35 @@ const ID_COLLECTIONS = ['eps', 'pls', 'prompts', 'cmds', 'skills', 'todos', 'mem
 /** Flat record maps whose keys should union so neither device loses an entry. */
 const MAP_FIELDS = ['keys', 'widgets', 'features', 'libraryShow', 'effort', 'routeStats'] as const
 
+/** Merge the search settings.
+ *
+ * Credentials are blanked in everything that travels to the slot, so a copy
+ * that arrives without keys means "not sent", never "cleared": this device's
+ * keys and reader key stay. For the same reason such a copy says nothing about
+ * which provider those keys belong to — letting its default provider win would
+ * leave web search pointing at a provider whose key is blank here, which looks
+ * exactly like the key having been erased. So the local provider/reader choice
+ * is kept whenever the incoming copy carries no credentials of its own. */
+export function mergeSearch(local: unknown, remote: unknown): Obj {
+  const l = asObj(local)
+  const r = asObj(remote)
+  const search: Obj = { ...l, ...r }
+  let incomingCreds = false
+  const keys = { ...asObj(l.keys) }
+  for (const [id, value] of Object.entries(asObj(r.keys))) {
+    if (typeof value === 'string' && value) { keys[id] = value; incomingCreds = true }
+  }
+  search.keys = keys
+  const readerKey = String(r.readerKey ?? '') || String(l.readerKey ?? '')
+  if (readerKey) search.readerKey = readerKey
+  else delete search.readerKey
+  if (String(r.readerKey ?? '')) incomingCreds = true
+  if (!incomingCreds) {
+    for (const k of ['provider', 'readerProvider']) if (k in l) search[k] = l[k]
+  }
+  return search
+}
+
 export function mergeSettings(local: Obj, remote: Obj, projects: Obj[]): Obj {
   const out: Obj = { ...local, ...remote }
   // Recurse one level into plain objects both sides own (prefs, params,
@@ -204,19 +233,9 @@ export function mergeSettings(local: Obj, remote: Obj, projects: Obj[]): Obj {
     if (isObj(local[k]) && isObj(remote[k])) out[k] = { ...local[k], ...remote[k] }
   }
   // Search credentials are blanked in the remote shape, so a remote `{}` must
-  // not wipe this device's keys. Merge the maps and keep a local key when the
-  // incoming copy is blank (a blank here means "not sent", not "cleared").
-  if (isObj(local.search) || isObj(remote.search)) {
-    const l = asObj(local.search)
-    const r = asObj(remote.search)
-    const keys = { ...asObj(l.keys) }
-    for (const [id, value] of Object.entries(asObj(r.keys))) if (value) keys[id] = value
-    const search: Obj = { ...l, ...r, keys }
-    const readerKey = String(r.readerKey ?? '') || String(l.readerKey ?? '')
-    if (readerKey) search.readerKey = readerKey
-    else delete search.readerKey
-    out.search = search
-  }
+  // not wipe this device's keys (or switch it onto a provider whose key it
+  // does not have). See mergeSearch.
+  if (isObj(local.search) || isObj(remote.search)) out.search = mergeSearch(local.search, remote.search)
   const dedupeByText = (list: unknown[]): unknown[] => {
     const seen = new Set<string>()
     const kept: unknown[] = []
@@ -264,6 +283,28 @@ export function mergeSelectedRevision(local: unknown, remote: unknown, workspace
   return out
 }
 
+/* ---- open-chat pointer ---- */
+
+/** Settle the open-chat pointer of a merged save.
+ *
+ * The pointer is device-local (it is listed in SYNC_LIVE_ONLY), so a remote
+ * snapshot must never move the view onto the chat another device had open.
+ * `local` is this device's pointer: an empty string is a position (a new chat
+ * is being started) and is kept, whilst a pointer whose chat disappeared in the
+ * merge is repaired to the first surviving chat. When the caller has no local
+ * pointer at all, the key is dropped so applying the snapshot leaves the live
+ * pointer untouched. */
+export function resolveChatPointer(local: unknown, settings: Obj, chats: unknown[]): Obj {
+  const out = { ...settings }
+  if (typeof local !== 'string') { delete out.chat; return out }
+  let chat: string = local
+  if (chat && !chats.some((c) => isObj(c) && c.id === chat)) {
+    chat = isObj(chats[0]) && typeof (chats[0] as AnyChat).id === 'string' ? String((chats[0] as AnyChat).id) : ''
+  }
+  out.chat = chat
+  return out
+}
+
 /* ---- entry point ---- */
 
 /**
@@ -276,10 +317,14 @@ export function mergeSelectedRevision(local: unknown, remote: unknown, workspace
  */
 export function mergeSyncData(local: SyncData, remote: SyncData, mode: SyncMergeMode = 'merge'): SyncData {
   if (mode === 'remote') {
-    return { settings: { ...local.settings, ...remote.settings }, chats: remote.chats, workspaces: { ...asObj(remote.workspaces) }, selectedRevision: { ...asObj(remote.selectedRevision) } }
+    const settings: Obj = { ...local.settings, ...remote.settings }
+    // Adopting the other device's settings still must not erase credentials
+    // that only exist on this device (the remote copy never carries them).
+    if (isObj(local.settings.search) || isObj(remote.settings.search)) settings.search = mergeSearch(local.settings.search, remote.settings.search)
+    return { settings: resolveChatPointer(local.settings.chat, settings, remote.chats), chats: remote.chats, workspaces: { ...asObj(remote.workspaces) }, selectedRevision: { ...asObj(remote.selectedRevision) } }
   }
   if (mode === 'local') {
-    return { settings: { ...remote.settings, ...local.settings }, chats: local.chats, workspaces: { ...asObj(local.workspaces) }, selectedRevision: { ...asObj(local.selectedRevision) } }
+    return { settings: resolveChatPointer(local.settings.chat, { ...remote.settings, ...local.settings }, local.chats), chats: local.chats, workspaces: { ...asObj(local.workspaces) }, selectedRevision: { ...asObj(local.selectedRevision) } }
   }
   // Projects were renamed from folders; accept either key from a remote or
   // local snapshot and always emit the new one (plus the legacy alias).
@@ -290,17 +335,6 @@ export function mergeSyncData(local: SyncData, remote: SyncData, mode: SyncMerge
   const chats = mergeChats(remapChatProjects(local.chats, remap), remapChatProjects(remote.chats, remap))
   const workspaces = mergeWorkspaces(local.workspaces, remote.workspaces)
   const settings = mergeSettings(local.settings, remote.settings, projects)
-  // Keep the "open chat" pointer valid after chats and projects are merged.
-  // Prefer the local open chat when it survived the merge: the app may have
-  // opened to it moments ago (startup, a brand-new chat) and a remote snapshot
-  // must not yank the view onto a different chat. Fall back to repair only when
-  // the local chat was dropped in the merge (deleted, or collapsed into a twin).
-  const localChatId = typeof local.settings.chat === 'string' ? local.settings.chat : ''
-  if (localChatId && (chats as AnyChat[]).some((c) => isObj(c) && c.id === localChatId)) {
-    settings.chat = localChatId as string
-  } else if (typeof settings.chat !== 'string' || !(chats as AnyChat[]).some((c) => isObj(c) && c.id === settings.chat)) {
-    settings.chat = (isObj(chats[0]) ? (chats[0] as AnyChat).id : '') as string
-  }
   const selectedRevision = mergeSelectedRevision(local.selectedRevision, remote.selectedRevision, workspaces)
-  return { settings, chats, workspaces, selectedRevision }
+  return { settings: resolveChatPointer(local.settings.chat, settings, chats), chats, workspaces, selectedRevision }
 }

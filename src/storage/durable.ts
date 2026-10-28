@@ -2,7 +2,9 @@
  * Settings stay in localStorage (zustand persist `byok.v1`). Large payloads
  * (chats, workspaces, attachment blobs) live here so localStorage quota can
  * never wipe history. All functions are safe to call in Node tests: they
- * no-op without DOM/IndexedDB/OPFS. */
+ * use an in-memory fallback in Node tests without browser storage. */
+
+import { reportStorageFailure } from '../persistence'
 
 export const DURABLE_DB = 'byok.durable.v1'
 export const DURABLE_CHATS_KEY = 'chats'
@@ -25,8 +27,11 @@ function hasIDB(): boolean {
 }
 
 function openDB(): Promise<IDBDatabase | null> {
-  if (!hasIDB()) return Promise.resolve(null)
-  return new Promise((resolve) => {
+  if (!hasIDB()) {
+    if (typeof window !== 'undefined') { reportStorageFailure(); return Promise.reject(Error('IndexedDB is unavailable.')) }
+    return Promise.resolve(null)
+  }
+  return new Promise((resolve, reject) => {
     try {
       const req = indexedDB.open(DURABLE_DB, 1)
       req.onupgradeneeded = () => {
@@ -34,8 +39,9 @@ function openDB(): Promise<IDBDatabase | null> {
         if (!db.objectStoreNames.contains('kv')) db.createObjectStore('kv')
       }
       req.onsuccess = () => resolve(req.result)
-      req.onerror = () => resolve(null)
-    } catch { resolve(null) }
+      req.onerror = () => { reportStorageFailure(); reject(req.error ?? Error('Could not open IndexedDB.')) }
+      req.onblocked = () => { reportStorageFailure(); reject(Error('IndexedDB is blocked by another tab.')) }
+    } catch (error) { reportStorageFailure(); reject(error) }
   })
 }
 
@@ -43,42 +49,45 @@ async function idbGet<T>(key: string): Promise<T | null> {
   if (mem.has(key)) return (mem.get(key) as T) ?? null
   const db = await openDB()
   if (!db) return null
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     try {
       const tx = db.transaction('kv', 'readonly')
       const rq = tx.objectStore('kv').get(key)
       rq.onsuccess = () => { db.close(); resolve((rq.result as T) ?? null) }
-      rq.onerror = () => { db.close(); resolve(null) }
-    } catch { try { db.close() } catch {} resolve(null) }
+      rq.onerror = () => { db.close(); reportStorageFailure(); reject(rq.error ?? Error('Could not read IndexedDB.')) }
+      tx.onabort = () => { db.close(); reportStorageFailure(); reject(tx.error ?? Error('IndexedDB read was interrupted.')) }
+    } catch (error) { try { db.close() } catch {} reject(error) }
   })
 }
 
 async function idbSet(key: string, value: unknown): Promise<void> {
-  mem.set(key, value)
   const db = await openDB()
-  if (!db) return
-  await new Promise<void>((resolve) => {
+  if (!db) { mem.set(key, value); return }
+  await new Promise<void>((resolve, reject) => {
     try {
       const tx = db.transaction('kv', 'readwrite')
       tx.objectStore('kv').put(value, key)
       tx.oncomplete = () => { db.close(); resolve() }
-      tx.onerror = () => { db.close(); resolve() }
-    } catch { try { db.close() } catch {} resolve() }
+      tx.onabort = () => { db.close(); reportStorageFailure(); reject(tx.error ?? Error('IndexedDB write was interrupted.')) }
+      tx.onerror = () => { /* abort reports the transaction failure */ }
+    } catch (error) { try { db.close() } catch {} reportStorageFailure(); reject(error) }
   })
+  mem.set(key, value)
 }
 
 async function idbDel(key: string): Promise<void> {
-  mem.delete(key)
   const db = await openDB()
-  if (!db) return
-  await new Promise<void>((resolve) => {
+  if (!db) { mem.delete(key); return }
+  await new Promise<void>((resolve, reject) => {
     try {
       const tx = db.transaction('kv', 'readwrite')
       tx.objectStore('kv').delete(key)
       tx.oncomplete = () => { db.close(); resolve() }
-      tx.onerror = () => { db.close(); resolve() }
-    } catch { try { db.close() } catch {} resolve() }
+      tx.onabort = () => { db.close(); reject(tx.error ?? Error('IndexedDB delete was interrupted.')) }
+      tx.onerror = () => { /* abort reports the transaction failure */ }
+    } catch (error) { try { db.close() } catch {} reject(error) }
   })
+  mem.delete(key)
 }
 
 /* ---- OPFS (large blobs only) ---- */
@@ -134,7 +143,7 @@ const OPFS_THRESHOLD = 100_000
 export async function blobPut(id: string, data: string): Promise<'opfs' | 'idb' | 'memory'> {
   const key = DURABLE_BLOBS_PREFIX + id
   if (data.length >= OPFS_THRESHOLD && opfsSupported()) {
-    if (await opfsWrite(id, data)) { mem.set(key, { backend: 'opfs' } as unknown); await idbSet(key, { backend: 'opfs' }); return 'opfs' }
+    if (await opfsWrite(id, data)) { await idbSet(key, { backend: 'opfs' }); return 'opfs' }
   }
   await idbSet(key, data)
   return hasIDB() ? 'idb' : 'memory'
@@ -202,6 +211,7 @@ export async function durableDelSyncBase(): Promise<void> {
 export type StoredBackup = { id: string; at: number; bytes: number; json: string }
 
 export async function durablePutBackup(entry: StoredBackup, keep = 5): Promise<void> {
+  if (!hasIDB()) throw Error('IndexedDB is unavailable; the backup was not saved.')
   const list = (await idbGet<StoredBackup[]>(DURABLE_BACKUPS_KEY)) ?? []
   const next = [entry, ...list.filter((x) => x.id !== entry.id)].slice(0, Math.max(1, keep))
   await idbSet(DURABLE_BACKUPS_KEY, next)
@@ -292,6 +302,10 @@ export async function durableUsage(): Promise<StorageBreakdown> {
     const e = await (navigator as unknown as { storage?: { estimate?: () => Promise<{ usage?: number }> } })?.storage?.estimate?.()
     durableBytes = Math.max(0, (e?.usage ?? 0) - localBytes)
   } catch { /* ignore */ }
-  const backend = opfsSupported() ? 'opfs' : hasIDB() ? 'idb' : 'memory'
+  let backend: StorageBreakdown['backend'] = 'memory'
+  try {
+    const db = await openDB()
+    if (db) { db.close(); backend = 'idb' }
+  } catch { /* the storage warning explains that this browser cannot save */ }
   return { localBytes, durableBytes, opfs: opfsSupported(), backend }
 }

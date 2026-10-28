@@ -6,11 +6,11 @@ import { normSkills, resolveSkill, validateCustomSkill, enabledSkills, BUILTIN_S
 import { findDuplicatePairs, mergeMemory } from '../recall'
 import { TOOL_REGISTRY, can, stream } from '../engine'
 import { CI, TOOLS, WIDGETS, KEYS, orderTools } from '../meta'
-import { SETTINGS_TABS, splitSettingTarget, settingDomId } from '../settingsCatalog'
+import { SETTINGS_TABS, SETTINGS_GROUPS, searchSettings, splitSettingTarget, settingDomId } from '../settingsCatalog'
 import { PROMPT_QUALITIES, type GlobalPrompt } from '../flair'
 import { PROMPT_VARS } from '../promptVars'
-import { DataTab, StatsTab, KeysTab, TestRow, TestAllEndpoints } from './Extra'
-import { Btn, Field, Input, Area, Sel, Toggle, Seg, RangeSlider, Checkbox, HelpTip, Modal, Surface, Chip, Item, cx, type Ic } from './ui'
+import { DataTab, KeysTab, TestRow, TestAllEndpoints } from './Extra'
+import { Btn, Field, Input, Area, Sel, SearchSelect, Toggle, Seg, RangeSlider, Checkbox, HelpTip, Modal, Surface, Chip, Item, cx, useEscapeClose, type Ic } from './ui'
 import { SortableList, type SortHandleProps, type SortItemApi } from './dnd'
 import { fetchModelCatalogCached, clearCatalogCache, prefetchModelCatalog, fetchModelProviders, filterCatalogByEndpoint, prioritizeProviderRows, discoverEndpointModels, clearModelDiscoveryCache, type CatalogEntry, type CatalogProvider, type CatalogSource } from '../catalog'
 import { resolveProvider } from '../providerRegistry'
@@ -24,6 +24,8 @@ import { BLANK_CODE_RUN, CODE_OUTPUT_MAX, CODE_TIMEOUT_MAX, CODE_TIMEOUT_MIN, no
 import { normVoice, VOICE_LANGS, speak, stopSpeaking, speechAvailable, dictationAvailable } from '../voice'
 import { DENSITIES, DENSITY_IDS, SPACING_LIMITS, STYLE_PRESETS, STYLE_PRESET_IDS, hasSpacingOverrides, resolveSpacing } from '../style'
 import { accentOnlyColors } from '../theme'
+import { USAGE_PERIODS } from '../usageStats'
+import { UsageStats } from './UsageStats'
 
 const TABS = SETTINGS_TABS
 /** Tabs hidden while their owning feature is disabled. */
@@ -82,17 +84,21 @@ function HelperPointer({ anchor, title, desc, current }: { anchor: string; title
 function AddEndpointSplit({ onAdd }: { onAdd: (type: 'openai' | 'anthropic') => void }) {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
+  const trigger = useRef<HTMLButtonElement>(null)
+  const menu = useRef<HTMLDivElement>(null)
+  useEscapeClose(() => { setOpen(false); trigger.current?.focus() }, open)
   useEffect(() => {
     if (!open) return
     const f = (e: MouseEvent) => { if (!ref.current?.contains(e.target as Node)) setOpen(false) }
     addEventListener('mousedown', f)
     return () => removeEventListener('mousedown', f)
   }, [open])
-  const pick = (t: 'openai' | 'anthropic') => { setOpen(false); onAdd(t) }
+  const pick = (t: 'openai' | 'anthropic') => { setOpen(false); onAdd(t); trigger.current?.focus() }
   return (
     <div ref={ref} className="relative inline-flex">
       <Btn v="solid" icon={Plus} className="!rounded-r-none" onClick={() => pick('openai')}>Add endpoint</Btn>
       <button
+        ref={trigger}
         type="button"
         aria-haspopup="menu"
         aria-expanded={open}
@@ -104,7 +110,7 @@ function AddEndpointSplit({ onAdd }: { onAdd: (type: 'openai' | 'anthropic') => 
         <ChevronDown size={14} className={cx('transition-transform', open && 'rotate-180')} />
       </button>
       {open && (
-        <div role="menu" className="edge-border absolute left-0 top-full z-20 mt-1.5 w-64 rounded-xl bg-hov p-1.5">
+        <div ref={menu} role="menu" onKeyDown={(e) => { if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return; e.preventDefault(); const buttons = Array.from(menu.current?.querySelectorAll<HTMLButtonElement>('button') ?? []); const i = buttons.indexOf(document.activeElement as HTMLButtonElement); buttons[(i + (e.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length]?.focus() }} className="edge-border absolute left-0 top-full z-20 mt-1.5 w-64 rounded-xl bg-hov p-1.5">
           <Item icon={Cpu} onClick={() => pick('openai')} sub="Most providers, local servers, OpenRouter">OpenAI-compatible</Item>
           <Item icon={ScrollText} onClick={() => pick('anthropic')} sub="Anthropic Messages API shape">Anthropic-compatible</Item>
         </div>
@@ -126,7 +132,7 @@ const INFO: Record<string, string> = {
   voice: 'Dictate messages with the microphone and have replies read aloud. Both use the browser\u2019s own speech features, with the language and speed you choose.',
   memory: 'Optional local memory. When enabled, the memory tool summarizes durable details and adds selected memories to future requests.',
   widgets: 'Optional panels beside the chat. Widgets are off by default; enable them here and drag the grip in the panel to rearrange them.',
-  stats: 'All-time totals of tokens sent and generated, messages sent and chats started.',
+  stats: 'Windowed usage dashboard built from saved replies: cost, tokens, models and recent attempts. The lifetime counters at the bottom are separate all-time totals that survive deleting chats.',
   keys: 'Click Change, then press the keys you want. Shortcuts need Ctrl/Cmd or Alt so they never fire while you type.',
   look: 'Theme, display options, and auto-generated chat names settings.',
   data: 'Export or import your setup. Exports leave API keys out unless you include them.',
@@ -758,21 +764,12 @@ function Eps() {
   }
   const quickActions = <div className="flex flex-wrap gap-2">
     <AddEndpointSplit onAdd={addCompatible} />
-    <Btn v="solid" icon={Terminal} onClick={() => setCurlOpen(true)}>Add provider from cURL</Btn>
+    <Btn v="soft" icon={Terminal} onClick={() => setCurlOpen(true)}>Add provider from cURL</Btn>
   </div>
   return (
     <Panel id="eps" n={eps.length}>
-      <Section title="Helper models" desc="The models that do the small jobs behind the scenes.">
-      <HelperModels />
-      <Anchor id="model-pricing-toggle">
-      <div className="rounded-xl bg-surf p-3 space-y-2">
-        <label className="flex items-center justify-between gap-3 text-sm">Show model pricing controls<Toggle on={s.prefs.showModelPricing} set={(showModelPricing) => s.patch({ prefs: { ...s.prefs, showModelPricing } })} /></label>
-        <div className="text-xs text-mu">Adds per-model pricing fields to each endpoint. Off by default.</div>
-      </div>
-      </Anchor>
-      </Section>
       <Section title="Endpoints" desc="The model APIs you connect with your own key.">
-      {quickActions}
+      <Anchor id="add-endpoint">{quickActions}</Anchor>
       <SortableCards k="eps" ids={eps.map((x) => x.id)} label="Endpoint" renderCard={(eid, handle) => {
         const e = eps.find((x) => x.id === eid)
         if (!e) return null
@@ -782,10 +779,10 @@ function Eps() {
           <Anchor key={eid} id={`ep-${e.id}`}>
           <Card handle={handle} icon={Server} title={editingName === e.id
             ? <input autoFocus value={e.name} onChange={(ev) => u({ name: ev.target.value })} onBlur={() => setEditingName('')} onKeyDown={(ev) => { ev.stopPropagation(); if (ev.key === 'Enter' || ev.key === 'Escape') { ev.preventDefault(); setEditingName('') } }} onClick={(ev) => ev.stopPropagation()} aria-label="Endpoint name" className="w-full min-w-0 rounded-md bg-bg px-2 py-1 font-medium outline-none focus:ring-2 focus:ring-ac/40" />
-            : <span className="inline-flex min-w-0 items-center gap-1.5"><span className="truncate">{e.name}</span><button type="button" title="Rename endpoint" aria-label="Rename endpoint" onClick={(ev) => { ev.stopPropagation(); setEditingName(e.id) }} className="grid size-6 shrink-0 place-items-center rounded-sm text-mu hover:bg-hov hover:text-tx"><Pencil size={13}/></button></span>} sub={e.model || 'No model id'} open0={!e.model && !e.key} muted={!e.on} right={<Toggle on={e.on} set={(v) => u({ on: v })} />}>
+            : <span className="inline-flex min-w-0 items-center gap-1.5"><span className="truncate">{e.name}</span><button type="button" title="Rename endpoint" aria-label="Rename endpoint" onClick={(ev) => { ev.stopPropagation(); setEditingName(e.id) }} className="grid size-6 shrink-0 place-items-center rounded-sm text-mu hover:bg-hov hover:text-tx"><Pencil size={13}/></button></span>} sub={e.model || 'No model id'} open0={!e.model && !e.key} muted={!e.on} right={<Toggle on={e.on} set={(v) => u({ on: v })} label={`Enable ${e.name}`} />}>
             <div className="space-y-3">
               <Anchor id="models"><section className="space-y-3 rounded-xl bg-bg p-3">
-              <Field label="Preset"><Sel value={e.preset ?? presetForUrl(e.url)?.[0] ?? ''} set={(v) => v ? selectPreset(e.id, v) : u({ preset: '', endpointId: '', endpointFilter: 'author' })} opts={[[ '', 'Choose a preset'], ...Object.keys(PRE).map((k) => [k, k] as [string, string])]} placeholder="Search endpoints" /></Field>
+              <Field label="Preset"><SearchSelect ariaLabel="Endpoint preset" value={e.preset ?? presetForUrl(e.url)?.[0] ?? ''} set={(v) => v ? selectPreset(e.id, v) : u({ preset: '', endpointId: '', endpointFilter: 'author' })} opts={[[ '', 'Choose a preset'], ...Object.keys(PRE).map((k) => [k, k] as [string, string])]} placeholder="Search endpoints" /></Field>
               <Field label="Models" hint="Press Enter to add the next row. Every row uses this endpoint and API key.">
                 <ModelsEditor e={e} update={u} />
               </Field>
@@ -796,8 +793,8 @@ function Eps() {
               <Anchor id="credentials"><section className="space-y-3 rounded-xl bg-bg p-3"><div className="text-sm font-medium">Credentials</div>
               <Field label="API key" hint="Stored unencrypted in this browser and sent only to the base URL.">
                 <div className="relative">
-                  <Input type={show === e.id ? 'text' : 'password'} value={e.key} set={(v) => u({ key: v })} placeholder="Leave empty for local servers" />
-                  <button onClick={() => setShow(show === e.id ? '' : e.id)} title="Show or hide key" className="absolute right-2 top-1/2 -translate-y-1/2 text-mu hover:text-tx">{show === e.id ? <EyeOff size={16} /> : <Eye size={16} />}</button>
+                  <Input aria-label="Endpoint API key" type={show === e.id ? 'text' : 'password'} value={e.key} set={(v) => u({ key: v })} placeholder="Leave empty for local servers" />
+                  <button onClick={() => setShow(show === e.id ? '' : e.id)} aria-label={show === e.id ? 'Hide API key' : 'Show API key'} title={show === e.id ? 'Hide API key' : 'Show API key'} className="absolute right-2 top-1/2 -translate-y-1/2 text-mu hover:text-tx">{show === e.id ? <EyeOff size={16} /> : <Eye size={16} />}</button>
                 </div>
               </Field>
               {!provider && <Field label="Auth method" hint="How the key is sent. Custom endpoints use this; named presets keep their own auth scheme.">
@@ -871,8 +868,16 @@ function Eps() {
           </Anchor>
         )
       }} />
-      <Anchor id="add-endpoint"><span className="block text-xs text-mu">Use Add endpoint above to connect a provider, then test each model here.</span></Anchor>
       {!!eps.length && <TestAllEndpoints eps={eps} />}
+      </Section>
+      <Section title="Helper models" desc="The models that do the small jobs behind the scenes.">
+      <HelperModels />
+      <Anchor id="model-pricing-toggle">
+      <div className="rounded-xl bg-surf p-3 space-y-2">
+        <label className="flex items-center justify-between gap-3 text-sm">Show model pricing controls<Toggle on={s.prefs.showModelPricing} set={(showModelPricing) => s.patch({ prefs: { ...s.prefs, showModelPricing } })} /></label>
+        <div className="text-xs text-mu">Adds per-model pricing fields to each endpoint. Off by default.</div>
+      </div>
+      </Anchor>
       </Section>
       {curlOpen && <CurlImportModal close={() => setCurlOpen(false)} importProvider={importCurl} />}
     </Panel>
@@ -1774,7 +1779,7 @@ function WidgetsTab() {
             <Field label="Group usage"><Seg v={wp.usageGroup} set={(usageGroup) => setWp({ usageGroup })} opts={[["endpoint", "Endpoint totals"], ["model", "Individual models"]]} /></Field>
             <Field label="Show"><Seg v={wp.usageMode} set={(usageMode) => setWp({ usageMode })} opts={[["success", "OK / fails"], ["tokens", "Tokens"]]} /></Field>
             {wp.usageMode === 'tokens' && <Field label="Token format" hint="Use {in} and {out} where input and output totals should appear."><Input value={wp.usageFormat} set={(usageFormat) => setWp({ usageFormat })} /></Field>}
-            <Field label="Usage period"><Seg v={wp.usagePeriod} set={(usagePeriod) => setWp({ usagePeriod })} opts={[["session", "Session"], ["day", "Day"], ["week", "Week"], ["custom", "Custom"], ["all", "All time"]]} /></Field>
+            <Field label="Usage period"><Seg v={wp.usagePeriod} set={(usagePeriod) => setWp({ usagePeriod })} opts={USAGE_PERIODS} /></Field>
             {wp.usagePeriod === 'custom' && <div className="grid grid-cols-2 gap-2"><Field label="From"><Input type="date" value={wp.usageFrom ?? ''} set={(usageFrom) => setWp({ usageFrom })} /></Field><Field label="Through"><Input type="date" value={wp.usageTo ?? ''} set={(usageTo) => setWp({ usageTo })} /></Field></div>}
             <Checkbox checked={wp.usageTotal} set={(usageTotal) => setWp({ usageTotal })} label="Show total across models and endpoints" />
           </div></Anchor>}
@@ -2350,7 +2355,7 @@ function Chats() {
       <Anchor id="startup">
       <div className="rounded-xl bg-surf p-3 space-y-2">
         <div className="text-sm font-medium">Open on load</div>
-        <div className="text-xs text-mu">Which conversation the app shows when you open it. Most recent permanent chats never pick a temporary one.</div>
+        <div className="text-xs text-mu">Most recent chat restores the last selected chat on this device. Most recent permanent chat skips temporary and archived chats.</div>
         <Sel value={normStartup(s.prefs.startup)} set={(startup) => s.patch({ prefs: { ...s.prefs, startup: normStartup(startup) } })} opts={STARTUP_MODES as [string, string][]} />
       </div>
       </Anchor>
@@ -2370,13 +2375,18 @@ function Chats() {
   )
 }
 
-const VIEWS: Record<string, () => ReactNode> = { features: FeaturesTab, eps: Eps, prompts: Prompts, skills: SkillsTab, pls: Pls, cmds: Cmds, workspace: WorkspaceTab, tools: Tools, mcp: McpTab, memory: MemoryTab, widgets: WidgetsTab, look: Look, chats: Chats, voice: VoiceTab, stats: StatsTab, keys: KeysTab, data: DataTab, adv: AdvancedTab }
+const VIEWS: Record<string, () => ReactNode> = { features: FeaturesTab, eps: Eps, prompts: Prompts, skills: SkillsTab, pls: Pls, cmds: Cmds, workspace: WorkspaceTab, tools: Tools, mcp: McpTab, memory: MemoryTab, widgets: WidgetsTab, look: Look, chats: Chats, voice: VoiceTab, keys: KeysTab, data: DataTab, adv: AdvancedTab }
 
 export function Settings({ tab, setTab }: { tab: string; setTab: (t: string) => void }) {
   const features = useS((s) => s.features)
   const tabs = visibleTabs(features)
+  const [query, setQuery] = useState('')
+  const results = useMemo(() => searchSettings(query), [query])
   const { tab: rawTab, anchor } = splitSettingTarget(tab)
-  const active = tabs.some(([k]) => k === rawTab) ? rawTab : 'features'
+  const active = SETTINGS_TABS.some(([k]) => k === rawTab) ? rawTab : 'features'
+  const disabledFeature = Object.entries(FEATURE_TABS).find(([f, ids]) => (ids as string[]).includes(active) && !featOn({ features }, f as FeatureId))?.[0] as FeatureId | undefined
+  const featureLabel = FEATURES.find(([id]) => id === disabledFeature)?.[1] ?? 'This feature'
+  const openResult = (target: string) => { setQuery(''); setTab(target) }
   const V = VIEWS[active] ?? FeaturesTab
   const settingsOpacity = useS((s) => s.prefs.settingsOpacity)
   const settingsWidth = useS((s) => s.prefs.settingsWidth ?? 1024)
@@ -2389,7 +2399,7 @@ export function Settings({ tab, setTab }: { tab: string; setTab: (t: string) => 
     try { window.dispatchEvent(new CustomEvent('byok:anchor', { detail: anchor })) } catch { /* scroll still runs */ }
     const t = setTimeout(() => flashAnchor(anchor), 60)
     return () => clearTimeout(t)
-  }, [active, anchor])
+  }, [active, anchor, disabledFeature])
   useEffect(() => {
     const jump = (e: Event) => {
       const t = (e as CustomEvent<string>).detail
@@ -2399,24 +2409,25 @@ export function Settings({ tab, setTab }: { tab: string; setTab: (t: string) => 
     return () => window.removeEventListener('byok:setting', jump)
   }, [setTab])
   return (
-    <Modal close={() => setTab('')} blur={false} opacity={settingsOpacity}>
+    <Modal close={() => setTab('')} blur={false} opacity={settingsOpacity} labelledBy="settings-title">
       <div style={{ width: `min(${settingsWidth}px, 100%)`, height: `min(${settingsHeight}px, 92dvh)` }} className="settings-root modal-panel flex overflow-hidden rounded-2xl bg-bg">
-        <nav className="hidden w-56 shrink-0 flex-col border-r border-bor bg-side p-3 sm:flex">
-          <div className="min-h-0 flex-1 space-y-0.5 overflow-y-auto">
-            {tabs.map(([k, l, I], i) => (
-              <div key={k}>
-                {i === 1 && <div aria-hidden="true" className="mx-2 my-2 h-px rounded-full bg-hov shadow-[0_1px_2px_rgb(0_0_0/0.35)]" />}
-                <button onClick={() => setTab(k)} className={cx('flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-sm', active === k ? 'bg-hov' : 'text-mu hover:bg-surf hover:text-tx')}>
-                  <I size={16} />{l}
-                </button>
-              </div>
-            ))}
+        <span id="settings-title" className="sr-only">Settings</span>
+        <nav aria-label="Settings sections" className="hidden w-56 shrink-0 flex-col border-r border-bor bg-side p-3 sm:flex">
+          <h2 className="px-3 pb-3 text-lg font-semibold">Settings</h2>
+          <input aria-label="Search settings" value={query} onChange={e => setQuery(e.target.value)} placeholder="Search settings" className="mb-3 w-full rounded-lg bg-surf px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ac/40" />
+          <div className="min-h-0 flex-1 space-y-3 overflow-y-auto">
+            {query.trim() ? results.map(result => <button key={result.target} onClick={() => openResult(result.target)} className="block w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-surf"><span className="block">{result.title}</span><span className="block text-xs text-mu">{result.section}</span></button>) : SETTINGS_GROUPS.map(group => <div key={group.label}><h3 className="px-3 pb-1 text-xs font-medium text-mu">{group.label}</h3>{group.tabs.map(id => { const entry = SETTINGS_TABS.find(([k]) => k === id)!; const [k, l, I] = entry; const off = !tabs.some(([visible]) => visible === k); return <button key={k} onClick={() => setTab(k)} aria-current={active === k ? 'page' : undefined} className={cx('flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm', active === k ? 'bg-hov' : 'text-mu hover:bg-surf hover:text-tx')}><I size={16} /><span className="min-w-0 flex-1">{l}</span>{off && <span className="text-xs">Off</span>}</button> })}</div>)}
+            {query.trim() && !results.length && <p className="px-3 py-2 text-sm text-mu">No settings found.</p>}
           </div>
         </nav>
-        <div className="relative min-w-0 flex-1 overflow-y-auto p-4 sm:p-6">
-        <div className="absolute right-3 top-3 z-20"><Btn icon={X} title="Close settings" aria-label="Close settings" onClick={() => setTab('')} /></div>
-          <div className="mb-4 pr-12 sm:hidden"><Sel value={active} set={setTab} opts={tabs.map(([k, l]) => [k, l] as [string, string])} /></div>
-          <V />
+        <div className="relative min-w-0 flex-1">
+          <div className="absolute right-3 top-3 z-30"><Btn icon={X} title="Close settings" onClick={() => setTab('')} /></div>
+          <div className="h-full overflow-y-auto p-4 sm:p-6">
+            <div className="mb-4 space-y-2 pr-12 sm:hidden"><h2 id="settings-mobile-title" className="text-lg font-semibold">Settings</h2><input aria-label="Search settings" value={query} onChange={e => setQuery(e.target.value)} placeholder="Search settings" className="w-full rounded-lg bg-surf px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ac/40" />{query.trim() ? <div className="max-h-48 overflow-y-auto rounded-lg bg-surf">{results.map(result => <button key={result.target} onClick={() => openResult(result.target)} className="block w-full px-3 py-2 text-left text-sm hover:bg-hov">{result.title}<span className="ml-2 text-xs text-mu">{result.section}</span></button>)}{!results.length && <p className="p-3 text-sm text-mu">No settings found.</p>}</div> : <SearchSelect ariaLabel="Settings section" value={active} set={setTab} opts={SETTINGS_TABS.map(([k, l]) => [k, `${l}${tabs.some(([v]) => v === k) ? '' : ' (off)'}`] as [string, string])} />}</div>
+            {disabledFeature ? <div className="space-y-3"><h2 className="text-lg font-semibold">{featureLabel} is off</h2><p className="text-sm text-mu">Turn it on in Features to use its settings.</p><Btn v="soft" onClick={() => setTab(`features#feature-${disabledFeature}`)}>Open Features</Btn></div> : active === 'stats'
+              ? <UsageStats onOpenChat={(chatId, messageId) => { useS.getState().patch({ chat: chatId, flashMsg: messageId, activeProject: '' }); setTab('') }} />
+              : <V />}
+          </div>
         </div>
       </div>
     </Modal>

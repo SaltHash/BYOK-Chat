@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { PanelLeft, PanelRight, Download, Command, SlidersHorizontal, Share2, MoreVertical, Bookmark, Hourglass, Settings2 } from 'lucide-react'
+import { PanelLeft, PanelRight, Download, Command, Share2, MoreVertical, Bookmark, Hourglass, Settings2 } from 'lucide-react'
 import { useShallow } from 'zustand/react/shallow'
 import { useS, exportChat, featOn, DEFAULT_ADVANCED } from '../store'
 import { Btn, Pop, Toggle, RangeSlider, Item, cx } from './ui'
@@ -87,23 +87,9 @@ export function Header({ side, toggle, cfg, pal, title }: { side: boolean; toggl
       {!side && <Btn icon={PanelLeft} title="Show sidebar" onClick={toggle} />}
       <h1 className="min-w-0 flex-1 truncate px-1 font-medium sm:px-2">{title}</h1>
       {curTemporary && <TemporaryFlair cfg={cfg} expiresAt={tempExpiresAt} tempHours={tempHours} />}
-      <ContextMeter />
-      {/* Wide layout: each secondary action keeps its own icon button. */}
-      <Btn icon={Command} title="Command palette" onClick={pal} className="hidden sm:inline-flex" />
-      {paramsOn && (
-        <span className="hidden sm:block">
-          <Pop right w="w-72" trigger={() => <Btn icon={SlidersHorizontal} title="Model parameters" />}>
-            {() => <div className="space-y-4 p-2"><ParamsBody p={p} set={u} /></div>}
-          </Pop>
-        </span>
-      )}
-      <Btn icon={Share2} title="Share a read-only link" onClick={openShare} disabled={!hasChat} className="hidden sm:inline-flex" />
-      <Btn icon={Download} title="Export chat" onClick={exportChat} className="hidden sm:inline-flex" />
-      <Btn icon={Bookmark} title={curTemporary ? 'Save as a permanent chat' : 'This chat is already permanent'} onClick={keepPermanent} disabled={!curTemporary} className="hidden sm:inline-flex" />
-      {featOn({ features }, 'widgets') && <Btn icon={PanelRight} title="Widgets" onClick={() => (anyW ? patch({ rail: !rail }) : cfg('widgets'))} className="hidden sm:inline-flex" />}
-      {/* Narrow layout: one overflow menu holds the secondary actions. */}
-      <span className="sm:hidden">
-        <Pop right w="w-64" trigger={() => <Btn icon={MoreVertical} title="More actions" />}>
+      <ContextMeter cfg={cfg} />
+      <span>
+        <Pop right w="w-64" trigger={() => <Btn icon={MoreVertical} title="Chat actions" aria-label="Chat actions">Actions</Btn>}>
           {(close) => (
             <>
               <Item icon={Command} onClick={() => { close(); pal() }}>Command palette</Item>

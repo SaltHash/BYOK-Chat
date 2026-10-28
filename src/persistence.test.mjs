@@ -33,6 +33,25 @@ test('sharded persistence reassembles the exact state and deletes removed chats'
   assert.deepEqual(removed.deletes, [`${CHAT_SHARD_PREFIX}b`])
 })
 
+test('boot blocks queued writes until recovery completes', async () => {
+  const { spawnSync } = await import('node:child_process')
+  const script = `
+    globalThis.window = { addEventListener() {}, removeEventListener() {}, dispatchEvent() {} };
+    const values = new Map([['byok.v1', 'original']]);
+    globalThis.localStorage = { getItem: k => values.get(k) ?? null, setItem: (k,v) => values.set(k,v), removeItem: k => values.delete(k), key: i => [...values.keys()][i] ?? null, get length() { return values.size } };
+    const { persistStorage, allowPersistWritesAfterBoot } = await import('./src/persistence.ts');
+    persistStorage.setItem('byok.v1', { version: 22, state: { chats: [] } });
+    persistStorage.flush();
+    if (values.get('byok.v1') !== 'original') throw Error('boot overwrote original');
+    allowPersistWritesAfterBoot();
+    persistStorage.setItem('byok.v1', { version: 22, state: { chats: [] } });
+    persistStorage.flush();
+    if (!JSON.parse(values.get('byok.v1')).state.__byokSharded) throw Error('write did not resume');
+  `
+  const result = spawnSync(process.execPath, ['--import', './tests/register-loader.mjs', '--input-type=module', '-e', script], { encoding: 'utf8' })
+  assert.equal(result.status, 0, result.stderr)
+})
+
 test('quota compaction keeps the newest visible messages and drops regenerable payloads', () => {
   const c = { id: 'a', msgs: Array.from({ length: 120 }, (_, i) => ({ id: `m${i}`, r: 'user', t: `t${i}`, toolRounds: [{ calls: [] }], reasoning: 'x' })) }
   const small = compactChatForQuota(c, 80)

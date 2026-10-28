@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import { useShallow } from 'zustand/react/shallow'
-import { Info, X, Server, Play, MessageSquare, Keyboard, ArrowUp, ArrowDown, MessagesSquare, RotateCcw, Download, Upload, FileText, Trash2, CircleCheck, CircleX, Gauge, ShieldCheck, DatabaseBackup, GitMerge, CalendarDays, RefreshCw, ArchiveRestore } from 'lucide-react'
+import { Info, X, Server, Play, MessageSquare, Keyboard, RotateCcw, Download, Upload, FileText, Trash2, CircleCheck, CircleX, Gauge, ShieldCheck, DatabaseBackup, GitMerge, CalendarDays, RefreshCw, ArchiveRestore } from 'lucide-react'
 import { useS, dl, BLANK, THEMES, themePatch, DEFAULT_FEATURES, DEFAULT_PREFS, DEFAULT_PARAMS, DEFAULT_WIDGET_PREFS, DEFAULT_CUSTOM_DARK_THEME, DEFAULT_CUSTOM_LIGHT_THEME, normCustomTheme, modelsOf, modelNameOf, normSearch, normAdvanced, normFeatureOrder, normDocs, featOn, errText, storageUsage, QUOTA_FLAG, type Ep, type Kind, type FeatureId } from '../store'
 import { normSkills } from '../skills'
 import { normMcpServers } from '../mcp'
@@ -150,37 +150,6 @@ const Box = ({ icon: I, t, d, children }: { icon: Ic; t: string; d: string; chil
   </Surface>
 )
 
-export function StatsTab() {
-  const { stats: t, features } = useS(useShallow((s) => ({ stats: s.stats, features: s.features })))
-  const [cf, setCf] = useState(false)
-  if (!featOn({ features }, 'stats')) return null
-  const card = (I: Ic, l: string, v: number, d: string) => (
-    <div className="rounded-xl bg-surf p-4">
-      <div className="flex items-center gap-2 text-sm text-mu"><I size={16} className="text-ac" />{l}</div>
-      <div className="mt-2 text-2xl font-semibold">{v.toLocaleString()}</div>
-      <div className="text-xs text-mu">{d}</div>
-    </div>
-  )
-  return (
-    <Panel id="stats">
-      <Section title="Totals" desc="All-time counters. They are not affected by deleting chats.">
-      <div className="grid gap-3 sm:grid-cols-2">
-        <Anchor id="tokens-sent">{card(ArrowUp, 'Tokens sent', t.tin, `${t.explicitIn.toLocaleString()} explicitly sent · ${t.historyIn.toLocaleString()} history + tool calls`)}</Anchor>
-        <Anchor id="tokens-generated">{card(ArrowDown, 'Tokens generated', t.tout, 'Reply tokens, including partial replies')}</Anchor>
-        <Anchor id="messages-sent">{card(MessageSquare, 'Messages sent', t.sent, 'Includes edited and resent messages')}</Anchor>
-        <Anchor id="chats-started">{card(MessagesSquare, 'Chats started', t.chats, 'A chat counts when its first message is sent')}</Anchor>
-      </div>
-      <p className="text-xs text-mu">Total {(t.tin + t.tout).toLocaleString()} tokens since {new Date(t.since).toLocaleDateString()}. Totals are all-time and are not affected by deleting chats. They use token counts reported by the provider when available, and a rough 4-characters-per-token estimate otherwise.</p>
-      <p className="text-xs text-mu">Tokens sent are split into what you wrote (explicitly sent) and everything that travelled with it: the system prompt, the chat history, and any tool calls and their results (history + tool calls).</p>
-      </Section>
-      <Section title="Reset" desc="Start the counters over.">
-      <Anchor id="reset-stats"><Btn v="danger" icon={RotateCcw} onClick={() => setCf(true)}>Reset stats</Btn></Anchor>
-      </Section>
-      {cf && <Confirm title="Reset all stats?" text="Tokens, messages and chats-started totals go back to zero. Your chats and settings are not affected." ok="Reset" close={() => setCf(false)} run={() => useS.getState().resetStats()} />}
-    </Panel>
-  )
-}
-
 export function KeysTab() {
   const { keys, features, patch } = useS(useShallow((s) => ({ keys: s.keys, features: s.features, patch: s.patch })))
   const off = !featOn({ features }, 'shortcuts')
@@ -251,7 +220,7 @@ function StorageBox() {
     void storageUsage().then((v) => { if (live) setInfo(v) })
     void import('../storage/durable').then(({ durableUsage }) => durableUsage().then((v) => { if (live) setDurable(v) }).catch(() => {}))
     try { setQuotaFull(localStorage.getItem(QUOTA_FLAG) != null) } catch { /* ignore */ }
-    // Background compaction every 5 min: prune durable + clear quota flag.
+    // Background compaction every 5 min: prune the durable mirror.
     const timer = setInterval(() => {
       void import('../storage/boot').then(({ compactDurable }) => compactDurable(useS.getState().chats as never).catch(() => null))
     }, 300_000)
@@ -266,7 +235,7 @@ function StorageBox() {
       <Btn v="soft" onClick={() => {
         void import('../storage/boot').then(({ compactDurable }) => compactDurable(useS.getState().chats as never).then((r) => setNote(`Durable compaction: ${(r.freedChars / 1024).toFixed(1)} KB freed${r.droppedChats ? `, ${r.droppedChats} expired chats removed` : ''}.`)).catch(() => setNote('Durable compaction failed.')))
       }}>Compact durable</Btn>
-      {quotaFull && <span className="basis-full text-xs text-er">The last save did not fit: settings were kept and bulky history was compacted automatically. Use Compact or delete old chats to free space.</span>}
+      {quotaFull && <span className="basis-full text-xs text-er">The last save was interrupted or did not fit. Export a backup, then free space or check browser storage permissions.</span>}
       {note && <span className="basis-full text-xs text-mu">{note}</span>}
       <LargestChats kb={kb} />
     </Box>
@@ -619,7 +588,7 @@ export function DataTab() {
         try { await useS.persist.clearStorage() } catch { try { localStorage.removeItem('byok.v1') } catch { /* ignore */ } }
         for (const k of ['byok.sync.token', 'byok.sync.auto', 'byok.sync.last']) { try { localStorage.removeItem(k) } catch { /* ignore */ } }
         const { beginDurableErase } = await import('../storage/boot')
-        beginDurableErase()
+        await beginDurableErase()
         const { durableEraseAll } = await import('../storage/durable')
         await durableEraseAll().catch(() => {})
         location.reload()

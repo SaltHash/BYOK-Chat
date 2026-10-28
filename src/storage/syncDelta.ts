@@ -20,7 +20,7 @@
  * messages, revisions or settings.
  */
 
-import { chatFingerprint, mergeSelectedRevision, mergeSettings, mergeWorkspace, type SyncData } from './syncMerge'
+import { chatFingerprint, mergeSelectedRevision, mergeSettings, mergeWorkspace, resolveChatPointer, type SyncData } from './syncMerge'
 
 type Obj = Record<string, unknown>
 
@@ -394,11 +394,13 @@ export function applySyncDelta(local: SyncData, delta: SyncDelta): SyncData {
   for (const id of delta.selectedRevision?.del ?? []) delete selected[id]
   selected = mergeSelectedRevision(selected, {}, workspaces)
 
-  // Keep the open-chat pointer valid after a delete. The local choice wins
-  // whenever it survived, matching the full-merge behavior.
-  const open = typeof settings.chat === 'string' ? settings.chat : ''
-  const openAlive = open && chats.some((c) => isObj(c) && c.id === open)
-  if (!openAlive) settings = { ...settings, chat: isObj(chats[0]) && typeof (chats[0] as Obj).id === 'string' ? (chats[0] as Obj).id : '' }
+  // The open-chat pointer is device-local: a pulled change must never move this
+  // device onto the chat another device had open (older peers still sent it in
+  // `settings.set`). Without a local pointer the key is dropped instead, so
+  // applying the change leaves the live pointer untouched; when this device is
+  // on a new chat (an empty pointer) that position is kept, and only a pointer
+  // whose chat is gone is repaired.
+  settings = resolveChatPointer(local.settings.chat, settings, chats)
 
   return { settings, chats, workspaces, selectedRevision: selected }
 }

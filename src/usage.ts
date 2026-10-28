@@ -16,9 +16,9 @@ export const NO_LOGS: Attempt[][] = []
 /** Start of the current page load, used by the "this session" usage period. */
 export const SESSION_START = Date.now()
 
-/* Endpoint names carry a `(classifier)` suffix for routing calls; report the
- * spend against the endpoint the user configured. */
-export const endpointNameOf = (n: string) => n.replace(/ \(classifier\)$/, '')
+/* Endpoint names carry a `(classifier)` or `(effort)` suffix for helper calls;
+ * report the spend against the endpoint the user configured. */
+export const endpointNameOf = (n: string) => n.replace(/ \((?:classifier|effort)\)$/, '')
 
 const endpointByName = (eps: Ep[], n: string) => eps.find((e) => e.name === endpointNameOf(n))
 
@@ -79,15 +79,26 @@ export type UsageGroup = { key: string; ok: number; bad: number; tin: number; to
 
 export type UsageWindow = { period?: string; from?: string; to?: string; now: number }
 
+/** Parse a date input as local midnight, so a custom range matches the user's
+ *  calendar rather than UTC. Bare dates are also compared as plain strings by
+ *  the stats page's validator, so the two views agree. */
+const dayStart = (s: string): number => {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s)
+  if (!m) return new Date(s).getTime()
+  return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])).getTime()
+}
+
 /** Half-open [start, end] window for the configured usage period. `end` is
- *  open-ended unless a custom range sets it. */
+ *  open-ended unless a custom range sets it; a custom `to` date is inclusive,
+ *  so the window ends at the following local midnight. */
 export function usageRange({ period, from, to, now }: UsageWindow): { start: number; end: number } {
   const start = period === 'session' ? SESSION_START
     : period === 'day' ? now - 86400000
       : period === 'week' ? now - 7 * 86400000
-        : period === 'custom' ? (from ? new Date(from).getTime() : 0)
-          : 0
-  const end = period === 'custom' && to ? new Date(to).getTime() + 86400000 : Infinity
+        : period === 'month' ? now - 30 * 86400000
+          : period === 'custom' ? (from ? dayStart(from) : 0)
+            : 0
+  const end = period === 'custom' && to ? dayStart(to) + 86400000 : Infinity
   return { start, end }
 }
 
@@ -157,13 +168,20 @@ const priceOf = (eps: Ep[], t: Attempt) => (t.m ? endpointByName(eps, t.n)?.pric
  *  one (cache reads are cheaper than input; cache writes usually dearer), and
  *  fall back to the input rate when it does not. `tin` counts uncached input
  *  only (see `usageFrom`), so nothing is charged twice. */
-const costOf = (eps: Ep[], t: Attempt) => {
-  if (Number.isFinite(t.cost) && (t.cost ?? 0) > 0) return t.cost as number
+/** Per-attempt spend and whether it came from the price table.
+ *  Provider-reported spend wins; the price table is a labelled estimate; no
+ *  price at all is `null` (unknown), never a fabricated zero. */
+export function attemptCost(eps: Ep[], t: Attempt): { cost: number | null; estimated: boolean } {
+  if (Number.isFinite(t.cost) && (t.cost ?? 0) > 0) return { cost: t.cost as number, estimated: false }
   const price = priceOf(eps, t)
-  if (!price) return 0
+  if (!price) return { cost: null, estimated: false }
   const read = t.cacheRead ?? 0, write = t.cacheWrite ?? 0
-  return ((t.tin ?? 0) * price.input + read * (price.cacheRead ?? price.input) + write * (price.cacheWrite ?? price.input) + (t.tout ?? 0) * price.output) / 1e6
+  const cost = ((t.tin ?? 0) * price.input + read * (price.cacheRead ?? price.input) + write * (price.cacheWrite ?? price.input) + (t.tout ?? 0) * price.output) / 1e6
+  return { cost, estimated: true }
 }
+
+/** Cost used by the header meter: unknown pricing contributes nothing. */
+const costOf = (eps: Ep[], t: Attempt) => attemptCost(eps, t).cost ?? 0
 
 /** Model-reported context window, or 0 when the endpoint has no entry. */
 const contextLimit = (ep: Ep | undefined, model: string | undefined) => {

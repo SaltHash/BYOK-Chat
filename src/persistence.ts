@@ -4,6 +4,21 @@ import { attachFlushOnHide, createCoalescedPersistStorage, type CoalescedPersist
 
 export const QUOTA_FLAG = 'byok.v1:quota-full'
 
+// A session-wide warning: a successful write to one storage tier does not prove
+// that an earlier failure in another tier was repaired.
+let storageWarning = ''
+export const getStorageWarning = () => storageWarning
+export function reportStorageFailure(): void {
+  if (storageWarning) return
+  storageWarning = 'Browser storage could not save all data. Export a backup now, free space or check browser storage permissions, then reload.'
+  if (typeof window !== 'undefined') window.dispatchEvent(new Event('byok:storage-failure'))
+}
+export function subscribeStorageWarning(callback: () => void): () => void {
+  if (typeof window === 'undefined') return () => {}
+  window.addEventListener('byok:storage-failure', callback)
+  return () => window.removeEventListener('byok:storage-failure', callback)
+}
+
 /** Persist payload version — single source for the zustand persist wrapper,
  *  durable migration metadata, and sync payloads. */
 export const STORE_VERSION = 22
@@ -180,6 +195,12 @@ const SHARD_IDS = '__byokChatIds'
 /** Shards we last wrote, keyed by storage key. Kept in memory (not storage) so * a reload simply rewrites each chat once, then returns to delta writes. */
 const writtenShards = new Map<string, string>()
 
+// Zustand may enqueue a migration write before durable recovery finishes. Do
+// not allow that partial state to replace the saved index while boot is still
+// checking it, especially when recovery has to stop.
+let bootWritesBlocked = typeof window !== 'undefined'
+export function allowPersistWritesAfterBoot(): void { bootWritesBlocked = false }
+
 export type ShardPlan = {
   main: string
   writes: { key: string; value: string; chat: unknown }[]
@@ -222,6 +243,21 @@ export function planPersistShards(raw: string, previous: Map<string, string> = w
 /** Rebuild a persist payload from the main value and its chat shards. Returns
  *  null when `mainRaw` is not a sharded payload, so callers can fall back to
  *  the legacy single-value format. */
+export function missingPersistShards(mainRaw: string, read: (key: string) => string | null): string[] {
+  let parsed: any
+  try { parsed = JSON.parse(mainRaw) } catch { return [] }
+  const state = parsed?.state && typeof parsed.state === 'object' ? parsed.state : parsed
+  if (state?.[SHARD_MARKER] !== true || !Array.isArray(state[SHARD_IDS])) return []
+  return state[SHARD_IDS].filter((id: unknown): id is string => {
+    if (typeof id !== 'string') return false
+    const raw = read(CHAT_SHARD_PREFIX + id)
+    try {
+      const chat = raw ? JSON.parse(raw) : null
+      return !chat || typeof chat !== 'object' || chat.id !== id || !Array.isArray(chat.msgs)
+    } catch { return true }
+  })
+}
+
 export function joinPersistShards(mainRaw: string, read: (key: string) => string | null): string | null {
   let parsed: any
   try { parsed = JSON.parse(mainRaw) } catch { return null }
@@ -233,7 +269,10 @@ export function joinPersistShards(mainRaw: string, read: (key: string) => string
   for (const id of ids) {
     const raw = read(CHAT_SHARD_PREFIX + id)
     if (!raw) continue
-    try { chats.push(JSON.parse(raw)) } catch { /* skip a truncated shard rather than lose every chat */ }
+    try {
+      const chat = JSON.parse(raw)
+      if (chat && typeof chat === 'object' && chat.id === id && Array.isArray(chat.msgs)) chats.push(chat)
+    } catch { /* boot checks missing shards against the durable copy */ }
   }
   chats.push(...(Array.isArray(state.chats) ? state.chats : []))
   const outState: Record<string, unknown> = { ...state, chats }
@@ -263,7 +302,6 @@ export function compactChatForQuota(chat: unknown, keep = 80): unknown {
 const rawStorage: StateStorage = {
   getItem: (k: string) => {
     try {
-      localStorage.removeItem(QUOTA_FLAG)
       const raw = localStorage.getItem(k)
       if (raw == null) return null
       const joined = joinPersistShards(raw, (key) => { try { return localStorage.getItem(key) } catch { return null } })
@@ -271,11 +309,18 @@ const rawStorage: StateStorage = {
     } catch { return null }
   },
   setItem: (k: string, v: string) => {
+    if (k === 'byok.v1' && bootWritesBlocked) return
     // Other keys (not the persisted store) keep the simple path.
     if (k !== 'byok.v1') { try { localStorage.setItem(k, v) } catch (x) { if (!isQuotaError(x)) throw x } return }
     const plan = planPersistShards(v)
     if (!plan) { try { localStorage.setItem(k, v); localStorage.removeItem(QUOTA_FLAG) } catch { /* leave the old copy */ } return }
     let quota = false
+    // Reserve the recovery marker before touching any shard. If the browser
+    // cannot write even this, keep the previous snapshot untouched.
+    try { localStorage.setItem(QUOTA_FLAG, String(Date.now())) }
+    catch { reportStorageFailure(); return }
+    const previousMain = localStorage.getItem(k)
+    const previousIds: string[] = (() => { try { const parsed = JSON.parse(previousMain ?? '{}'); const state = parsed.state ?? parsed; return Array.isArray(state.__byokChatIds) ? state.__byokChatIds.filter((id: unknown): id is string => typeof id === 'string') : [] } catch { return [] } })()
     for (const write of plan.writes) {
       try { localStorage.setItem(write.key, write.value); writtenShards.set(write.key, write.value) }
       catch (x) {
@@ -286,13 +331,18 @@ const rawStorage: StateStorage = {
         catch { /* keep the previous shard; durable has the full copy */ }
       }
     }
-    for (const key of plan.deletes) { try { localStorage.removeItem(key) } catch { /* ignore */ } writtenShards.delete(key) }
-    try { localStorage.setItem(k, plan.main); localStorage.removeItem(QUOTA_FLAG) }
+    try { localStorage.setItem(k, plan.main) }
     catch (x) {
       if (!isQuotaError(x)) throw x
       quota = true
     }
-    if (quota) { try { localStorage.setItem(QUOTA_FLAG, String(Date.now())) } catch { /* ignore */ } }
+    if (!quota) {
+      localStorage.removeItem(QUOTA_FLAG)
+      const retained = new Set(plan.index)
+      const deleted = new Set([...plan.deletes, ...previousIds.filter(id => !retained.has(id)).map(id => CHAT_SHARD_PREFIX + id)])
+      for (const key of deleted) { try { localStorage.removeItem(key) } catch { /* ignore */ } writtenShards.delete(key) }
+    }
+    if (quota) reportStorageFailure()
   },
   removeItem: (k: string) => {
     try {
@@ -317,6 +367,6 @@ export const PERSIST_WRITE_WINDOW_MS = 400
  *  break the app. */
 export const persistStorage: CoalescedPersistStorage<any> = createCoalescedPersistStorage<any>(rawStorage, {
   wait: PERSIST_WRITE_WINDOW_MS,
-  onError: (x) => { if (isQuotaError(x)) { try { localStorage.setItem(QUOTA_FLAG, String(Date.now())) } catch { /* ignore */ } } },
+  onError: (x) => { reportStorageFailure(); if (isQuotaError(x)) { try { localStorage.setItem(QUOTA_FLAG, String(Date.now())) } catch { /* ignore */ } } },
 })
 attachFlushOnHide(persistStorage.flush)

@@ -117,9 +117,36 @@ test('blanked remote search credentials never erase this device\'s keys', () => 
     settings: { search: { provider: 'tinyfish', keys: {}, readerKey: '' } },
   })
   const out = mergeSyncData(local, remote)
-  assert.equal(out.settings.search.provider, 'tinyfish')
+  // The remote copy carries no credentials, so its default provider says
+  // nothing about this device's key: keep pointing at the provider that has it.
+  assert.equal(out.settings.search.provider, 'exa')
   assert.equal(out.settings.search.keys.exa, 'local-secret')
   assert.equal(out.settings.search.readerKey, 'local-reader')
+})
+
+test('a remote search copy that does carry keys still wins the provider choice', () => {
+  const local = empty({ settings: { search: { provider: 'exa', keys: {}, readerProvider: 'builtin' } } })
+  const remote = empty({ settings: { search: { provider: 'firecrawl', keys: { firecrawl: 'remote-secret' }, readerProvider: 'firecrawl' } } })
+  const out = mergeSyncData(local, remote)
+  assert.equal(out.settings.search.provider, 'firecrawl')
+  assert.equal(out.settings.search.readerProvider, 'firecrawl')
+  assert.equal(out.settings.search.keys.firecrawl, 'remote-secret')
+})
+
+test('adopting the other device keeps credentials that only exist here', () => {
+  const local = empty({ settings: { search: { provider: 'exa', keys: { exa: 'local-secret' } } } })
+  const remote = empty({ settings: { search: { provider: 'tinyfish', keys: {}, readerKey: '' }, themeMode: 'dark' } })
+  const out = mergeSyncData(local, remote, 'remote')
+  assert.equal(out.settings.themeMode, 'dark')
+  assert.equal(out.settings.search.keys.exa, 'local-secret')
+  assert.equal(out.settings.search.provider, 'exa')
+})
+
+test('a new chat stays open when a remote snapshot arrives', () => {
+  const local = empty({ chats: [chat('a', 100), chat('b', 200)], settings: { chat: '' } })
+  const remote = empty({ chats: [chat('b', 200)], settings: { chat: 'b' } })
+  assert.equal(mergeSyncData(local, remote).settings.chat, '')
+  assert.equal(mergeSyncData(local, remote, 'remote').settings.chat, '')
 })
 
 test('the local open chat survives the merge even when the remote had a different one open', () => {

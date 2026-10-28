@@ -49,14 +49,23 @@ export const TAB_KEYWORDS: Record<SettingsTabId, string> = {
   mcp: 'mcp model context protocol servers tools external remote connect url headers bearer token',
   memory: 'memory tool mode recall method classifier add stored duplicates categories',
   widgets: 'widgets panels context meter endpoint status usage scratchpad snippets cost last reply prompts shortcuts draft counter checklist',
-  look: 'appearance fonts theme hue saturation brightness sliders display layout max height width message settings model picker palette blur opacity style preset radius rounded sharp bubbly floating density compact comfortable spacious spacing header padding margins gap overrides sidebar composer panel code blocks timestamps actions hover text size scale zoom wrap code lines transparency flat contrast',
+  look: 'appearance fonts theme dark light hue saturation brightness sliders display layout max height width message settings model picker palette blur opacity style preset radius rounded sharp bubbly floating density compact comfortable spacious spacing header padding margins gap overrides sidebar composer panel code blocks timestamps actions hover text size scale zoom wrap code lines transparency flat contrast',
   chats: 'chats conversation replies temporary retention hours immediate expires enter send title auto streaming markdown fade speed model answered log startup open load shown sidebar attachments documents pdf office archives ocr image transcription',
   voice: 'voice dictation microphone speech recognition read aloud speech synthesis language rate auto read',
   keys: 'shortcuts keybinds keyboard reset bindings',
-  stats: 'stats usage tokens cost messages chats reset totals',
+  stats: 'stats usage dashboard tokens cost messages chats reset totals windowed period session 24 hours 7 days 30 days month custom range average per million cache read write output estimated unpriced model endpoint overview models over time trends activity bucket hourly daily weekly monthly lifetime',
   data: 'data import backup privacy export erase encrypted history storage compact',
   adv: 'advanced debugging verbose errors additional capabilities system prompt payloads token counts model parameters temperature top p max tokens',
 }
+
+/** Navigation groups preserve tab ids and deep links while organizing by task. */
+export const SETTINGS_GROUPS: { label: string; tabs: SettingsTabId[] }[] = [
+  { label: 'Chat', tabs: ['chats', 'prompts', 'cmds', 'voice', 'keys'] },
+  { label: 'Models & providers', tabs: ['eps', 'pls'] },
+  { label: 'Tools & research', tabs: ['tools', 'skills', 'mcp', 'memory', 'workspace'] },
+  { label: 'Personalize', tabs: ['look', 'widgets', 'features'] },
+  { label: 'Data & advanced', tabs: ['stats', 'data', 'adv'] },
+]
 
 export type SettingLink = {
   tab: SettingsTabId
@@ -234,12 +243,22 @@ export const SETTING_LINKS: SettingLink[] = [
   // Shortcuts (per-shortcut rows are dynamic)
   { tab: 'keys', anchor: 'reset-all-keys', title: 'Reset all shortcuts', keywords: 'reset all shortcuts defaults bindings' },
 
-  // Stats
-  { tab: 'stats', anchor: 'tokens-sent', title: 'Tokens sent', keywords: 'tokens sent explicitly sent history tool calls input' },
-  { tab: 'stats', anchor: 'tokens-generated', title: 'Tokens generated', keywords: 'tokens generated reply output' },
-  { tab: 'stats', anchor: 'messages-sent', title: 'Messages sent', keywords: 'messages sent edited resent' },
-  { tab: 'stats', anchor: 'chats-started', title: 'Chats started', keywords: 'chats started first message' },
-  { tab: 'stats', anchor: 'reset-stats', title: 'Reset stats', keywords: 'reset zero totals' },
+  // Stats — dashboard views, detail sections and the lifetime counters.
+  { tab: 'stats', anchor: 'view-overview', title: 'Usage: Overview', keywords: 'usage dashboard overview cost tokens average most used model token mix trend top models summary' },
+  { tab: 'stats', anchor: 'view-models', title: 'Usage: Models', keywords: 'usage models ranking per model tokens share cost average last used search sort breakdown' },
+  { tab: 'stats', anchor: 'view-trends', title: 'Usage: Over time', keywords: 'usage over time charts trend cost tokens buckets hourly daily weekly monthly category model legend data table' },
+  { tab: 'stats', anchor: 'view-activity', title: 'Usage: Activity', keywords: 'usage activity recent attempts log day filters success failure chat jump' },
+  { tab: 'stats', anchor: 'detail-cost', title: 'Usage: Cost detail', keywords: 'usage cost detail recorded estimated unpriced spend by model pricing' },
+  { tab: 'stats', anchor: 'detail-tokens', title: 'Usage: Token detail', keywords: 'usage token detail uncached cache read write output share prompt' },
+  { tab: 'stats', anchor: 'detail-average', title: 'Usage: Average cost detail', keywords: 'usage average cost per million formula priced tokens comparison' },
+  { tab: 'stats', anchor: 'detail-model', title: 'Usage: Model detail', keywords: 'usage model detail endpoint removed recent attempts failed jump' },
+  { tab: 'stats', anchor: 'usage-period', title: 'Usage period', keywords: 'usage period session last 24 hours 7 days 30 days all time custom from through date range' },
+  { tab: 'stats', anchor: 'lifetime-counters', title: 'Lifetime counters', keywords: 'lifetime all time counters tokens messages chats since' },
+  { tab: 'stats', anchor: 'tokens-sent', title: 'Lifetime tokens sent', keywords: 'tokens sent explicitly sent history tool calls input lifetime' },
+  { tab: 'stats', anchor: 'tokens-generated', title: 'Lifetime tokens generated', keywords: 'tokens generated reply output lifetime' },
+  { tab: 'stats', anchor: 'messages-sent', title: 'Lifetime messages sent', keywords: 'messages sent edited resent lifetime' },
+  { tab: 'stats', anchor: 'chats-started', title: 'Lifetime chats started', keywords: 'chats started first message lifetime' },
+  { tab: 'stats', anchor: 'reset-stats', title: 'Reset stats', keywords: 'reset zero totals lifetime counters' },
 
   // Data
   { tab: 'data', anchor: 'local-backups', title: 'Local backups', keywords: 'backup backups automatic daily local indexeddb restore snapshot' },
@@ -257,6 +276,21 @@ export const SETTING_LINKS: SettingLink[] = [
   { tab: 'adv', anchor: 'show-token-counts', title: 'Show per-step token counts', keywords: 'token counts input output per step reported' },
   { tab: 'adv', anchor: 'show-model-params', title: 'Model parameters', keywords: 'model parameters temperature top p max tokens generation header advanced' },
 ]
+
+export type SettingsSearchResult = { target: string; title: string; section: string }
+
+/** Search both sections and their addressable settings; tab ids remain stable. */
+export function searchSettings(query: string): SettingsSearchResult[] {
+  const words = query.trim().toLowerCase().split(/\s+/).filter(Boolean)
+  if (!words.length) return []
+  const matches = (text: string) => words.every(word => text.toLowerCase().includes(word))
+  const tabs = new Map(SETTINGS_TABS.map(([id, label]) => [id, label]))
+  const sections = SETTINGS_TABS.filter(([id, label]) => matches(`${label} ${TAB_KEYWORDS[id]}`))
+    .map(([id, title]) => ({ target: id, title, section: 'Section' }))
+  const settings = SETTING_LINKS.filter(link => matches(`${link.title} ${link.keywords} ${tabs.get(link.tab) ?? ''}`))
+    .map(link => ({ target: `${link.tab}#${link.anchor}`, title: link.title, section: tabs.get(link.tab) ?? link.tab }))
+  return [...sections, ...settings]
+}
 
 /** Split a `cfg()` target like `"tools#search-mode"` into tab + anchor. */
 export const splitSettingTarget = (target: string): { tab: string; anchor: string } => {

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { handleSyncPush, handleSyncPull, parseToken } from '../../server/sync.mjs'
 import { memStore } from '../../server/syncStore.mjs'
 import { encryptSyncDelta } from './sync.ts'
-import { useS } from '../store.ts'
+import { normSearch, searchKeyOf, useS } from '../store.ts'
 import { getSyncToken, pullAndMerge, pushNow, resetSyncBaseline, setSyncToken } from './syncRuntime.ts'
 
 /* Drive the real runtime against the real sync handlers with fetch routed to
@@ -15,6 +15,7 @@ const TOKEN_A = tokenFor('abcdefghijklmnop')
 const TOKEN_B = tokenFor('bcdefghijklmnopq')
 const TOKEN_C = tokenFor('cdefghijklmnopqr')
 const TOKEN_D = tokenFor('defghijklmnopqrs')
+const TOKEN_E = tokenFor('efghijklmnopqrst')
 
 const request = (url, init = {}) => ({
   method: init.method ?? 'GET',
@@ -132,6 +133,48 @@ test('a pull asks only for changes after the local sequence and applies them', a
     // no-op rather than echoing the message back.
     const settled = await pushNow(TOKEN_B)
     assert.equal(settled.backend, 'up-to-date')
+  } finally {
+    restore()
+    setSyncToken(previousToken)
+    resetSyncBaseline()
+  }
+})
+
+test('a pulled change leaves the open chat and the search credentials alone', async () => {
+  const backend = memStore()
+  const restore = installFetch(backend)
+  const previousToken = getSyncToken()
+  try {
+    setSyncToken(TOKEN_E)
+    resetSyncBaseline()
+    useS.setState({
+      chats: [
+        { id: 'c1', title: 'older', msgs: [{ id: 'm1', r: 'user', t: 'hi', at: 1 }] },
+        { id: 'c2', title: 'recent', msgs: [{ id: 'm2', r: 'user', t: 'yo', at: 5 }] },
+      ],
+      workspaces: {}, selectedRevision: {}, chat: 'c1',
+      search: normSearch({ provider: 'exa', keys: { exa: 'sk-local' } }),
+    })
+    assert.equal((await pushNow(TOKEN_E)).seq, 1)
+
+    // Another device writes its open chat and its credential-blanked search.
+    const remote = { v: 1, at: Date.now(), settings: { set: { chat: 'c2', search: normSearch({}) } } }
+    await handleSyncPush(
+      request('https://app.test/api/sync/push', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ token: TOKEN_E, delta: await encryptSyncDelta(remote, TOKEN_E), baseSeq: 1 }),
+      }),
+      backend,
+    )
+
+    // This device starts a new chat while the pull is in flight.
+    useS.setState({ chat: '' })
+    assert.equal((await pullAndMerge(TOKEN_E)).seq, 2)
+    const after = useS.getState()
+    assert.equal(after.chat, '', 'the new chat must stay open')
+    assert.equal(searchKeyOf(after.search), 'sk-local', 'web search must keep using this device\'s key')
+    assert.equal(after.search.keys.exa, 'sk-local')
   } finally {
     restore()
     setSyncToken(previousToken)

@@ -46,8 +46,14 @@ export const SYNC_PUSH_DEBOUNCE_MS = 2500
 export const SYNC_PUSH_RETRY_MS = 30_000
 /** Live-only fields that must never ride a remote snapshot. Every other field
  *  in the store is configuration/content and is included automatically, so a
- *  new setting is synced without touching this list. */
-export const SYNC_LIVE_ONLY = ['busy', 'draft', 'drafts', 'notice', 'flashMsg', 'researchPanel']
+ *  new setting is synced without touching this list.
+ *
+ *  The view pointers belong here too: which chat is open (`chat`), whether a
+ *  new chat is being started (`newChatPending`) and whether a project overview
+ *  is showing (`activeProject`) are this device's position in the UI, not
+ *  shared configuration. Syncing them let a peer's last-used chat drag the
+ *  view onto another conversation every time it pushed. */
+export const SYNC_LIVE_ONLY = ['busy', 'draft', 'drafts', 'notice', 'flashMsg', 'researchPanel', 'chat', 'newChatPending', 'activeProject']
 
 export const getSyncToken = (): string => { try { return localStorage.getItem(TOKEN_KEY) ?? '' } catch { return '' } }
 export const setSyncToken = (t: string): void => { try { t ? localStorage.setItem(TOKEN_KEY, t) : localStorage.removeItem(TOKEN_KEY) } catch { /* blocked storage */ } }
@@ -77,13 +83,26 @@ export function readLocalData(): SyncData {
  *  the result straight back (and risk a push/pull loop). */
 let applying = false
 export function applySyncData(data: SyncData): void {
+  // The open-chat pointer is device-local (see SYNC_LIVE_ONLY), so the merged
+  // settings never carry it and the view stays where the user left it. The one
+  // repair left to do here is a pointer whose chat the merge deleted: the real
+  // pointer is only known at this boundary, not in the pure merge.
+  const current = useS.getState() as unknown as { chat?: unknown; newChatPending?: unknown; activeProject?: unknown; draft?: unknown; drafts?: unknown; busy?: unknown; notice?: unknown; flashMsg?: unknown; researchPanel?: unknown }
+  const settings = { ...data.settings }
+  // Full snapshots from older clients may contain live-only fields. Filter at
+  // the final write boundary as well as during normal snapshot creation.
+  for (const key of SYNC_LIVE_ONLY) delete settings[key]
+  const chats = Array.isArray(data.chats) ? (data.chats as { id?: unknown; archived?: boolean }[]) : []
+  const pointer = typeof current.chat === 'string' ? current.chat : ''
+  const repair = pointer && !chats.some((c) => !!c && c.id === pointer)
   applying = true
   try {
     useS.setState({
-      ...data.settings,
+      ...settings,
       chats: data.chats as never,
       workspaces: data.workspaces as never,
       selectedRevision: data.selectedRevision as never,
+      ...(repair ? { chat: chats.find(c => !c.archived)?.id ?? '' } : {}),
     } as unknown as Parameters<typeof useS.setState>[0])
   } finally {
     // Never let the applied snapshot look like a fresh local edit, or the
@@ -181,7 +200,6 @@ export async function pullAndMerge(token = getSyncToken()): Promise<{ data: Sync
     setLastSync(r.updatedAt)
     return { data: readLocalData(), updatedAt: r.updatedAt, backend: r.backend, seq }
   }
-  const local = readLocalData()
   let data: SyncData
   let nextBase: SyncBaseline
 
@@ -193,16 +211,17 @@ export async function pullAndMerge(token = getSyncToken()): Promise<{ data: Sync
     assertCompatible(payload, r.exportVersion, r.storeVersion)
     let remote = toSyncData(payload)
     for (const raw of r.deltas ?? []) remote = applySyncDelta(remote, await decryptDelta(raw, token))
+    const local = readLocalData()
     recordSyncConflicts(detectChatConflicts(local.chats, remote.chats))
     data = mergeSyncData(local, remote, 'merge')
     nextBase = baselineFromData(remote, base.tokenId, seq)
   } else {
     // Only the changes we missed: apply them to the current save without
     // replacing it, and advance the hash baseline by the same operations.
-    let current = local
+    const deltas = await Promise.all((r.deltas ?? []).map(raw => decryptDelta(raw, token)))
+    let current = readLocalData()
     let next = base
-    for (const raw of r.deltas ?? []) {
-      const delta = await decryptDelta(raw, token)
+    for (const delta of deltas) {
       current = applySyncDelta(current, delta)
       next = applyDeltaToBaseline(next, delta)
     }
