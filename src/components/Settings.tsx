@@ -488,6 +488,15 @@ function FeaturesTab() {
   return (
     <Panel id="features">
       <Section title="Features" desc="Turn whole features on or off. A disabled feature is hidden everywhere.">
+      <Anchor id="show-disabled-features">
+      <div className="flex items-center justify-between gap-3 rounded-xl bg-surf p-3">
+        <div className="min-w-0">
+          <div className="text-sm font-medium">Show disabled features<HelpTip text="Off: a disabled feature's settings tabs disappear completely. On: they stay listed and marked Off, so you can see what exists before turning it on." label="Help: Show disabled features" /></div>
+          <div className="text-xs text-mu">Keep a disabled feature's settings visible, marked Off, instead of hiding them.</div>
+        </div>
+        <Toggle on={s.prefs.showDisabledFeatures === true} set={(showDisabledFeatures) => s.patch({ prefs: { ...s.prefs, showDisabledFeatures } })} label="Show disabled features" />
+      </div>
+      </Anchor>
       {order.map((id) => {
         const [, label, desc] = byId(id)
         return (
@@ -1836,6 +1845,9 @@ function prefRow(s: ReturnType<typeof useSConfig>, anchor: string, k: PrefToggle
 
 function Look() {
   const s = useSConfig()
+  const glassOn = s.prefs.glassComposer !== false
+  const glassBlur = s.prefs.glassBlur ?? 14
+  const glassOpacity = s.prefs.glassOpacity ?? 80
   const settingsWidth = s.prefs.settingsWidth ?? 1024
   const settingsHeight = s.prefs.settingsHeight ?? 780
   const modelPickerHeight = s.prefs.modelPickerHeight ?? 480
@@ -2101,10 +2113,14 @@ function Look() {
         <Seg v={s.prefs.chatWidth} set={(chatWidth) => s.patch({ prefs: { ...s.prefs, chatWidth } })} opts={[["narrow", "Narrow"], ["standard", "Standard"], ["wide", "Wide"]]} />
       </div>
       </Anchor>
-      <div className="rounded-xl bg-surf p-3 space-y-2">
-        <label className="flex items-center justify-between gap-3 text-sm">Glass composer<Toggle on={s.prefs.glassComposer !== false} set={(glassComposer) => s.patch({ prefs: { ...s.prefs, glassComposer } })} /></label>
-        <div className="text-xs text-mu">Give the message box a translucent, blurred surface.</div>
+      <Anchor id="glass-composer">
+      <div className="rounded-xl bg-surf p-3 space-y-3">
+        <label className="flex items-center justify-between gap-3 text-sm">Glass composer<Toggle on={glassOn} set={(glassComposer) => s.patch({ prefs: { ...s.prefs, glassComposer } })} label="Glass composer" /></label>
+        <div className="text-xs text-mu">Give the message box a translucent, blurred surface. Blur softens whatever sits behind it; opacity sets how solid the surface itself is. 100% is fully opaque.</div>
+        <Field label={`Blur · ${glassBlur}px`}><RangeSlider label="Glass composer blur" min={0} max={40} step={1} value={glassBlur} set={(v) => s.patch({ prefs: { ...s.prefs, glassBlur: Math.round(v) } })} disabled={!glassOn} className="w-full" /></Field>
+        <Field label={`Opacity · ${glassOpacity}%`}><RangeSlider label="Glass composer opacity" min={20} max={100} step={5} value={glassOpacity} set={(v) => s.patch({ prefs: { ...s.prefs, glassOpacity: Math.round(v) } })} disabled={!glassOn} className="w-full" /></Field>
       </div>
+      </Anchor>
       <Anchor id="reduce-transparency">
       <div className="flex items-center justify-between gap-3 rounded-xl bg-surf p-3">
         <div className="min-w-0">
@@ -2379,7 +2395,13 @@ const VIEWS: Record<string, () => ReactNode> = { features: FeaturesTab, eps: Eps
 
 export function Settings({ tab, setTab }: { tab: string; setTab: (t: string) => void }) {
   const features = useS((s) => s.features)
+  const showOff = useS((s) => s.prefs.showDisabledFeatures === true)
   const tabs = visibleTabs(features)
+  // Disabled features disappear from the nav unless the reader asked to keep
+  // them listed (then they stay, marked Off).
+  const navGroups = SETTINGS_GROUPS
+    .map((g) => ({ label: g.label, tabs: g.tabs.filter((id) => showOff || tabs.some(([visible]) => visible === id)) }))
+    .filter((g) => g.tabs.length)
   const [query, setQuery] = useState('')
   const results = useMemo(() => searchSettings(query), [query])
   const { tab: rawTab, anchor } = splitSettingTarget(tab)
@@ -2416,14 +2438,14 @@ export function Settings({ tab, setTab }: { tab: string; setTab: (t: string) => 
           <h2 className="px-3 pb-3 text-lg font-semibold">Settings</h2>
           <input aria-label="Search settings" value={query} onChange={e => setQuery(e.target.value)} placeholder="Search settings" className="mb-3 w-full rounded-lg bg-surf px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ac/40" />
           <div className="min-h-0 flex-1 space-y-3 overflow-y-auto">
-            {query.trim() ? results.map(result => <button key={result.target} onClick={() => openResult(result.target)} className="block w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-surf"><span className="block">{result.title}</span><span className="block text-xs text-mu">{result.section}</span></button>) : SETTINGS_GROUPS.map(group => <div key={group.label}><h3 className="px-3 pb-1 text-xs font-medium text-mu">{group.label}</h3>{group.tabs.map(id => { const entry = SETTINGS_TABS.find(([k]) => k === id)!; const [k, l, I] = entry; const off = !tabs.some(([visible]) => visible === k); return <button key={k} onClick={() => setTab(k)} aria-current={active === k ? 'page' : undefined} className={cx('flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm', active === k ? 'bg-hov' : 'text-mu hover:bg-surf hover:text-tx')}><I size={16} /><span className="min-w-0 flex-1">{l}</span>{off && <span className="text-xs">Off</span>}</button> })}</div>)}
+            {query.trim() ? results.map(result => <button key={result.target} onClick={() => openResult(result.target)} className="block w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-surf"><span className="block">{result.title}</span><span className="block text-xs text-mu">{result.section}</span></button>) : navGroups.map(group => <div key={group.label}><h3 className="px-3 pb-1 text-xs font-medium text-mu">{group.label}</h3>{group.tabs.map(id => { const entry = SETTINGS_TABS.find(([k]) => k === id)!; const [k, l, I] = entry; const off = !tabs.some(([visible]) => visible === k); return <button key={k} onClick={() => setTab(k)} aria-current={active === k ? 'page' : undefined} className={cx('flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm', active === k ? 'bg-hov' : 'text-mu hover:bg-surf hover:text-tx')}><I size={16} /><span className="min-w-0 flex-1">{l}</span>{off && <span className="text-xs">Off</span>}</button> })}</div>)}
             {query.trim() && !results.length && <p className="px-3 py-2 text-sm text-mu">No settings found.</p>}
           </div>
         </nav>
         <div className="relative min-w-0 flex-1">
           <div className="absolute right-3 top-3 z-30"><Btn icon={X} title="Close settings" onClick={() => setTab('')} /></div>
           <div className="h-full overflow-y-auto p-4 sm:p-6">
-            <div className="mb-4 space-y-2 pr-12 sm:hidden"><h2 id="settings-mobile-title" className="text-lg font-semibold">Settings</h2><input aria-label="Search settings" value={query} onChange={e => setQuery(e.target.value)} placeholder="Search settings" className="w-full rounded-lg bg-surf px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ac/40" />{query.trim() ? <div className="max-h-48 overflow-y-auto rounded-lg bg-surf">{results.map(result => <button key={result.target} onClick={() => openResult(result.target)} className="block w-full px-3 py-2 text-left text-sm hover:bg-hov">{result.title}<span className="ml-2 text-xs text-mu">{result.section}</span></button>)}{!results.length && <p className="p-3 text-sm text-mu">No settings found.</p>}</div> : <SearchSelect ariaLabel="Settings section" value={active} set={setTab} opts={SETTINGS_TABS.map(([k, l]) => [k, `${l}${tabs.some(([v]) => v === k) ? '' : ' (off)'}`] as [string, string])} />}</div>
+            <div className="mb-4 space-y-2 pr-12 sm:hidden"><h2 id="settings-mobile-title" className="text-lg font-semibold">Settings</h2><input aria-label="Search settings" value={query} onChange={e => setQuery(e.target.value)} placeholder="Search settings" className="w-full rounded-lg bg-surf px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ac/40" />{query.trim() ? <div className="max-h-48 overflow-y-auto rounded-lg bg-surf">{results.map(result => <button key={result.target} onClick={() => openResult(result.target)} className="block w-full px-3 py-2 text-left text-sm hover:bg-hov">{result.title}<span className="ml-2 text-xs text-mu">{result.section}</span></button>)}{!results.length && <p className="p-3 text-sm text-mu">No settings found.</p>}</div> : <SearchSelect ariaLabel="Settings section" value={active} set={setTab} opts={SETTINGS_TABS.filter(([k]) => showOff || tabs.some(([v]) => v === k)).map(([k, l]) => [k, `${l}${tabs.some(([v]) => v === k) ? '' : ' (off)'}`] as [string, string])} />}</div>
             {disabledFeature ? <div className="space-y-3"><h2 className="text-lg font-semibold">{featureLabel} is off</h2><p className="text-sm text-mu">Turn it on in Features to use its settings.</p><Btn v="soft" onClick={() => setTab(`features#feature-${disabledFeature}`)}>Open Features</Btn></div> : active === 'stats'
               ? <UsageStats onOpenChat={(chatId, messageId) => { useS.getState().patch({ chat: chatId, flashMsg: messageId, activeProject: '' }); setTab('') }} />
               : <V />}

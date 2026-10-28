@@ -984,13 +984,18 @@ export function Chat({ side, toggle, cfg, pal }: { side: boolean; toggle: () => 
   }
   const pinned = pinnedReplyOf(c)
   // Dense transcripts get sampled down to a readable rail instead of 400
-  // overlapping dots; every dot still jumps to a real message.
-  const railDots = useMemo(() => {
-    const msgs = (c?.msgs ?? []).filter((m) => m.r === 'assistant')
+  // overlapping dots; every dot still jumps to a real message. The rail only
+  // earns its place once the reader has sent a couple of messages, so a single
+  // prompt and its reply do not sit behind a lone dot.
+  const { railDots, sentCount } = useMemo(() => {
+    const all = c?.msgs ?? []
+    const sentCount = all.reduce((n, m) => n + (m.r === 'user' ? 1 : 0), 0)
+    const msgs = all.filter((m) => m.r === 'assistant')
     const max = 160
-    if (msgs.length <= max) return msgs
-    const step = Math.ceil(msgs.length / max)
-    return msgs.filter((_, i) => i % step === 0 || i === msgs.length - 1)
+    const railDots = msgs.length <= max
+      ? msgs
+      : (() => { const step = Math.ceil(msgs.length / max); return msgs.filter((_, i) => i % step === 0 || i === msgs.length - 1) })()
+    return { railDots, sentCount }
   }, [c?.msgs])
 
   return (
@@ -1032,7 +1037,7 @@ export function Chat({ side, toggle, cfg, pal }: { side: boolean; toggle: () => 
               </button>
             </div>
           )}
-          {c && c.msgs.length > 1 && (
+          {c && sentCount >= 2 && (
             <nav aria-label="Message rail" className="absolute inset-y-6 right-2 z-20 hidden w-4 md:block">
               <div className="relative h-full w-full flex flex-col items-center justify-center gap-[6px] overflow-y-auto">
                 {railDots.map((m) => (

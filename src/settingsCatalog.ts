@@ -90,6 +90,7 @@ export const SETTING_LINKS: SettingLink[] = [
   { tab: 'features', anchor: 'feature-shortcuts', title: 'Feature: Shortcuts', keywords: 'feature shortcuts toggle keyboard' },
   { tab: 'features', anchor: 'feature-library', title: 'Feature: Library', keywords: 'feature library toggle sidebar' },
   { tab: 'features', anchor: 'library-entries', title: 'Library entries', keywords: 'library sidebar shortcuts entries show' },
+  { tab: 'features', anchor: 'show-disabled-features', title: 'Show disabled features', keywords: 'disabled features off hidden settings tabs signpost show hide' },
   { tab: 'features', anchor: 'feature-workspace', title: 'Feature: Workspace', keywords: 'feature workspace toggle files' },
   { tab: 'features', anchor: 'feature-advanced', title: 'Feature: Advanced', keywords: 'feature advanced toggle debugging' },
 
@@ -233,6 +234,7 @@ export const SETTING_LINKS: SettingLink[] = [
   { tab: 'look', anchor: 'code-wrap', title: 'Wrap long code lines', keywords: 'code blocks wrap soft wrap long lines scroll overflow' },
   { tab: 'look', anchor: 'code-line-numbers', title: 'Code line numbers', keywords: 'code blocks line numbers gutter numbered' },
   { tab: 'look', anchor: 'code-max-height', title: 'Code block height cap', keywords: 'code blocks maximum height scroll collapse long' },
+  { tab: 'look', anchor: 'glass-composer', title: 'Glass composer', keywords: 'glass composer frosted translucent backdrop blur opacity solid transparency message box' },
   { tab: 'look', anchor: 'reduce-transparency', title: 'Reduce transparency', keywords: 'reduce transparency flat opaque glass blur shadow gpu performance' },
   { tab: 'look', anchor: 'title-model', title: 'Title generation model', keywords: 'title model chat names endpoint helper endpoints' },
 

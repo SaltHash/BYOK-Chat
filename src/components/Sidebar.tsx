@@ -1,7 +1,7 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useShallow } from 'zustand/react/shallow'
-import { Plus, Clock, Search, PanelLeftClose, Pin, Pencil, Trash2, MessageSquare, Server, ListMusic, ScrollText, Terminal, Wrench, Settings, Palette, PanelRight, Folder, FolderPlus, FolderMinus, ChevronRight, Bookmark, Download, Archive, ArchiveRestore } from 'lucide-react'
-import { useS, chatMd, dl, THEMES, DARK_THEMES, LIGHT_THEMES, themeKeyOf, DEFAULT_LIBRARY_SHOW, featOn, type Chat, type FeatureId } from '../store'
+import { Plus, Clock, Search, PanelLeftClose, Pin, Pencil, Trash2, MessageSquare, Server, ListMusic, ScrollText, Terminal, Wrench, Settings, Palette, PanelRight, Folder, FolderPlus, FolderMinus, ChevronRight, Bookmark, Download, Archive, ArchiveRestore, MoreVertical, Check } from 'lucide-react'
+import { useS, chatMd, dl, THEMES, DARK_THEMES, LIGHT_THEMES, THEME_COLORS, themeKeyOf, DEFAULT_LIBRARY_SHOW, featOn, type Chat, type FeatureId } from '../store'
 import { searchChats } from '../recall'
 import { clampSidebarWidth } from '../layout'
 import { focusComposer } from '../hooks'
@@ -11,6 +11,7 @@ import { DndPlaceholder, DndLiveRegion, showDragOverlay, moveDragOverlay, hideDr
 import { stepInsertion } from '../dndShared'
 
 const act = 'grid size-7 place-items-center rounded-md text-mu hover:text-tx'
+const rowMenuItem = 'side-item flex w-full items-center gap-2.5 rounded-lg px-2.5 text-left text-sm hover:bg-surf'
 
 function Name({ v, save, done }: { v: string; save: (t: string) => void; done: () => void }) {
   const [t, setT] = useState(v)
@@ -24,46 +25,70 @@ function Name({ v, save, done }: { v: string; save: (t: string) => void; done: (
 }
 
 type RowDnd = { register: (id: string) => (el: HTMLDivElement | null) => void; handle: (chat: Chat, container: string, index: number) => { className: string; tabIndex: number; role: string; 'aria-label': string; 'aria-pressed': boolean; onPointerDown: (e: React.PointerEvent) => void; onKeyDown: (e: React.KeyboardEvent) => void }; activeId: string | null }
-type RowProps = { c: Chat; mv: (id: string, x: number, y: number) => void; del: (id: string, shift: boolean) => void; dnd: RowDnd; container: string; index: number }
+type RowProps = { c: Chat; mv: (id: string, x: number, y: number) => void; del: (id: string, shift: boolean) => void; dnd: RowDnd | null; container: string; index: number; /** Extra trailing label (temporary chats show the time they have left). */ time?: string }
 
-function RowBody({ c, mv, del, dnd, container, index }: RowProps) {
+function RowBody({ c, mv, del, dnd, container, index, time }: RowProps) {
   // The only store field a row renders is whether it is the open chat; the
   // actions are stable and read on demand, so a streamed chunk or a keystroke
   // in the composer does not re-render the list.
   const selected = useS((s) => s.chat === c.id)
   const [ed, setEd] = useState(false)
-  const dragging = dnd.activeId === c.id
-  const h = dnd.handle(c, container, index)
+  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null)
+  const dragging = dnd?.activeId === c.id
+  const h = dnd ? dnd.handle(c, container, index) : null
+  useEffect(() => {
+    if (!menu) return
+    const f = () => setMenu(null)
+    addEventListener('mousedown', f)
+    return () => removeEventListener('mousedown', f)
+  }, [menu])
+  const exportThis = () => {
+    const chat = useS.getState().chats.find((x) => x.id === c.id)
+    if (!chat) return
+    const base = chat.title.replace(/[^\w-]+/g, '_')
+    dl(`${base}.md`, chatMd(chat), 'text/markdown')
+    dl(`${base}.json`, JSON.stringify({ v: 4, chats: [chat] }, null, 1), 'application/json')
+  }
+  const vw = typeof window !== 'undefined' ? window.innerWidth : 0
+  const vh = typeof window !== 'undefined' ? window.innerHeight : 0
+  // Six standard actions, plus "save as permanent" for a temporary chat.
+  const menuH = 40 * (c.temporary ? 7 : 6) + 16
+  const menuLeft = menu ? Math.max(8, Math.min(menu.x - 208, vw - 216)) : 0
+  const menuTop = menu ? Math.max(8, Math.min(menu.y, vh - menuH)) : 0
   return (
-    <div ref={dnd.register(c.id)} data-chat-row={c.id}
-      {...h} title="Drag to move to a project"
-      className={cx('dnd-handle group flex cursor-grab items-center rounded-lg pr-1 text-sm', selected ? 'bg-hov' : 'hover:bg-surf', dragging && 'opacity-25')}>
+    <div ref={dnd ? dnd.register(c.id) : undefined} data-chat-row={c.id}
+      {...(h ?? {})} title={dnd ? 'Drag to move to a project' : undefined}
+      className={cx('group flex items-center rounded-lg pr-1 text-sm', dnd && 'dnd-handle cursor-grab', selected ? 'bg-hov' : 'hover:bg-surf', dragging && 'opacity-25')}>
       {ed ? <Name v={c.title} save={(t) => useS.getState().rename(c.id, t)} done={() => setEd(false)} /> : (
         <button onDoubleClick={() => setEd(true)} onClick={() => useS.getState().patch({ chat: c.id, activeProject: '' })} className="side-item flex min-w-0 flex-1 items-center gap-2.5 px-2.5 text-left">
           {c.pin ? <Pin size={15} className="shrink-0 text-ac" /> : c.temporary ? <Clock size={15} className="shrink-0 text-mu" /> : <MessageSquare size={15} className="shrink-0 text-mu" />}
-          <span className="truncate">{c.title}{c.temporary ? ' · temporary' : ''}</span>
+          <span className="truncate">{c.title}{c.temporary && container !== 'temporary' ? ' · temporary' : ''}</span>
         </button>
       )}
+      {time && <span title={c.expiresAt ? `Deletes in ${time}` : 'Deletes when you leave'} className="shrink-0 text-xs text-mu">{time}</span>}
       <span className="dnd-actions hidden shrink-0 max-md:flex md:group-hover:flex md:group-focus-within:flex">
-        <button aria-label={`Rename ${c.title}`} title="Rename" onClick={() => setEd(true)} className={act}><Pencil size={14} /></button>
-        <button aria-label={`Export ${c.title} (.md and .json)`} title="Export this chat (.md + .json)" onClick={() => {
-          const chat = useS.getState().chats.find((x) => x.id === c.id)
-          if (!chat) return
-          const base = chat.title.replace(/[^\w-]+/g, '_')
-          dl(`${base}.md`, chatMd(chat), 'text/markdown')
-          dl(`${base}.json`, JSON.stringify({ v: 4, chats: [chat] }, null, 1), 'application/json')
-        }} className={act}><Download size={14} /></button>
-        <button aria-label={`Move ${c.title} to project`} title="Move to project" onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); mv(c.id, r.left, r.bottom + 4) }} className={act}><Folder size={14} /></button>
-        <button aria-label={`${c.pin ? 'Unpin' : 'Pin'} ${c.title}`} title={c.pin ? 'Unpin' : 'Pin'} onClick={() => useS.getState().chatOp(c.id, 'pin')} className={act}><Pin size={14} /></button>
-        <button aria-label={c.archived ? `Restore ${c.title} from archive` : `Archive ${c.title}`} title={c.archived ? 'Restore from archive' : 'Archive chat (kept, hidden from the main list)'} onClick={() => useS.getState().chatOp(c.id, 'archive')} className={act}>{c.archived ? <ArchiveRestore size={14} /> : <Archive size={14} />}</button>
         <button aria-label={`Delete ${c.title}`} title="Delete chat (hold Shift to skip confirmation)" onClick={(e) => del(c.id, e.shiftKey)} className={cx(act, 'hover:text-er')}><Trash2 size={14} /></button>
+        <button aria-label={`More actions for ${c.title}`} title="More actions" aria-haspopup="menu" aria-expanded={!!menu} onClick={(e) => { e.stopPropagation(); const r = e.currentTarget.getBoundingClientRect(); setMenu({ x: r.right, y: r.bottom + 4 }) }} className={act}><MoreVertical size={14} /></button>
       </span>
+      {menu && (
+        <div role="menu" aria-label={`Actions for ${c.title}`} onMouseDown={(e) => e.stopPropagation()}
+          style={{ left: menuLeft, top: menuTop }}
+          className="dnd-actions fixed z-40 w-52 rounded-xl bg-hov p-1.5 shadow-md">
+          <button role="menuitem" onClick={() => { setEd(true); setMenu(null) }} className={rowMenuItem}><Pencil size={16} className="text-mu" />Rename</button>
+          <button role="menuitem" title="Export this chat (.md + .json)" onClick={() => { exportThis(); setMenu(null) }} className={rowMenuItem}><Download size={16} className="text-mu" />Export (.md + .json)</button>
+          <button role="menuitem" onClick={() => { mv(c.id, menuLeft, menuTop); setMenu(null) }} className={rowMenuItem}><Folder size={16} className="text-mu" />Move to project</button>
+          <button role="menuitem" onClick={() => { useS.getState().chatOp(c.id, 'pin'); setMenu(null) }} className={rowMenuItem}><Pin size={16} className="text-mu" />{c.pin ? 'Unpin' : 'Pin'}</button>
+          <button role="menuitem" title={c.archived ? 'Restore from archive' : 'Archive chat (kept, hidden from the main list)'} onClick={() => { useS.getState().chatOp(c.id, 'archive'); setMenu(null) }} className={rowMenuItem}>{c.archived ? <ArchiveRestore size={16} className="text-mu" /> : <Archive size={16} className="text-mu" />}{c.archived ? 'Restore from archive' : 'Archive'}</button>
+          {c.temporary && <button role="menuitem" onClick={() => { useS.getState().promoteChat(c.id); setMenu(null) }} className={rowMenuItem}><Bookmark size={16} className="text-mu" />Save as permanent chat</button>}
+          <button role="menuitem" onClick={(e) => { del(c.id, e.shiftKey); setMenu(null) }} className={cx(rowMenuItem, 'hover:text-er')}><Trash2 size={16} />Delete</button>
+        </div>
+      )}
     </div>
   )
 }
 
 const Row = memo(RowBody, (a, b) =>
-  a.container === b.container && a.index === b.index && a.dnd === b.dnd && a.mv === b.mv && a.del === b.del
+  a.container === b.container && a.index === b.index && a.dnd === b.dnd && a.mv === b.mv && a.del === b.del && a.time === b.time
   && a.c.id === b.c.id && a.c.title === b.c.title && a.c.pin === b.c.pin && a.c.temporary === b.c.temporary && a.c.archived === b.c.archived)
 
 export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; toggle: () => void; cfg: (t: string) => void; width?: number }) {
@@ -73,7 +98,7 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
      free and keeps the call sites unchanged. */
   const s = useS(useShallow((st) => ({
     chats: st.chats, chat: st.chat, projects: st.projects, activeProject: st.activeProject, prefs: st.prefs,
-    themeMode: st.themeMode, themeLight: st.themeLight, themeDark: st.themeDark, libraryShow: st.libraryShow,
+    themeMode: st.themeMode, themeLight: st.themeLight, themeDark: st.themeDark, customLightColors: st.customLightColors, customDarkColors: st.customDarkColors, libraryShow: st.libraryShow,
     eps: st.eps, pls: st.pls, prompts: st.prompts, cmds: st.cmds, tools: st.tools, memories: st.memories, widgets: st.widgets, features: st.features,
     patch: st.patch, newChat: st.newChat, renameProject: st.renameProject, delProject: st.delProject, openProject: st.openProject, moveChat: st.moveChat, promoteChat: st.promoteChat,
   })))
@@ -84,6 +109,7 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
   const [showArchived, setShowArchived] = useState(false)
   const [fe, setFe] = useState('')
   const [menu, setMenu] = useState<{ id: string; x: number; y: number } | null>(null)
+  const [themeMenu, setThemeMenu] = useState<{ x: number; y: number } | null>(null)
   const [deleteId, setDeleteId] = useState('')
   const [projectId, setProjectId] = useState('')
   const [newModal, setNewModal] = useState(false)
@@ -124,6 +150,12 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
     addEventListener('mousedown', f)
     return () => removeEventListener('mousedown', f)
   }, [menu])
+  useEffect(() => {
+    if (!themeMenu) return
+    const f = () => setThemeMenu(null)
+    addEventListener('mousedown', f)
+    return () => removeEventListener('mousedown', f)
+  }, [themeMenu])
   const k = q.toLowerCase()
   // Filter and partition in single passes, memoized: the list only changes
   // when chats or the query change, not on every unrelated store write.
@@ -506,14 +538,7 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
         <div className="flex flex-col rounded-lg" style={{ maxHeight: tempMaxH }}>
           <div className="shrink-0 px-2.5 pb-1 text-xs font-medium text-mu">Temporary chats</div>
           <div className="side-rows min-h-0 overflow-y-auto">
-            {tempVisible.map((c) => <div key={c.id} className={cx('group flex items-center rounded-lg pr-2 text-sm', s.chat === c.id ? 'bg-hov' : 'hover:bg-surf')}>
-              <button onClick={() => s.patch({ chat: c.id, activeProject: '' })} className="side-item flex min-w-0 flex-1 items-center gap-2.5 rounded-lg px-2.5 text-left">
-                <Clock size={15} className="shrink-0 text-mu" /><span className="truncate">{c.title}</span>
-              </button>
-              <span title={c.expiresAt ? `Deletes in ${timeLeft(c)}` : 'Deletes when you leave'} className="shrink-0 text-xs text-mu">{timeLeft(c)}</span>
-              <button title="Save as a permanent chat" aria-label={`Save ${c.title} as a permanent chat`} onClick={() => s.promoteChat(c.id)} className={cx(act, 'hidden shrink-0 max-md:grid md:group-hover:grid md:group-focus-within:grid')}><Bookmark size={14} /></button>
-              <button aria-label={`Delete ${c.title}`} title="Delete chat (hold Shift to skip confirmation)" onClick={(e) => del(c.id, e.shiftKey)} className={cx(act, 'ml-1 hidden shrink-0 hover:text-er max-md:grid md:group-hover:grid md:group-focus-within:grid')}><Trash2 size={14} /></button>
-            </div>)}
+            {tempVisible.map((c) => <Row key={c.id} c={c} mv={mv} del={del} dnd={null} container="temporary" index={0} time={timeLeft(c)} />)}
             {!temporary.length && <p className="px-2.5 py-1 text-sm text-mu">Nothing here yet.</p>}
           </div>
           {(tempMore > 0 || tempOpen) && (
@@ -578,8 +603,34 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
       )}
       <div className="flex items-center gap-1">
         <Btn icon={Settings} className="flex-1 justify-start" onClick={() => cfg('eps')}>Settings</Btn>
-        <Btn icon={Palette} title={`Theme: ${THEMES[themeKeyOf(s)]}`} onClick={() => s.patch(s.themeMode === 'light' ? { themeLight: thNext as typeof s.themeLight } : { themeDark: thNext as typeof s.themeDark })} />
+        <Btn icon={Palette} title={`Theme: ${THEMES[themeKeyOf(s)]} · Shift-click to cycle`} aria-haspopup="menu" aria-expanded={!!themeMenu} onClick={(e) => {
+          // Shift-click keeps the old gesture: cycle to the next theme.
+          if (e.shiftKey) { s.patch(s.themeMode === 'light' ? { themeLight: thNext as typeof s.themeLight } : { themeDark: thNext as typeof s.themeDark }); return }
+          const r = e.currentTarget.getBoundingClientRect()
+          setThemeMenu({ x: r.right, y: r.top })
+        }} />
       </div>
+      {themeMenu && (
+        <div role="menu" aria-label="Choose a theme" onMouseDown={(e) => e.stopPropagation()}
+          style={{ left: Math.max(8, Math.min(themeMenu.x - 208, (typeof window !== 'undefined' ? window.innerWidth : 0) - 216)), top: Math.max(8, themeMenu.y - 8 - (th.length * 40 + 40)) }}
+          className="fixed z-40 w-52 rounded-xl bg-hov p-1.5 shadow-md">
+          <div className="px-2.5 pb-1 text-xs font-medium text-mu">{s.themeMode === 'light' ? 'Light themes' : 'Dark themes'}</div>
+          {th.map((k) => {
+            const active = k === thCur
+            const accent = k === 'custom' ? (s.themeMode === 'light' ? s.customLightColors.ac : s.customDarkColors.ac) : THEME_COLORS[k]?.ac
+            return (
+              <button key={k} role="menuitemradio" aria-checked={active} onClick={() => {
+                s.patch(s.themeMode === 'light' ? { themeLight: k as typeof s.themeLight } : { themeDark: k as typeof s.themeDark })
+                setThemeMenu(null)
+              }} className={item}>
+                <span aria-hidden="true" className="size-4 shrink-0 rounded-full border border-bor" style={{ background: accent }} />
+                <span className="min-w-0 flex-1 truncate">{THEMES[k as keyof typeof THEMES]}</span>
+                {active && <Check size={14} className="shrink-0 text-ac" />}
+              </button>
+            )
+          })}
+        </div>
+      )}
       {menu && (
         <div onMouseDown={(e) => e.stopPropagation()} style={{ left: Math.min(menu.x, Math.max(8, (typeof window !== 'undefined' ? window.innerWidth : 0) - 216)), top: Math.min(menu.y, Math.max(8, (typeof window !== 'undefined' ? window.innerHeight : 0) - (60 + (s.projects.length + 1) * 36))) }} className="fixed z-40 w-52 rounded-xl bg-hov p-1.5">
           <button onClick={() => { s.moveChat(menu.id, ''); setMenu(null) }} className={item}><FolderMinus size={16} className="text-mu" />No project</button>

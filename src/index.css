@@ -263,13 +263,15 @@ html[data-codewrap] .md pre code { white-space: pre-wrap; overflow-wrap: anywher
 /* Glass composer: a translucent, blurred panel. Falls back to an opaque surface
    where backdrop-filter is unsupported. */
 /* Glass: a top-lit gradient over a light blur, so the surface reads as layered
-   rather than flat frosted. */
+   rather than flat frosted. The two knobs are Settings → Look → Glass composer:
+   --glass-blur (px) and --glass-opacity (%). The top stop sits slightly more
+   transparent than the bottom so the surface keeps its lit edge. */
 .glass-composer {
   background: linear-gradient(180deg,
-    color-mix(in srgb, var(--surf) 58%, transparent),
-    color-mix(in srgb, var(--surf) 78%, transparent));
-  -webkit-backdrop-filter: blur(10px) saturate(160%);
-  backdrop-filter: blur(10px) saturate(160%);
+    color-mix(in srgb, var(--surf) calc(var(--glass-opacity, 80%) - 8%), transparent),
+    color-mix(in srgb, var(--surf) var(--glass-opacity, 80%), transparent));
+  -webkit-backdrop-filter: blur(var(--glass-blur, 14px)) saturate(160%);
+  backdrop-filter: blur(var(--glass-blur, 14px)) saturate(160%);
 }
 
 /* Hairline edges: panes, menus and dialogs read as separate surfaces. */

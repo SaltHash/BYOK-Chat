@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import { Plus, FileUp, FileText, Image as ImageIcon, ArrowUp, ArrowLeft, ArrowRight, Square, CornerDownRight, ChevronRight, ListMusic, Cpu, ScrollText, Settings, Search, BookOpen, X, TriangleAlert, Wrench, Link as LinkIcon, ScanText, Mic, Star, GripVertical } from 'lucide-react'
 import { useS, usable, modelsOf, modelNameOf, featOn, normDocs, normSearch, fetchOptsOf, effortClassifierOf, helperRef, splitHelperRef, toggleFavRef, type Att, type Ep } from '../store'
@@ -593,7 +593,7 @@ export function Composer({ cfg }: { cfg: (t: string) => void }) {
     <div className="w-full self-center">
       <div className="mx-auto w-full" style={{ maxWidth: composerWidth(s.prefs.chatWidth), paddingLeft: 'var(--ui-chat-pad-x)', paddingRight: 'var(--ui-chat-pad-x)' }}>
       <Notice cfg={cfg} />
-      <div ref={box} style={{ padding: 'var(--ui-composer-pad)' }} className={cx('composer-shell relative rounded-2xl transition-colors', s.prefs.glassComposer !== false ? 'glass-composer border border-hov hover:border-bor focus-within:border-bor shadow-lg shadow-black/10' : 'edge-border bg-surf hover:border-bor focus-within:border-bor')} data-lit={menusOpen || listening || typing ? '1' : undefined} onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); add(e.dataTransfer.files) }}>
+      <div ref={box} style={{ padding: 'var(--ui-composer-pad)', '--glass-blur': `${s.prefs.glassBlur ?? 14}px`, '--glass-opacity': `${s.prefs.glassOpacity ?? 80}%` } as CSSProperties} className={cx('composer-shell relative rounded-2xl transition-colors', s.prefs.glassComposer !== false ? 'glass-composer border border-hov hover:border-bor focus-within:border-bor shadow-lg shadow-black/10' : 'edge-border bg-surf hover:border-bor focus-within:border-bor')} data-lit={menusOpen || listening || typing ? '1' : undefined} onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); add(e.dataTransfer.files) }}>
         {banner && <MentionBanner kind={banner} onDismiss={dismissBanner} warning={banner === 'search' && !searchEnabled ? 'Web search is off.' : undefined} onEnable={banner === 'search' && !searchEnabled ? () => { s.patch({ features: { ...s.features, tools: true }, tools: { ...s.tools, search: true } }) } : undefined} />}
         {menu && !menuOff && (
           <div className="edge-border absolute inset-x-0 bottom-full mb-2 rounded-xl bg-hov p-1.5">
