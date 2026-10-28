@@ -7,6 +7,27 @@ import { useS } from './store'
 
 export const canUseDOM = () => typeof window !== 'undefined' && typeof document !== 'undefined'
 
+/** Focus the message composer for an explicit "start typing here" action
+ *  (new chat, new temporary chat). The click that asked for it focuses its own
+ *  button, and React may still be committing the screen, so the focus is
+ *  applied on the next frame and re-asserted briefly. A dialog owns the
+ *  interaction while it is open, and a field the user is already typing in is
+ *  never stolen from. */
+export function focusComposer(): void {
+  if (!canUseDOM()) return
+  let frames = 0
+  const step = () => {
+    const el = document.getElementById('composer')
+    if (el && !document.querySelector('[role="dialog"]')) {
+      const ae = document.activeElement
+      const typing = ae instanceof HTMLInputElement || ae instanceof HTMLTextAreaElement || (ae instanceof HTMLElement && ae.isContentEditable && ae !== el)
+      if (!typing) el.focus({ preventScroll: true })
+    }
+    if (++frames < 3) requestAnimationFrame(step)
+  }
+  requestAnimationFrame(step)
+}
+
 /** Applies `data-t`, custom colors, luminance color-scheme and modal blur. */
 export function useThemeCss(opts: {
   themeMode: Parameters<typeof themeKeyOf>[0]['themeMode']

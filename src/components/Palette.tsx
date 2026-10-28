@@ -9,6 +9,7 @@ import { normSkills, resolveSkill } from '../skills'
 import { CI, WIDGETS, KEYS, orderTools } from '../meta'
 import { WORKSPACE_TEMPLATES } from '../workspace'
 import { pickFortune } from '../flair'
+import { focusComposer } from '../hooks'
 import { Confirm, Modal, cx, type Ic } from './ui'
 
 const TAB_FEATURE: Record<string, FeatureId> = {
@@ -42,7 +43,7 @@ export function Palette({ close, cfg, toggleSide }: { close: () => void; cfg: (t
   const { skills } = normSkills(s.skills)
 
   const all: Action[] = [
-    action(Plus, 'New chat', 'Action', 'create start conversation blank', s.newChat),
+    action(Plus, 'New chat', 'Action', 'create start conversation blank', () => { s.newChat(); focusComposer() }),
     ...s.chats.map((c) => action(MessageSquare, c.title, 'Chat', `chat conversation ${c.title}`, () => s.patch({ chat: c.id }))),
     ...s.eps.flatMap((e) => modelsOf(e).map((model) => action(Cpu, modelNameOf(e, model), e.name, `model ${modelNameOf(e, model)} ${model} ${e.name} provider endpoint switch select`, () => s.patch({ sel: { k: 'ep', id: e.id, model } })))),
     ...(featOn(s, 'playlists') ? s.pls.map((p) => action(Cpu, p.name, 'Playlist', `playlist model route ${p.name}`, () => s.patch({ sel: { k: 'pl', id: p.id } }))) : []),

@@ -3,7 +3,7 @@ import { useShallow } from 'zustand/react/shallow'
 import { useS, exportChat, featOn } from './store'
 import { combo, rec } from './engine'
 import { clampSidebarWidth, clampWidgetWidth } from './layout'
-import { canUseDOM, useThemeCss, useStyleCss, useVisualPrefs, usePanelResize } from './hooks'
+import { canUseDOM, focusComposer, useThemeCss, useStyleCss, useVisualPrefs, usePanelResize } from './hooks'
 import { useFontCss, sanitizeFontName } from './fonts'
 import { nextThemePatch, stepModelSelection, stepPromptSelection } from './selection'
 import { Sidebar } from './components/Sidebar'
@@ -149,7 +149,7 @@ export default function App() {
       if (!a) return
       e.preventDefault()
       if (a === 'palette') setPal((v) => !v)
-      else if (a === 'newChat') s.newChat()
+      else if (a === 'newChat') { s.newChat(); focusComposer() }
       else if (a === 'sidebar') setSide((v) => !v)
       else if (a === 'settings') setCfg((v) => (v ? '' : 'eps'))
       else if (a === 'focus') document.getElementById('composer')?.focus()
@@ -166,7 +166,7 @@ export default function App() {
         if (!featOn(s, 'prompts')) return
         s.patch({ pr: stepPromptSelection(s.prompts, s.pr) })
       }
-      else if (a === 'tempChat') s.newChat(true)
+      else if (a === 'tempChat') { s.newChat(true); focusComposer() }
     }
     window.addEventListener('keydown', f)
     return () => window.removeEventListener('keydown', f)

@@ -3,7 +3,7 @@ import { useShallow } from 'zustand/react/shallow'
 import { GitBranch, ChevronLeft, ChevronRight, ChevronDown, Server, Cpu, Copy, Check, RefreshCw, Trash2, ListOrdered, CircleCheck, CircleX, TriangleAlert, Paperclip, Download, ExternalLink, Volume2, Pin, PinOff, Search, ArrowUp, ArrowDown, X, Quote } from 'lucide-react'
 import { useS, useLive, usable, featOn, previewSysFor, activeWorkspaceForChat, pinnedReplyOf, type Msg } from '../store'
 import { clampWorkspaceFrac, roundFrac, CHAT_WIDTH } from '../layout'
-import { startPointerDrag } from '../hooks'
+import { focusComposer, startPointerDrag } from '../hooks'
 import { createFrameThrottle } from '../throttle'
 import { CI, fmtDuration } from '../meta'
 import { formatMsgDateTime, formatMsgTime } from '../time'
@@ -655,14 +655,12 @@ export function Chat({ side, toggle, cfg, pal }: { side: boolean; toggle: () => 
   const newChatPending = useS((st) => st.newChatPending)
   // Starting a fresh chat moves focus straight into the composer so typing
   // needs no click. Runs for the pending descriptor and again whenever the
-  // pending mode changes (e.g. switching "new" ↔ "new temporary").
+  // pending mode changes (e.g. switching "new" ↔ "new temporary"). The click
+  // that asked for it can leave its own button focused, so the composer is
+  // focused from the shared helper instead of only from an unfocused page.
   useEffect(() => {
     if (s.chat !== '') return
-    const id = requestAnimationFrame(() => {
-      if (document.activeElement !== document.body || document.querySelector('[role="dialog"]')) return
-      ;(document.getElementById('composer') as HTMLElement | null)?.focus({ preventScroll: true })
-    })
-    return () => cancelAnimationFrame(id)
+    focusComposer()
   }, [s.chat, newChatPending])
 
   // Also focus when switching to an existing chat (clicking a chat in the

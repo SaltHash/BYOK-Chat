@@ -4,6 +4,7 @@ import { Plus, Clock, Search, PanelLeftClose, Pin, Pencil, Trash2, MessageSquare
 import { useS, chatMd, dl, THEMES, DARK_THEMES, LIGHT_THEMES, themeKeyOf, DEFAULT_LIBRARY_SHOW, featOn, type Chat, type FeatureId } from '../store'
 import { searchChats } from '../recall'
 import { clampSidebarWidth } from '../layout'
+import { focusComposer } from '../hooks'
 import { Btn, Confirm, cx } from './ui'
 import { ProjectModal } from './ProjectModal'
 import { DndPlaceholder, DndLiveRegion, showDragOverlay, moveDragOverlay, hideDragOverlay, measureBox, DND_ACTIVATION_PX, useFlipAnimate, restDocTop, pointerDocY, edgeScroll } from './dnd'
@@ -457,8 +458,8 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
   return (
     <aside ref={asideRef} style={{ width: safeWidth, maxWidth: '90vw', padding: 'var(--ui-side-pad)', gap: 'var(--ui-side-gap)' }} className="side-shell z-20 flex min-w-0 shrink-0 flex-col border-r border-bor bg-side max-md:fixed max-md:inset-y-0 max-md:left-0">
       <div className="flex gap-2">
-        <Btn v="solid" icon={s.prefs.temporaryByDefault ? Clock : Plus} title={s.prefs.temporaryByDefault ? 'New temporary chat' : 'New chat'} className="flex-1" onClick={() => s.newChat()}>{s.prefs.temporaryByDefault ? 'Temporary chat' : 'New chat'}</Btn>
-        <Btn icon={s.prefs.temporaryByDefault ? Plus : Clock} title={s.prefs.temporaryByDefault ? 'New regular chat' : 'New temporary chat'} onClick={() => s.newChat(!s.prefs.temporaryByDefault)} />
+        <Btn v="solid" icon={s.prefs.temporaryByDefault ? Clock : Plus} title={s.prefs.temporaryByDefault ? 'New temporary chat' : 'New chat'} className="flex-1" onClick={() => { s.newChat(); focusComposer() }}>{s.prefs.temporaryByDefault ? 'Temporary chat' : 'New chat'}</Btn>
+        <Btn icon={s.prefs.temporaryByDefault ? Plus : Clock} title={s.prefs.temporaryByDefault ? 'New regular chat' : 'New temporary chat'} onClick={() => { s.newChat(!s.prefs.temporaryByDefault); focusComposer() }} />
         <Btn icon={PanelLeftClose} title="Hide sidebar" onClick={toggle} />
       </div>
       <div className="relative">
