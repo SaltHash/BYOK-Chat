@@ -1,13 +1,14 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { useShallow } from 'zustand/react/shallow'
-import { Plus, FileUp, FileText, Image as ImageIcon, ArrowUp, ArrowLeft, ArrowRight, Square, CornerDownRight, ChevronRight, ListMusic, Cpu, ScrollText, Settings, Search, BookOpen, X, TriangleAlert, Wrench, Link as LinkIcon, ScanText, Mic, Star, GripVertical } from 'lucide-react'
+import { Plus, FileUp, FileText, ArrowUp, Square, CornerDownRight, ChevronRight, ListMusic, Cpu, ScrollText, Settings, Search, BookOpen, X, TriangleAlert, Wrench, Link as LinkIcon, ScanText, Loader2, Mic, Star, GripVertical, Check } from 'lucide-react'
 import { useS, usable, modelsOf, modelNameOf, featOn, normDocs, normSearch, fetchOptsOf, effortClassifierOf, helperRef, splitHelperRef, toggleFavRef, type Att, type Ep } from '../store'
 import { CI, orderTools } from '../meta'
 import { composerWidth } from '../layout'
 import { can, readAtts, ocrImage, fetchPage } from '../engine'
 import { fitDoc } from '../docs'
 import { bannerOf, armMention, isPill, mentionsOf, stripMention, tokenizeMentions, type Mention, type Seg as MentionSeg } from '../mentions'
-import { Btn, Item, Pop, Seg, RangeSlider, Toggle, cx, type Ic } from './ui'
+import { Btn, Item, Pop, Seg, RangeSlider, Toggle, ImageLightbox, cx, type Ic } from './ui'
+import { SortableList } from './dnd'
 import { MentionBanner, MentionInfo } from './Mention'
 import { Notice } from './Extra'
 import { dictationAvailable, startDictation, stopSpeaking, normVoice, type Dictation } from '../voice'
@@ -374,53 +375,22 @@ export function Composer({ cfg }: { cfg: (t: string) => void }) {
     const txtChars = att.reduce((a, x) => a + (x.text?.length ?? 0), 0)
     const { atts, notices } = await readAtts(l, txtChars, dp)
     if (notices.length) s.patch({ notice: { t: notices.join('\n') } })
-    if (atts.length) setAtt((a) => [...a, ...atts])
+    if (atts.length) { setOcrStatus(''); setAtt((a) => [...a, ...atts]) }
   }
-  /* Pasting an image used to attach it silently. Show what was pasted first:
-   * a thumbnail and its pixel dimensions, with an explicit Attach step. Other
-   * pasted files still attach immediately (their names make them obvious). */
-  const [pastePreview, setPastePreview] = useState<{ file: File; url: string; w?: number; h?: number }[] | null>(null)
-  const previewPaste = (files: File[]) => {
-    const images = files.filter((f) => /^image\//i.test(f.type) || /\.(png|jpe?g|gif|webp|bmp|avif)$/i.test(f.name))
-    const rest = files.filter((f) => !images.includes(f))
-    if (rest.length) void add(rest)
-    if (!images.length) return
-    setPastePreview((prev) => {
-      for (const p of prev ?? []) URL.revokeObjectURL(p.url)
-      const rows = images.map((file) => {
-        const row: { file: File; url: string; w?: number; h?: number } = { file, url: URL.createObjectURL(file) }
-        const img = new Image()
-        img.onload = () => setPastePreview((cur) => cur ? cur.map((x) => (x.url === row.url ? { ...x, w: img.naturalWidth, h: img.naturalHeight } : x)) : cur)
-        img.src = row.url
-        return row
-      })
-      return rows
-    })
+  /* Pasting an image attaches it directly, like dropping a file on the box. */
+  /* Pending attachments are reordered with the shared drag system. Each one
+   * keeps a stable identity while it moves, so the list never duplicates an
+   * entry or follows a stale index. */
+  const attIds = useRef(new WeakMap<Att, string>())
+  const attSeq = useRef(0)
+  const attId = (a: Att): string => {
+    let id = attIds.current.get(a)
+    if (!id) { id = `att-${++attSeq.current}`; attIds.current.set(a, id) }
+    return id
   }
-  const discardPaste = () => {
-    setPastePreview((prev) => { for (const p of prev ?? []) URL.revokeObjectURL(p.url); return null })
-  }
-  const attachPasted = () => {
-    const files = (pastePreview ?? []).map((p) => p.file)
-    discardPaste()
-    if (files.length) void add(files)
-  }
-  const pasteRef = useRef(pastePreview)
-  pasteRef.current = pastePreview
-  useEffect(() => () => { for (const p of pasteRef.current ?? []) URL.revokeObjectURL(p.url) }, [])
-  /* Pending attachments are draggable: the order is sometimes meaningful (the
-   * model reads them in the order they are listed), and there was no way to
-   * change it before sending. */
-  const [dragAtt, setDragAtt] = useState<number | null>(null)
-  const [attachmentStatus, setAttachmentStatus] = useState('')
-  const moveAttachment = (from: number, to: number) => { const item = att[from]; if (!item || to < 0 || to >= att.length) return; reorderAtt(from, to); setAttachmentStatus(`${item.name} moved to position ${to + 1} of ${att.length}.`) }
-  const reorderAtt = (from: number, to: number) => setAtt((list) => {
-    if (from === to || from < 0 || to < 0 || from >= list.length || to >= list.length) return list
-    const next = [...list]
-    const [item] = next.splice(from, 1)
-    next.splice(to, 0, item)
-    return next
-  })
+  const byAttId = new Map(att.map((a) => [attId(a), a] as const))
+  const [ocrStatus, setOcrStatus] = useState('')
+  const [zoomed, setZoomed] = useState<{ src: string; alt: string } | null>(null)
   const [urlOpen, setUrlOpen] = useState(false)
   const [urlVal, setUrlVal] = useState('')
   const [urlBusy, setUrlBusy] = useState(false)
@@ -468,14 +438,16 @@ export function Composer({ cfg }: { cfg: (t: string) => void }) {
       ?? s.eps.find((e) => usable(e) && can(e, 'img'))
       ?? (ep && can(ep, 'img') ? ep : undefined)
     if (!vex) { s.patch({ notice: { t: 'Transcription needs a vision-capable endpoint, and none is set up yet. Add one in Settings → Endpoints, then try again.', tab: 'eps', label: 'Open endpoints' } }); return }
+    const model = vex.id === dp.ocrEp && dp.ocrModel ? dp.ocrModel : vex.model
     setOcrBusy(a)
+    setOcrStatus(`Transcribing ${a.name} with ${modelNameOf(vex, model)}…`)
     try {
-      const model = vex.id === dp.ocrEp && dp.ocrModel ? dp.ocrModel : vex.model
       const text = await ocrImage(vex, model, a)
       // Match by identity, not by index: the list may have changed while the
       // request was in flight.
-      setAtt((list) => list.map((x) => x === a ? { ...x, text: `[ocr: transcribed from ${x.name}]\n${text}`, source: 'ocr' } : x))
-    } catch (x: any) { s.patch({ notice: { t: `Transcription did not finish (${String(x?.message ?? x)}). Try again, or pick a different endpoint in Settings.` } }) }
+      setAtt((list) => list.map((x) => x === a ? { ...x, text: `[ocr: transcribed text from an attached image]\n${text}`, source: 'ocr' } : x))
+      setOcrStatus(`Transcribed ${a.name} · ${text.trim().length.toLocaleString()} characters added to this message, ready to send.`)
+    } catch (x: any) { setOcrStatus(''); s.patch({ notice: { t: `Transcription did not finish (${String(x?.message ?? x)}). Try again, or pick a different endpoint in Settings.` } }) }
     finally { setOcrBusy(null) }
   }
   const ready = !!v.trim() || att.length > 0
@@ -602,45 +574,81 @@ export function Composer({ cfg }: { cfg: (t: string) => void }) {
             )) : <p className="px-2.5 py-3 text-sm text-mu">{tw ? 'No tool matches.' : 'No enabled command matches. Manage commands in Settings.'}</p>}
           </div>
         )}
-        {pastePreview && (
-          <div className="mb-2 rounded-xl border border-ac/40 bg-ac/5 p-2.5">
-            <div className="mb-2 flex items-center justify-between gap-2">
-              <span className="text-xs font-medium">Pasted image{pastePreview.length > 1 ? `s (${pastePreview.length})` : ''} — review before attaching</span>
-              <div className="flex gap-1.5">
-                <Btn v="solid" className="h-8 px-2.5 text-xs" onClick={attachPasted}>Attach {pastePreview.length > 1 ? 'images' : 'image'}</Btn>
-                <Btn v="soft" className="h-8 px-2.5 text-xs" onClick={discardPaste}>Discard</Btn>
-              </div>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              {pastePreview.map((p) => (
-                <figure key={p.url} className="flex h-24 w-32 flex-col overflow-hidden rounded-lg bg-hov p-1.5">
-                  <img src={p.url} alt={p.file.name} className="min-h-0 flex-1 rounded-sm object-contain p-1" />
-                  <figcaption className="truncate px-1 text-xs text-mu" title={p.file.name}>{p.file.name} · {p.w && p.h ? `${p.w}×${p.h}` : 'loading size…'}</figcaption>
-                </figure>
-              ))}
-            </div>
-          </div>
-        )}
         {att.length > 0 && (
-          <div className="mb-2 flex flex-wrap gap-2" role="group" aria-label="Attachments">
-            <span className="sr-only" aria-live="polite">{attachmentStatus}</span>
-            {att.map((a, i) => a.kind === 'img' && a.data ? (
-              <div key={i} draggable onDragStart={(e) => { setDragAtt(i); e.dataTransfer.effectAllowed = 'move' }} onDragOver={(e) => { if (dragAtt != null) { e.preventDefault(); e.dataTransfer.dropEffect = 'move' } }} onDrop={(e) => { e.preventDefault(); if (dragAtt != null) reorderAtt(dragAtt, i); setDragAtt(null) }} onDragEnd={() => setDragAtt(null)} title={`${a.text ? `${a.name} · transcribed text attached` : a.name} · drag to reorder`} className={cx('group/preview relative flex h-24 w-28 cursor-grab flex-col overflow-hidden rounded-lg bg-hov p-1.5 ring-1 ring-hov', bad(a) && 'ring-er', dragAtt === i && 'opacity-50')}>
-                <img src={`data:${a.mime || 'image/*'};base64,${a.data}`} alt={a.name} className="min-h-0 flex-1 rounded-sm object-contain p-1" />
-                <span className="truncate px-1 text-xs text-mu" title={a.name}>{a.text ? '✓ ' : ''}{a.name}</span>
-                <span aria-hidden="true" className="absolute left-1 top-1 grid size-5 place-items-center rounded-full bg-black/60 text-white opacity-100 md:opacity-0 md:group-hover/preview:opacity-100"><GripVertical size={12} /></span>
-                {!a.text && <button aria-label={`Transcribe text from ${a.name}`} title="Transcribe image text with a vision model" onClick={() => { void ocrOne(a) }} disabled={ocrBusy != null} className="absolute bottom-6 left-1 grid size-5 place-items-center rounded-full bg-black/70 text-white opacity-100 transition-opacity md:opacity-0 md:group-hover/preview:opacity-100 md:focus:opacity-100 disabled:opacity-40"><ScanText size={12} /></button>}
-                <button aria-label={`Remove ${a.name}`} title={`Remove ${a.name}`} onClick={() => setAtt(att.filter((_, j) => j !== i))} className="absolute right-1 top-1 grid size-5 place-items-center rounded-full bg-black/70 text-white opacity-100 transition-opacity md:opacity-0 md:group-hover/preview:opacity-100 md:focus:opacity-100"><X size={12} /></button>
-                {att.length > 1 && <span className="absolute bottom-1 right-1 flex gap-0.5"><Btn sm icon={ArrowLeft} title={`Move ${a.name} earlier`} disabled={i === 0} onClick={() => moveAttachment(i, i - 1)} className="!size-7 bg-black/70 text-white" /><Btn sm icon={ArrowRight} title={`Move ${a.name} later`} disabled={i === att.length - 1} onClick={() => moveAttachment(i, i + 1)} className="!size-7 bg-black/70 text-white" /></span>}
-                {bad(a) && <span className="absolute left-1 right-1 top-7 rounded-sm bg-er/90 px-1 py-0.5 text-center text-xs text-white"><TriangleAlert size={11} className="inline" /> Unsupported</span>}
-              </div>
-            ) : (
-              <span key={i} draggable onDragStart={(e) => { setDragAtt(i); e.dataTransfer.effectAllowed = 'move' }} onDragOver={(e) => { if (dragAtt != null) { e.preventDefault(); e.dataTransfer.dropEffect = 'move' } }} onDrop={(e) => { e.preventDefault(); if (dragAtt != null) reorderAtt(dragAtt, i); setDragAtt(null) }} onDragEnd={() => setDragAtt(null)} title={bad(a) ? 'The selected model cannot process this file' : (a.source ? `${a.name} · ${a.source}${a.pages ? ` · ${a.pages} pages` : ''}${a.text ? ` · ${Math.round(a.text.length / 1024)} KB text` : ''} · drag to reorder` : 'Drag to reorder')} className={cx('inline-flex cursor-grab items-center gap-1.5 rounded-lg bg-hov py-1 pl-2 pr-1 text-xs', bad(a) && 'text-er', dragAtt === i && 'opacity-50')}>
-                <GripVertical size={12} className="text-mu" aria-hidden="true" />{bad(a) ? <TriangleAlert size={13} /> : <FileText size={13} />}{a.text && a.kind !== 'txt' ? '✓ ' : ''}{a.name}<span className="text-mu">{a.size}</span>
-                {att.length > 1 && <><Btn sm icon={ArrowLeft} title={`Move ${a.name} earlier`} disabled={i === 0} onClick={() => moveAttachment(i, i - 1)} /><Btn sm icon={ArrowRight} title={`Move ${a.name} later`} disabled={i === att.length - 1} onClick={() => moveAttachment(i, i + 1)} /></>}
-                <Btn sm icon={X} title={`Remove ${a.name}`} onClick={() => setAtt(att.filter((_, j) => j !== i))} />
-              </span>
-            ))}
+          <div className="mb-2" role="group" aria-label="Attachments">
+            <SortableList
+              ids={att.map((a) => attId(a))}
+              onCommit={(from, to) => setAtt((list) => {
+                // Resolve the dragged item by identity, not by the index the
+                // drag started from: an OCR result can replace the list while
+                // the pointer is down, and a stale index would move the wrong
+                // file (or duplicate one).
+                const id = list.map(attId)[from]
+                const at = list.findIndex((x) => attId(x) === id)
+                if (at < 0) return list
+                const next = [...list]
+                const [item] = next.splice(at, 1)
+                next.splice(Math.max(0, Math.min(to, next.length)), 0, item)
+                return next
+              })}
+              label="Attachment"
+              axis="x"
+              describe={(id) => byAttId.get(id)?.name ?? 'attachment'}
+              className="flex items-center gap-2 overflow-x-auto pb-1"
+              itemClassName="shrink-0"
+              renderItem={(id, api) => {
+                const a = byAttId.get(id)
+                if (!a) return null
+                const hp = api.handleProps(`Reorder ${a.name}`)
+                const remove = () => setAtt((list) => list.filter((x) => x !== a))
+                const handle = (extra: string) => (
+                  <button
+                    type="button"
+                    {...hp}
+                    title={`Drag to reorder ${a.name}`}
+                    className={cx('dnd-handle grid size-5 shrink-0 place-items-center rounded-full bg-black/60 text-white', extra)}
+                  >
+                    <GripVertical size={12} />
+                  </button>
+                )
+                if (a.kind === 'img' && a.data) {
+                  const src = `data:${a.mime || 'image/*'};base64,${a.data}`
+                  return (
+                    <div onPointerDown={hp.onPointerDown} className={cx('group/preview relative flex h-24 w-28 cursor-grab flex-col overflow-hidden rounded-lg bg-hov p-1.5 ring-1 ring-hov', bad(a) && 'ring-er')} title={a.text ? `${a.name} · transcribed text attached` : a.name}>
+                      <button type="button" aria-label={`View ${a.name} full screen`} title="Click to enlarge" onClick={() => setZoomed({ src, alt: a.name })} className="min-h-0 flex-1 overflow-hidden rounded-sm">
+                        <img src={src} alt={a.name} draggable={false} className="h-full w-full object-contain p-1" />
+                      </button>
+                      <span className="truncate px-1 text-xs text-mu" title={a.name}>{a.text ? '✓ ' : ''}{a.name}</span>
+                      {handle('absolute left-1 top-1')}
+                      {!a.text ? (
+                        <button aria-label={`Transcribe text from ${a.name}`} title="Transcribe image text with a vision model" onClick={() => { void ocrOne(a) }} disabled={ocrBusy != null} className="absolute bottom-6 left-1 grid size-5 place-items-center rounded-full bg-black/70 text-white opacity-100 transition-opacity md:opacity-0 md:group-hover/preview:opacity-100 md:focus:opacity-100 disabled:opacity-40">
+                          {ocrBusy === a ? <Loader2 size={12} className="animate-spin" /> : <ScanText size={12} />}
+                        </button>
+                      ) : (
+                        <span title="Transcribed text is attached" className="absolute bottom-6 left-1 grid size-5 place-items-center rounded-full bg-ac text-acx"><Check size={12} /></span>
+                      )}
+                      <button aria-label={`Remove ${a.name}`} title={`Remove ${a.name}`} onClick={remove} className="absolute right-1 top-1 grid size-5 place-items-center rounded-full bg-black/70 text-white opacity-100 transition-opacity md:opacity-0 md:group-hover/preview:opacity-100 md:focus:opacity-100"><X size={12} /></button>
+                      {ocrBusy === a && <span className="absolute inset-0 grid place-items-center bg-black/55 text-center text-[10px] font-medium text-white"><Loader2 size={14} className="mb-1 animate-spin" />Transcribing…</span>}
+                      {bad(a) && <span className="absolute left-1 right-1 top-7 rounded-sm bg-er/90 px-1 py-0.5 text-center text-xs text-white"><TriangleAlert size={11} className="inline" /> Unsupported</span>}
+                    </div>
+                  )
+                }
+                return (
+                  <div onPointerDown={hp.onPointerDown} title={bad(a) ? 'The selected model cannot process this file' : `${a.name}${a.source ? ` · ${a.source}` : ''}${a.pages ? ` · ${a.pages} pages` : ''}${a.text ? ` · ${Math.round(a.text.length / 1024)} KB text` : ''}`} className={cx('inline-flex items-center gap-1.5 rounded-lg bg-hov py-1 pl-2 pr-1 text-xs', bad(a) && 'text-er')}>
+                    {handle('!bg-transparent !text-mu hover:!text-tx')}
+                    {bad(a) ? <TriangleAlert size={13} /> : <FileText size={13} />}{a.text && a.kind !== 'txt' ? '✓ ' : ''}{a.name}<span className="text-mu">{a.size}</span>
+                    <Btn sm icon={X} title={`Remove ${a.name}`} onClick={remove} />
+                  </div>
+                )
+              }}
+            />
+            {ocrStatus && (
+              <p role="status" className={cx('flex items-center gap-1.5 px-1 pt-1 text-xs', ocrBusy ? 'text-mu' : 'text-ac')}>
+                {ocrBusy ? <Loader2 size={12} className="shrink-0 animate-spin" /> : <Check size={12} className="shrink-0" />}
+                <span className="min-w-0 flex-1 truncate">{ocrStatus}</span>
+              </p>
+            )}
+            {zoomed && <ImageLightbox src={zoomed.src} alt={zoomed.alt} close={() => setZoomed(null)} />}
           </div>
         )}
         {urlOpen && (
@@ -726,7 +734,7 @@ export function Composer({ cfg }: { cfg: (t: string) => void }) {
             onBlur={() => { setTyping(false); setActive(null) }}
             onFocus={() => setTyping(true)}
             onPaste={(e) => {
-              if (e.clipboardData.files.length) { e.preventDefault(); previewPaste(Array.from(e.clipboardData.files)); return }
+              if (e.clipboardData.files.length) { e.preventDefault(); void add(e.clipboardData.files); return }
               const text = e.clipboardData.getData('text/plain')
               if (!text) return
               e.preventDefault()

@@ -1,18 +1,18 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { useShallow } from 'zustand/react/shallow'
-import { DEFAULT_TOOLS, KEYS, WIDGETS, TOOLS } from './meta'
+import { DEFAULT_TOOLS, KEYS, WIDGETS } from './meta'
 import { est, redact, stream, wire, trimHistory, estimateHistoryTokens, runToolLoop, type ToolCall, type ToolResult, searchWeb, formatSearch, fetchPage, formatPage, can, ocrImage, clearSessionCache, setDynamicTools, DYNAMIC_TOOLS, type ToolSpec, type PageExcerpt } from './engine'
 import { normMcpServers, mcpBindings, callMcpTool, toolParameters, type McpServer, type McpTool } from './mcp'
-import { uniqueAttachmentNames } from './attachments'
+import { uniqueAttachmentNames, anonymizeAttachmentNames, promptNameOf } from './attachments'
 import { generateImages, normImageGen, BLANK_IMAGE_GEN, imageSummary, type ImageGenPrefs } from './imagegen'
 import { runCode, formatCodeResult, normCodeRun, BLANK_CODE_RUN, type CodeRunPrefs, type CodeLang } from './codesandbox'
 import type { EndpointAuth } from './endpointAuth'
 import { blobPut } from './storage/durable'
 import { normVoice, BLANK_VOICE, type VoicePrefs } from './voice'
 import { DEFAULT_SKILL_STATE, normSkills, enabledSkills, getSkillInstructions, composeSystemPrompt, SKILL_TOOL_NAME, type SkillState, type ResolvedSkill } from './skills'
-import { BLANK_RESEARCH, PLAN_SCOPE_MAX, PLAN_SCOPE_SYSTEM, RESEARCH_ABSTRACT_ASK, RESEARCH_MIN_SEARCHES, RESEARCH_REASONING_CHARS, RESEARCH_REPORT_ASK, RESEARCH_TIERS, citationRepairAsk, citationUncitedAsk, compactResearchRounds, estimateResearchUsage, fallbackPlan, looksLikeReport, normResearch, parseResearchPlan, parseResearchRequest, planNote, planUserAsk, reportSample, researchAbstract, researchMinAsk, researchSystemNote, sanitizeCitations, setStep, tierOf, withStepLead, type ResearchPlan, type ResearchState, type ResearchTierId } from './research'
-export { BLANK_RESEARCH, normResearch, tierOf, RESEARCH_TIERS }
+import { PLAN_SCOPE_MAX, PLAN_SCOPE_SYSTEM, RESEARCH_ABSTRACT_ASK, RESEARCH_MIN_SEARCHES, RESEARCH_REASONING_CHARS, RESEARCH_REPORT_ASK, RESEARCH_TIERS, citationRepairAsk, citationUncitedAsk, compactResearchRounds, countedSteps, estimateResearchUsage, fallbackPlan, looksLikeReport, parseResearchPlan, parseResearchRequest, planNote, planUserAsk, reportSample, researchAbstract, researchMinAsk, researchSystemNote, sanitizeCitations, setStep, tierOf, withStepLead, type ResearchPlan, type ResearchState, type ResearchTierId } from './research'
+export { tierOf, RESEARCH_TIERS }
 export type { ResearchState, ResearchTierId, ResearchPlan, ResearchPlanStep } from './research'
 import { collectMessageSources, citationCoverage, citationRule, createCiteIds } from './citations'
 import { hintForLog, getErrorCode, classifyModelError, type ErrorCode } from './errors'
@@ -56,7 +56,7 @@ export type Command = { id: string; name: string; desc: string; in: 'text' | 'im
 export type Cmd = Command
 export type Attempt = { n: string; m: string; detail?: string; ms?: number; err?: string; errCode?: ErrorCode; tin?: number; tout?: number; /** Prompt and reply tokens of the final tool round; the context meter uses these instead of the cumulative `tin`/`tout` across rounds. */ contextTin?: number; contextTout?: number; cacheRead?: number; cacheWrite?: number; cost?: number; at?: number }
 export type Try = Attempt
-export type Attachment = { name: string; kind: 'img' | 'pdf' | 'txt' | 'media'; size: string; mime?: string; data?: string; text?: string; source?: string; pages?: number }
+export type Attachment = { name: string; kind: 'img' | 'pdf' | 'txt' | 'media'; size: string; mime?: string; data?: string; text?: string; source?: string; pages?: number; /** Neutral name shown to the model instead of the real file name. */ modelName?: string }
 export type Att = Attachment
 export type Message = { id: string; r: 'user' | 'assistant'; t: string; at?: number; by?: string; tps?: number; log?: Attempt[]; att?: Attachment[]; err?: boolean; trunc?: boolean; capped?: boolean; full?: string; ctx?: string[]; fx?: string; cmd?: string; alts?: Snap[]; ai?: number; historyTokens?: number; explicitTokens?: number; reasoning?: string; toolRounds?: { text: string; calls: ToolResult[] }[]; toolFinal?: string; sys?: string; workspaceIds?: string[]; research?: ResearchState; /** Kept visible under the header and added to the model context (see prefs.pinContext). */ pin?: boolean }
 export type Msg = Message
@@ -506,9 +506,10 @@ export const readerSummaryModelsOf = (
 type S = {
   eps: Ep[]; prompts: Prompt[]; pls: Pl[]; cmds: Cmd[]; mcps: McpServer[]; chats: Chat[]; chat: string
   tools: Record<string, boolean>
-  /** Tools the user allowed for good ("do not ask again"). Enabling one of
-   *  these skips the allow popup; the entry is dropped when the tool is off. */
-  toolConsent: Record<string, boolean>
+  /** One shared answer to the allow prompt shown before enabling a tool that
+   *  reads the device (location, clipboard, date, time). True stops the prompt
+   *  for all of them; the prompt is never shown for any other tool. */
+  toolConsent: boolean
   imageGen: ImageGenPrefs
   codeRun: CodeRunPrefs
   voicePrefs: VoicePrefs
@@ -541,7 +542,6 @@ type S = {
   gistToken: string
   memories: Memory[]; memoryPrefs: MemoryPrefs
   docPrefs: DocPrefs
-  research: { defaultTier: ResearchTierId }
   projects: Project[]; price: { in: number; out: number }; todos: { id: string; t: string; done: boolean }[]
   /** Project whose overview fills the main area. Session-scoped: chat view
    *  wins whenever a chat is open, and it resets on every reload. */
@@ -1190,8 +1190,10 @@ export const useS = create<S>()(
         const ctxLimit = candidateCtx.length ? Math.min(configuredCtx, Math.min(...candidateCtx)) : configuredCtx
         const baseSteps = resume ? (getResearch()?.steps ?? []) : []
         const baseRounds = resume ? (researchMsg(chatId, mid)?.toolRounds ?? []) : []
-        const baseSearches = baseSteps.filter((s) => s.kind === 'search').length
-        const baseReads = baseSteps.filter((s) => s.kind === 'read').length
+        // Only searches and reads that returned something count against the
+        // tier budget; failed attempts stay visible but cost nothing.
+        const baseSearches = countedSteps(baseSteps, 'search')
+        const baseReads = countedSteps(baseSteps, 'read')
         const planApproved = getResearch()?.plan ?? null
         const pinned = pinnedContextFor(get().chats.find((c) => c.id === chatId), get().prefs, ctxLimit, cpt)
         const system = `${p.sys}${p.sys ? '\n\n' : ''}${researchSystemNote(query, tier, new Date(), planApproved)}${pinned ? `\n\n${pinned.note}` : ''}`
@@ -1278,10 +1280,14 @@ export const useS = create<S>()(
                   enabledTools.search = false
                   return `Search budget reached (${tier.maxSearches} searches for ${tier.label}). No further searches are available — close the research with your short abstract of the report you are about to write.`
                 }
+                // Reserve the slot up front (searches in one round run in
+                // parallel), then give it back when the call fails, so failed
+                // attempts are not charged to the budget.
                 usedSearches++
+                const attempt = usedSearches
                 stepN++
                 const id = `s${stepN}`
-                patchRs(chatId, mid, (rs) => withStepLead(rs, { id, kind: 'search', label: `Search ${usedSearches}`, query: String(q ?? '').slice(0, 120), state: 'running' }))
+                patchRs(chatId, mid, (rs) => withStepLead(rs, { id, kind: 'search', label: `Search ${attempt}`, query: String(q ?? '').slice(0, 120), state: 'running' }))
                 try {
                   const data = await searchWeb(String(q ?? ''), { ...searchOpts, count: searchCountOf(prefs, count), cache: true })
                   const results = (data as { results?: { id: string; url: string }[] }).results ?? []
@@ -1291,10 +1297,12 @@ export const useS = create<S>()(
                   return results.length ? out : `${out}\nNo results matched this query. Rewrite it with different wording, fewer qualifiers, or a more specific domain, then search once more before moving on.`
                 } catch (err: any) {
                   const msg = String(err?.message ?? err).slice(0, 200)
-                  setSteps(setStep(getSteps(), id, { state: 'error', error: msg }))
+                  usedSearches = Math.max(0, usedSearches - 1)
+                  setSteps(setStep(getSteps(), id, { state: 'error', label: 'Search failed', error: msg }))
                   // Surface an instructive tool error so the model rewrites the
-                  // query instead of the call failing the whole run.
-                  throw Error(`Search failed (${msg}). Rewrite the query or try another angle; do not stop the research over one failed search.`)
+                  // query instead of the call failing the whole run. The failed
+                  // attempt did not use any of the search budget.
+                  throw Error(`Search failed (${msg}). This attempt did not use the search budget. Rewrite the query or try another angle; do not stop the research over one failed search.`)
                 }
               },
               fetch_page: async ({ url, info }: { url: string; info?: string }) => {
@@ -1308,10 +1316,13 @@ export const useS = create<S>()(
                   enabledTools.fetch_page = false
                   return `Read budget reached (${tier.maxReads} pages for ${tier.label}). No further page reads are available — close the research with your short abstract of the report you are about to write.`
                 }
+                // Reads run one at a time, so a failed page simply returns its
+                // slot; unreadable pages never count against the budget.
                 usedReads++
+                const attempt = usedReads
                 stepN++
                 const id = `s${stepN}`
-                patchRs(chatId, mid, (rs) => withStepLead(rs, { id, kind: 'read', label: `Read ${usedReads}`, query: String(url ?? '').slice(0, 120), state: 'running' }))
+                patchRs(chatId, mid, (rs) => withStepLead(rs, { id, kind: 'read', label: `Read ${attempt}`, query: String(url ?? '').slice(0, 120), state: 'running' }))
                 try {
                   const page = await fetchPage(String(url ?? ''), { cache: true, ...fetchOptsOf(prefs) })
                   const citeId = citeIdFor(page.url || String(url ?? ''))
@@ -1321,8 +1332,9 @@ export const useS = create<S>()(
                   return out
                 } catch (err: any) {
                   const msg = String(err?.message ?? err).slice(0, 200)
-                  setSteps(setStep(getSteps(), id, { state: 'error', error: msg }))
-                  throw Error(`Could not read that page (${msg}). Try another result URL; do not stop the research over one unreadable page.`)
+                  usedReads = Math.max(0, usedReads - 1)
+                  setSteps(setStep(getSteps(), id, { state: 'error', label: 'Read failed', error: msg }))
+                  throw Error(`Could not read that page (${msg}). This read did not use the page budget. Try another result URL; do not stop the research over one unreadable page.`)
                 }
               },
             }
@@ -1982,7 +1994,7 @@ export const useS = create<S>()(
           { id: 'k6', name: 'translate', desc: 'Translate text', in: 'text', sys: 'Translate the provided text into the language requested. If no target language is specified, ask which language.', tpl: '{{input}}', pl: '', on: true, args: '<text> to <language>' },
           { id: 'k7', name: 'brainstorm', desc: 'Generate useful ideas', in: 'text', sys: 'Generate varied, practical ideas. Keep each idea distinct and briefly explain why it may work.', tpl: '{{input}}', pl: '', on: true, args: '<topic>' },
         ],
-        chats: [], chat: '', drafts: {}, memories: [], imageGen: { ...BLANK_IMAGE_GEN }, codeRun: { ...BLANK_CODE_RUN }, voicePrefs: { ...BLANK_VOICE }, memoryPrefs: { ...DEFAULT_MEMORY_PREFS }, docPrefs: { ...BLANK_DOCS }, research: { ...BLANK_RESEARCH }, tools: { ...DEFAULT_TOOLS }, toolConsent: {}, search: { ...BLANK_SEARCH, keys: { ...BLANK_SEARCH.keys } }, skills: DEFAULT_SKILL_STATE.map((s) => ({ ...s })), widgets: {}, widgetPrefs: { ...DEFAULT_WIDGET_PREFS, widgetOrder: [...DEFAULT_WIDGET_PREFS.widgetOrder], shortcuts: [...DEFAULT_WIDGET_PREFS.shortcuts] }, rail: false, pad: '', snips: [],
+        chats: [], chat: '', drafts: {}, memories: [], imageGen: { ...BLANK_IMAGE_GEN }, codeRun: { ...BLANK_CODE_RUN }, voicePrefs: { ...BLANK_VOICE }, memoryPrefs: { ...DEFAULT_MEMORY_PREFS }, docPrefs: { ...BLANK_DOCS }, tools: { ...DEFAULT_TOOLS }, toolConsent: false, search: { ...BLANK_SEARCH, keys: { ...BLANK_SEARCH.keys } }, skills: DEFAULT_SKILL_STATE.map((s) => ({ ...s })), widgets: {}, widgetPrefs: { ...DEFAULT_WIDGET_PREFS, widgetOrder: [...DEFAULT_WIDGET_PREFS.widgetOrder], shortcuts: [...DEFAULT_WIDGET_PREFS.shortcuts] }, rail: false, pad: '', snips: [],
         params: { ...DEFAULT_PARAMS }, effort: {},
         workspacePrefs: { defaultView: 'latest', autoOpen: true, autoFollow: true },
         advanced: { ...DEFAULT_ADVANCED },
@@ -2081,7 +2093,8 @@ export const useS = create<S>()(
           // Every uploaded file gets a distinct name before anything else sees
           // it, so the model can refer to "report (2).pdf" unambiguously and
           // the visible attachment chips match what the prompt contains.
-          const namedAtt = uniqueAttachmentNames(att)
+          // Give each upload a neutral prompt name; the chips keep the real one.
+          const namedAtt = anonymizeAttachmentNames(uniqueAttachmentNames(att))
           const researchReq = parseResearchRequest(raw)
           if (researchReq && !namedAtt.length) {
             const pre = plan(s, { id: 'tmp', r: 'user', t: raw } as Msg)
@@ -2117,7 +2130,7 @@ export const useS = create<S>()(
               um.historyTokens = 0
               um.explicitTokens = est(raw)
               set((st) => ({ chats: st.chats.map((c) => (c.id === pm.c.id ? { ...c, msgs: [...c.msgs, um] } : c)), notice: null }))
-              void planResearch(pm.m.id, um, pm.m.research!.query, pm.m.research!.tier ?? s.research.defaultTier, raw)
+              void planResearch(pm.m.id, um, pm.m.research!.query, pm.m.research!.tier ?? 'standard', raw)
               return true
             }
           }
@@ -2158,7 +2171,7 @@ export const useS = create<S>()(
                     files = await Promise.all(namedAtt.map(async (a) => {
                       if (a.kind !== 'img' || !a.data || a.text) return a
                       const text = await ocrImage(picked, model, a)
-                      return { ...a, text: `[ocr: transcribed from ${a.name}]\n${text}`, source: 'ocr' }
+                      return { ...a, text: `[ocr: transcribed from ${promptNameOf(a)}]\n${text}`, source: 'ocr' }
                     }))
                     um.att = files
                   } catch (x: any) {
@@ -2182,12 +2195,12 @@ export const useS = create<S>()(
           // Every attachment with extracted text (txt, PDF text layer, Office
           // docs, transcripts, OCR) rides inline; native binaries (images on
           // vision endpoints, PDFs on Anthropic) ride alongside in wire().
-          um.fx = files.filter((a) => a.text).map((a) => `\n\n[file: ${a.name}]\n${a.text ?? ''}`).join('')
+          um.fx = files.filter((a) => a.text).map((a) => `\n\n[file: ${promptNameOf(a)}]\n${a.text ?? ''}`).join('')
           um.full = full(body(cmd, text), um.ctx, um.fx)
           const previous = s2.chats.find((c) => c.id === chatId)?.msgs ?? []
           const cpt = Math.min(10, Math.max(1, Number(s2.widgetPrefs?.charsPerToken) || 4))
           um.historyTokens = estimateHistoryTokens(previous, '', cpt)
-          um.explicitTokens = est(um.full + JSON.stringify(files.map(a => ({ name: a.name, text: a.text }))))
+          um.explicitTokens = est(um.full + JSON.stringify(files.map(a => ({ name: promptNameOf(a), text: a.text }))))
           set((st) => {
             const old = st.chats.find((c) => c.id === chatId)
             // Materializes the pending new chat: the temporary flag and expiry
@@ -2271,7 +2284,6 @@ export const useS = create<S>()(
           if (!um) return
           set((st) => ({
             chats: st.chats.map((x) => (x.id === c.id ? { ...x, msgs: x.msgs.map((m) => (m.id === mid && m.research ? { ...m, research: { ...m.research, tier } } : m)) } : x)),
-            research: { ...st.research, defaultTier: tier },
           }))
           void planResearch(mid, um, msg.research.query, tier)
         },
@@ -2286,7 +2298,7 @@ export const useS = create<S>()(
           if (!msg.research || msg.research.status !== 'plan') return
           const um = [...c.msgs.slice(0, i)].reverse().find((m) => m.r === 'user')
           if (!um) return
-          void runResearch(mid, um, msg.research.query, msg.research.tier ?? s.research.defaultTier)
+          void runResearch(mid, um, msg.research.query, msg.research.tier ?? 'standard')
         },
         resumeResearch: (mid) => {
           const s = get()
@@ -2298,8 +2310,8 @@ export const useS = create<S>()(
           const i = c.msgs.findIndex((m) => m.id === mid)
           const um = [...c.msgs.slice(0, i)].reverse().find((m) => m.r === 'user')
           if (!um) return
-          const used = msg.research.steps.filter((st) => st.kind === 'search').length
-          const tier = tierOf(msg.research.tier ?? s.research.defaultTier)
+          const used = countedSteps(msg.research.steps, 'search')
+          const tier = tierOf(msg.research.tier)
           if (used >= tier.maxSearches) return
           void runResearch(mid, um, msg.research.query, tier.id, true)
         },
@@ -2450,13 +2462,16 @@ export const useS = create<S>()(
         p.prefs = { ...p.prefs, favoritesSection: p.prefs?.favoritesSection !== false, hideFavoritesInProviders: p.prefs?.hideFavoritesInProviders !== false, collapsedProviders: Array.isArray(p.prefs?.collapsedProviders) ? p.prefs.collapsedProviders.filter((x: unknown) => typeof x === 'string') : [] }
         p.tools = { ...DEFAULT_TOOLS, ...(p.tools ?? {}) }
         // Only boolean flags for known tools survive a reload.
-        p.toolConsent = Object.fromEntries(Object.entries(p.toolConsent ?? {}).filter(([k, v]) => v === true && TOOLS.some(([id]) => id === k)))
+        // Older builds remembered consent per tool; the prompt is shared now,
+        // so any saved "do not ask" answer carries over to the one flag.
+        p.toolConsent = p.toolConsent === true || (!!p.toolConsent && typeof p.toolConsent === 'object' && Object.values(p.toolConsent).some((v) => v === true))
         p.mcps = normMcpServers(p.mcps)
         p.imageGen = normImageGen(p.imageGen)
         p.codeRun = normCodeRun(p.codeRun)
         p.voicePrefs = normVoice(p.voicePrefs)
         p.search = normSearch(p.search)
-        p.research = normResearch(p.research)
+        // The research depth is chosen per run, so no default is persisted.
+        delete p.research
         p.researchPanel = null
         p.skills = normSkills(p.skills).skills
         if (typeof p.pr !== 'string') p.pr = ''

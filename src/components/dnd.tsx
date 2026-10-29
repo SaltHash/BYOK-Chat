@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
-import { flipDelta, parseTranslateY, stepInsertion } from '../dndShared'
+import { flipDelta, parseTranslateX, parseTranslateY, stepInsertion } from '../dndShared'
 
 /* Pointer-based drag-and-drop, shared by SortableList and the Sidebar.
  *
@@ -49,16 +49,39 @@ function translateYOf(el: HTMLElement): number {
   return parseTranslateY(getComputedStyle(el).transform)
 }
 
+function translateXOf(el: HTMLElement): number {
+  return parseTranslateX(getComputedStyle(el).transform)
+}
+
+/** Sum of horizontal scroll offsets of everything above `el`. */
+export function scrollSumLeft(el: HTMLElement): number {
+  let sum = window.scrollX
+  for (let p = el.parentElement; p && p !== document.body && p !== document.documentElement; p = p.parentElement) {
+    sum += p.scrollLeft
+  }
+  return sum
+}
+
 /** Document-space top of an element's layout box, ignoring any animation
  *  transform currently applied to it. */
 export function restDocTop(el: HTMLElement): number {
   return el.getBoundingClientRect().top + scrollSumAbove(el) - translateYOf(el)
 }
 
+/** Document-space left of an element's layout box, ignoring transforms. */
+export function restDocLeft(el: HTMLElement): number {
+  return el.getBoundingClientRect().left + scrollSumLeft(el) - translateXOf(el)
+}
+
 /** Document-space y for a viewport pointer position, relative to `el`'s
  *  content. Same coordinate system as `restDocTop`. */
 export function pointerDocY(clientY: number, el: HTMLElement): number {
   return clientY + scrollSumAbove(el) + el.scrollTop
+}
+
+/** Document-space x for a viewport pointer position. */
+export function pointerDocX(clientX: number, el: HTMLElement): number {
+  return clientX + scrollSumLeft(el) + el.scrollLeft
 }
 
 let overlayEl: HTMLDivElement | null = null
@@ -109,13 +132,14 @@ export function edgeScroll(clientY: number, scrollers: (HTMLElement | null)[]) {
   else if (clientY > window.innerHeight - 72) window.scrollBy(0, 10)
 }
 
-export function DndPlaceholder({ height, radius }: { height: number; radius?: string }) {
+export function DndPlaceholder({ height, radius, width }: { height: number; radius?: string; width?: number }) {
   // The measured wrapper is often unrounded (the rounding lives on inner
   // content), which would override the rounded default with 0px. Only inherit
   // a radius that actually rounds something.
   const rounded = radius && !/^0/.test(radius.trim()) ? radius : undefined
   const style: CSSProperties = {
     height: Math.max(24, Math.round(height)),
+    ...(width ? { width: Math.max(24, Math.round(width)), flexShrink: 0 } : null),
     ...(rounded ? { borderRadius: rounded } : null),
   }
   return <div className="dnd-placeholder" style={style} aria-hidden="true" data-dnd-placeholder="true" />
@@ -138,29 +162,30 @@ const FLIP_MS = 180
  *  that is interrupted by another commit restarts from wherever it is on
  *  screen (see `flipDelta`), never from a stale slot. */
 export function useFlipAnimate(elsRef: React.RefObject<Map<string, HTMLElement>>, disabled: boolean, layoutKey: string) {
-  const prev = useRef(new Map<string, number>())
+  const prev = useRef(new Map<string, { x: number; y: number }>())
   useLayoutEffect(() => {
     const els = elsRef.current
     if (!els) return
 
     // Read phase: the DOM already has the new layout, but running animations
-    // still apply, so `restDocTop` gives the new slot and `translateYOf` gives
-    // the translate the row is currently drawn with.
-    const next = new Map<string, number>()
-    const starts: [HTMLElement, number][] = []
+    // still apply, so the rest positions give the new slot and the current
+    // translate is where the row is actually drawn.
+    const next = new Map<string, { x: number; y: number }>()
+    const starts: [HTMLElement, number, number][] = []
     els.forEach((el, id) => {
-      const now = restDocTop(el)
-      next.set(id, now)
+      const nowX = restDocLeft(el), nowY = restDocTop(el)
+      next.set(id, { x: nowX, y: nowY })
       const before = prev.current.get(id)
       if (before == null || disabled) return
-      const delta = flipDelta(before, translateYOf(el), now)
-      if (Math.abs(delta) > 0.5) starts.push([el, delta])
+      const dx = flipDelta(before.x, translateXOf(el), nowX)
+      const dy = flipDelta(before.y, translateYOf(el), nowY)
+      if (Math.abs(dx) > 0.5 || Math.abs(dy) > 0.5) starts.push([el, dx, dy])
     })
 
     // Write phase: cancel stale motion, then start one fresh animation per row.
     els.forEach((el) => el.getAnimations().forEach((a) => a.cancel()))
-    for (const [el, delta] of starts) {
-      el.animate([{ transform: `translateY(${delta}px)` }, { transform: 'translateY(0px)' }], {
+    for (const [el, dx, dy] of starts) {
+      el.animate([{ transform: `translate(${dx}px, ${dy}px)` }, { transform: 'translate(0px, 0px)' }], {
         duration: FLIP_MS,
         easing: 'ease',
       })
@@ -198,8 +223,11 @@ export function SortableList(props: {
   className?: string
   itemClassName?: string
   describe?: (id: string) => string
+  /** Reorder along rows (default) or a single horizontal strip. */
+  axis?: 'x' | 'y'
 }) {
-  const { ids, onCommit, renderItem, label, className, itemClassName, describe } = props
+  const { ids, onCommit, renderItem, label, className, itemClassName, describe, axis = 'y' } = props
+  const horizontal = axis === 'x'
   const [activeId, setActiveId] = useState<string | null>(null)
   const [insertAt, setInsertAt] = useState(0)
   const [box, setBox] = useState<{ w: number; h: number; radius: string } | null>(null)
@@ -248,16 +276,18 @@ export function SortableList(props: {
       if (id === draggedId) continue
       const el = itemEls.current.get(id)
       if (!el) continue
-      mids.push(restDocTop(el) + el.getBoundingClientRect().height / 2)
+      const r = el.getBoundingClientRect()
+      mids.push(horizontal ? restDocLeft(el) + r.width / 2 : restDocTop(el) + r.height / 2)
     }
     slots.current = mids
-  }, [])
+  }, [horizontal])
 
-  const computeInsertAt = useCallback((clientY: number) => {
+  const computeInsertAt = useCallback((clientX: number, clientY: number) => {
     const c = containerRef.current
     if (!c) return stateRef.current.insertAt
-    return stepInsertion(slots.current, pointerDocY(clientY, c), stateRef.current.insertAt)
-  }, [])
+    const pointer = horizontal ? pointerDocX(clientX, c) : pointerDocY(clientY, c)
+    return stepInsertion(slots.current, pointer, stateRef.current.insertAt)
+  }, [horizontal])
 
   const cleanup = useCallback(() => {
     const d = drag.current
@@ -279,7 +309,7 @@ export function SortableList(props: {
       // Pointer drops resolve the slot from the latest pointer position, not the
       // last rendered state: a fast release can land before the frame loop's
       // setState has committed.
-      const at = d.pointer ? computeInsertAt(d.y) : stateRef.current.insertAt
+      const at = d.pointer ? computeInsertAt(d.x, d.y) : stateRef.current.insertAt
       const from = cur.indexOf(d.id)
       cleanup()
       setActiveId(null)
@@ -306,7 +336,7 @@ export function SortableList(props: {
     const d = drag.current
     if (!d || !d.pointer) return
     moveDragOverlay(d.x, d.y, d.dx, d.dy)
-    const at = computeInsertAt(d.y)
+    const at = computeInsertAt(d.x, d.y)
     if (at !== stateRef.current.insertAt) setInsertAt(at)
     edgeScroll(d.y, [containerRef.current, containerRef.current?.closest('[data-dnd-scroll]') as HTMLElement | null])
     d.raf = requestAnimationFrame(frame)
@@ -415,9 +445,10 @@ export function SortableList(props: {
         setInsertAt(clamped)
         setMessage(`Destination position ${clamped + 1} of ${cur.length}.`)
       }
-      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      if (horizontal ? e.key === 'ArrowRight' || e.key === 'ArrowLeft' : e.key === 'ArrowDown' || e.key === 'ArrowUp') {
         e.preventDefault()
-        move(stateRef.current.insertAt + (e.key === 'ArrowDown' ? 1 : -1))
+        const forward = horizontal ? e.key === 'ArrowRight' : e.key === 'ArrowDown'
+        move(stateRef.current.insertAt + (forward ? 1 : -1))
       } else if (e.key === 'Enter' || e.key === ' ') {
         e.preventDefault()
         finish(true)
@@ -456,7 +487,7 @@ export function SortableList(props: {
     <div ref={containerRef} className={className} data-dnd-scroll="">
       {visual.map((entry, i) => {
         if (entry.kind === 'placeholder') {
-          return <DndPlaceholder key="__placeholder" height={box?.h ?? 48} radius={box?.radius} />
+          return <DndPlaceholder key="__placeholder" height={box?.h ?? 48} radius={box?.radius} {...(horizontal ? { width: box?.w ?? 96 } : {})} />
         }
         const api = apiFor(entry.id)
         return (

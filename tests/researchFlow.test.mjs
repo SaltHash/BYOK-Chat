@@ -346,3 +346,62 @@ test('the shown estimate uses the most expensive candidate price, not just the f
   assert.ok(expected > 0)
   assert.equal(msgById(pick.id).research.estimate.costUsd, expected, 'the ceiling reflects the priciest candidate')
 })
+
+test('failed searches and unreadable pages never spend the research budget', async () => {
+  // Every search before the eighth one fails with a permanent error, so the
+  // old accounting would exhaust the quick tier's 8 searches before a single
+  // result arrived and the run would close with no evidence.
+  globalThis.fetch = async (url, init) => {
+    const u = String(url)
+    if (u.includes('/api/search')) {
+      const q = String(JSON.parse(init.body).query ?? '')
+      if (q.startsWith('fail')) return new Response('bad query', { status: 400 })
+      searchN++
+      return json({ query: 'fusion', results: [{ id: `S${searchN}`, title: `Source ${searchN}`, url: `https://s${searchN}.test/p`, snippet: `snippet ${searchN}` }], searchedAt: 'now', provider: 'tinyfish' })
+    }
+    if (u.includes('/api/extract')) {
+      if (String(init.body).includes('fail.test')) return new Response('unreadable', { status: 400 })
+      return json({ url: 'https://s1.test/p', title: 'Page', text: 'A long page body about fusion.', truncated: false })
+    }
+    if (u.includes('/chat/completions')) {
+      const body = JSON.parse(init.body)
+      const sys = body.messages[0]?.content ?? ''
+      const lastUser = [...body.messages].reverse().find((m) => m.role === 'user' && typeof m.content === 'string')
+      if (sys.includes('You draft a deep-research plan')) return openai({ content: PLAN })
+      if (typeof lastUser?.content === 'string' && lastUser.content.includes('Now write the final report')) {
+        return openai({ content: '## Summary\nFusion is progressing.\n\n## Key findings\n- Net energy gain reported [S1].\n\n## Evidence\nClaim supported [S1].\n\n## Limitations\nSmall sample.\n\n## Sources note\nPrimary sources agree.' })
+      }
+      const rounds = body.messages.filter((m) => m.role === 'tool').length
+      const call = (name, args) => openai({ content: 'Continuing.', tool_calls: [{ id: `c${rounds}`, type: 'function', function: { name, arguments: JSON.stringify(args) } }] })
+      if (rounds < 8) return call('search', { query: `fail ${rounds}` })
+      if (rounds === 8) return call('search', { query: 'fusion one' })
+      if (rounds === 9) return call('search', { query: 'fusion two' })
+      if (rounds === 10) return call('fetch_page', { url: 'https://fail.test/p' })
+      if (rounds === 11) return call('fetch_page', { url: 'https://s1.test/p' })
+      return openai({ content: 'Fusion progress is real. The report will cover milestones, projects, and caveats.' })
+    }
+    return baseFetch(url, init)
+  }
+  searchN = 0
+  resetStore()
+  await useS.getState().send('@research[quick](failed attempts)', [])
+  const pick = lastResearch()
+  useS.getState().chooseResearchTier(pick.id, 'quick')
+  await wait(() => msgById(pick.id).research.status === 'plan')
+  useS.getState().startResearch(pick.id)
+  assert.equal(await wait(() => msgById(pick.id).research.status === 'done', 20000), true, 'run should finish')
+  const { countedSteps } = await import('../src/research.ts')
+  const steps = msgById(pick.id).research.steps
+  const failedSearch = steps.filter((s) => s.kind === 'search' && s.state === 'error')
+  const goodSearch = steps.filter((s) => s.kind === 'search' && s.state === 'done')
+  const failedRead = steps.filter((s) => s.kind === 'read' && s.state === 'error')
+  const goodRead = steps.filter((s) => s.kind === 'read' && s.state === 'done')
+  assert.equal(failedSearch.length, 8, 'all eight failures stay visible')
+  assert.equal(goodSearch.length, 2, 'both searches after the failures still ran')
+  assert.equal(failedRead.length, 1)
+  assert.equal(goodRead.length, 1)
+  assert.ok(failedSearch.every((s) => s.label === 'Search failed'))
+  assert.ok(failedRead.every((s) => s.label === 'Read failed'))
+  assert.equal(countedSteps(steps, 'search'), 2)
+  assert.equal(countedSteps(steps, 'read'), 1)
+})

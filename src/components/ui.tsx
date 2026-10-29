@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState, type ButtonHTMLAttributes, type InputHTMLAttributes, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type TextareaHTMLAttributes } from 'react'
-import { Check, ChevronRight, CircleHelp, Star, TriangleAlert, type LucideIcon } from 'lucide-react'
+import { useEffect, useRef, useState, type ButtonHTMLAttributes, type ImgHTMLAttributes, type InputHTMLAttributes, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type TextareaHTMLAttributes } from 'react'
+import { Check, ChevronRight, CircleHelp, Star, TriangleAlert, X, type LucideIcon } from 'lucide-react'
 
 export type Ic = LucideIcon
 export const cx = (...a: unknown[]) => a.filter(Boolean).join(' ')
@@ -231,6 +231,40 @@ export function Modal({ children, close, blur = true, opacity = 55, keyboard = t
     else if (e.shiftKey && (document.activeElement === first || document.activeElement === node)) { e.preventDefault(); last.focus() }
   }
   return <div ref={root} role="dialog" aria-modal="true" aria-labelledby={labelledBy} tabIndex={-1} onKeyDown={onKeyDown} style={{ backgroundColor: `rgb(0 0 0 / ${Math.max(0, Math.min(100, opacity))}%)`, backdropFilter: blur ? 'blur(var(--modal-blur, 12px))' : undefined }} className="fixed inset-0 z-50 grid place-items-center overflow-y-auto overscroll-contain p-4 outline-none" onMouseDown={(e) => e.target === e.currentTarget && close()}>{children}</div>
+}
+
+/** Full-screen image viewer. Clicking the backdrop, the close button, or
+ *  pressing Escape closes it; the image itself stays put. */
+export function ImageLightbox({ src, alt, close }: { src: string; alt?: string; close: () => void }) {
+  return (
+    <Modal close={close} blur={false} opacity={82}>
+      <figure className="relative m-0 flex max-h-[94vh] w-full max-w-[min(96vw,1400px)] items-center justify-center">
+        <img src={src} alt={alt ?? ''} className="max-h-[94vh] w-auto max-w-full rounded-lg object-contain shadow-2xl" />
+        <Btn sm icon={X} title="Close full screen" onClick={close} className="absolute right-2 top-2 bg-black/60 text-white hover:bg-black/80" />
+      </figure>
+    </Modal>
+  )
+}
+
+/** An image that opens the lightbox when clicked. Clicks on a button or link
+ *  inside the surrounding card are left alone, so the controls keep working. */
+export function ZoomableImage({ src, alt, className, ...rest }: { src: string; alt?: string; className?: string } & Omit<ImgHTMLAttributes<HTMLImageElement>, 'src' | 'alt' | 'className'>) {
+  const [open, setOpen] = useState(false)
+  return (
+    <>
+      <img
+        {...rest}
+        src={src}
+        alt={alt ?? ''}
+        className={cx(className, 'cursor-zoom-in')}
+        onClick={(e) => {
+          if ((e.target as HTMLElement).closest('button, a')) return
+          setOpen(true)
+        }}
+      />
+      {open && <ImageLightbox src={src} alt={alt} close={() => setOpen(false)} />}
+    </>
+  )
 }
 
 export function Confirm({ title, text, ok, close, run }: { title: string; text: string; ok: string; close: () => void; run: () => void }) {

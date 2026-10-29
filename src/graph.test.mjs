@@ -186,3 +186,23 @@ test('series connect by default, while scatter, connect:false and a lone point s
   assert.deepEqual(spec.series.map((s) => s.kind), ['line', 'scatter', 'scatter', 'scatter', 'bar'])
   assert.deepEqual(spec.series[4].points.map((p) => p.label), ['A', 'B', 'C'])
 })
+
+test('placement defaults to inline-left and accepts right and below', () => {
+  const at = (raw) => g.normalizeGraphSpec({ equations: ['y = x'], ...raw }).placement
+  assert.equal(at({}), 'left')
+  assert.equal(at({ placement: 'left' }), 'left')
+  assert.equal(at({ placement: 'right' }), 'right')
+  assert.equal(at({ placement: 'below' }), 'below')
+  assert.equal(at({ placement: 'bottom' }), 'below')
+  assert.equal(at({ side: 'right' }), 'right')
+  assert.equal(at({ placement: 'somewhere odd' }), 'left')
+})
+
+test('the tool summary tells the model which side the figure took', () => {
+  const spec = g.normalizeGraphSpec({ equations: ['y = x'], placement: 'right' })
+  const text = g.summarizeGraphSpec(spec)
+  assert.match(text, /to the right of the reply text/)
+  assert.match(text, /prose wrapping beside it/)
+  const below = g.summarizeGraphSpec(g.normalizeGraphSpec({ equations: ['y = x'], placement: 'below' }))
+  assert.match(below, /below the reply text/)
+})

@@ -1,7 +1,7 @@
 import type { Ep, Att, Msg } from './store'
 import { TOOLS } from './meta'
 import { BLANK_DOCS, expandArchives, extractOffThread, fitDoc, pairTranscripts } from './docs'
-import { attachmentManifest } from './attachments'
+import { attachmentManifest, promptNameOf } from './attachments'
 import { WORKSPACE_ACTIONS, compactWorkspaceHistory, isWorkspaceReadAction, sanitizePath, withWorkspaceTags } from './workspace'
 import { withCode, type ErrorCode } from './errors'
 import { buildStreamRequest, splitSseBuffer } from './streamRequest'
@@ -52,7 +52,7 @@ export const DEFAULT_CONTEXT_RESERVE = 8000
 export const estimateTokens = (text: string, charsPerToken = 4) =>
   Math.ceil(String(text ?? '').length / Math.max(1, charsPerToken))
 const msgSize = (m: Msg, charsPerToken: number, liveRounds = false) =>
-  estimateTokens(JSON.stringify({ t: m.t, full: (m as any).full, fx: (m as any).fx, ctx: (m as any).ctx, att: (m.att ?? []).map((a) => ({ name: a.name, text: (a as any).text ?? '' })), toolRounds: liveRounds ? (m.toolRounds ?? []) : [] }), charsPerToken)
+  estimateTokens(JSON.stringify({ t: m.t, full: (m as any).full, fx: (m as any).fx, ctx: (m as any).ctx, att: (m.att ?? []).map((a) => ({ name: promptNameOf(a), text: (a as any).text ?? '' })), toolRounds: liveRounds ? (m.toolRounds ?? []) : [] }), charsPerToken)
 /** Index of the assistant message whose tool rounds wire() will resend. Older
  *  rounds are dropped from the request, so counting them here made history
  *  trimming discard messages that did not actually consume context. */
@@ -277,7 +277,7 @@ export const TOOL_REGISTRY: Record<string, ToolSpec> = {
   prompt_chip: { description: 'Offer one or more small follow-up buttons below your reply when they would help the user continue or dig deeper. Use them generously — include at least one whenever the answer opens a next step, invites exploration, or would benefit from a quick follow-up. Each chip is its own button with a short label and a clear follow-up request; show several side by side when they offer genuinely different directions, and keep labels concrete and action-shaped (e.g. "Explain the tradeoffs", "Show an example", "Try the next step"). Omit chips for simple acknowledgements, closed questions, or urgent requests. Do not combine chips with an inline_poll in the same reply — use one or the other. Never mention the chips or follow-up options in your prose: do not say you added options and do not tell the user to click them. The interface shows them on its own.', parameters: { type: 'object', properties: { label: textArg('Button label.'), prompt: textArg('Follow-up request to send when selected.') }, required: ['label', 'prompt'], additionalProperties: false }, run: ({ label }) => `Follow-up ready: ${label}` },
   inline_poll: { description: 'Ask a short survey-style question card below your reply, to learn the user\'s environment, preferences, or any detail you need to answer accurately and safely. Use this whenever you are genuinely uncertain about something that materially affects your answer — the user\'s setup, constraints, context, or intent — and cannot safely assume. Each item in `questions` is one question with its own input type. Prefer multiple choice and sliders over typed text: use typed text or numbers only when a free-form answer is truly needed. Multiple choice options should include an "Other" choice with a typeable area next to it when the likely answers aren\'t fully covered. Keep questions few (1–4), each one focused, and phrase the label as a complete sentence. The user fills the card and presses Continue, and their answers are sent back to you as a message so you can proceed. Never mention the question card, the questions, or that you are asking through a widget in your prose; ask only through the card.', parameters: { type: 'object', properties: { questions: { type: 'array', minItems: 1, maxItems: 4, description: 'One question per item; the user answers each in turn.', items: { type: 'object', properties: { label: textArg('The question text, phrased as a complete sentence.'), type: { type: 'string', enum: ['choice', 'slider', 'text', 'number'], description: 'choice = multiple choice (prefer this). slider = a range with a visible value. text = short free-form answer. number = a numeric answer.' }, options: { type: 'array', minItems: 2, maxItems: 6, description: 'Required for choice. Each option is a visible label, or an object with label, an optional follow-up prompt, and an optional fillBlank flag. Set fillBlank:true only on the options that should accept a typed custom answer (usually "Other"); you choose per option. Do not add a separate "type your own" choice unless it uses fillBlank.', items: { anyOf: [{ type: 'string' }, { type: 'object', properties: { label: textArg('Visible choice label.'), prompt: textArg('Optional follow-up prompt sent for this choice.'), fillBlank: { type: 'boolean', description: 'Attach a typeable text field to this option when selected. Use for "Other" or any choice that needs a custom answer.' } }, required: ['label'], additionalProperties: false }] } }, min: { type: 'number', description: 'Required for slider. Minimum value.' }, max: { type: 'number', description: 'Required for slider. Maximum value.' }, step: { type: 'number', description: 'Optional for slider. Increment between values.' }, placeholder: textArg('Optional hint shown in the empty field. Use for text and number.'), defaultValue: textArg('Optional starting value. Use for text; for number this is a numeric default.'), multiline: { type: 'boolean', description: 'Optional for text. Use a taller textarea when the answer is likely to be a paragraph.' } }, required: ['label', 'type'], additionalProperties: false } } }, required: ['questions'], additionalProperties: false }, run: ({ questions }) => `Choice card ready: ${Array.isArray(questions) ? questions.length : 0} question(s)` },
   graph: {
-    description: 'Plot a graph, chart, or geometry figure beside the reply. Use this for any request to graph, plot, chart, visualize, or show a curve, function, equation, inequality, dataset, or shape; never approximate a plot with ASCII art or list coordinates instead of showing them. Equations accept explicit functions (y = x^2, sin(x)), implicit equations (x^2 + y^2 = 1), and inequalities (y > x^2, x^2 + y^2 <= 4). Series accept points and connect them as a line by default; set kind to scatter for dots, bar for columns, or area for a filled line. Label bar points to name the categories on the x axis. Shapes draw segments, arrows, circles, rectangles, polygons and text labels. Colors are fixed theme colors: black (default), red, green, blue, orange, purple, teal, pink, yellow, gray; black renders as the theme ink so it stays visible on dark themes. Use equal aspect for circles and geometry; auto only for wide charts. After the call, do not repeat the coordinates or equations in your prose; explain the trend, relationship, or result.',
+    description: 'Plot a graph, chart, or geometry figure and place it in the flow of the reply, beside the prose it belongs to. Use this for any request to graph, plot, chart, visualize, or show a curve, function, equation, inequality, dataset, or shape; never approximate a plot with ASCII art or list coordinates instead of showing them. Set placement on every call: left (default) floats the figure left of the text you write in the same reply, right floats it on the right, and the prose wraps around it. Use below only when the figure must follow the writing; a figure is never collected at the end of the message, so write the explanation next to the graph under left or right. Inline placements drop the card chrome and fill their whole box, so write complete paragraphs beside them instead of standalone captions. Equations accept explicit functions (y = x^2, sin(x)), implicit equations (x^2 + y^2 = 1), and inequalities (y > x^2, x^2 + y^2 <= 4). Series accept points and connect them as a line by default; set kind to scatter for dots, bar for columns, or area for a filled line. Label bar points to name the categories on the x axis. Shapes draw segments, arrows, circles, rectangles, polygons and text labels. Colors are the fixed theme colors: black (default), red, green, blue, orange, purple, teal, pink, yellow, gray; black renders as the theme ink so it stays visible on dark themes. Use equal aspect for circles and geometry; auto only for wide charts. After the call, do not repeat the coordinates or equations in your prose; explain the trend, relationship, or result in the words beside the figure.',
     parameters: { type: 'object', properties: {
       title: textArg('Short chart title shown above the plot.'),
       xLabel: textArg('Optional horizontal axis label.'),
@@ -310,6 +310,7 @@ export const TOOL_REGISTRY: Record<string, ToolSpec> = {
       grid: { type: 'boolean', description: 'Grid lines (default true).' },
       legend: { type: 'boolean', description: 'Legend (default true).' },
       aspect: { type: 'string', enum: ['equal', 'auto'], description: 'equal keeps circles round (default for implicit equations and shapes); auto fills the panel (default for functions and data charts).' },
+      placement: { type: 'string', enum: ['left', 'right', 'below'], description: 'Where the figure sits relative to your reply text. left (default) floats it beside the prose with text wrapping on its right; right floats it on the other side; below puts it after the writing. Choose left or right when you write an explanation next to the figure, and below only when the text should come first.' },
     }, additionalProperties: false },
     run: (args) => summarizeGraphSpec(normalizeGraphSpec(args)),
   },
@@ -719,19 +720,19 @@ export function wire(e: Ep, msgs: Msg[]): Wire[] {
       // kinds are omitted the same way.
       if (a.kind === 'pdf' && e.type !== 'anthropic') {
         if (a.text) continue
-        t += `\n[${a.name} omitted: no readable text layer${a.source === 'pdf-scanned' ? ' (scanned pages)' : ''}; use an Anthropic endpoint for the native file, attach the text instead, or enable image OCR in Settings → Chats → Documents]`
+        t += `\n[${promptNameOf(a)} omitted: no readable text layer${a.source === 'pdf-scanned' ? ' (scanned pages)' : ''}; use an Anthropic endpoint for the native file, attach the text instead, or enable image OCR in Settings → Chats → Documents]`
         continue
       }
       // Media travels as its paired transcript text (inlined above); without
       // one there is nothing the model can hear or see.
       if (a.kind === 'media') {
         if (a.text) continue
-        t += `\n[${a.name} attached without a transcript: the model cannot hear audio or see video. Attach a .vtt/.srt/.txt transcript with a matching name]`
+        t += `\n[${promptNameOf(a)} attached without a transcript: the model cannot hear audio or see video. Attach a .vtt/.srt/.txt transcript with a matching name]`
         continue
       }
-      if (a.kind !== 'img' && a.kind !== 'pdf') { t += `\n[${a.name} omitted: this model cannot process it]`; continue }
-      if (!can(e, a.kind as 'img' | 'pdf')) { t += `\n[${a.name} omitted: this model cannot process it]`; continue }
-      if (!a.data) { t += `\n[${a.name}: not retained after reload]`; continue }
+      if (a.kind !== 'img' && a.kind !== 'pdf') { t += `\n[${promptNameOf(a)} omitted: this model cannot process it]`; continue }
+      if (!can(e, a.kind as 'img' | 'pdf')) { t += `\n[${promptNameOf(a)} omitted: this model cannot process it]`; continue }
+      if (!a.data) { t += `\n[${promptNameOf(a)}: not retained after reload]`; continue }
       // Files dragged in without a MIME mapping carry an empty `type`;
       // never send an empty media_type to Anthropic.
       const mime = a.mime || (a.kind === 'img' ? 'image/png' : 'application/pdf')

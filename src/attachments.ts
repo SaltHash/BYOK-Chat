@@ -7,6 +7,13 @@
  */
 
 export type NamedFile = { name: string }
+/** Attachments may carry the name the model is shown separately from the name
+ *  the user sees: file names are private and often contain client names,
+ *  dates, or addresses. */
+export type ModelNamedFile = NamedFile & { modelName?: string }
+
+/** The name to put in the prompt for this attachment. */
+export const promptNameOf = (a: ModelNamedFile): string => a.modelName || a.name
 
 const splitExt = (name: string): [string, string] => {
   const i = name.lastIndexOf('.')
@@ -39,10 +46,34 @@ export function uniqueAttachmentNames<T extends NamedFile>(atts: T[]): T[] {
   })
 }
 
+/** Give every attachment a neutral name for the model while the UI keeps the
+ *  real one.
+ *
+ *  Uploads are numbered per kind — `image-1.png`, `image-2.jpg`, `file-1.pdf` —
+ *  so the model can still refer to a specific file unambiguously without
+ *  learning anything about its source. The original extension is kept so the
+ *  model knows what it is looking at, and images default to `.png` when the
+ *  upload had no usable one. The input array is never mutated. */
+export function anonymizeAttachmentNames<T extends NamedFile & { kind?: string }>(atts: T[]): (T & { modelName: string })[] {
+  let images = 0
+  let files = 0
+  return atts.map((a) => {
+    const [, extRaw] = splitExt(String(a.name ?? ''))
+    const ext = /^\.[a-z0-9]{1,6}$/i.test(extRaw) ? extRaw.toLowerCase() : ''
+    const imageExt = /^\.(png|jpe?g|gif|webp|bmp|avif|svg|heic|heif|tiff?)$/i.test(ext)
+    const isImage = a.kind === 'img' || (!a.kind && imageExt)
+    const stem = isImage ? `image-${++images}` : `file-${++files}`
+    // A date or version fragment is not an extension, so images fall back to
+    // .png rather than carrying something like "image-1.22" into the prompt.
+    const suffix = isImage ? (imageExt ? ext : '.png') : ext
+    return { ...a, modelName: `${stem}${suffix}` }
+  })
+}
+
 /** A one-line manifest naming every attachment, so even native binaries (an
  *  image sent as an image block, a PDF sent as a document block) have a name
  *  in the prompt the model can quote back. Empty when there are no files. */
-export function attachmentManifest(atts: NamedFile[] | undefined): string {
+export function attachmentManifest(atts: ModelNamedFile[] | undefined): string {
   if (!atts?.length) return ''
-  return `Attached files: ${atts.map((a, i) => `${i + 1}. ${a.name}`).join(', ')}.`
+  return `Attached files: ${atts.map((a, i) => `${i + 1}. ${promptNameOf(a)}`).join(', ')}.`
 }

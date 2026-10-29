@@ -1,7 +1,6 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { X, Plus, Trash2, ArrowUp, ArrowDown, CornerDownRight, ChevronDown, ChevronRight, Eye, EyeOff, Play, ShieldCheck, Shield, Download, Upload, Check, CircleCheck, CircleX, Cpu, Route, GripVertical, Server, ListMusic, ScrollText, Terminal, Wrench, Palette, FolderOpen, FileText, PanelRight, TrendingUp, Keyboard, Search, Brain, Pencil, Sparkles, RotateCcw, SlidersHorizontal, FlaskConical, Library, Database, Lock, LockOpen, LayoutTemplate, Share2, Plug, Image as ImageIcon, Volume2, AudioLines, Code2, Star } from 'lucide-react'
-import { useS, useSConfig, PRE, BLANK, THEMES, DARK_THEMES, LIGHT_THEMES, BASE_THEMES, THEME_COLOR_KEYS, THEME_COLOR_LABELS, THEME_COLORS, defaultCustomTheme, customThemeColors, normCustomTheme, accentHue, SEARCH_PROVIDERS, READER_PROVIDERS, FEATURES, LIBRARY_ITEMS, FEATURE_TABS, FEATURE_WIDGETS, DEFAULT_LIBRARY_SHOW, DEFAULT_ADVANCED, featOn, normSearch, normResearch, normAdvanced, normDocs, usable, modelsOf, modelNameOf, helperRef, splitHelperRef, favRef, toggleFavRef, effortClassifierOf, TOOL_ROUNDS_DEFAULT, TOOL_ROUNDS_MIN, TOOL_ROUNDS_BASE_MAX, TOOL_ROUNDS_MAX, toolRoundLimitOf, isToolRoundsUnlimited, GENERAL_PROMPT_TEXT, STARTUP_MODES, normStartup, PROMPT_RECALL_MODES, normPromptRecall, type PromptRecallMode, type Kind, type FeatureId, type DocPrefs, type ModelPrice } from '../store'
-import { RESEARCH_TIERS, type ResearchTierId } from '../research'
+import { useS, useSConfig, PRE, BLANK, THEMES, DARK_THEMES, LIGHT_THEMES, BASE_THEMES, THEME_COLOR_KEYS, THEME_COLOR_LABELS, THEME_COLORS, defaultCustomTheme, customThemeColors, normCustomTheme, accentHue, SEARCH_PROVIDERS, READER_PROVIDERS, FEATURES, LIBRARY_ITEMS, FEATURE_TABS, FEATURE_WIDGETS, DEFAULT_LIBRARY_SHOW, DEFAULT_ADVANCED, featOn, normSearch, normAdvanced, normDocs, usable, modelsOf, modelNameOf, helperRef, splitHelperRef, favRef, toggleFavRef, effortClassifierOf, TOOL_ROUNDS_DEFAULT, TOOL_ROUNDS_MIN, TOOL_ROUNDS_BASE_MAX, TOOL_ROUNDS_MAX, toolRoundLimitOf, isToolRoundsUnlimited, GENERAL_PROMPT_TEXT, STARTUP_MODES, normStartup, PROMPT_RECALL_MODES, normPromptRecall, type PromptRecallMode, type Kind, type FeatureId, type DocPrefs, type ModelPrice } from '../store'
 import { normSkills, resolveSkill, validateCustomSkill, enabledSkills, BUILTIN_SKILLS, SKILL_TOOL_NAME, type SkillState } from '../skills'
 import { findDuplicatePairs, mergeMemory } from '../recall'
 import { TOOL_REGISTRY, can, stream } from '../engine'
@@ -11,7 +10,7 @@ import { PROMPT_QUALITIES, type GlobalPrompt } from '../flair'
 import { PROMPT_VARS } from '../promptVars'
 import { DataTab, KeysTab, TestRow, TestAllEndpoints } from './Extra'
 import { Btn, Field, Input, Area, Sel, SearchSelect, Toggle, Seg, RangeSlider, Checkbox, HelpTip, Modal, Surface, Chip, Item, cx, useEscapeClose, type Ic } from './ui'
-import { SortableList, type SortHandleProps, type SortItemApi } from './dnd'
+import { SortableList, useFlipAnimate, type SortHandleProps, type SortItemApi } from './dnd'
 import { fetchModelCatalogCached, clearCatalogCache, prefetchModelCatalog, fetchModelProviders, filterCatalogByEndpoint, prioritizeProviderRows, discoverEndpointModels, clearModelDiscoveryCache, type CatalogEntry, type CatalogProvider, type CatalogSource } from '../catalog'
 import { resolveProvider } from '../providerRegistry'
 import { parseCurlCommand, type CurlProvider } from '../curlImport'
@@ -1226,17 +1225,32 @@ function CodeRunCard() {
   )
 }
 
+/* Tools that read the device ask before they switch on. One answer silences
+ * the prompt for all of them, so the user never answers it four times. */
+const DEVICE_TOOLS = new Set(['location', 'clipboard', 'date', 'time'])
+
+/** Nearest scroll container of a card, used to hold the list still while a
+ *  tool is re-sorted to the top. */
+const scrollBoxOf = (el: HTMLElement | null): HTMLElement | null => {
+  for (let p = el?.parentElement ?? null; p; p = p.parentElement) {
+    const oy = getComputedStyle(p).overflowY
+    if ((oy === 'auto' || oy === 'scroll') && p.scrollHeight > p.clientHeight + 4) return p
+  }
+  return null
+}
+
 function Tools() {
   const s = useSConfig()
+  const [ask, setAsk] = useState<string | null>(null)
+  const [askAlways, setAskAlways] = useState(false)
   const [showSearchKey, setShowSearchKey] = useState(false)
   const [showReaderKey, setShowReaderKey] = useState(false)
   const [health, setHealth] = useState<{ searchConfigured?: boolean; apiProviders?: Record<string, { label: string; configured: boolean; needsZone?: boolean; optionalKey?: boolean }> } | null>(null)
   useEffect(() => {
     fetch('/api/health').then((r) => r.json()).then((x) => setHealth(x)).catch(() => setHealth({ searchConfigured: false }))
   }, [])
-  /* Tools the user allowed for good: enabling a tool never shows a popup, so
-   * this only records the per-tool choice. */
-  const consent = s.toolConsent ?? {}
+  /* True once the user silenced the allow prompt for every device tool. */
+  const consent = s.toolConsent === true
   const search = normSearch(s.search)
   const setSearch = (p: Partial<typeof search>) => s.patch({ search: { ...search, ...p } })
   const ownKey = (search.keys[search.provider] || '').trim()
@@ -1266,12 +1280,46 @@ function Tools() {
     if (ref.startsWith('pl:')) setSearch({ readerSummaryPl: ref.slice(3), readerSummaryEp: '', readerSummaryModel: '' })
     else setSearch({ readerSummaryEp: ref, readerSummaryPl: '', readerSummaryModel: '' })
   }
-  /* Tools toggle straight on: no trust popup, no confirmation step. */
+  /* Enabling a tool re-sorts the list. Capture the scroll position first so the
+   * page stays where the reader was instead of following the card that moved. */
+  const cardEls = useRef(new Map<string, HTMLElement>())
+  const keepScroll = useRef<{ el: HTMLElement; top: number } | null>(null)
+  const rememberScroll = (k: string) => {
+    const box = scrollBoxOf(cardEls.current.get(k) ?? null)
+    if (box) keepScroll.current = { el: box, top: box.scrollTop }
+  }
+  const setTool = (k: string, on: boolean) => {
+    rememberScroll(k)
+    s.patch({ tools: { ...s.tools, [k]: on } })
+  }
+  /* Device tools ask first unless the user silenced the prompt; every other
+   * tool switches on directly. */
   const toggleTool = (k: string, v: boolean) => {
-    s.patch({ tools: { ...s.tools, [k]: v } })
+    if (!v || consent || !DEVICE_TOOLS.has(k)) { setTool(k, v); return }
+    rememberScroll(k)
+    setAskAlways(false)
+    setAsk(k)
+  }
+  const allowTool = (k: string, always: boolean) => {
+    rememberScroll(k)
+    s.patch({ tools: { ...s.tools, [k]: true }, ...(always ? { toolConsent: true } : {}) })
+    setAsk(null)
+    setAskAlways(false)
   }
   /* Enabled tools first, then everything else; both groups keep relevance order. */
   const listed = orderTools(s.tools)
+  const asked = TOOLS.find((x) => x[0] === ask)
+  const layoutKey = listed.map(([k]) => k).join(',')
+  const reducedMotion = useMemo(() => typeof window !== 'undefined' && !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches, [])
+  /* Cards glide to their new slot instead of jumping, and the scroll position
+   * captured above is restored before paint so the list never chases the card. */
+  useFlipAnimate(cardEls, reducedMotion, layoutKey)
+  useLayoutEffect(() => {
+    const keep = keepScroll.current
+    if (!keep) return
+    keepScroll.current = null
+    if (keep.el.scrollTop !== keep.top) keep.el.scrollTop = keep.top
+  }, [layoutKey])
   return (
     <Panel id="tools">
       <Section title="Execution" desc="How many model → tool rounds a single reply may run, and the extra capabilities the model can call.">
@@ -1284,15 +1332,18 @@ function Tools() {
       <Card icon={Brain} title="Deep research" sub="@research(query)">
         <p className="text-sm">Multi-step investigation: the model drafts a research plan for you to review, then searches and reads on its own within the depth budget, narrating progress as it goes, ending in a long cited report opened from a card in a document-styled side panel.</p>
         <p className="text-sm text-mu">Start with @research(topic), the + menu → Deep research…, or a model-suggested “Deep research …” chip. Every run asks for Quick, Standard, or Thorough, then shows a plan you can edit or start; a stopped run can be resumed where it left off.</p>
-        <Field label="Default depth" hint="Preselected in the tier picker. Quick is fastest; Thorough uses the largest search and read budgets.">
-          <Seg v={normResearch(s.research).defaultTier} set={(defaultTier) => s.patch({ research: { ...normResearch(s.research), defaultTier } })} opts={RESEARCH_TIERS.map((t) => [t.id, `${t.label} · ${t.blurb}`] as [ResearchTierId, string])} />
-        </Field>
+        <p className="text-sm text-mu">Failed searches and unreadable pages are shown in the progress card but do not use up the run's search or page budget.</p>
       </Card>
       </Anchor>
       </Section>
-      <Section title="Tools" desc="The tools the model may call. Enabled tools are listed first.">
+      <Section title="Tools" desc="The tools the model may call. Enabled tools are sorted to the top and stay where you are reading.">
+      <div className="flex items-center justify-between gap-3 rounded-xl bg-surf p-3">
+        <div className="min-w-0"><div className="text-sm font-medium">Ask before enabling device tools</div><div className="text-xs text-mu">Shows one allow prompt for Location, Clipboard, Date and Date and time. The answer covers all four, so they never ask again.</div></div>
+        <Toggle on={!consent} set={(v) => s.patch({ toolConsent: !v })} label="Ask before enabling device tools" />
+      </div>
       {listed.map(([k, n, I, u, d, p]) => (
-        <Anchor key={k} id={`tool-${k}`}>
+        <div key={k} ref={(el) => { if (el) cardEls.current.set(k, el); else cardEls.current.delete(k) }}>
+        <Anchor id={`tool-${k}`}>
         <Card icon={I} title={n} sub={u} muted={!s.tools[k]} right={
           <>
             <span className="hidden items-center gap-1.5 text-xs text-mu sm:flex">{s.tools[k] ? <ShieldCheck size={14} className="text-ac" /> : <Shield size={14} />}{s.tools[k] ? 'Allowed' : 'Off'}</span>
@@ -1301,7 +1352,6 @@ function Tools() {
         }>
           <p className="text-sm">{d}</p>
           <p className="text-sm text-mu">Permission: {p}</p>
-          <div className="flex items-center justify-between gap-3 rounded-xl bg-bg p-3"><div className="flex items-center gap-1.5 text-sm font-medium">Do not ask again<HelpTip text="Enabling this tool never shows the allow popup. The permission above still applies." label="Help: Do not ask again" /></div><Toggle on={!!consent[k]} set={(v) => s.patch({ toolConsent: { ...consent, [k]: v } })} label="Do not ask again" /></div>
           {k === 'workspace_upsert' && <Anchor id="workspace-view"><div className="space-y-3 rounded-xl bg-bg p-3">
             <div className="flex items-center justify-between gap-3"><div><div className="text-sm font-medium">Default view for workspace tiles</div><div className="text-xs text-mu">Pinned shows the revision created by each message. Latest shows the most recent revision with a dropdown to go back.</div></div><Seg v={s.workspacePrefs?.defaultView ?? 'pinned'} set={(defaultView) => s.patch({ workspacePrefs: { ...s.workspacePrefs, defaultView } })} opts={[['pinned', 'Pinned'], ['latest', 'Latest']]} /></div>
             <div className="flex items-center justify-between gap-3"><div><div className="text-sm font-medium">Auto-open workspace panel</div><div className="text-xs text-mu">Automatically open the side panel when the AI starts writing files.</div></div><Toggle on={s.workspacePrefs?.autoOpen ?? true} set={(autoOpen) => s.patch({ workspacePrefs: { ...s.workspacePrefs, autoOpen } })} /></div>
@@ -1447,6 +1497,7 @@ function Tools() {
           </div>}
         </Card>
         </Anchor>
+        </div>
       ))}
       </Section>
       {featOn(s, 'advanced') && s.advanced?.showHiddenTools && (
@@ -1482,6 +1533,22 @@ function Tools() {
         </Card>
         </Anchor>
         </Section>
+      )}
+      {asked && (
+        <Modal close={() => { setAsk(null); setAskAlways(false) }}>
+          <div className="modal-panel w-full max-w-sm space-y-4 rounded-2xl bg-bg p-5">
+            <div className="flex items-center gap-2 font-semibold"><ShieldCheck size={18} className="text-ac" />Enable {asked[1]}?</div>
+            <p className="text-sm text-mu">{asked[5]}</p>
+            <label className="flex items-start gap-3 rounded-xl bg-surf p-3 text-sm">
+              <input type="checkbox" checked={askAlways} onChange={(e) => setAskAlways(e.target.checked)} className="mt-0.5 size-4 accent-[var(--accent)]" />
+              <span><span className="font-medium">Do not show again</span><span className="mt-0.5 block text-xs text-mu">Skips this prompt for Location, Clipboard, Date and Date and time. Turn it back on with Ask before enabling device tools.</span></span>
+            </label>
+            <div className="flex justify-end gap-2">
+              <Btn v="soft" onClick={() => { setAsk(null); setAskAlways(false) }}>Cancel</Btn>
+              <Btn v="solid" icon={Check} onClick={() => allowTool(asked[0], askAlways)}>Enable</Btn>
+            </div>
+          </div>
+        </Modal>
       )}
     </Panel>
   )

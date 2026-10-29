@@ -7,12 +7,12 @@ import { focusComposer, startPointerDrag } from '../hooks'
 import { createFrameThrottle } from '../throttle'
 import { CI, fmtDuration } from '../meta'
 import { formatMsgDateTime, formatMsgTime } from '../time'
-import { Btn, Chip, cx, type Ic } from './ui'
+import { Btn, Chip, cx, ZoomableImage, type Ic } from './ui'
 import { Composer } from './Composer'
 import { ProjectOverview } from './ProjectOverview'
 import { Header } from './Header'
 import { MessageActions } from './ReplyActions'
-import { GraphCards } from './Graph'
+import { GraphCards, hasPlacedGraphs } from './Graph'
 import { Tutorial } from './Extra'
 import { Md, UserText } from './Md'
 import { activityLine, flairLine, thinkingLine } from '../flair'
@@ -186,7 +186,7 @@ function ImageGroup({ id }: { id: string }) {
         if (!src) return null
         return (
           <figure key={i} className="max-w-[min(100%,20rem)] space-y-1.5">
-            <img src={src} alt={img.revised || `Generated image ${i + 1}`} loading="lazy" className="max-h-80 rounded-xl border border-bor object-contain" />
+            <ZoomableImage src={src} alt={img.revised || `Generated image ${i + 1}`} loading="lazy" className="max-h-80 rounded-xl border border-bor object-contain" />
             <figcaption className="flex items-center gap-3 text-xs text-mu">
               <a href={src} download={`generated-${i + 1}.png`} className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 hover:bg-surf hover:text-tx"><Download size={13} />Download</a>
               <a href={src} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 hover:bg-surf hover:text-tx"><ExternalLink size={13} />Open</a>
@@ -491,7 +491,11 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
           </ol>
         </div>
       )}
-      <div className={cx('leading-7', m.err && 'text-er')}>
+      <div className={cx('flow-root leading-7', m.err && 'text-er')}>
+        {/* Inline graphs float beside the prose, so the text wraps around the
+            figure it explains instead of the plot being pushed to the end. */}
+        {!m.err && !hideBody && hasPlacedGraphs(m.toolRounds, 'left') && <div className="float-left mb-3 w-full sm:mr-5 sm:w-[min(52%,23rem)]"><GraphCards rounds={m.toolRounds} placement="left" compact /></div>}
+        {!m.err && !hideBody && hasPlacedGraphs(m.toolRounds, 'right') && <div className="float-right mb-3 w-full sm:ml-5 sm:w-[min(52%,23rem)]"><GraphCards rounds={m.toolRounds} placement="right" compact /></div>}
         {m.err ? (
           <div className="space-y-3 rounded-xl border border-er/30 bg-er/10 p-4">
             <div className="flex items-center gap-2 font-semibold text-er">
@@ -546,9 +550,12 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
             </>
           )
         })()}
+        {/* A figure placed below belongs directly under the prose that
+            explains it, not in a separate block at the end of the message. */}
+        {!m.err && !hideBody && <div className="clear-both mt-3"><GraphCards rounds={m.toolRounds} placement="below" /></div>}
+        {!m.err && <div className="clear-both" aria-hidden="true" />}
       </div>
       {!m.err && <GeneratedImages rounds={m.toolRounds} />}
-      {!m.err && <GraphCards rounds={m.toolRounds} />}
       {m.capped && !m.err && (
         <div className="mt-2 flex flex-wrap items-center gap-2 rounded-xl border border-er/30 bg-er/10 px-3 py-2 text-xs text-mu">
           <TriangleAlert size={13} className="shrink-0 text-er" />

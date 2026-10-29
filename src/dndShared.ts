@@ -48,3 +48,13 @@ export function parseTranslateY(transform: string): number {
   const y = m[1] === 'matrix' ? v[5] : v[13]
   return Number.isFinite(y) ? y : 0
 }
+
+/** X component of a computed `transform`. */
+export function parseTranslateX(transform: string): number {
+  if (!transform || transform === 'none') return 0
+  const m = /^(matrix3d|matrix)\((.+)\)$/.exec(transform.trim())
+  if (!m) return 0
+  const v = m[2].split(',').map((s) => parseFloat(s))
+  const x = m[1] === 'matrix' ? v[4] : v[12]
+  return Number.isFinite(x) ? x : 0
+}

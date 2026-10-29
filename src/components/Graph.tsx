@@ -1,5 +1,5 @@
 import { useEffect, useId, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
-import { Download, Maximize2, RotateCcw, ZoomIn, ZoomOut } from 'lucide-react'
+import { Download, Maximize2, RotateCcw, X, ZoomIn, ZoomOut } from 'lucide-react'
 import { useS } from '../store'
 import { Btn, cx, Modal } from './ui'
 import {
@@ -16,6 +16,7 @@ import {
   sampleExplicit,
   type GraphPoint,
   type GraphSeries,
+  type GraphPlacement,
   type GraphShape,
   type GraphSpec,
   type Pt,
@@ -181,14 +182,20 @@ function PointView({ point, sx, sy, dark }: { point: GraphPoint; sx: (x: number)
   )
 }
 
-export function GraphView({ spec, dark, width = 760, height = 430, expanded = false }: {
+export function GraphView({ spec, dark, width = 760, height = 430, expanded = false, compact = false }: {
   spec: GraphSpec
   dark: boolean
   width?: number
   height?: number
   expanded?: boolean
+  /** Inline mode: no card chrome, full-bleed plot, and one expand control. */
+  compact?: boolean
 }) {
-  const margins = { left: spec.yLabel ? 76 : 58, right: 22, top: 20, bottom: spec.xLabel ? 58 : 44 }
+  // Inline figures are narrow, so they spend as little of that width on
+  // margins as the tick labels allow and skip the plot frame entirely.
+  const margins = compact
+    ? { left: spec.yLabel ? 46 : 32, right: 8, top: 8, bottom: spec.xLabel ? 30 : 22 }
+    : { left: spec.yLabel ? 76 : 58, right: 22, top: 20, bottom: spec.xLabel ? 58 : 44 }
   const plot = { x: margins.left, y: margins.top, w: width - margins.left - margins.right, h: height - margins.top - margins.bottom }
   const base = useMemo(() => computeGraphDomain(spec, plot.w / plot.h), [spec, plot.w, plot.h])
   const [view, setView] = useState(base)
@@ -369,8 +376,8 @@ export function GraphView({ spec, dark, width = 760, height = 430, expanded = fa
   const tickFont = { fontVariantNumeric: 'tabular-nums' as const }
 
   return (
-    <div className="space-y-2">
-      <div className="flex flex-wrap items-center justify-between gap-2">
+    <div className={compact ? 'space-y-1.5' : 'space-y-2'}>
+      {!compact && <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="min-w-0">
           <div id={titleId} className="truncate text-sm font-medium">{graphTitle(spec)}</div>
           <div className="truncate text-xs text-mu">
@@ -385,13 +392,50 @@ export function GraphView({ spec, dark, width = 760, height = 430, expanded = fa
           <Btn sm icon={Download} title="Download SVG" onClick={download} />
           {!expanded && <Btn sm icon={Maximize2} title="Expand graph" onClick={() => setFull(true)} />}
         </div>
-      </div>
+      </div>}
 
-      <svg ref={svgRef} viewBox={`0 0 ${width} ${height}`} className="w-full select-none" role="img" aria-label={aria}>
+      {compact && (
+        <div className={cx('flex items-center gap-2', expanded && 'pr-9')}>
+          <div className="min-w-0 flex-1 truncate text-[11px] font-medium text-mu" title={graphTitle(spec)}>{graphTitle(spec)}</div>
+          {!expanded && (
+            <button
+              type="button"
+              aria-label={`Expand graph: ${graphTitle(spec)}`}
+              title="Expand graph"
+              onClick={() => setFull(true)}
+              className="grid size-6 shrink-0 place-items-center rounded-md text-mu opacity-70 transition hover:bg-hov hover:text-tx focus-visible:opacity-100"
+            >
+              <Maximize2 size={13} />
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* The plot surface, including its axes and labels, is one click target:
+          clicking anywhere on it (not the legend below) opens the full view. */}
+      <div
+        role={expanded ? undefined : 'button'}
+        tabIndex={expanded ? undefined : 0}
+        aria-label={expanded ? undefined : `Open ${graphTitle(spec)} full screen`}
+        title={expanded ? undefined : 'Click to enlarge'}
+        onClick={expanded ? undefined : () => setFull(true)}
+        onKeyDown={expanded ? undefined : (e) => {
+          if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setFull(true) }
+        }}
+        className={cx(
+          'relative overflow-hidden rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ac/70',
+          expanded
+            ? 'bg-surf/40'
+            : compact
+              ? 'cursor-pointer bg-surf/40 ring-1 ring-bor/70 transition-colors hover:bg-surf/80 hover:ring-ac/60'
+              : 'cursor-zoom-in transition-shadow hover:ring-2 hover:ring-ac/40',
+        )}
+      >
+      <svg ref={svgRef} viewBox={`0 0 ${width} ${height}`} className="block w-full select-none" role="img" aria-label={aria}>
         <defs>
           <clipPath id={clipId}><rect x={plot.x} y={plot.y} width={plot.w} height={plot.h} rx={8} /></clipPath>
         </defs>
-        <rect x={plot.x} y={plot.y} width={plot.w} height={plot.h} rx={8} fill="var(--bg)" stroke="var(--bor)" />
+        {!compact && <rect x={plot.x} y={plot.y} width={plot.w} height={plot.h} rx={8} fill="var(--bg)" stroke="var(--bor)" />}
 
         <g clipPath={`url(#${clipId})`}>
           {spec.grid && !categorical && xt.ticks.map((tick) => (
@@ -476,9 +520,10 @@ export function GraphView({ spec, dark, width = 760, height = 430, expanded = fa
           ? <text x={clamp(yAxisX + 8, plot.x + 6, plot.x + plot.w - 8)} y={plot.y + 14} textAnchor="start" fontSize={12} fill="var(--tx)" stroke="var(--surf)" strokeWidth={3} paintOrder="stroke" strokeLinejoin="round">{spec.yLabel}</text>
           : <text x={16} y={plot.y + plot.h / 2} textAnchor="middle" fontSize={12} fill="var(--tx)" transform={`rotate(-90 16 ${plot.y + plot.h / 2})`}>{spec.yLabel}</text>)}
       </svg>
+      </div>
 
       {spec.legend && legend.length > 1 && (
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 pt-0.5" role="group" aria-label="Graph legend">
+        <div className="flex flex-wrap items-center gap-1 pt-0.5" role="group" aria-label="Graph legend">
           {legend.map((entry) => {
             const off = hidden.has(entry.key)
             return (
@@ -488,9 +533,12 @@ export function GraphView({ spec, dark, width = 760, height = 430, expanded = fa
                 aria-pressed={!off}
                 title={`${off ? 'Show' : 'Hide'} ${entry.label}`}
                 onClick={() => toggle(entry.key)}
-                className={cx('inline-flex max-w-full items-center gap-1.5 rounded-md px-1.5 py-0.5 text-xs transition-opacity hover:bg-hov', off && 'opacity-40')}
+                className={cx(
+                  'inline-flex max-w-full items-center gap-1.5 rounded-full border border-bor/70 bg-surf/70 px-2 py-0.5 text-[11px] font-medium text-tx transition hover:border-ac/50 hover:bg-hov',
+                  off && 'opacity-45 line-through',
+                )}
               >
-                <span aria-hidden="true" className="size-2.5 shrink-0 rounded-full" style={{ background: resolveGraphColor(entry.color, dark) }} />
+                <span aria-hidden="true" className="size-2 shrink-0 rounded-full ring-1 ring-black/10" style={{ background: resolveGraphColor(entry.color, dark) }} />
                 <span className="truncate">{entry.label}</span>
               </button>
             )
@@ -506,8 +554,17 @@ export function GraphView({ spec, dark, width = 760, height = 430, expanded = fa
 
       {full && (
         <Modal close={() => setFull(false)}>
-          <div className="modal-panel w-[min(96vw,1120px)] rounded-2xl border border-bor bg-bg p-4">
-            <GraphView spec={spec} dark={dark} width={1040} height={620} expanded />
+          <div className="modal-panel relative w-[min(96vw,1120px)] rounded-2xl border border-bor bg-bg p-4">
+            <button
+              type="button"
+              aria-label="Close graph"
+              title="Close"
+              onClick={() => setFull(false)}
+              className="absolute right-2 top-2 z-10 grid size-8 place-items-center rounded-lg bg-surf/90 text-mu ring-1 ring-bor/70 transition hover:text-tx"
+            >
+              <X size={15} />
+            </button>
+            <GraphView spec={spec} dark={dark} width={1040} height={620} expanded compact />
           </div>
         </Modal>
       )}
@@ -515,9 +572,16 @@ export function GraphView({ spec, dark, width = 760, height = 430, expanded = fa
   )
 }
 
-function GraphCard({ call, dark }: { call: CallLike; dark: boolean }) {
+function GraphCard({ call, dark, compact }: { call: CallLike; dark: boolean; compact?: boolean }) {
   const spec = useMemo(() => normalizeGraphSpec(parseArgs(call.arguments)), [call.arguments])
   if (!graphItemCount(spec)) return null
+  if (compact) {
+    return (
+      <figure aria-label={`Graph: ${graphTitle(spec)}`} className="m-0 w-full">
+        <GraphView spec={spec} dark={dark} compact />
+      </figure>
+    )
+  }
   return (
     <section aria-label={`Graph: ${graphTitle(spec)}`} className="w-full overflow-hidden rounded-xl border border-bor bg-surf p-3">
       <GraphView spec={spec} dark={dark} />
@@ -525,13 +589,26 @@ function GraphCard({ call, dark }: { call: CallLike; dark: boolean }) {
   )
 }
 
-/** Graphs attached to an assistant reply. Tool arguments are the source of
- *  truth, so the plotted picture survives a reload without storing pixels. */
-export function GraphCards({ rounds }: { rounds?: { calls: CallLike[] }[] }) {
+/** Whether this reply has any figure placed on that side. The chat uses it so
+ *  an unused inline slot never takes width away from the prose. */
+export function hasPlacedGraphs(rounds: { calls: CallLike[] }[] | undefined, placement: GraphPlacement): boolean {
+  return (rounds ?? []).some((round) => round.calls.some((call) =>
+    call.name === 'graph' && !call.error && normalizeGraphSpec(parseArgs(call.arguments)).placement === placement))
+}
+
+/** Graphs attached to an assistant reply, filtered by where the model placed
+ *  them. Tool arguments are the source of truth, so the plotted picture
+ *  survives a reload without storing pixels. */
+export function GraphCards({ rounds, placement = 'below', compact = false }: {
+  rounds?: { calls: CallLike[] }[]
+  placement?: GraphPlacement
+  compact?: boolean
+}) {
   const dark = useS((s) => s.themeMode !== 'light')
   const calls = (rounds ?? []).flatMap((round) => round.calls).filter((call) => call.name === 'graph' && !call.error)
-  if (!calls.length) return null
-  return <div className="space-y-3">{calls.map((call) => <GraphCard key={call.id} call={call} dark={dark} />)}</div>
+  const placed = calls.filter((call) => normalizeGraphSpec(parseArgs(call.arguments)).placement === placement)
+  if (!placed.length) return null
+  return <div className={compact ? 'space-y-2' : 'space-y-3'}>{placed.map((call) => <GraphCard key={call.id} call={call} dark={dark} compact={compact} />)}</div>
 }
 
 export type { GraphSeries }

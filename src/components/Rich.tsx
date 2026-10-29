@@ -9,7 +9,7 @@ import rehypeSanitize, { defaultSchema } from 'rehype-sanitize'
 import rehypeHighlight from 'rehype-highlight'
 import { common } from 'lowlight'
 import { Check, Copy, ImageOff } from 'lucide-react'
-import { cx } from './ui'
+import { cx, ZoomableImage } from './ui'
 import { useS } from '../store'
 import type { CiteSource } from '../citations'
 
@@ -181,7 +181,7 @@ function RemoteImage({ src, alt, title }: { src?: string; alt?: string; title?: 
   const allow = useS((s) => s.prefs.remoteImages === true)
   const [loaded, setLoaded] = useState(false)
   const remote = /^https?:\/\//i.test(src ?? '')
-  if (!remote || allow || loaded) return <img src={src} alt={alt} title={title} loading="lazy" referrerPolicy="no-referrer" className="my-3 max-h-96 max-w-full rounded-xl bg-surf" />
+  if (!remote || allow || loaded) return <ZoomableImage src={src ?? ''} alt={alt} title={title} loading="lazy" referrerPolicy="no-referrer" className="my-3 max-h-96 max-w-full rounded-xl bg-surf" />
   let host = src ?? ''
   try { host = new URL(src ?? '').host || host } catch { /* keep the raw URL */ }
   return (

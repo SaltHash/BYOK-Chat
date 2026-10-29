@@ -19,14 +19,35 @@ test('tiers resolve with a safe default and budgets', () => {
   assert.equal(r.tierOf('standard').maxSearches, 24)
   assert.equal(r.tierOf('thorough').maxSearches, 60)
   assert.equal(r.tierOf('bogus').id, 'standard')
-  assert.equal(r.normResearch({}).defaultTier, 'standard')
-  assert.equal(r.normResearch({ defaultTier: 'thorough' }).defaultTier, 'thorough')
+  // The depth is chosen per run, so no default preference is stored.
+  assert.equal(r.normResearch, undefined)
+})
+
+test('failed searches and reads are shown but never count against the budget', () => {
+  const steps = [
+    { id: 's1', kind: 'search', label: 'Search 1', state: 'done' },
+    { id: 's2', kind: 'search', label: 'Search failed', state: 'error' },
+    { id: 's3', kind: 'search', label: 'Search 2', state: 'done' },
+    { id: 'r1', kind: 'read', label: 'Read 1', state: 'done' },
+    { id: 'r2', kind: 'read', label: 'Read failed', state: 'error' },
+  ]
+  assert.equal(r.countedSteps(steps, 'search'), 2)
+  assert.equal(r.countedSteps(steps, 'read'), 1)
+  assert.equal(r.countedSteps([], 'search'), 0)
+  // Failed attempts do not shift the "Searches 1-2" reasoning ranges.
+  const blocks = r.reasoningBlocks([
+    { ...steps[0], lead: 'First search thought.' },
+    { ...steps[1], lead: 'That query was wrong.' },
+    { ...steps[2], lead: 'Second search thought.' },
+  ])
+  assert.deepEqual(blocks.map((b) => b.label), ['Search 1', 'Search failed', 'Search 2'])
 })
 
 test('system note leaves query and page choices to the model', () => {
   const note = r.researchSystemNote('fusion', r.tierOf('standard'))
   assert.match(note, /write each search query/)
   assert.match(note, /pick which result pages/)
+  assert.match(note, /do not count against your budget/)
   assert.equal(r.decomposeResearch, undefined)
 })
 

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { BookOpen, Check, Copy, Download, FileText, Globe, ListFilter, ListOrdered, Pencil, Play, RotateCcw, Sparkles, Square, X } from 'lucide-react'
 import { useS, useLive, type Msg } from '../store'
-import { PLAN_INTRO, RESEARCH_TIERS, dedupTrace, reasoningBlocks, tierOf, type ResearchPlan, type ResearchPlanStep, type ResearchTierId } from '../research'
+import { PLAN_INTRO, RESEARCH_TIERS, countedSteps, dedupTrace, reasoningBlocks, tierOf, type ResearchPlan, type ResearchPlanStep, type ResearchTierId } from '../research'
 import { claimForCitation, collectMessageSources, linkifyCitations, stripCitations } from '../citations'
 import { Md } from './Md'
 import { SourcesPanel, scrollToSource } from './Sources'
@@ -174,7 +174,6 @@ export function ResearchTierPicker({ msg }: { msg: Msg }) {
   const choose = useS((s) => s.chooseResearchTier)
   const stop = useS((s) => s.stopResearch)
   const busy = useS((s) => s.busy)
-  const def = useS((s) => s.research?.defaultTier)
   const rs = msg.research
   if (!rs || rs.status !== 'tier-pick') return null
   return (
@@ -193,13 +192,12 @@ export function ResearchTierPicker({ msg }: { msg: Msg }) {
             className={cx('rounded-lg border px-3 py-2.5 text-left transition-colors hover:bg-hov disabled:opacity-50', rs.tier === t.id ? 'border-ac bg-ac/10' : 'border-bor')}
             aria-pressed={rs.tier === t.id}
           >
-            <span className="flex items-center gap-1.5 text-sm font-medium">{t.label}{def === t.id && <span className="rounded-sm bg-hov px-1.5 py-0.5 text-[10px] font-medium text-mu">default</span>}</span>
+            <span className="block text-sm font-medium">{t.label}</span>
             <span className="mt-0.5 block text-xs text-mu">{t.blurb}</span>
           </button>
         ))}
       </div>
-      <div className="flex items-center justify-between">
-        <span className="text-xs text-mu">Default is remembered for next time.</span>
+      <div className="flex items-center justify-end">
         <button disabled={busy} onClick={() => stop(msg.id)} className="rounded-lg px-3 py-1.5 text-xs text-mu hover:bg-hov hover:text-tx disabled:opacity-50">Cancel</button>
       </div>
     </section>
@@ -237,7 +235,7 @@ export function ResearchProgressCard({ msg }: { msg: Msg }) {
   if (rs.status !== 'running' && !rs.steps.length && !rs.error && rs.status !== 'stopped') return null
   const done = rs.steps.filter((s) => s.state === 'done').length
   const tier = tierOf(rs.tier ?? 'standard')
-  const usedSearches = rs.steps.filter((s) => s.kind === 'search').length
+  const usedSearches = countedSteps(rs.steps, 'search')
   const canResume = rs.status === 'stopped' && usedSearches < tier.maxSearches && !!msg.toolRounds?.length
   return (
     <section aria-label="Deep research progress" aria-live="polite" className="max-w-xl space-y-2 rounded-xl border border-bor bg-surf p-4">

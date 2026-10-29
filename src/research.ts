@@ -26,13 +26,6 @@ export const RESEARCH_TIER_IDS = RESEARCH_TIERS.map((t) => t.id)
 export const tierOf = (id: unknown): ResearchTier =>
   RESEARCH_TIERS.find((t) => t.id === String(id || '').trim().toLowerCase()) ?? RESEARCH_TIERS[1]
 
-export type ResearchPrefs = { defaultTier: ResearchTierId }
-export const BLANK_RESEARCH: ResearchPrefs = { defaultTier: 'standard' }
-export const normResearch = (v: any): ResearchPrefs => {
-  const id = String(v?.defaultTier || '').trim().toLowerCase()
-  return { defaultTier: (['quick', 'standard', 'thorough'] as string[]).includes(id) ? (id as ResearchTierId) : 'standard' }
-}
-
 /* ---- Plan ---- */
 
 export type ResearchPlanStepKind = 'search' | 'analyze' | 'report' | 'other'
@@ -228,6 +221,12 @@ export type ResearchStepState = 'running' | 'done' | 'error'
 /** `lead` is the narration the model wrote immediately before this step, so the
  * card always reads: thinking → the searches it led to. */
 export type ResearchStep = { id: string; kind: 'search' | 'read'; label: string; query?: string; state: ResearchStepState; sources?: number; error?: string; lead?: string }
+
+/** Search or page-read attempts that actually returned something, i.e. the
+ *  ones that count against a tier's budget. Failed attempts stay in `steps`
+ *  (the progress card shows them) but never consume a slot. */
+export const countedSteps = (steps: ResearchStep[], kind: 'search' | 'read'): number =>
+  steps.filter((s) => s.kind === kind && s.state !== 'error').length
 /** `planning` = drafting the plan; `plan` = waiting for the user to start it;
  * `writing` = the search phase is over and the model is writing the report. */
 export type ResearchStatus = 'tier-pick' | 'planning' | 'plan' | 'running' | 'writing' | 'done' | 'stopped' | 'error'
@@ -355,6 +354,7 @@ export function researchSystemNote(query: string, tier: ResearchTier, now: Date 
     ``,
     `# Empty or failed results`,
     `If a search returns no results, do not give up on the point: rewrite the query with different wording, add or remove qualifiers, or try a more specific domain, then search once more. If a page fails to read, move to another result. Never end the run because a single search or page failed.`,
+    `Failed searches and unreadable pages do not count against your budget, so retrying with a different query or URL costs nothing; only searches and reads that return something are charged.`,
     ``,
     `# Freshness`,
     `Today's date is ${todayStamp(now)}. Treat information published before ${oneYearAgoStamp(now)} as historical context unless the question is specifically about the past.`,
@@ -490,7 +490,9 @@ export function reasoningBlocks(steps: ResearchStep[]): ResearchReasoningBlock[]
   let searches = 0
   let prev = 0
   for (const s of steps) {
-    if (s.kind === 'search') searches++
+    // Failed searches never gathered anything, so they do not advance the
+    // "Searches 1-5" ranges; they keep their own "Search failed" label.
+    if (s.kind === 'search' && s.state !== 'error') searches++
     const lead = String(s.lead ?? '').trim()
     if (!lead) continue
     const label = searches > prev + 1 ? `Searches ${prev + 1}-${searches}` : searches === prev + 1 ? `Search ${searches}` : s.label

@@ -513,6 +513,11 @@ export type GraphShape =
   | { type: 'polygon'; points: Pt[]; color: string; width: number; dashed: boolean; fill: boolean; fillColor?: string; label?: string }
   | { type: 'label'; at: Pt; text: string; color: string }
 
+/** Where the figure sits relative to the reply text. Inline placements float
+ *  beside the prose so the text wraps around the graph; `below` puts it after
+ *  the writing. */
+export type GraphPlacement = 'left' | 'right' | 'below'
+
 export type GraphSpec = {
   title?: string
   xLabel?: string
@@ -526,6 +531,7 @@ export type GraphSpec = {
   grid: boolean
   legend: boolean
   aspect: 'equal' | 'auto'
+  placement: GraphPlacement
   errors: string[]
 }
 
@@ -673,6 +679,12 @@ export function normalizeGraphSpec(raw: unknown): GraphSpec {
   const grid = o.grid !== false
   const legend = o.legend !== false
   const aspectRequested = text(o.aspect, 10).toLowerCase()
+  const side = text(o.placement ?? o.position ?? o.side, 12).toLowerCase()
+  // Inline is the default: a figure should sit beside the words it belongs to,
+  // never be pushed to the bottom of the reply on its own.
+  const placement: GraphPlacement = side === 'right' ? 'right'
+    : side === 'below' || side === 'bottom' || side === 'after' || side === 'under' ? 'below'
+      : 'left'
 
   // Equations can arrive as strings or objects, under several familiar keys.
   const equationList = parseJsonList(o.equations ?? o.equation ?? o.expression ?? o.expressions ?? o.functions ?? o.function ?? o.curves)
@@ -773,6 +785,7 @@ export function normalizeGraphSpec(raw: unknown): GraphSpec {
     grid,
     legend,
     aspect,
+    placement,
     errors: [...new Set(errors)].slice(0, 6),
   }
 }
@@ -797,7 +810,8 @@ export function summarizeGraphSpec(spec: GraphSpec): string {
   if (!bits.length) throw new Error(`Nothing could be drawn${spec.errors.length ? `: ${spec.errors.join('; ')}` : '. Provide an equation, points, a series, or a shape.'}`)
   const title = spec.title ? ` “${spec.title}”` : ''
   const errors = spec.errors.length ? ` Some items were skipped: ${spec.errors.join('; ')}. Correct them and call graph again only if they matter.` : ''
-  return `Graph${title} is displayed beside the reply (${bits.join(', ')}). Do not repeat the coordinates, equations, or table of values in your reply; explain the result, trend, relationship, or takeaway, and mention a specific value only when it helps.${errors}`
+  const where = spec.placement === 'below' ? 'below the reply text' : `to the ${spec.placement} of the reply text, with the prose wrapping beside it`
+  return `Graph${title} is displayed ${where} (${bits.join(', ')}). Do not repeat the coordinates, equations, or table of values in your reply; explain the result, trend, relationship, or takeaway, and mention a specific value only when it helps.${errors}`
 }
 
 /** Round a tick step to a readable 1/2/5 × 10^n value and return every tick
