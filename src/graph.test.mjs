@@ -133,7 +133,7 @@ test('paired columns, labels and a circle given x/y both normalize', () => {
     shapes: [{ type: 'circle', x: 1, y: 2, radius: 1 }],
   })
   assert.deepEqual(spec.series[0].points.map((p) => [p.x, p.y, p.label]), [[0, 4, 'a'], [1, 5, 'b'], [2, 9, 'c']])
-  assert.deepEqual(spec.shapes[0], { type: 'circle', center: { x: 1, y: 2 }, radius: 1, color: 'black', width: 2, dashed: false, fill: false })
+  assert.deepEqual(spec.shapes[0], { type: 'circle', center: { x: 1, y: 2 }, radius: 1, color: 'black', width: 2, pattern: 'solid', opacity: 1, fill: false })
 })
 
 test('unicode inequalities and superscripts are accepted', () => {
@@ -205,4 +205,99 @@ test('the tool summary tells the model which side the figure took', () => {
   assert.match(text, /prose wrapping beside it/)
   const below = g.summarizeGraphSpec(g.normalizeGraphSpec({ equations: ['y = x'], placement: 'below' }))
   assert.match(below, /below the reply text/)
+})
+
+test('marks resolve y from the only function and keep an explicit pair', () => {
+  const spec = g.normalizeGraphSpec({
+    equations: ['y = x^2'],
+    marks: [{ x: 2, label: 'vertex' }, [-1, 4, 'B']],
+  })
+  assert.equal(spec.marks.length, 2)
+  assert.deepEqual(
+    [spec.marks[0].x, spec.marks[0].y, spec.marks[0].label, spec.marks[0].curve],
+    [2, 4, 'vertex', 0],
+  )
+  assert.deepEqual(
+    [spec.marks[1].x, spec.marks[1].y, spec.marks[1].label, spec.marks[1].curve],
+    [-1, 4, 'B', undefined],
+  )
+})
+
+test('an x-only mark needs a named curve when several exist, and cannot guess y on a circle', () => {
+  const ambiguous = g.normalizeGraphSpec({ equations: ['y = x', 'y = -x'], marks: [{ x: 2 }] })
+  assert.equal(ambiguous.marks.length, 0)
+  assert.match(ambiguous.errors.join(' '), /ambiguous/i)
+
+  const named = g.normalizeGraphSpec({ equations: ['y = x', 'y = -x'], marks: [{ x: 2, on: 'y = x', label: 'P' }] })
+  assert.equal(named.marks.length, 1)
+  assert.equal(named.marks[0].y, 2)
+
+  const byIndex = g.normalizeGraphSpec({ equations: ['y = x', 'y = -x'], marks: [{ x: 3, on: 2 }] })
+  assert.equal(byIndex.marks[0].y, -3)
+
+  const circle = g.normalizeGraphSpec({ equations: ['x^2 + y^2 = 1'], marks: [{ x: 0, label: 'top' }] })
+  assert.equal(circle.marks.length, 0)
+  assert.match(circle.errors.join(' '), /more than one y/i)
+})
+
+test('line patterns and translucency normalize for curves, series and shapes', () => {
+  const spec = g.normalizeGraphSpec({
+    equations: [
+      { expression: 'x = 2', pattern: 'dash-dot', translucent: true },
+      { expression: 'y = 1/x', style: 'dotted', opacity: 0.3 },
+      { expression: 'y = x', dashed: true },
+    ],
+    series: [{ points: [[0, 0], [1, 1]], pattern: 'dashed', translucent: true }],
+    shapes: [{ type: 'segment', from: [0, 0], to: [1, 1], dashed: true }],
+  })
+  assert.deepEqual(spec.curves.map((c) => c.pattern), ['dashdot', 'dotted', 'dashed'])
+  assert.deepEqual(spec.curves.map((c) => c.opacity), [0.45, 0.3, 1])
+  assert.equal(spec.series[0].pattern, 'dashed')
+  assert.equal(spec.series[0].opacity, 0.45)
+  assert.equal(spec.shapes[0].pattern, 'dashed')
+})
+
+test('hover snapping prefers the nearest point, then the closest point on a line', () => {
+  const anchors = [{ x: 10, y: 10, kind: 'point', label: 'A' }]
+  const lines = [{ points: [{ x: 0, y: 0 }, { x: 100, y: 100 }], label: 'y = x' }]
+  const onPoint = g.snapTo(anchors, lines, { x: 12, y: 11 }, 14)
+  assert.equal(onPoint.kind, 'point')
+  assert.equal(onPoint.label, 'A')
+
+  const onLine = g.snapTo(anchors, lines, { x: 60, y: 66 }, 14)
+  assert.equal(onLine.kind, 'curve')
+  close(onLine.x, 63)
+  close(onLine.y, 63)
+
+  assert.equal(g.snapTo(anchors, lines, { x: 200, y: 200 }, 14), null)
+  // A labeled point wins a near-tie against a line a couple of pixels closer.
+  const biased = g.snapTo(anchors, [{ points: [{ x: 0, y: 12 }, { x: 100, y: 12 }] }], { x: 10, y: 13 }, 14)
+  assert.equal(biased.kind, 'point')
+})
+
+test('closestOnPolyline projects onto the segment instead of a vertex', () => {
+  const hit = g.closestOnPolyline([{ x: 0, y: 0 }, { x: 10, y: 0 }], { x: 4, y: 5 })
+  close(hit.x, 4)
+  close(hit.y, 0)
+  close(hit.distance, 5)
+})
+
+test('only single-valued function graphs get the vertical cursor guide', () => {
+  assert.equal(g.isSingleValuedGraph(g.normalizeGraphSpec({ equations: ['y = x^2'] })), true)
+  assert.equal(g.isSingleValuedGraph(g.normalizeGraphSpec({ equations: ['f(x) = sin(x)', 'y = x'] })), true)
+  assert.equal(g.isSingleValuedGraph(g.normalizeGraphSpec({ equations: ['x^2 + y^2 = 1'] })), false)
+  assert.equal(g.isSingleValuedGraph(g.normalizeGraphSpec({ equations: ['y > x^2'] })), false)
+  assert.equal(g.isSingleValuedGraph(g.normalizeGraphSpec({
+    equations: ['y = x'],
+    series: [{ points: [[0, 1], [1, 2]], kind: 'bar' }],
+  })), false)
+  assert.equal(g.isSingleValuedGraph(g.normalizeGraphSpec({ equations: ['y = x'] }), () => false), false)
+})
+
+test('marks stay visible in an automatic view and are counted in the summary', () => {
+  const spec = g.normalizeGraphSpec({ equations: ['y = x^2'], marks: [{ x: 12, label: 'far' }] })
+  const d = g.computeGraphDomain(spec, 1.8)
+  assert.ok(d.x[1] >= 12, `mark x should fit, got ${d.x[1]}`)
+  assert.ok(d.y[1] >= 144, `mark y should fit, got ${d.y[1]}`)
+  assert.match(g.summarizeGraphSpec(spec), /1 marked point/)
 })

@@ -1,5 +1,5 @@
 /* Graph engine: expression parsing, implicit relations, inequalities, data
- * series and shapes for the `graph` tool.
+ * series, labeled marks and shapes for the `graph` tool.
  *
  * Everything here is pure and dependency-free so it can be unit tested outside
  * the browser: parsing (`compileRelation`), sampling (`sampleExplicit`,
@@ -8,10 +8,17 @@
  * `components/Graph.tsx` only turns the resulting geometry into SVG.
  *
  * Equations may be explicit (`y = x^2`, `sin(x)`), implicit
- * (`x^2 + y^2 = 1`), or inequalities (`y > x^2`, `x^2 + y^2 <= 4`). The
- * palette is deliberately small and theme-aware: every colour resolves through
+ * (`x^2 + y^2 = 1`), or inequalities (`y > x^2`, `x^2 + y^2 <= 4`). Lines
+ * carry a `pattern` (solid, dashed, dotted, dashdot) and an `opacity`, which
+ * is how an asymptote is drawn as a faint dashed guide. `marks` pin labeled
+ * points to a curve: an x alone resolves y through a single-valued function,
+ * while ambiguous relations require both coordinates. The palette is
+ * deliberately small and theme-aware: every colour resolves through
  * `GRAPH_PALETTE`, and an unspecified colour is black (rendered as the theme
  * ink in dark mode so it stays visible).
+ *
+ * The browser renderer also uses the pure helpers at the bottom of this file
+ * for hover snapping, so the geometry rules are unit-tested without a DOM.
  */
 
 export type GraphColorName = 'black' | 'red' | 'green' | 'blue' | 'orange' | 'purple' | 'teal' | 'pink' | 'yellow' | 'gray'
@@ -485,16 +492,26 @@ export function regionRuns(test: (x: number, y: number) => boolean, xRange: [num
 /* View fitting                                                        */
 /* ------------------------------------------------------------------ */
 
+/** Stroke style for a drawn line. Asymptotes and guides are usually dashed or
+ *  dash-dotted, and `translucent` (or an explicit `opacity`) keeps them faint. */
+export type GraphPattern = 'solid' | 'dashed' | 'dotted' | 'dashdot'
+
 export type GraphCurve = {
   source: string
   label: string
   color: string
   width: number
-  dashed: boolean
+  pattern: GraphPattern
+  opacity: number
   compiled: CompiledRelation
 }
 
 export type GraphPoint = { x: number; y: number; label?: string }
+
+/** A callout pinned to a curve (or to an exact coordinate). `curve` records the
+ *  index of the equation the y value came from, so a mark placed with only an
+ *  x is self-describing for the summary and for snapping. */
+export type GraphMark = GraphPoint & { color: string; curve?: number }
 
 export type GraphSeries = {
   points: GraphPoint[]
@@ -502,15 +519,16 @@ export type GraphSeries = {
   color: string
   label: string
   width: number
-  dashed: boolean
+  pattern: GraphPattern
+  opacity: number
   barWidth?: number
 }
 
 export type GraphShape =
-  | { type: 'segment' | 'vector'; from: Pt; to: Pt; color: string; width: number; dashed: boolean; label?: string }
-  | { type: 'circle'; center: Pt; radius: number; color: string; width: number; dashed: boolean; fill: boolean; fillColor?: string; label?: string }
-  | { type: 'rect'; from: Pt; to: Pt; color: string; width: number; dashed: boolean; fill: boolean; fillColor?: string; label?: string }
-  | { type: 'polygon'; points: Pt[]; color: string; width: number; dashed: boolean; fill: boolean; fillColor?: string; label?: string }
+  | { type: 'segment' | 'vector'; from: Pt; to: Pt; color: string; width: number; pattern: GraphPattern; opacity: number; label?: string }
+  | { type: 'circle'; center: Pt; radius: number; color: string; width: number; pattern: GraphPattern; opacity: number; fill: boolean; fillColor?: string; label?: string }
+  | { type: 'rect'; from: Pt; to: Pt; color: string; width: number; pattern: GraphPattern; opacity: number; fill: boolean; fillColor?: string; label?: string }
+  | { type: 'polygon'; points: Pt[]; color: string; width: number; pattern: GraphPattern; opacity: number; fill: boolean; fillColor?: string; label?: string }
   | { type: 'label'; at: Pt; text: string; color: string }
 
 /** Where the figure sits relative to the reply text. Inline placements float
@@ -525,6 +543,7 @@ export type GraphSpec = {
   curves: GraphCurve[]
   series: GraphSeries[]
   points: GraphPoint[]
+  marks: GraphMark[]
   shapes: GraphShape[]
   xRange?: [number, number]
   yRange?: [number, number]
@@ -539,6 +558,7 @@ const DEFAULT_COLOR = 'black'
 const MAX_CURVES = 12
 const MAX_SERIES = 12
 const MAX_POINTS = 300
+const MAX_MARKS = 40
 const MAX_SHAPES = 60
 
 const text = (v: unknown, max = 120): string => (typeof v === 'string' ? v.trim().slice(0, max) : '')
@@ -568,6 +588,28 @@ const normalizeColor = (raw: unknown): string => {
 const normalizeWidth = (raw: unknown, fallback = 2.2): number => {
   const n = finite(raw)
   return n == null ? fallback : Math.max(0.5, Math.min(8, n))
+}
+
+/** Accept `pattern: "dash-dot"`, `style: "dotted"`, or the older `dashed`
+ *  flag. Anything unrecognised keeps the caller's default. */
+const normalizePattern = (entry: Record<string, unknown> | null | undefined, fallback: GraphPattern = 'solid'): GraphPattern => {
+  const raw = text(entry?.pattern ?? entry?.linePattern ?? entry?.lineStyle ?? entry?.style ?? entry?.strokeStyle, 16).toLowerCase().replace(/[^a-z]/g, '')
+  if (raw.includes('dot') && raw.includes('dash')) return 'dashdot'
+  if (raw.includes('dot')) return 'dotted'
+  if (raw.includes('dash')) return 'dashed'
+  if (raw === 'solid' || raw === 'none' || raw === 'continuous') return 'solid'
+  if (entry?.dashed === true || entry?.dash === true) return 'dashed'
+  if (entry?.dotted === true) return 'dotted'
+  return fallback
+}
+
+/** `translucent: true` is the shorthand the model is told about; an explicit
+ *  opacity wins when both are present. */
+const normalizeOpacity = (entry: Record<string, unknown> | null | undefined, fallback = 1): number => {
+  const n = finite(entry?.opacity ?? entry?.alpha)
+  if (n != null) return Math.max(0.08, Math.min(1, n))
+  if (entry?.translucent === true || entry?.faded === true || entry?.semiTransparent === true) return 0.45
+  return fallback
 }
 
 const parsePoint = (raw: unknown): GraphPoint | null => {
@@ -617,14 +659,15 @@ function parseShape(raw: unknown): GraphShape | null {
   const type = text(o.type ?? o.kind ?? o.shape, 20).toLowerCase()
   const color = normalizeColor(o.color)
   const width = normalizeWidth(o.width ?? o.strokeWidth, 2)
-  const dashed = o.dashed === true || o.dash === true
+  const pattern = normalizePattern(o)
+  const opacity = normalizeOpacity(o)
   const label = text(o.label ?? o.title, 60) || undefined
   const { fill, fillColor } = shapeFill(o.fill ?? o.filled ?? o.shade)
   if (type === 'point' || type === 'dot') {
     const p = parsePoint(o)
     if (!p) return null
     const at = { x: p.x, y: p.y }
-    return label ? { type: 'label', at, text: label, color } : { type: 'circle', center: at, radius: normalizeWidth(o.radius ?? o.r, 0.15), color, width, dashed, fill: true, fillColor: color }
+    return label ? { type: 'label', at, text: label, color } : { type: 'circle', center: at, radius: normalizeWidth(o.radius ?? o.r, 0.15), color, width, pattern, opacity, fill: true, fillColor: color }
   }
   if (type === 'label' || type === 'text' || type === 'annotation') {
     const at = shapePoint(o.at ?? o.from ?? o.center ?? o.point)
@@ -636,7 +679,7 @@ function parseShape(raw: unknown): GraphShape | null {
     const center = shapePoint(o.center ?? o.from ?? o.at) ?? (cx != null && cy != null ? { x: cx, y: cy } : { x: 0, y: 0 })
     const radius = finite(o.radius ?? o.r)
     if (!center || radius == null || radius <= 0) return null
-    return { type: 'circle', center, radius: Math.min(1e6, radius), color, width, dashed, fill, ...(fillColor ? { fillColor } : {}), ...(label ? { label } : {}) }
+    return { type: 'circle', center, radius: Math.min(1e6, radius), color, width, pattern, opacity, fill, ...(fillColor ? { fillColor } : {}), ...(label ? { label } : {}) }
   }
   if (type === 'rect' || type === 'rectangle' || type === 'square') {
     let from = shapePoint(o.from ?? o.start ?? o.a)
@@ -649,22 +692,22 @@ function parseShape(raw: unknown): GraphShape | null {
       }
     }
     if (!from || !to) return null
-    return { type: 'rect', from, to, color, width, dashed, fill, ...(fillColor ? { fillColor } : {}), ...(label ? { label } : {}) }
+    return { type: 'rect', from, to, color, width, pattern, opacity, fill, ...(fillColor ? { fillColor } : {}), ...(label ? { label } : {}) }
   }
   if (type === 'polygon' || type === 'triangle' || type === 'quad') {
     const pts = asList(o.points).map(shapePoint).filter((p): p is Pt => !!p)
     if (pts.length < 3) return null
-    return { type: 'polygon', points: pts.slice(0, 40), color, width, dashed, fill, ...(fillColor ? { fillColor } : {}), ...(label ? { label } : {}) }
+    return { type: 'polygon', points: pts.slice(0, 40), color, width, pattern, opacity, fill, ...(fillColor ? { fillColor } : {}), ...(label ? { label } : {}) }
   }
   if (type === 'segment' || type === 'line' || type === 'vector' || type === 'arrow') {
     const from = shapePoint(o.from ?? o.start ?? o.a)
     const to = shapePoint(o.to ?? o.end ?? o.b)
     if (!from || !to) return null
-    return { type: type === 'arrow' || type === 'vector' ? 'vector' : 'segment', from, to, color, width, dashed, ...(label ? { label } : {}) }
+    return { type: type === 'arrow' || type === 'vector' ? 'vector' : 'segment', from, to, color, width, pattern, opacity, ...(label ? { label } : {}) }
   }
   // A bare `{from,to}` shape is treated as a segment.
   const from = shapePoint(o.from), to = shapePoint(o.to)
-  if (from && to) return { type: 'segment', from, to, color, width, dashed, ...(label ? { label } : {}) }
+  if (from && to) return { type: 'segment', from, to, color, width, pattern, opacity, ...(label ? { label } : {}) }
   return null
 }
 
@@ -700,7 +743,8 @@ export function normalizeGraphSpec(raw: unknown): GraphSpec {
         label: text(entry?.label ?? entry?.name, 80) || source,
         color: normalizeColor(entry?.color),
         width: normalizeWidth(entry?.width ?? entry?.strokeWidth),
-        dashed: entry?.dashed === true || entry?.dash === true,
+        pattern: normalizePattern(entry),
+        opacity: normalizeOpacity(entry),
         compiled,
       })
     } catch (error) {
@@ -750,7 +794,8 @@ export function normalizeGraphSpec(raw: unknown): GraphSpec {
       color: normalizeColor(entry.color),
       label: text(entry.label ?? entry.name, 80),
       width: normalizeWidth(entry.width ?? entry.strokeWidth),
-      dashed: entry.dashed === true || entry.dash === true,
+      pattern: normalizePattern(entry),
+      opacity: normalizeOpacity(entry),
       ...(finite(entry.barWidth) != null ? { barWidth: Math.max(0.01, Math.min(1e6, finite(entry.barWidth)!)) } : {}),
     })
   }
@@ -759,6 +804,84 @@ export function normalizeGraphSpec(raw: unknown): GraphSpec {
     .map(parsePoint)
     .filter((p): p is GraphPoint => !!p)
     .slice(0, MAX_POINTS)
+
+  // A mark is a labeled point pinned to a curve. Giving only x is the common
+  // case for a single-valued function: y is computed from the equation. When
+  // the graph has several curves, `on` names the one to use; when it has more
+  // than one y at that x, both coordinates are required.
+  const marks: GraphMark[] = []
+  for (const item of parseJsonList(o.marks ?? o.mark ?? o.markers ?? o.highlights).slice(0, MAX_MARKS)) {
+    const entry = asObject(item)
+    const label = text(entry?.label ?? entry?.name ?? entry?.text ?? (Array.isArray(item) ? item[2] : undefined), 60) || undefined
+    const color = normalizeColor(entry?.color)
+    let x: number | null = null
+    let y: number | null = null
+    if (Array.isArray(item)) {
+      x = finite(item[0])
+      y = finite(item[1])
+    } else if (entry) {
+      x = finite(entry.x ?? entry.input)
+      y = finite(entry.y ?? entry.output)
+      const point = entry.point ?? entry.at
+      if (Array.isArray(point)) {
+        if (x == null) x = finite(point[0])
+        if (y == null) y = finite(point[1])
+      } else {
+        const obj = asObject(point)
+        if (obj) {
+          if (x == null) x = finite(obj.x)
+          if (y == null) y = finite(obj.y)
+        } else if (x == null) {
+          x = finite(point)
+        }
+      }
+    }
+    if (x == null) {
+      errors.push('A mark was skipped because it has no x coordinate.')
+      continue
+    }
+    let curveIndex = -1
+    if (y == null) {
+      const rawOn = entry?.on ?? entry?.curve ?? entry?.equation ?? entry?.of ?? entry?.function
+      const wanted = text(rawOn, MAX_EXPR_LENGTH).toLowerCase()
+      let curve: GraphCurve | undefined
+      if (typeof rawOn === 'number' || /^#?\d+$/.test(wanted)) {
+        curve = curves[Math.round(typeof rawOn === 'number' ? rawOn : Number(wanted.replace('#', ''))) - 1]
+      } else if (wanted) {
+        curve = curves.find((c) => c.source.toLowerCase() === wanted || c.label.toLowerCase() === wanted)
+          ?? curves.find((c) => wanted.length >= 3 && (c.source.toLowerCase().includes(wanted) || wanted.includes(c.source.toLowerCase())))
+        if (!curve) {
+          errors.push(`A mark at x = ${x} names “${wanted}”, which is not one of the equations.`)
+          continue
+        }
+      } else if (curves.length === 1) {
+        curve = curves[0]
+      } else if (!curves.length) {
+        errors.push(`A mark at x = ${x} has no equation to sit on; add y, or plot the function first.`)
+        continue
+      } else {
+        errors.push(`A mark at x = ${x} is ambiguous with ${curves.length} equations; give y, or set on to the equation it belongs to.`)
+        continue
+      }
+      if (!curve) {
+        errors.push(`A mark at x = ${x} was skipped because no equation matched it.`)
+        continue
+      }
+      const f = curve.compiled.f
+      if (curve.compiled.kind !== 'explicit' || !f) {
+        errors.push(`A mark at x = ${x} needs a y because “${curve.source}” can have more than one y there; give both x and y.`)
+        continue
+      }
+      const value = f(x)
+      if (!Number.isFinite(value)) {
+        errors.push(`A mark at x = ${x} is outside the domain of “${curve.source}”.`)
+        continue
+      }
+      y = value
+      curveIndex = curves.indexOf(curve)
+    }
+    marks.push({ x, y, color, ...(label ? { label } : {}), ...(curveIndex >= 0 ? { curve: curveIndex } : {}) })
+  }
 
   const shapeList = parseJsonList(o.shapes ?? o.annotations)
   const shapes: GraphShape[] = []
@@ -779,6 +902,7 @@ export function normalizeGraphSpec(raw: unknown): GraphSpec {
     curves,
     series,
     points,
+    marks,
     shapes,
     ...(parseRange(o.xRange ?? o.xDomain ?? o.domainX ?? o.x) ? { xRange: parseRange(o.xRange ?? o.xDomain ?? o.domainX ?? o.x)! } : {}),
     ...(parseRange(o.yRange ?? o.yDomain ?? o.domainY ?? o.y) ? { yRange: parseRange(o.yRange ?? o.yDomain ?? o.domainY ?? o.y)! } : {}),
@@ -791,7 +915,7 @@ export function normalizeGraphSpec(raw: unknown): GraphSpec {
 }
 
 export const graphItemCount = (spec: GraphSpec): number =>
-  spec.curves.length + spec.series.length + spec.points.length + spec.shapes.length
+  spec.curves.length + spec.series.length + spec.points.length + spec.marks.length + spec.shapes.length
 
 export const graphSummaryBits = (spec: GraphSpec): string[] => {
   const bits: string[] = []
@@ -799,6 +923,7 @@ export const graphSummaryBits = (spec: GraphSpec): string[] => {
   push(spec.curves.length, 'equation', 'equations')
   push(spec.series.length, 'series', 'series')
   push(spec.points.length, 'point', 'points')
+  push(spec.marks.length, 'marked point', 'marked points')
   push(spec.shapes.length, 'shape', 'shapes')
   return bits
 }
@@ -938,6 +1063,21 @@ export function computeGraphDomain(spec: GraphSpec, aspect = 1.8): { x: [number,
   }
   xr = ensure(xr); yr = ensure(yr)
 
+  // Marks annotate a curve, so they widen an automatic view just enough to
+  // stay visible instead of pulling the window onto a single point.
+  if (spec.marks.length) {
+    if (xAuto) {
+      const lo = Math.min(xr[0], ...spec.marks.map((m) => m.x))
+      const hi = Math.max(xr[1], ...spec.marks.map((m) => m.x))
+      if (lo < xr[0] || hi > xr[1]) xr = padRange(lo, hi, 0.04)
+    }
+    if (yAuto) {
+      const lo = Math.min(yr[0], ...spec.marks.map((m) => m.y))
+      const hi = Math.max(yr[1], ...spec.marks.map((m) => m.y))
+      if (lo < yr[0] || hi > yr[1]) yr = padRange(lo, hi, 0.04)
+    }
+  }
+
   if (spec.aspect !== 'auto' && Number.isFinite(aspect) && aspect > 0 && (xAuto || yAuto)) {
     const spanX = xr[1] - xr[0], spanY = yr[1] - yr[0]
     if (xAuto && yAuto) {
@@ -961,3 +1101,65 @@ export function computeGraphDomain(spec: GraphSpec, aspect = 1.8): { x: [number,
 
 /** Compact one-line description for the process log and card header. */
 export const graphTitle = (spec: GraphSpec): string => spec.title || 'Graph'
+
+/** Whether the visible figure is a single-valued function graph, meaning a
+ *  vertical line through the plot meets each curve exactly once. That is the
+ *  case that gets an x-following cursor guide instead of a free 2-D crosshair. */
+export function isSingleValuedGraph(spec: GraphSpec, visible?: (index: number) => boolean): boolean {
+  const curves = spec.curves.filter((_, i) => !visible || visible(i))
+  if (!curves.length) return false
+  if (spec.series.some((s) => s.kind === 'line' || s.kind === 'bar' || s.kind === 'area')) return false
+  return curves.every((c) => c.compiled.kind === 'explicit' && c.compiled.relation === '=' && !!c.compiled.f)
+}
+
+/** Closest point on a screen-space polyline to `at`, used by hover snapping.
+ *  Works on one point too, so a single dot is a valid target. */
+export function closestOnPolyline(points: Pt[], at: Pt): { x: number; y: number; distance: number } | null {
+  if (!points.length) return null
+  if (points.length === 1) {
+    const p = points[0]
+    return { x: p.x, y: p.y, distance: Math.hypot(p.x - at.x, p.y - at.y) }
+  }
+  let best: { x: number; y: number; distance: number } | null = null
+  for (let i = 1; i < points.length; i++) {
+    const a = points[i - 1], b = points[i]
+    const dx = b.x - a.x, dy = b.y - a.y
+    const len2 = dx * dx + dy * dy
+    const t = len2 > 0 ? Math.max(0, Math.min(1, ((at.x - a.x) * dx + (at.y - a.y) * dy) / len2)) : 0
+    const x = a.x + dx * t, y = a.y + dy * t
+    const distance = Math.hypot(x - at.x, y - at.y)
+    if (!best || distance < best.distance) best = { x, y, distance }
+  }
+  return best
+}
+
+export type SnapAnchor = { x: number; y: number; kind?: 'point' | 'curve'; label?: string }
+export type SnapLine = { points: Pt[]; label?: string }
+export type SnapHit = { x: number; y: number; kind: 'point' | 'curve'; label?: string; distance: number }
+
+/** Nearest thing a pointer can snap to, in screen pixels.
+ *
+ *  A labeled mark or data point is intentional, so it wins a near-tie against
+ *  a curve: its score is its distance minus `pointBias` px. Curves are
+ *  projected onto their sampled polyline, which gives a point that lies on the
+ *  line rather than only on a sample vertex. */
+export function snapTo(anchors: SnapAnchor[], lines: SnapLine[], at: Pt, maxPx = 14, pointBias = 3): SnapHit | null {
+  let best: SnapHit | null = null
+  let bestScore = Infinity
+  const consider = (x: number, y: number, kind: 'point' | 'curve', label: string | undefined, distance: number) => {
+    if (distance > maxPx + (kind === 'curve' ? 0 : pointBias)) return
+    const score = distance - (kind === 'curve' ? 0 : pointBias)
+    if (score >= bestScore) return
+    bestScore = score
+    best = { x, y, kind, ...(label ? { label } : {}), distance }
+  }
+  for (const anchor of anchors) {
+    const distance = Math.hypot(anchor.x - at.x, anchor.y - at.y)
+    consider(anchor.x, anchor.y, anchor.kind ?? 'point', anchor.label, distance)
+  }
+  for (const line of lines) {
+    const hit = closestOnPolyline(line.points, at)
+    if (hit) consider(hit.x, hit.y, 'curve', line.label, hit.distance)
+  }
+  return best
+}
