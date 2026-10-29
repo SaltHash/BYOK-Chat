@@ -545,6 +545,19 @@ test('inline citations default to pills but honour an explicit off', () => {
   assert.equal(normSearch({ citeStyle: 'junk' }).citeStyle, 'pills')
 })
 
+test('the graph tool is enabled by default and summarizes a plotted result', async () => {
+  const { DEFAULT_TOOLS } = await import('./meta.ts')
+  assert.equal(DEFAULT_TOOLS.graph, true)
+  const ok = await executeTool({ id: 'g1', name: 'graph', arguments: JSON.stringify({ title: 'Parabola', equations: ['y = x^2'], points: [[0, 0]] }) }, enabled)
+  assert.equal(ok.error, undefined)
+  assert.match(ok.result, /Parabola/)
+  assert.match(ok.result, /Do not repeat/)
+  const invalid = await executeTool({ id: 'g2', name: 'graph', arguments: JSON.stringify({ equations: ['y = )'] }) }, enabled)
+  assert.match(invalid.result, /Nothing could be drawn/)
+  const disabled = await executeTool({ id: 'g3', name: 'graph', arguments: JSON.stringify({ equations: ['y = x'] }) }, { time: true })
+  assert.match(disabled.result, /disabled/)
+})
+
 test('search tool accepts an integer count and rejects other types', async () => {
   const searchFetch = globalThis.fetch
   globalThis.fetch = async () => jsonResponse({ query: 'q', results: [{ id: 'S1', title: 'T', url: 'https://one.example/a', snippet: 's' }] })

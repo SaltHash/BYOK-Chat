@@ -1,4 +1,4 @@
-import { Type, Image, ImagePlus, FileText, Files, Clock, Clipboard, Calculator, Activity, Layers, StickyNote, Bookmark, Fingerprint, Dices, Hash, MapPin, Coins, Timer, ScrollText, Keyboard, ListChecks, Search, Link, CornerDownLeft } from 'lucide-react'
+import { Type, Image, ImagePlus, FileText, Files, Clock, Clipboard, Calculator, Activity, Layers, StickyNote, Bookmark, Fingerprint, Dices, Hash, MapPin, Coins, Timer, ScrollText, Keyboard, ListChecks, Search, Link, CornerDownLeft, LineChart } from 'lucide-react'
 
 export const CI = { text: Type, image: Image, 'image+text': ImagePlus, doc: FileText }
 
@@ -17,6 +17,7 @@ export const TOOLS: [string, string, typeof Clock, string, string, string][] = [
   ['clipboard', 'Clipboard', Clipboard, '@clipboard', 'Inserts the text currently on your clipboard.', 'Reads your clipboard. The browser may ask again on first use.'],
   ['prompt_chip', 'Quick prompt', CornerDownLeft, 'prompt_chip', 'Adds one or more clickable follow-up buttons below the reply. Offer at least one whenever the answer opens a next step or invites exploration; show several side by side for different directions. Omit for simple acknowledgements. Never mention the buttons in the reply text.', 'Creates one-click follow-up buttons.'],
   ['inline_poll', 'Inline poll', ListChecks, 'inline_poll', 'Asks a short survey-style question card below the reply to learn the user\'s environment or intent. Supports choice, slider, text and number questions. Any choice option can set fillBlank:true to attach a typeable answer field (usually for "Other"); the model chooses which options get one. Prefer choices and sliders over typed text. Never mention the card in the reply text.', 'Creates an interactive multi-question card.'],
+  ['graph', 'Graphs and charts', LineChart, '@graph(equations, series, points, shapes)', 'Plots functions, implicit equations, inequalities, data series, points and geometry beside the reply, themed to the app with export and zoom.', 'Renders the graph locally in this browser. Nothing about the plot leaves the device.'],
   ['location', 'Location', MapPin, '@location', 'Inserts your approximate coordinates.', 'Reads your position from the browser, which asks you first. The coordinates are sent to the selected model.'],
   ['navigate', 'App links', Link, '@navigate(destination)', 'Provides a direct link to a page or setting in this app.', 'Returns links to built-in pages and settings.'],
   ['count', 'Text counts', Type, '@count(text)', 'Counts characters, words and lines in the supplied text.', 'Processes the supplied text locally.'],
@@ -49,7 +50,7 @@ export const WIDGETS: [string, string, typeof Clock, string][] = [
   ['todo', 'Checklist', ListChecks, 'A small persistent task list.'],
 ]
 
-export const DEFAULT_TOOLS: Record<string, boolean> = { search: false, fetch_page: true, calc: true, count: true, date: true, time: true, random: true, navigate: true, prompt_chip: true, inline_poll: true, workspace_upsert: true }
+export const DEFAULT_TOOLS: Record<string, boolean> = { search: false, fetch_page: true, calc: true, count: true, date: true, time: true, random: true, navigate: true, prompt_chip: true, inline_poll: true, graph: true, workspace_upsert: true }
 export const fmtDuration = (ms: number, unit: 'ms' | 's' | 'auto' = 'auto') => {
   if (unit === 'ms' || (unit === 'auto' && ms < 1000)) return `${Math.round(ms)} ms`
   return `${(ms / 1000).toFixed(unit === 's' ? 2 : 1)} s`

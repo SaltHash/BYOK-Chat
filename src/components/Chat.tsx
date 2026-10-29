@@ -12,6 +12,7 @@ import { Composer } from './Composer'
 import { ProjectOverview } from './ProjectOverview'
 import { Header } from './Header'
 import { MessageActions } from './ReplyActions'
+import { GraphCards } from './Graph'
 import { Tutorial } from './Extra'
 import { Md, UserText } from './Md'
 import { activityLine, flairLine, thinkingLine } from '../flair'
@@ -135,6 +136,15 @@ function toolStep(name: string, rawArgs: string, result?: string) {
     if (action === 'update') return `Memory · updated entry ${String(args.id ?? '(missing id)')}${text ? ` · new summary: “${clip(text)}”` : ''}`
     if (action === 'delete') return `Memory · deleted entry ${String(args.id ?? '(missing id)')}`
     return `Memory · ${action}`
+  }
+  if (name === 'graph') {
+    const title = typeof args.title === 'string' ? args.title : ''
+    const equations = Array.isArray(args.equations) ? args.equations.length : 0
+    const series = Array.isArray(args.series) ? args.series.length : 0
+    const points = Array.isArray(args.points) ? args.points.length : 0
+    const shapes = Array.isArray(args.shapes) ? args.shapes.length : 0
+    const bits = [equations ? `${equations} equation${equations === 1 ? '' : 's'}` : '', series ? `${series} series` : '', points ? `${points} point${points === 1 ? '' : 's'}` : '', shapes ? `${shapes} shape${shapes === 1 ? '' : 's'}` : ''].filter(Boolean)
+    return `Graph · ${title ? `“${clip(title, 60)}”` : 'plot'}${bits.length ? ` (${bits.join(' · ')})` : ''}`
   }
   if (name === 'use_skill') {
     let id = ''
@@ -538,6 +548,7 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
         })()}
       </div>
       {!m.err && <GeneratedImages rounds={m.toolRounds} />}
+      {!m.err && <GraphCards rounds={m.toolRounds} />}
       {m.capped && !m.err && (
         <div className="mt-2 flex flex-wrap items-center gap-2 rounded-xl border border-er/30 bg-er/10 px-3 py-2 text-xs text-mu">
           <TriangleAlert size={13} className="shrink-0 text-er" />

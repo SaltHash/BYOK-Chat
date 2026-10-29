@@ -47,7 +47,7 @@ export const TAB_KEYWORDS: Record<SettingsTabId, string> = {
   workspace: 'workspace files panel templates gist share default view auto open follow',
   tools: 'tools helpers search fetch calculator date time clipboard location workspace memory navigate prompt poll count json base64 uuid random hash execution limit citations reader jina firecrawl exa summary',
   mcp: 'mcp model context protocol servers tools external remote connect url headers bearer token',
-  memory: 'memory tool mode recall method classifier add stored duplicates categories',
+  memory: 'memory tool mode recall method classifier add stored duplicates categories temporary temp chats recall save',
   widgets: 'widgets panels context meter endpoint status usage scratchpad snippets cost last reply prompts shortcuts draft counter checklist',
   look: 'appearance fonts theme dark light hue saturation brightness sliders display layout max height width message settings model picker palette blur opacity style preset radius rounded sharp bubbly floating density compact comfortable spacious spacing header padding margins gap overrides sidebar composer panel code blocks timestamps actions hover text size scale zoom wrap code lines transparency flat contrast',
   chats: 'chats conversation replies temporary retention hours immediate expires enter send title auto streaming markdown fade speed model answered log startup open load shown sidebar attachments documents pdf office archives ocr image transcription',
@@ -169,6 +169,7 @@ export const SETTING_LINKS: SettingLink[] = [
   // Memory
   { tab: 'memory', anchor: 'memory-tool', title: 'Memory tool toggle', keywords: 'memory enabled browser stored' },
   { tab: 'memory', anchor: 'memory-mode', title: 'Memory mode', keywords: 'intentional balanced aggressive store policy' },
+  { tab: 'memory', anchor: 'memory-temp-chats', title: 'Memory in temporary chats', keywords: 'memory temporary temp chat recall save enabled' },
   { tab: 'memory', anchor: 'recall-method', title: 'Memory recall method', keywords: 'local rank classifier call cost' },
   { tab: 'memory', anchor: 'recall-mode', title: 'Memory recall mode', keywords: 'holistic contextual specific rank relevant' },
   { tab: 'memory', anchor: 'recall-classifier', title: 'Memory recall classifier', keywords: 'classifier endpoint model memory selection json helper endpoints' },

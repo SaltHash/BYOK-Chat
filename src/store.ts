@@ -29,6 +29,7 @@ import { migrateLegacyCanvasGroups, applyWorkspaceCall, activeWorkspaceId, resol
 import { BLANK_DOCS, normDocs, type DocPrefs } from './docs'
 export { BLANK_DOCS, normDocs, type DocPrefs }
 import { rankMemories, mergeMemory, RouteCache, orderEndpoints, recordRoute, type RouteStat, type RoutingMode } from './recall'
+import { DEFAULT_MEMORY_PREFS, normMemoryPrefs, memoryEnabledFor, memoryPolicyText, searchMemories, formatMemoryResults, type MemoryPrefs } from './memory'
 export type { RouteStat, RoutingMode }
 import { QUOTA_FLAG, prunePersisted, storageUsage, persistStorage, createPersistMapper, STORE_VERSION, withoutExpiredTemps } from './persistence'
 import { providerPresetEntries } from './providerRegistry'
@@ -538,7 +539,7 @@ type S = {
    *  Held in the store so it persists and rides device sync like every other
    *  config; it is only sent to GitHub when the user presses Share. */
   gistToken: string
-  memories: Memory[]; memoryPrefs: { enabled: boolean; intent: 'intentional' | 'balanced' | 'aggressive'; recall: 'holistic' | 'contextual' | 'specific'; method: 'local' | 'classifier'; classifierEp: string; classifierModel: string }
+  memories: Memory[]; memoryPrefs: MemoryPrefs
   docPrefs: DocPrefs
   research: { defaultTier: ResearchTierId }
   projects: Project[]; price: { in: number; out: number }; todos: { id: string; t: string; done: boolean }[]
@@ -1522,11 +1523,16 @@ export const useS = create<S>()(
           return msgs
         }
         const memoryState = get(), mp = memoryState.memoryPrefs
-        const memOn = featOn(memoryState, 'memory') && mp.enabled
+        const memoryChat = memoryState.chats.find((c) => c.id === id)
+        const temporaryChat = memoryChat?.temporary === true
+        const memoryFeature = featOn(memoryState, 'memory')
+        const memOn = memoryEnabledFor(mp, memoryFeature, temporaryChat)
         // Capture the memory context decision for the visible process log without exposing memory text.
         let memoryTrace: string | undefined
-        if (memOn) system += `${system ? '\n\n' : ''}Memory tool policy: memories are user-controlled local data. Use action list to find exact IDs before updating or deleting; never guess an ID. Use add only for short, summarized durable details. ${mp.intent === 'intentional' ? 'Add only when the user explicitly asks you to remember something.' : mp.intent === 'balanced' ? 'Add details the user explicitly asks you to remember, plus important durable information they disclose such as allergies, dietary restrictions, major interests, preferences, and other facts worth remembering for future conversations.' : 'Add explicit requests, important disclosures, and smaller useful preferences or details.'} When saving multiple memories in a single turn, make a separate memory tool call for each one rather than combining them. Give each memory a short, descriptive category (like "Dietary restrictions", "Programming interests", or "Travel preferences") rather than a vague label like "About the user". Update or delete only when the user asks to change or forget a memory. Never store secrets or sensitive personal information.`
-        if (!memOn) memoryTrace = 'Memory was disabled; no stored context was read.'
+        if (memOn) system += `${system ? '\n\n' : ''}${memoryPolicyText(mp, { count: memoryState.memories.length, temporary: temporaryChat })}`
+        if (!memOn) memoryTrace = memoryFeature && mp.enabled && temporaryChat
+          ? 'Temporary chat: memory is turned off for temporary chats in Settings → Memory, so no stored context was read.'
+          : 'Memory was disabled; no stored context was read.'
         else if (!memoryState.memories.length) memoryTrace = 'Memory was enabled, but there were no saved entries to recall.'
         if (memOn && memoryState.memories.length) {
           let selectedMemories = memoryState.memories
@@ -1748,18 +1754,27 @@ export const useS = create<S>()(
                   const citeId = citeIds.idFor(page.url || url)
                   return formatPage(summary ? { ...page, text: summary } : page, { citeId, ...(summary ? { summarized: true } : {}), inlineCites: prefs.citeStyle !== 'off' })
                 },
-                memory: ({ action, id, text, category }: { action: 'list' | 'add' | 'update' | 'delete'; id?: string; text?: string; category?: string }) => {
+                memory: ({ action, id, text, category, query }: { action: 'list' | 'search' | 'add' | 'update' | 'delete'; id?: string; text?: string; category?: string; query?: string }) => {
                 const state = get(), prefs = state.memoryPrefs
                 if (!prefs.enabled) throw Error('Memory is disabled')
-                if (action === 'list') return state.memories.length ? state.memories.map((m) => `${m.id} | ${m.category} | ${m.text}`).join('\n') : 'No memories are stored.'
+                const currentChat = state.chats.find((c) => c.id === state.chat)
+                if (!memoryEnabledFor(prefs, true, currentChat?.temporary === true)) throw Error('Memory is off for temporary chats. Turn it on in Settings → Memory.')
+                const q = typeof query === 'string' ? query.trim() : ''
+                if (action === 'list' || action === 'search') {
+                  if (action === 'search' && !q) throw Error('Provide a query to search memories')
+                  const rows = action === 'search'
+                    ? searchMemories(state.memories, q, 20)
+                    : q ? searchMemories(state.memories, q, 30) : state.memories.slice(0, 100)
+                  return formatMemoryResults(rows, state.memories.length, q)
+                }
                 if (action === 'add') {
-                  const explicit = /\b(remember that|please remember|remember this|don't forget)\b/i.test(um.t)
+                  const explicit = /\b(remember(?: that| this| it)?|please remember|don'?t forget|keep (?:this |that )?in mind|save (?:this|that)|note (?:this|that) down)\b/i.test(um.full ?? um.t)
                   if (prefs.intent === 'intentional' && !explicit) throw Error('Intentional memory mode only stores details the user explicitly asked to remember')
                   if (typeof text !== 'string' || !text.trim()) throw Error('Provide a concise memory summary')
                   const now = Date.now()
                   const entry = { id: uid(), text: text.trim().slice(0, 500), category: String(category || 'General').trim().slice(0, 60) || 'General', createdAt: now, updatedAt: now }
                   const outcome = mergeMemory(state.memories, entry)
-                  set(() => ({ memories: mergeMemory(state.memories, entry).memories }))
+                  set(() => ({ memories: outcome.memories }))
                   return outcome.merged
                     ? `Merged into existing memory ${outcome.id} (near-duplicate): ${outcome.memories.find((m) => m.id === outcome.id)?.text}`
                     : `Stored memory ${outcome.id}: ${entry.text}`
@@ -1777,7 +1792,7 @@ export const useS = create<S>()(
                   set((s) => ({ memories: s.memories.map((m) => m.id === id ? updated : m) }))
                   return `Updated memory ${id}: ${updated.text} [${updated.category}]`
                 }
-                throw Error('Choose list, add, update, or delete')
+                throw Error('Choose list, search, add, update, or delete')
               },
               generate_image: async ({ prompt, size, count }: { prompt?: string; size?: string; count?: number }) => {
                 const st = get()
@@ -1967,7 +1982,7 @@ export const useS = create<S>()(
           { id: 'k6', name: 'translate', desc: 'Translate text', in: 'text', sys: 'Translate the provided text into the language requested. If no target language is specified, ask which language.', tpl: '{{input}}', pl: '', on: true, args: '<text> to <language>' },
           { id: 'k7', name: 'brainstorm', desc: 'Generate useful ideas', in: 'text', sys: 'Generate varied, practical ideas. Keep each idea distinct and briefly explain why it may work.', tpl: '{{input}}', pl: '', on: true, args: '<topic>' },
         ],
-        chats: [], chat: '', drafts: {}, memories: [], imageGen: { ...BLANK_IMAGE_GEN }, codeRun: { ...BLANK_CODE_RUN }, voicePrefs: { ...BLANK_VOICE }, memoryPrefs: { enabled: false, intent: 'balanced', recall: 'contextual', method: 'local', classifierEp: '', classifierModel: '' }, docPrefs: { ...BLANK_DOCS }, research: { ...BLANK_RESEARCH }, tools: { ...DEFAULT_TOOLS }, toolConsent: {}, search: { ...BLANK_SEARCH, keys: { ...BLANK_SEARCH.keys } }, skills: DEFAULT_SKILL_STATE.map((s) => ({ ...s })), widgets: {}, widgetPrefs: { ...DEFAULT_WIDGET_PREFS, widgetOrder: [...DEFAULT_WIDGET_PREFS.widgetOrder], shortcuts: [...DEFAULT_WIDGET_PREFS.shortcuts] }, rail: false, pad: '', snips: [],
+        chats: [], chat: '', drafts: {}, memories: [], imageGen: { ...BLANK_IMAGE_GEN }, codeRun: { ...BLANK_CODE_RUN }, voicePrefs: { ...BLANK_VOICE }, memoryPrefs: { ...DEFAULT_MEMORY_PREFS }, docPrefs: { ...BLANK_DOCS }, research: { ...BLANK_RESEARCH }, tools: { ...DEFAULT_TOOLS }, toolConsent: {}, search: { ...BLANK_SEARCH, keys: { ...BLANK_SEARCH.keys } }, skills: DEFAULT_SKILL_STATE.map((s) => ({ ...s })), widgets: {}, widgetPrefs: { ...DEFAULT_WIDGET_PREFS, widgetOrder: [...DEFAULT_WIDGET_PREFS.widgetOrder], shortcuts: [...DEFAULT_WIDGET_PREFS.shortcuts] }, rail: false, pad: '', snips: [],
         params: { ...DEFAULT_PARAMS }, effort: {},
         workspacePrefs: { defaultView: 'latest', autoOpen: true, autoFollow: true },
         advanced: { ...DEFAULT_ADVANCED },
@@ -2492,8 +2507,7 @@ export const useS = create<S>()(
           auto: r.auto === true,
           private: r.private === true,
         })) : []
-        p.memoryPrefs = { enabled: false, intent: 'balanced', recall: 'contextual', method: 'local', classifierEp: '', classifierModel: '', ...(p.memoryPrefs ?? {}) }
-        if (p.memoryPrefs.method !== 'local' && p.memoryPrefs.method !== 'classifier') p.memoryPrefs.method = 'local'
+        p.memoryPrefs = normMemoryPrefs(p.memoryPrefs)
         if (!p.routeStats || typeof p.routeStats !== 'object') p.routeStats = {}
         else {
           for (const [k, v] of Object.entries(p.routeStats)) {

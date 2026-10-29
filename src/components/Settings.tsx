@@ -1705,6 +1705,15 @@ function MemoryTab() {
         <Seg v={mp.intent} set={(intent) => setPrefs({ intent })} opts={[["intentional", "Intentional"], ["balanced", "Balanced"], ["aggressive", "Aggressive"]]} />
       </Field>
       </Anchor>
+      <Anchor id="memory-temp-chats">
+      <div className="flex items-center justify-between gap-3 border-t border-bor pt-3">
+        <div className="min-w-0">
+          <div className="text-sm font-medium">Use memory in temporary chats</div>
+          <div className="text-xs text-mu">Recall saved memories and let the model save new ones while writing in a temporary chat. The transcript still expires; memories are kept separately in Settings → Memory.</div>
+        </div>
+        <Toggle on={mp.tempChats !== false} set={(tempChats) => setPrefs({ tempChats })} label="Use memory in temporary chats" />
+      </div>
+      </Anchor>
       <Anchor id="recall-method">
       <Field label="Recall method" hint="Local rank picks memories on this device with no model calls (fast, free, offline). Classifier call asks a model to choose, and costs a request per reply.">
         <Seg v={mp.method ?? 'local'} set={(method) => setPrefs({ method })} opts={[["local", "Local rank"], ["classifier", "Classifier call"]]} />

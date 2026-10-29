@@ -134,6 +134,7 @@ const ACTIVITY: Record<string, readonly string[]> = {
   workspace_upsert: ['Working with files…'],
   prompt_chip: ['Preparing follow-up…'],
   inline_poll: ['Preparing choices…'],
+  graph: ['Plotting the graph…'],
   time: ['Checking the time…'],
   date: ['Checking the date…'],
   calc: ['Calculating…'],
