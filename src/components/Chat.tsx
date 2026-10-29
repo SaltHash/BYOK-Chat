@@ -552,7 +552,7 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
         })()}
         {/* A figure placed below belongs directly under the prose that
             explains it, not in a separate block at the end of the message. */}
-        {!m.err && !hideBody && <div className="clear-both mt-3"><GraphCards rounds={m.toolRounds} placement="below" /></div>}
+        {!m.err && !hideBody && hasPlacedGraphs(m.toolRounds, 'below') && <div className="clear-both mt-3"><GraphCards rounds={m.toolRounds} placement="below" /></div>}
         {!m.err && <div className="clear-both" aria-hidden="true" />}
       </div>
       {!m.err && <GeneratedImages rounds={m.toolRounds} />}
