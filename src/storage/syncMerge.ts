@@ -224,6 +224,35 @@ export function mergeSearch(local: unknown, remote: unknown): Obj {
   return search
 }
 
+/** Id-keyed collections whose entries carry a credential. Sync blanks these
+ *  fields, so a copy that arrives without one means "not sent", never
+ *  "cleared". */
+const CRED_FIELDS: Record<string, string> = { eps: 'key', mcps: 'headers' }
+
+/** Adopt an incoming settings object while keeping this device's credentials on
+ *  the entries it shares. Everything else about an adopted copy is the newer
+ *  truth; its credential fields are blank by construction (they never travel),
+ *  so applying them as-is would erase the endpoint keys and MCP headers that
+ *  exist only here. */
+export function keepLocalCredentials(local: Obj, incoming: Obj): Obj {
+  const out: Obj = { ...incoming }
+  for (const [id, field] of Object.entries(CRED_FIELDS)) {
+    if (!Array.isArray(incoming[id])) continue
+    const mine = new Map<string, string>()
+    for (const item of asArr(local[id])) {
+      const x = asObj(item)
+      if (typeof x.id === 'string' && typeof x[field] === 'string' && x[field]) mine.set(x.id, x[field] as string)
+    }
+    if (!mine.size) continue
+    out[id] = asArr(incoming[id]).map((item) => {
+      const x = asObj(item)
+      const kept = typeof x.id === 'string' ? mine.get(x.id) : undefined
+      return typeof x[field] === 'string' && !x[field] && kept ? { ...x, [field]: kept } : item
+    })
+  }
+  return out
+}
+
 export function mergeSettings(local: Obj, remote: Obj, projects: Obj[]): Obj {
   const out: Obj = { ...local, ...remote }
   // Recurse one level into plain objects both sides own (prefs, params,
@@ -317,7 +346,9 @@ export function resolveChatPointer(local: unknown, settings: Obj, chats: unknown
  */
 export function mergeSyncData(local: SyncData, remote: SyncData, mode: SyncMergeMode = 'merge'): SyncData {
   if (mode === 'remote') {
-    const settings: Obj = { ...local.settings, ...remote.settings }
+    // Credentials never travel, so adopting a copy must not erase the ones
+    // only this device holds (endpoint keys, MCP headers, search keys).
+    const settings: Obj = keepLocalCredentials(local.settings, { ...local.settings, ...remote.settings })
     // Adopting the other device's settings still must not erase credentials
     // that only exist on this device (the remote copy never carries them).
     if (isObj(local.settings.search) || isObj(remote.settings.search)) settings.search = mergeSearch(local.settings.search, remote.settings.search)

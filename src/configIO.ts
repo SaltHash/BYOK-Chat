@@ -58,6 +58,32 @@ export function chatsInDateRange<C extends { msgs?: { at?: unknown }[] }>(chats:
   }))
 }
 
+/** Combine an imported `search` block with this device's copy (pure).
+ *
+ * Exports and local backups omit credentials unless "Include API keys" was
+ * ticked, so a blank key in a file means "not included", never "cleared": a
+ * key this device already holds survives the import. Everything else the file
+ * carries (provider, limits, citation style, reader choice, …) is applied as
+ * given, because those are ordinary settings the file really does describe.
+ * This applies to both merge and replace, otherwise restoring a backup or
+ * moving a save destroys the keys it could not carry. */
+export function mergeImportedSearch<T extends Record<string, unknown>>(current: unknown, incoming: T): T & { keys: Record<string, string>; readerKey: string } {
+  const cur = (current && typeof current === 'object' && !Array.isArray(current) ? current : {}) as Record<string, unknown>
+  const next = (incoming && typeof incoming === 'object' && !Array.isArray(incoming) ? incoming : {}) as Record<string, unknown>
+  const mapOf = (v: unknown): Record<string, unknown> => (v && typeof v === 'object' && !Array.isArray(v) ? v as Record<string, unknown> : {})
+  const curKeys = mapOf(cur.keys)
+  const nextKeys = mapOf(next.keys)
+  const keys: Record<string, string> = {}
+  for (const id of new Set([...Object.keys(curKeys), ...Object.keys(nextKeys)])) {
+    const fromFile = typeof nextKeys[id] === 'string' ? (nextKeys[id] as string).trim() : ''
+    const onDevice = typeof curKeys[id] === 'string' ? curKeys[id] as string : ''
+    keys[id] = fromFile ? nextKeys[id] as string : onDevice
+  }
+  const fileReaderKey = typeof next.readerKey === 'string' ? next.readerKey.trim() : ''
+  const readerKey = fileReaderKey ? next.readerKey as string : (typeof cur.readerKey === 'string' ? cur.readerKey : '')
+  return { ...next, keys, readerKey } as T & { keys: Record<string, string>; readerKey: string }
+}
+
 /** Build the JSON payload for `dl('chat-config.json', …)` (pure). */
 export function buildExportPayload(
   s: ExportState,
@@ -80,8 +106,10 @@ export function buildExportPayload(
     data.tools = s.tools
     const sp = normSearch(s.search)
     // The reader key is a credential like the search keys: it is only
-    // exported when the export explicitly includes keys.
-    data.search = withKeys ? sp : { ...sp, keys: { tinyfish: '', you: '', exa: '', firecrawl: '', brightdata: '' }, readerKey: '' }
+    // exported when the export explicitly includes keys. Every provider key is
+    // blanked from the shape itself, so a provider added later cannot leak by
+    // being missed in a hand-written list (Jina used to).
+    data.search = withKeys ? sp : { ...sp, keys: Object.fromEntries(Object.keys(sp.keys).map((id) => [id, ''])), readerKey: '' }
     // MCP headers usually carry a bearer token: strip them unless the export
     // explicitly includes keys, exactly like endpoint API keys.
     const mcps = Array.isArray(s.mcps) ? s.mcps : []

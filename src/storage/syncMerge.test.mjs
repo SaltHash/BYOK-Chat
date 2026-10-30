@@ -142,6 +142,25 @@ test('adopting the other device keeps credentials that only exist here', () => {
   assert.equal(out.settings.search.provider, 'exa')
 })
 
+test('adopting the other device keeps endpoint keys and MCP headers too', () => {
+  const local = empty({
+    settings: {
+      eps: [{ id: 'e1', name: 'Mine', key: 'sk-local' }],
+      mcps: [{ id: 'm1', headers: 'Bearer x' }],
+    },
+  })
+  const remote = empty({
+    settings: {
+      eps: [{ id: 'e1', name: 'Renamed', key: '' }],
+      mcps: [{ id: 'm1', headers: '' }],
+    },
+  })
+  const out = mergeSyncData(local, remote, 'remote')
+  assert.equal(out.settings.eps[0].name, 'Renamed')
+  assert.equal(out.settings.eps[0].key, 'sk-local')
+  assert.equal(out.settings.mcps[0].headers, 'Bearer x')
+})
+
 test('a new chat stays open when a remote snapshot arrives', () => {
   const local = empty({ chats: [chat('a', 100), chat('b', 200)], settings: { chat: '' } })
   const remote = empty({ chats: [chat('b', 200)], settings: { chat: 'b' } })

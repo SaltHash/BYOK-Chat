@@ -1252,7 +1252,17 @@ function Tools() {
   /* True once the user silenced the allow prompt for every device tool. */
   const consent = s.toolConsent === true
   const search = normSearch(s.search)
-  const setSearch = (p: Partial<typeof search>) => s.patch({ search: { ...search, ...p } })
+  /* Always build on the store's current search settings, never on this
+   * render's snapshot: two edits in one tick (pick a provider, paste a key)
+   * would otherwise write back the older object and silently erase the key
+   * that was just set. Nested `keys` maps merge per provider for the same
+   * reason — one provider's key must not drop another's. */
+  const setSearch = (p: Partial<Omit<typeof search, 'keys'>> & { keys?: Partial<typeof search.keys> }) => {
+    const cur = normSearch(useS.getState().search)
+    const next = { ...cur, ...p }
+    if (p.keys) next.keys = { ...cur.keys, ...p.keys }
+    s.patch({ search: next as typeof cur })
+  }
   const ownKey = (search.keys[search.provider] || '').trim()
   const keyless = !!health?.apiProviders?.[search.provider]?.optionalKey
   /* The page-summary picker lists every endpoint model, so the user picks
@@ -1368,7 +1378,7 @@ function Tools() {
             <Anchor id="search-key">
             <Field label={`${health?.apiProviders?.[search.provider]?.label ?? search.provider} API key`} hint="Bring your own key. Stored unencrypted in this browser and sent only to your search backend with each query.">
               <div className="relative">
-                <Input type={showSearchKey ? 'text' : 'password'} value={search.keys[search.provider] ?? ''} set={(v) => setSearch({ keys: { ...search.keys, [search.provider]: v } })} placeholder="Paste your search API key" />
+                <Input type={showSearchKey ? 'text' : 'password'} value={search.keys[search.provider] ?? ''} set={(v) => setSearch({ keys: { [search.provider]: v } })} placeholder="Paste your search API key" />
                 <button onClick={() => setShowSearchKey(!showSearchKey)} title="Show or hide key" className="absolute right-2 top-1/2 -translate-y-1/2 text-mu hover:text-tx">{showSearchKey ? <EyeOff size={16} /> : <Eye size={16} />}</button>
               </div>
             </Field>
