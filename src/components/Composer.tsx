@@ -1,13 +1,13 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { useShallow } from 'zustand/react/shallow'
-import { Plus, FileUp, FileText, ArrowUp, Square, CornerDownRight, ChevronRight, ListMusic, Cpu, ScrollText, Settings, Search, BookOpen, X, TriangleAlert, Wrench, Link as LinkIcon, ScanText, Loader2, Mic, Star, GripVertical, Check } from 'lucide-react'
+import { Plus, FileUp, FileText, ArrowUp, Square, CornerDownRight, ChevronRight, ListMusic, Cpu, ScrollText, Settings, Search, BookOpen, X, TriangleAlert, Wrench, Link as LinkIcon, ScanText, Loader2, Mic, Star, GripVertical, Check, Globe } from 'lucide-react'
 import { useS, usable, modelsOf, modelNameOf, featOn, normDocs, normSearch, fetchOptsOf, effortClassifierOf, helperRef, splitHelperRef, toggleFavRef, type Att, type Ep } from '../store'
 import { CI, orderTools } from '../meta'
 import { composerWidth } from '../layout'
 import { can, readAtts, ocrImage, fetchPage } from '../engine'
 import { fitDoc } from '../docs'
 import { bannerOf, armMention, isPill, mentionsOf, stripMention, tokenizeMentions, type Mention, type Seg as MentionSeg } from '../mentions'
-import { Btn, Item, Pop, Seg, RangeSlider, Toggle, ImageLightbox, cx, type Ic } from './ui'
+import { Btn, Item, Pop, Seg, RangeSlider, ImageLightbox, cx, type Ic } from './ui'
 import { SortableList } from './dnd'
 import { MentionBanner, MentionInfo } from './Mention'
 import { Notice } from './Extra'
@@ -810,16 +810,17 @@ export function Composer({ cfg }: { cfg: (t: string) => void }) {
               const g = s.globalPrompt ?? { on: false, text: '', qualities: [] }
               return (
                 <>
+                  {/* The global prompt is part of the same stack as the named
+                      prompts, so it is one row in the list rather than a
+                      separate card: the row itself switches it on and off. */}
+                  <Item
+                    icon={Globe}
+                    on={g.on}
+                    onClick={() => s.patch({ globalPrompt: { ...g, on: !g.on } })}
+                    title={g.on ? 'Turn the global system prompt off for every chat' : 'Add the global system prompt to every chat'}
+                  >Global system prompt</Item>
                   <Item icon={X} on={!s.pr} onClick={() => { s.patch({ pr: '' }); close() }}>No override</Item>
                   {s.prompts.map((p) => <Item key={p.id} icon={ScrollText} on={s.pr === p.id} onClick={() => { s.patch({ pr: p.id }); close() }}>{p.name}</Item>)}
-                  <div className="mx-1 mb-1 mt-2 rounded-xl border border-ac/30 bg-ac/5 p-2.5">
-                    <div className="flex items-center gap-2">
-                      <span className="min-w-0 flex-1 text-sm font-medium">Global system prompt</span>
-                      <Toggle on={g.on} set={(on) => s.patch({ globalPrompt: { ...g, on } })} label="Toggle global system prompt" />
-                    </div>
-                    <p className="mt-1 text-xs leading-relaxed text-mu">{g.on ? (g.text.trim() || (g.qualities?.length ?? 0) ? 'On — applies to every message in every chat.' : 'On, but no text set yet — add one in Manage.') : 'Off — applies to every message in every chat when on.'}</p>
-                    <Item icon={Settings} onClick={() => { close(); cfg('prompts') }}>Manage global…</Item>
-                  </div>
                   <Item icon={Settings} onClick={() => { close(); cfg('prompts') }}>Manage…</Item>
                 </>
               )

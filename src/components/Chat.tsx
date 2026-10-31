@@ -1,6 +1,6 @@
 import { memo, useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
-import { GitBranch, ChevronLeft, ChevronRight, ChevronDown, Server, Cpu, Copy, Check, RefreshCw, Trash2, ListOrdered, CircleCheck, CircleX, TriangleAlert, Paperclip, Download, ExternalLink, Volume2, Pin, PinOff, Search, ArrowUp, ArrowDown, X, Quote } from 'lucide-react'
+import { GitBranch, ChevronLeft, ChevronRight, ChevronDown, Server, Cpu, Copy, Check, RefreshCw, Trash2, ListOrdered, TriangleAlert, Paperclip, Download, ExternalLink, Volume2, Pin, PinOff, Search, ArrowUp, ArrowDown, X, Quote } from 'lucide-react'
 import { useS, useLive, usable, featOn, previewSysFor, activeWorkspaceForChat, pinnedReplyOf, type LogDetail, type Msg } from '../store'
 import { clampWorkspaceFrac, roundFrac, CHAT_WIDTH } from '../layout'
 import { focusComposer, startPointerDrag } from '../hooks'
@@ -15,7 +15,7 @@ import { MessageActions } from './ReplyActions'
 import { GraphCards, hasPlacedGraphs } from './Graph'
 import { Tutorial } from './Extra'
 import { Md, UserText } from './Md'
-import { activityLine, flairLine, thinkingLine } from '../flair'
+import { activityLine, flairLine, thinkingLine, TEMPORARY_NOTE } from '../flair'
 import { splitStream } from '../streamMd'
 import { WorkspaceTile, WorkspacePanel } from './Workspace'
 import { ResearchTierPicker, ResearchPlanCard, ResearchProgressCard, ResearchTile, ResearchPanel } from './Research'
@@ -159,6 +159,38 @@ function toolStep(name: string, rawArgs: string, result?: string) {
   }
   return `Tool ${name} · inputs: ${Object.keys(args).length ? Object.entries(args).map(([k, v]) => `${k}=${typeof v === 'string' ? clip(v, 60) : String(v)}`).join(', ') : 'none'}`
 }
+
+/* A tool step reads as a process node: a short name on the node itself and the
+ * details underneath it. `toolStep` already puts the name first and separates
+ * it with a middot, so a label without one falls back to the tool's own name. */
+const TOOL_NAMES: Record<string, string> = {
+  search: 'Web search',
+  fetch_page: 'Page reader',
+  time: 'Time',
+  date: 'Date',
+  calc: 'Calculator',
+  count: 'Text count',
+  json: 'JSON formatter',
+  base64: 'Base64 encoder',
+  location: 'Location',
+  clipboard: 'Clipboard',
+  uuid: 'UUID',
+  random: 'Random integer',
+  hash: 'SHA-256',
+  memory: 'Memory',
+  graph: 'Graph',
+  run_code: 'Code',
+  use_skill: 'Skill',
+  prompt_chip: 'Follow-up',
+  inline_poll: 'Choice',
+}
+const toolName = (id: string) => TOOL_NAMES[id] ?? (id.startsWith('mcp_') ? `MCP · ${id.slice(4).replace(/_/g, ' ')}` : id)
+/* Name on the node, details below it — the same split for saved calls and for
+ * a call that is still running. */
+function toolNode(label: string, id: string): [string, string] {
+  const cut = label.indexOf(' · ')
+  return cut < 0 ? [toolName(id), label] : [label.slice(0, cut), label.slice(cut + 3)]
+}
 /* Generated images live in durable local storage and are referenced by id in
  * the tool result, so the chat never carries base64. Each strip loads lazily. */
 function ImageGroup({ id }: { id: string }) {
@@ -250,9 +282,9 @@ function ProcessStep({ t, detail, timing, models, tokens, open, toggle }: {
     tokens && (t.tin != null || t.tout != null) ? `${t.tin ?? 0} in / ${t.tout ?? 0} out` : '',
   ].filter(Boolean)
   return (
-    <li className="flex items-start gap-2">
-      {t.err ? <CircleX size={14} className="mt-1 shrink-0 text-er" /> : <CircleCheck size={14} className="mt-1 shrink-0 text-ac" />}
-      <span className="min-w-0 flex-1">
+    <li className="process-node">
+      <span className="process-dot" data-err={t.err ? '' : undefined} aria-hidden="true" />
+      <div className="min-w-0">
         <span className="flex flex-wrap items-baseline gap-x-2">
           <span className="min-w-0 break-words">{t.n}</span>
           {models && t.m && t.m !== t.n && <span className="max-w-full truncate text-xs text-mu">{t.m}</span>}
@@ -265,7 +297,7 @@ function ProcessStep({ t, detail, timing, models, tokens, open, toggle }: {
             {clipped && <button type="button" onClick={toggle} className="ml-1 rounded text-ac hover:underline">{open ? 'Show less' : 'More'}</button>}
           </span>
         )}
-      </span>
+      </div>
     </li>
   )
 }
@@ -324,24 +356,14 @@ function StreamedMd({ chunks, fade }: { chunks: string[]; fade: number }) {
   )
 }
 
-/* Live progress for a reply that is still being produced. The orbiting dots
- * already say "working"; the label now cross-fades whenever the step changes,
- * a quiet elapsed counter keeps a long tool round from looking frozen, and a
- * thin accent sheen sweeps under the line. Nothing here is required to read
- * the status — it is all secondary motion. */
-function ReplyProgress({ status, since, block }: { status: string; since?: number; block?: boolean }) {
-  const [now, setNow] = useState(() => Date.now())
-  useEffect(() => {
-    const id = window.setInterval(() => setNow(Date.now()), 1000)
-    return () => window.clearInterval(id)
-  }, [])
-  const secs = since ? Math.max(0, Math.floor((now - since) / 1000)) : 0
+/* Live progress for a reply that is still being produced: the orbiting dots
+ * and the status line, nothing else. It is only mounted while the reply is
+ * waiting on something (see `active`), never while text is arriving. */
+function ReplyProgress({ status, block }: { status: string; block?: boolean }) {
   return (
     <span className={cx('reply-thinking', block && 'mt-2 block')} role="status" aria-label={status}>
       <span className="reply-dots" aria-hidden="true"><i /><i /><i /></span>
-      <span key={status} className="reply-status-in ml-2 text-mu">{status}</span>
-      {secs > 0 && <span className="reply-elapsed" aria-hidden="true">{secs}s</span>}
-      <span className="reply-sheen" aria-hidden="true" />
+      <span className="ml-2 text-mu">{status}</span>
     </span>
   )
 }
@@ -574,35 +596,66 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
           {(() => {
             const steps = m.log ?? []
             const calls = (m.toolRounds ?? []).flatMap((round) => round.calls)
+            // A call that is still running has no saved round yet, so it is
+            // drawn from the live list; ids keep a landed call from showing
+            // twice while the round is being written back.
+            const saved = new Set(calls.map((c) => c.id))
+            const pending = ((live ?? []) as { id?: string; name?: string; arguments?: string }[])
+              .filter((t) => t.name && (!t.id || !saved.has(t.id)))
+            const running = busy && last
+            const count = steps.length + calls.length + pending.length
             const total = [...steps.map((t) => t.ms ?? 0), ...calls.map((c) => c.ms ?? 0)].reduce((a, b) => a + b, 0)
             return (
               <>
-                {(steps.length > 0 || calls.length > 0) && !m.err && (
+                {count > 0 && !m.err && (
                   <div className="flex items-baseline gap-2 px-1 text-xs uppercase tracking-wide text-mu">
-                    <span>{steps.length + calls.length} step{steps.length + calls.length === 1 ? '' : 's'}</span>
+                    <span>{count} step{count === 1 ? '' : 's'}</span>
                     {logTiming && total > 0 && <span className="ml-auto normal-case tracking-normal tabular-nums">{duration(total).trim()} total</span>}
                   </div>
                 )}
-                <ol className="space-y-1.5">
-                  {steps.length === 0 && calls.length === 0 && <li className="text-mu">{thinkingLine(m.id)}</li>}
+                {/* A tree, not a list: one rail runs from dot to dot, model
+                    rounds are filled dots, and tool calls are open circles in
+                    the muted tone — work that happened on the way to the
+                    answer. Only a call that is still running animates. */}
+                <ol className="process-tree">
+                  {count === 0 && <li className="process-node text-mu"><span className="process-dot" aria-hidden="true" />{thinkingLine(m.id)}</li>}
                   {steps.map((t, i) => (
                     <ProcessStep key={`step-${i}`} t={t} detail={logDetail} timing={logTiming} models={logModels} tokens={!!adv?.showTokenCounts} open={!!expanded[`step-${i}`]} toggle={() => togglePayload(`step-${i}`)} />
                   ))}
-                  {calls.map((call, i) => (
-                    <li key={`tool-${i}`} className="flex flex-col gap-1">
-                      <span className="flex items-start gap-2">
-                        {call.error ? <CircleX size={14} className="mt-1 shrink-0 text-er" /> : <CircleCheck size={14} className="mt-1 shrink-0 text-ac" />}
-                        <span className="min-w-0 flex-1 break-words">{toolStep(call.name, call.arguments, call.result)}</span>
-                        {(logTiming || call.error) && <span className={cx('ml-auto shrink-0 pl-2 text-xs tabular-nums text-mu', call.error && 'text-er')}>{logTiming ? duration(call.ms).trim() : ''}</span>}
-                      </span>
-                      {adv?.showToolPayloads && (
-                        <span className="ml-6 space-y-1">
-                          <Payload label="args" text={prettyArgs(call.arguments)} open={!!expanded[`args-${i}`]} onToggle={() => togglePayload(`args-${i}`)} />
-                          {call.result != null && <Payload label="result" text={call.result} open={!!expanded[`result-${i}`]} onToggle={() => togglePayload(`result-${i}`)} />}
-                        </span>
-                      )}
-                    </li>
-                  ))}
+                  {calls.map((call, i) => {
+                    const [head, desc] = toolNode(toolStep(call.name, call.arguments, call.result), call.name)
+                    return (
+                      <li key={`tool-${i}`} className="process-node">
+                        <span className="process-ring" data-err={call.error ? '' : undefined} aria-hidden="true" />
+                        <div className="min-w-0">
+                          <span className="flex flex-wrap items-baseline gap-x-2">
+                            <span className={cx('min-w-0 break-words text-mu', call.error && 'text-er')}>{head}</span>
+                            {logTiming && call.ms != null && <span className={cx('ml-auto shrink-0 pl-2 text-xs tabular-nums text-mu', call.error && 'text-er')}>{duration(call.ms).trim()}</span>}
+                          </span>
+                          {desc && <div className={cx('mt-0.5 break-words text-xs text-mu', call.error && 'text-er')}>{desc}</div>}
+                          {adv?.showToolPayloads && (
+                            <div className="mt-1 space-y-1">
+                              <Payload label="args" text={prettyArgs(call.arguments)} open={!!expanded[`args-${i}`]} onToggle={() => togglePayload(`args-${i}`)} />
+                              {call.result != null && <Payload label="result" text={call.result} open={!!expanded[`result-${i}`]} onToggle={() => togglePayload(`result-${i}`)} />}
+                            </div>
+                          )}
+                        </div>
+                      </li>
+                    )
+                  })}
+                  {pending.map((tool, i) => {
+                    const name = tool.name!
+                    const [head, desc] = toolNode(toolStep(name, tool.arguments ?? ''), name)
+                    return (
+                      <li key={`pending-${i}`} className="process-node">
+                        <span className="process-ring" data-live={running ? '' : undefined} aria-hidden="true" />
+                        <div className="min-w-0">
+                          <div className="break-words text-mu">{head}</div>
+                          {desc && <div className="mt-0.5 break-words text-xs text-mu">{desc}</div>}
+                        </div>
+                      </li>
+                    )
+                  })}
                 </ol>
               </>
             )
@@ -643,11 +696,11 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
             .filter((t) => t.name && (!t.id || !finalIds.has(t.id)))
             .map((t) => t.name!)
           const status = writingPath ? `Writing ${writingPath}…` : activityLine(pendingNames, m.id)
-          // Keep the status line visible for the whole time this message is the
-          // one being worked on: text may already have streamed, a tool may be
-          // running, or the model may be between rounds. It only disappears
-          // once the reply is finished and nothing is pending.
-          const active = !!writingPath || (live?.length ?? 0) > 0 || (liveChunks?.length ?? 0) > 0 || (last && busy && !m.t)
+          // The indicator belongs to waiting, not writing: it shows while a tool
+          // runs (even if text already streamed) or before the first token, and
+          // hides the moment prose arrives so the dots never sit beside text
+          // the model is actively typing.
+          const active = !!writingPath || (live?.length ?? 0) > 0 || (last && busy && !m.t)
           return (
             <>
               {m.t && (
@@ -659,7 +712,7 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
                   )}
                 </div>
               )}
-              {active && <ReplyProgress status={status} since={m.at} block={!!m.t} />}
+              {active && <ReplyProgress status={status} block={!!m.t} />}
             </>
           )
         })()}
@@ -1220,11 +1273,16 @@ export function Chat({ side, toggle, cfg, pal }: { side: boolean; toggle: () => 
             {/* The greeting (or the temporary-chat line) belongs to the
                 composer it introduces, not to the welcome tiles: it sits
                 directly above the box with a clear gap, at a size that reads
-                as the headline of the empty chat. */}
+                as the headline of the empty chat. A temporary chat also gets
+                one short line under it, because the headline alone never says
+                what actually happens to the conversation. */}
             {empty && (
-              <div className="mb-6 px-4 text-center text-2xl font-semibold leading-tight tracking-tight text-tx">
-                {flairLine(new Date(), { temporary: isTemp, seasonal: s.prefs.seasonal, seed: s.chats.length })}
-              </div>
+              <>
+                <div className={cx('px-4 text-center text-2xl font-semibold leading-tight tracking-tight text-tx', isTemp ? 'mb-2' : 'mb-6')}>
+                  {flairLine(new Date(), { temporary: isTemp, seasonal: s.prefs.seasonal, seed: s.chats.length })}
+                </div>
+                {isTemp && <div className="mb-6 px-8 text-center text-xs leading-relaxed text-mu">{TEMPORARY_NOTE}</div>}
+              </>
             )}
             <Composer cfg={cfg} />
           </div>
@@ -1248,7 +1306,10 @@ export function Chat({ side, toggle, cfg, pal }: { side: boolean; toggle: () => 
         </>
         )}
       </div>
-      {(isTemp || project) && <div className="px-4 pb-2 text-center text-xs text-mu">{project ? 'Temporary chats are unavailable in projects.' : 'Some providers may retain temporary chats for safety or model training.'}</div>}
+      {project && <div className="px-4 pb-2 text-center text-xs text-mu">Temporary chats are unavailable in projects.</div>}
+      {/* The empty temporary chat already explains itself under the headline;
+          once the conversation starts, the standing provider caveat takes over. */}
+      {isTemp && !project && !empty && <div className="px-4 pb-2 text-center text-xs text-mu">Some providers may retain temporary chats for safety or model training.</div>}
       {/* Temporary-chat frame: one soft accent glow hugging the viewport edges.
          No shine sweep any more: while the chat is still empty the glow just
          waves in intensity and never actually turns off, then settles to a

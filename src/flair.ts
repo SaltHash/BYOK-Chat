@@ -100,6 +100,11 @@ export function greetingFor(now: Date, seed: number): string {
    the reader always knows this chat is on its way out. */
 export const TEMPORARY_FLAIR = 'Temporary chat. Disappears on its own.'
 
+/* One short line under that headline: what a temporary chat does, and the two
+   limits worth knowing before typing (it is gone on its own; a provider may
+   still keep logs of the request). */
+export const TEMPORARY_NOTE = 'Nothing here is saved, and it deletes itself when you leave or its timer ends. Providers may still log it.'
+
 export type FlairOptions = {
   /** The chat is temporary, so it gets the temporary line instead. */
   temporary?: boolean

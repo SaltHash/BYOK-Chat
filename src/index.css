@@ -358,18 +358,30 @@ html[data-codewrap] .md pre code { white-space: pre-wrap; overflow-wrap: anywher
 @media (prefers-reduced-motion: reduce) { :root { --reply-in-duration: 0ms; } }
 .animate-reply-in { animation: reply-in var(--reply-in-duration) ease-out both; }
 .animate-reply-in[data-fade="0"] { animation: none; }
-.reply-thinking { display:inline-flex; align-items:center; min-height:2rem; position:relative; padding:.1rem .45rem .3rem 1px; overflow:hidden; border-radius:.5rem; }
-/* The step label cross-fades when the activity changes, so a new step reads as
-   movement rather than the same frozen sentence being replaced. */
-.reply-status-in { animation: reply-status-in 240ms ease-out both; }
-@keyframes reply-status-in { from { opacity:0; transform:translateY(.12rem); } to { opacity:1; transform:none; } }
-.reply-elapsed { margin-left:.45rem; font-size:.7rem; font-variant-numeric:tabular-nums; color:color-mix(in srgb, var(--mu) 75%, transparent); }
-/* A very faint accent sheen along the bottom edge: secondary motion that
-   suggests work in progress without a spinner or a fake percentage. */
-.reply-sheen { position:absolute; left:0; right:0; bottom:0; height:2px; overflow:hidden; pointer-events:none; border-radius:2px; background:color-mix(in srgb, var(--ac) 10%, transparent); }
-.reply-sheen::after { content:''; position:absolute; top:0; bottom:0; width:45%; border-radius:2px; background:linear-gradient(90deg, transparent, color-mix(in srgb, var(--ac) 60%, transparent), transparent); animation:reply-sheen 2.6s ease-in-out infinite; }
-@keyframes reply-sheen { 0% { transform:translateX(-120%); } 100% { transform:translateX(320%); } }
-@media (prefers-reduced-motion: reduce) { .reply-status-in { animation:none; } .reply-sheen { display:none; } }
+.reply-thinking { display:inline-flex; align-items:center; min-height:2rem; position:relative; padding:.1rem .45rem .3rem 1px; border-radius:.5rem; }
+/* Process-to-answer reads as a tree: one hairline runs behind the nodes, so a
+   saved step and the tool call it caused sit on the same path instead of in
+   two unrelated rows. The line stops at the first and last dot. */
+.process-tree { position:relative; }
+.process-node { position:relative; padding:.3rem 0 .3rem 1.15rem; }
+.process-node::before { content:''; position:absolute; left:.2rem; top:0; bottom:0; width:1px; background:color-mix(in srgb, var(--mu) 30%, transparent); }
+.process-node:first-child::before { top:.68rem; }
+.process-node:last-child::before { bottom:auto; height:.68rem; }
+.process-dot, .process-ring { position:absolute; left:0; top:.68rem; box-sizing:border-box; width:9px; height:9px; border-radius:50%; }
+/* Model rounds are finished dots. */
+.process-dot { background:color-mix(in srgb, var(--ac) 80%, transparent); box-shadow:0 0 0 2.5px color-mix(in srgb, var(--ac) 14%, transparent); }
+.process-dot[data-err] { background:color-mix(in srgb, var(--er) 85%, transparent); box-shadow:0 0 0 2.5px color-mix(in srgb, var(--er) 14%, transparent); }
+/* Tool calls are open circles in the muted tone: things that happened on the
+   way to the answer, not another finished model step. */
+.process-ring { border:1.5px solid color-mix(in srgb, var(--mu) 60%, transparent); }
+.process-ring[data-err] { border-color:color-mix(in srgb, var(--er) 80%, transparent); }
+/* Only a call that is still running animates — a slow halo, no spinner. */
+.process-ring[data-live] { border-color:color-mix(in srgb, var(--ac) 75%, transparent); animation:process-ring 1.9s ease-out infinite; }
+@keyframes process-ring {
+  0% { box-shadow:0 0 0 0 color-mix(in srgb, var(--ac) 40%, transparent); }
+  75%, 100% { box-shadow:0 0 0 6px transparent; }
+}
+@media (prefers-reduced-motion: reduce) { .process-ring[data-live] { animation:none; } }
 .reply-dots { position:relative; display:inline-block; width:1.35rem; height:1.2rem; margin:0 .45rem; flex:none; }
 .reply-dots i { position:absolute; width:.42rem; height:.42rem; border-radius:50%; background:var(--ac); box-shadow:0 0 4px color-mix(in srgb,var(--ac) 30%,transparent);
   animation:
