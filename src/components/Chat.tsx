@@ -1,7 +1,7 @@
 import { memo, useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import { GitBranch, ChevronLeft, ChevronRight, ChevronDown, Server, Cpu, Copy, Check, RefreshCw, Trash2, ListOrdered, CircleCheck, CircleX, TriangleAlert, Paperclip, Download, ExternalLink, Volume2, Pin, PinOff, Search, ArrowUp, ArrowDown, X, Quote } from 'lucide-react'
-import { useS, useLive, usable, featOn, previewSysFor, activeWorkspaceForChat, pinnedReplyOf, type Msg } from '../store'
+import { useS, useLive, usable, featOn, previewSysFor, activeWorkspaceForChat, pinnedReplyOf, type LogDetail, type Msg } from '../store'
 import { clampWorkspaceFrac, roundFrac, CHAT_WIDTH } from '../layout'
 import { focusComposer, startPointerDrag } from '../hooks'
 import { createFrameThrottle } from '../throttle'
@@ -205,6 +205,7 @@ function GeneratedImages({ rounds }: { rounds?: Msg['toolRounds'] }) {
 }
 
 const duration = (ms?: number) => ms == null ? '' : ` ${fmtDuration(ms, useS.getState().widgetPrefs.timeUnit ?? 'auto')}`
+const STEP_CLIP = 180
 const prettyArgs = (raw: string) => {
   try {
     return JSON.stringify(JSON.parse(raw || '{}'), null, 1)
@@ -223,6 +224,49 @@ function Payload({ label, text, open, onToggle }: { label: string; text: string;
         </button>
       )}
     </span>
+  )
+}
+
+/* One saved attempt in the Process-to-answer panel. Where the old panel
+ * printed a whole sentence per step, the detail level now decides how much is
+ * shown: Compact keeps a row to its name, Standard clips long explanations
+ * behind a read-more, Detailed prints everything that was saved. Errors and
+ * the step's own timing/model are always kept — those are the parts a reader
+ * actually goes looking for. */
+function ProcessStep({ t, detail, timing, models, tokens, open, toggle }: {
+  t: NonNullable<Msg['log']>[number]
+  detail: LogDetail
+  timing: boolean
+  models: boolean
+  tokens: boolean
+  open: boolean
+  toggle: () => void
+}) {
+  const text = t.detail ?? ''
+  const clipped = detail !== 'verbose' && text.length > STEP_CLIP
+  const shown = detail === 'compact' ? '' : clipped && !open ? `${text.slice(0, STEP_CLIP).trimEnd()}…` : text
+  const meta = [
+    timing && t.ms != null ? duration(t.ms).trim() : '',
+    tokens && (t.tin != null || t.tout != null) ? `${t.tin ?? 0} in / ${t.tout ?? 0} out` : '',
+  ].filter(Boolean)
+  return (
+    <li className="flex items-start gap-2">
+      {t.err ? <CircleX size={14} className="mt-1 shrink-0 text-er" /> : <CircleCheck size={14} className="mt-1 shrink-0 text-ac" />}
+      <span className="min-w-0 flex-1">
+        <span className="flex flex-wrap items-baseline gap-x-2">
+          <span className="min-w-0 break-words">{t.n}</span>
+          {models && t.m && t.m !== t.n && <span className="max-w-full truncate text-xs text-mu">{t.m}</span>}
+          {meta.length > 0 && <span className="ml-auto shrink-0 pl-2 text-xs tabular-nums text-mu">{meta.join(' · ')}</span>}
+        </span>
+        {t.err && <span className="mt-0.5 block break-words text-xs text-er">{t.err}</span>}
+        {shown && (
+          <span className="mt-0.5 block break-words text-xs text-mu">
+            {shown}
+            {clipped && <button type="button" onClick={toggle} className="ml-1 rounded text-ac hover:underline">{open ? 'Show less' : 'More'}</button>}
+          </span>
+        )}
+      </span>
+    </li>
   )
 }
 
@@ -280,6 +324,28 @@ function StreamedMd({ chunks, fade }: { chunks: string[]; fade: number }) {
   )
 }
 
+/* Live progress for a reply that is still being produced. The orbiting dots
+ * already say "working"; the label now cross-fades whenever the step changes,
+ * a quiet elapsed counter keeps a long tool round from looking frozen, and a
+ * thin accent sheen sweeps under the line. Nothing here is required to read
+ * the status — it is all secondary motion. */
+function ReplyProgress({ status, since, block }: { status: string; since?: number; block?: boolean }) {
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(Date.now()), 1000)
+    return () => window.clearInterval(id)
+  }, [])
+  const secs = since ? Math.max(0, Math.floor((now - since) / 1000)) : 0
+  return (
+    <span className={cx('reply-thinking', block && 'mt-2 block')} role="status" aria-label={status}>
+      <span className="reply-dots" aria-hidden="true"><i /><i /><i /></span>
+      <span key={status} className="reply-status-in ml-2 text-mu">{status}</span>
+      {secs > 0 && <span className="reply-elapsed" aria-hidden="true">{secs}s</span>}
+      <span className="reply-sheen" aria-hidden="true" />
+    </span>
+  )
+}
+
 function applySearchHighlights(el: HTMLElement | null, query?: string, open?: boolean) {
   if (!el) return
   const marks = Array.from(el.querySelectorAll('.search-highlight'))
@@ -329,6 +395,9 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
   const prefs = useS((s) => s.prefs)
   const streamFade = prefs.streamFade
   const streamMd = prefs.streamMd
+  const logDetail = prefs.logDetail ?? 'standard'
+  const logTiming = prefs.logTiming !== false
+  const logModels = prefs.logModels !== false
   const busy = useS((s) => s.busy)
   const advanced = useS((s) => s.advanced)
   const features = useS((s) => s.features)
@@ -396,12 +465,54 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
   // Research reports live in the side panel (opened from the report card),
   // never inline. Error text still renders so failures stay visible.
   const hideBody = !!m.research && m.research.status !== 'error'
-  const copyMarkdown = prefs.copyMarkdown !== false
-  const copyReply = () => {
-    const text = messageForCopy(displayText, sources, copyMarkdown)
-    const p = navigator.clipboard?.writeText(text)
-    if (!p) return
-    void p.then(() => { setOk(true); setTimeout(() => setOk(false), 1200) }).catch(() => {})
+  /* Copying defaults to rich text: the reply is already rendered in the page,
+   * so its HTML is what a word processor needs to keep headings, lists,
+   * tables and code blocks. Modifier clicks stay available for the other two
+   * forms without adding a menu: Shift copies Markdown, Ctrl/Cmd copies plain
+   * text. Clipboard API quirks fall back to a plain-text write. */
+  const richCopyHtml = () => {
+    const el = contentRef.current
+    if (!el) return ''
+    const clone = el.cloneNode(true) as HTMLElement
+    clone.querySelectorAll('button').forEach((b) => {
+      // Citation pills are content: keep the number, and link it when the
+      // source is known, so a pasted answer still points at its evidence.
+      const cite = /^Jump to source (S\d+)/i.exec(b.getAttribute('aria-label') ?? '')
+      if (cite) {
+        const source = sources.find((s) => s.citeId.toUpperCase() === cite[1].toUpperCase())
+        const mark = document.createElement(source ? 'a' : 'sup')
+        if (source && mark instanceof HTMLAnchorElement) { mark.href = source.url; mark.title = source.title }
+        mark.textContent = cite[1].replace(/^S/i, '')
+        b.replaceWith(mark)
+      } else b.remove()
+    })
+    clone.querySelectorAll('mark.search-highlight').forEach((m) => m.classList.remove('search-highlight'))
+    return clone.innerHTML
+  }
+  const markCopied = () => { setOk(true); setTimeout(() => setOk(false), 1200) }
+  const copyReply = (mode: 'rich' | 'markdown' | 'plain' = 'rich') => {
+    const markdown = messageForCopy(displayText, sources, true)
+    const plain = messageForCopy(displayText, sources, false)
+    if (mode === 'markdown' || mode === 'plain') {
+      const p = navigator.clipboard?.writeText(mode === 'markdown' ? markdown : plain)
+      if (p) void p.then(markCopied).catch(() => {})
+      return
+    }
+    const html = richCopyHtml()
+    if (html && typeof ClipboardItem !== 'undefined' && navigator.clipboard?.write) {
+      const item = new ClipboardItem({
+        'text/html': new Blob([html], { type: 'text/html' }),
+        'text/plain': new Blob([plain], { type: 'text/plain' }),
+      })
+      void navigator.clipboard.write([item]).then(markCopied).catch(() => {
+        // Some browsers only allow one representation, or refuse HTML.
+        const p = navigator.clipboard?.writeText(markdown)
+        if (p) void p.then(markCopied).catch(() => {})
+      })
+      return
+    }
+    const p = navigator.clipboard?.writeText(markdown)
+    if (p) void p.then(markCopied).catch(() => {})
   }
   if (m.r === 'user')
     return (
@@ -415,9 +526,11 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
     )
   return (
     <div id={`msg-${m.id}`} data-msg-role="assistant" className={cx('group space-y-2 rounded-xl p-1', flash && 'ring-2 ring-ac')}>
-      {prefs.showBy && (
+      {/* The process panel is its own control, not part of the byline: hiding
+          which model answered must not make the saved steps unreachable. */}
+      {(prefs.showBy || (m.log && prefs.showLog) || (prefs.showTimestamps && m.at != null)) && (
         <div className="flex flex-wrap items-center gap-2 text-sm text-mu">
-          <span className={cx('inline-flex items-center gap-1.5', m.err && 'text-er')}>{m.err ? <TriangleAlert size={14} /> : <Cpu size={14} />}{m.by}</span>
+          {prefs.showBy && <span className={cx('inline-flex items-center gap-1.5', m.err && 'text-er')}>{m.err ? <TriangleAlert size={14} /> : <Cpu size={14} />}{m.by}</span>}
           {m.log && prefs.showLog && (
             <button onClick={() => setLog(!log)} className="inline-flex items-center gap-1.5 rounded-md px-1.5 py-0.5 hover:bg-surf hover:text-tx">
           <ListOrdered size={14} />Process to answer
@@ -426,9 +539,7 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
           {prefs.showTimestamps && m.at != null && <time dateTime={new Date(m.at).toISOString()} title={formatMsgDateTime(m.at)} className="ml-auto text-xs text-mu">{formatMsgTime(m.at)}</time>}
         </div>
       )}
-      {!prefs.showBy && prefs.showTimestamps && m.at != null && (
-        <div className="text-xs text-mu"><time dateTime={new Date(m.at).toISOString()} title={formatMsgDateTime(m.at)}>{formatMsgTime(m.at)}</time></div>
-      )}
+
       {log && (
         <div className="space-y-1.5 rounded-xl bg-surf p-3 text-sm">
           {adv?.showSystemPrompt && (
@@ -457,38 +568,45 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
               )}
             </div>
           )}
-          <ol className="space-y-1.5">
-            {m.log!.length === 0 && !m.toolRounds?.length && <li className="text-mu">{thinkingLine(m.id)}</li>}
-            {m.log!.filter((t) => /\(classifier\)$/.test(t.n) || t.n === 'Memory recall').map((t, i) => (
-              <li key={`classifier-${i}`} className="flex items-center gap-2">
-                {t.err ? <CircleX size={14} className="shrink-0 text-er" /> : <CircleCheck size={14} className="shrink-0 text-ac" />}
-                <span>{t.n === 'Memory recall' ? t.detail : `Classifier${t.m ? ` · ${t.m}` : ''}${t.detail ? ` · ${t.detail}` : ''}`}</span>
-                <span className="ml-auto text-mu">{duration(t.ms)}{adv?.showTokenCounts && (t.tin != null || t.tout != null) ? ` · ${t.tin ?? 0} in / ${t.tout ?? 0} out` : ''}</span>{t.err && <span className="text-er">{t.err}</span>}
-              </li>
-            ))}
-            {m.log!.filter((t) => !/\(classifier\)$/.test(t.n) && t.n !== 'Memory recall').map((t, i) => (
-              <li key={`model-${i}`} className="flex items-center gap-2">
-                {t.err ? <CircleX size={14} className="shrink-0 text-er" /> : <CircleCheck size={14} className="shrink-0 text-ac" />}
-                <span>{t.m || t.n}{m.reasoning && !t.err ? ' (reasoning)' : ''}{t.detail ? ` · ${t.detail}` : ''}</span>
-                <span className="ml-auto text-mu">{duration(t.ms)}{adv?.showTokenCounts && (t.tin != null || t.tout != null) ? ` · ${t.tin ?? 0} in / ${t.tout ?? 0} out` : ''}</span>{t.err && <span className="text-er">{t.err}</span>}
-              </li>
-            ))}
-            {(m.toolRounds ?? []).flatMap((round) => round.calls).map((call, i) => (
-              <li key={`tool-${i}`} className="flex flex-col gap-1">
-                <span className="flex items-center gap-2">
-                  {call.error ? <CircleX size={14} className="shrink-0 text-er" /> : <CircleCheck size={14} className="shrink-0 text-ac" />}
-                  <span>{toolStep(call.name, call.arguments, call.result)}</span>
-                  <span className={cx('ml-auto text-mu', call.error && 'text-er')}>{duration(call.ms)}</span>
-                </span>
-                {adv?.showToolPayloads && (
-                  <span className="ml-6 space-y-1">
-                    <Payload label="args" text={prettyArgs(call.arguments)} open={!!expanded[`args-${i}`]} onToggle={() => togglePayload(`args-${i}`)} />
-                    {call.result != null && <Payload label="result" text={call.result} open={!!expanded[`result-${i}`]} onToggle={() => togglePayload(`result-${i}`)} />}
-                  </span>
+          {/* One pass, in the order the steps happened. The old panel split the
+              log into helper calls and model calls, which put a later retry or
+              memory decision above the request that caused it. */}
+          {(() => {
+            const steps = m.log ?? []
+            const calls = (m.toolRounds ?? []).flatMap((round) => round.calls)
+            const total = [...steps.map((t) => t.ms ?? 0), ...calls.map((c) => c.ms ?? 0)].reduce((a, b) => a + b, 0)
+            return (
+              <>
+                {(steps.length > 0 || calls.length > 0) && !m.err && (
+                  <div className="flex items-baseline gap-2 px-1 text-xs uppercase tracking-wide text-mu">
+                    <span>{steps.length + calls.length} step{steps.length + calls.length === 1 ? '' : 's'}</span>
+                    {logTiming && total > 0 && <span className="ml-auto normal-case tracking-normal tabular-nums">{duration(total).trim()} total</span>}
+                  </div>
                 )}
-              </li>
-            ))}
-          </ol>
+                <ol className="space-y-1.5">
+                  {steps.length === 0 && calls.length === 0 && <li className="text-mu">{thinkingLine(m.id)}</li>}
+                  {steps.map((t, i) => (
+                    <ProcessStep key={`step-${i}`} t={t} detail={logDetail} timing={logTiming} models={logModels} tokens={!!adv?.showTokenCounts} open={!!expanded[`step-${i}`]} toggle={() => togglePayload(`step-${i}`)} />
+                  ))}
+                  {calls.map((call, i) => (
+                    <li key={`tool-${i}`} className="flex flex-col gap-1">
+                      <span className="flex items-start gap-2">
+                        {call.error ? <CircleX size={14} className="mt-1 shrink-0 text-er" /> : <CircleCheck size={14} className="mt-1 shrink-0 text-ac" />}
+                        <span className="min-w-0 flex-1 break-words">{toolStep(call.name, call.arguments, call.result)}</span>
+                        {(logTiming || call.error) && <span className={cx('ml-auto shrink-0 pl-2 text-xs tabular-nums text-mu', call.error && 'text-er')}>{logTiming ? duration(call.ms).trim() : ''}</span>}
+                      </span>
+                      {adv?.showToolPayloads && (
+                        <span className="ml-6 space-y-1">
+                          <Payload label="args" text={prettyArgs(call.arguments)} open={!!expanded[`args-${i}`]} onToggle={() => togglePayload(`args-${i}`)} />
+                          {call.result != null && <Payload label="result" text={call.result} open={!!expanded[`result-${i}`]} onToggle={() => togglePayload(`result-${i}`)} />}
+                        </span>
+                      )}
+                    </li>
+                  ))}
+                </ol>
+              </>
+            )
+          })()}
         </div>
       )}
       <div className={cx('flow-root leading-7', m.err && 'text-er')}>
@@ -541,12 +659,7 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
                   )}
                 </div>
               )}
-              {active && (
-                <span className={cx('reply-thinking', m.t && 'mt-2 block')} role="status" aria-label={status}>
-                  <span className="reply-dots" aria-hidden="true"><i /><i /><i /></span>
-                  <span className="ml-2 text-mu">{status}</span>
-                </span>
-              )}
+              {active && <ReplyProgress status={status} since={m.at} block={!!m.t} />}
             </>
           )
         })()}
@@ -624,7 +737,7 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
             <Btn sm icon={ChevronRight} title="Next reply" disabled={(m.ai ?? 0) >= m.alts.length - 1} onClick={() => useS.getState().variant(m.id, (m.ai ?? 0) + 1)} />
           </>
         )}
-        <Btn icon={ok ? Check : Copy} title={copyMarkdown ? 'Copy as Markdown (including source links)' : 'Copy as plain text'} onClick={copyReply} />
+        <Btn icon={ok ? Check : Copy} title="Copy with formatting — Shift-click for Markdown, Ctrl/Cmd-click for plain text" onClick={(e) => copyReply(e.shiftKey ? 'markdown' : e.ctrlKey || e.metaKey ? 'plain' : 'rich')} />
         {!m.err && !hideBody && (
           <Btn icon={m.pin ? PinOff : Pin} title={m.pin ? 'Unpin this reply (it stays in the model context until unpinned)' : 'Pin this reply (shown under the header and kept in the model context)'} className={m.pin ? 'text-ac' : undefined} onClick={() => useS.getState().pinMsg(m.id)} />
         )}
@@ -1089,7 +1202,6 @@ export function Chat({ side, toggle, cfg, pal }: { side: boolean; toggle: () => 
                   <div className="m-auto w-full"><Tutorial cfg={cfg} /></div>
                 ) : (
                   <div className="m-auto mx-auto flex w-full max-w-xl flex-col items-center gap-6 px-4 py-4 text-center">
-                    <h2 className="text-xl font-semibold">{flairLine(new Date(), { temporary: isTemp, seasonal: s.prefs.seasonal, seed: s.chats.length })}</h2>
                     <div className="grid w-full gap-2 sm:grid-cols-2">
                       {!s.eps.length && <Tile icon={Server} t="Add an endpoint" d="Connect a model with your own key" on={() => cfg('eps')} />}
                       {tiles.map((k) => <Tile key={k.id} icon={CI[k.in]} t={'/' + k.name} d={k.desc} on={() => s.patch({ draft: '/' + k.name + ' ' })} />)}
@@ -1104,6 +1216,15 @@ export function Chat({ side, toggle, cfg, pal }: { side: boolean; toggle: () => 
               <button type="button" onClick={() => { stick.current = true; setAtEnd(true); followBottom.call() }} className="absolute bottom-full left-1/2 z-10 mb-2 inline-flex min-h-8 -translate-x-1/2 items-center gap-1.5 rounded-full border border-bor bg-surf px-3 py-1 text-xs text-tx shadow-md transition-colors hover:bg-hov focus-visible:ring-2 focus-visible:ring-ac">
                 <ChevronDown size={13} className="text-ac" />Jump to latest
               </button>
+            )}
+            {/* The greeting (or the temporary-chat line) belongs to the
+                composer it introduces, not to the welcome tiles: it sits
+                directly above the box with a clear gap, at a size that reads
+                as the headline of the empty chat. */}
+            {empty && (
+              <div className="mb-6 px-4 text-center text-2xl font-semibold leading-tight tracking-tight text-tx">
+                {flairLine(new Date(), { temporary: isTemp, seasonal: s.prefs.seasonal, seed: s.chats.length })}
+              </div>
             )}
             <Composer cfg={cfg} />
           </div>

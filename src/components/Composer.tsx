@@ -180,12 +180,16 @@ function ModelMenu({ close, cfg }: { close: () => void; cfg: (t: string) => void
     const sub = secondary === 'provider' ? x.name : secondary === 'none' || secondary === primary ? '' : (secondary === 'name' ? alias : model).replace(/^~+/, '')
     return { title, sub }
   }
+  /* Favorites are addressed by endpoint, so the provider is shown beside a
+   * starred model by default. Some people star models precisely to stop
+   * thinking about which provider serves them, hence the setting. */
+  const favSub = (x: Ep) => (s.prefs.hideFavoriteProvider ? '' : x.name)
   const matches = (x: Ep, model: string) => !query || x.name.toLowerCase().includes(query) || model.toLowerCase().includes(query) || modelNameOf(x, model).toLowerCase().includes(query)
   // A model row gets a star so it can be favorited without leaving the menu.
   const modelRow = (x: Ep, model: string, keyPrefix = '') => {
     const { title, sub } = labelOf(x, model)
     const favorite = favSet.has(helperRef(x.id, model))
-    return <Item key={`${keyPrefix}${x.id}:${model}`} icon={Cpu} off={x.on === false} on={s.sel?.id === x.id && s.sel?.model === model} sub={keyPrefix ? x.name : sub} star={{ on: favorite, set: () => s.patch({ favs: toggleFavRef(s.favs, helperRef(x.id, model)) }) }} onClick={() => { s.patch({ sel: { k: 'ep', id: x.id, model } }); close() }}>{title}</Item>
+    return <Item key={`${keyPrefix}${x.id}:${model}`} icon={Cpu} off={x.on === false} on={s.sel?.id === x.id && s.sel?.model === model} sub={keyPrefix ? favSub(x) : sub} star={{ on: favorite, set: () => s.patch({ favs: toggleFavRef(s.favs, helperRef(x.id, model)) }) }} onClick={() => { s.patch({ sel: { k: 'ep', id: x.id, model } }); close() }}>{title}</Item>
   }
   const L: any[] = (t === 'pl' && plsOn ? s.pls : s.eps).filter((x) => x.name.toLowerCase().includes(query) || (t === 'ep' && modelsOf(x as Ep).some((model) => matches(x as Ep, model))))
   // Favorites are addressed by endpoint + model, so a starred model keeps its
@@ -779,7 +783,7 @@ export function Composer({ cfg }: { cfg: (t: string) => void }) {
               )
             }}
           </Pop>
-          <Pop up w="w-80" scroll={false} onOpenChange={setMenusOpen} trigger={(o) => {
+          <Pop up w="w-[26rem]" scroll={false} onOpenChange={setMenusOpen} trigger={(o) => {
             const activeEp = s.sel?.k === 'ep' && s.sel?.id ? s.eps.find((e) => e.id === s.sel!.id) : undefined
             const activeModel = s.sel?.k === 'ep' && s.sel.model ? s.sel.model : undefined
             const effortsArr = activeModel ? activeEp?.modelEfforts?.[activeModel] ?? [] : []

@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { X, Plus, Trash2, ArrowUp, ArrowDown, CornerDownRight, ChevronDown, ChevronRight, Eye, EyeOff, Play, ShieldCheck, Shield, Download, Upload, Check, CircleCheck, CircleX, Cpu, Route, GripVertical, Server, ListMusic, ScrollText, Terminal, Wrench, Palette, FolderOpen, FileText, PanelRight, TrendingUp, Keyboard, Search, Brain, Pencil, Sparkles, RotateCcw, SlidersHorizontal, FlaskConical, Library, Database, Lock, LockOpen, LayoutTemplate, Share2, Plug, Image as ImageIcon, Volume2, AudioLines, Code2, Star } from 'lucide-react'
-import { useS, useSConfig, PRE, BLANK, THEMES, DARK_THEMES, LIGHT_THEMES, BASE_THEMES, THEME_COLOR_KEYS, THEME_COLOR_LABELS, THEME_COLORS, defaultCustomTheme, customThemeColors, normCustomTheme, accentHue, SEARCH_PROVIDERS, READER_PROVIDERS, FEATURES, LIBRARY_ITEMS, FEATURE_TABS, FEATURE_WIDGETS, DEFAULT_LIBRARY_SHOW, DEFAULT_ADVANCED, featOn, normSearch, normAdvanced, normDocs, usable, modelsOf, modelNameOf, helperRef, splitHelperRef, favRef, toggleFavRef, effortClassifierOf, TOOL_ROUNDS_DEFAULT, TOOL_ROUNDS_MIN, TOOL_ROUNDS_BASE_MAX, TOOL_ROUNDS_MAX, toolRoundLimitOf, isToolRoundsUnlimited, GENERAL_PROMPT_TEXT, STARTUP_MODES, normStartup, PROMPT_RECALL_MODES, normPromptRecall, type PromptRecallMode, type Kind, type FeatureId, type DocPrefs, type ModelPrice } from '../store'
+import { useS, useSConfig, PRE, BLANK, THEMES, DARK_THEMES, LIGHT_THEMES, BASE_THEMES, THEME_COLOR_KEYS, THEME_COLOR_LABELS, THEME_COLORS, defaultCustomTheme, customThemeColors, normCustomTheme, accentHue, SEARCH_PROVIDERS, READER_PROVIDERS, FEATURES, LIBRARY_ITEMS, FEATURE_TABS, FEATURE_WIDGETS, DEFAULT_LIBRARY_SHOW, DEFAULT_ADVANCED, featOn, normSearch, normAdvanced, normLogDetail, normDocs, usable, modelsOf, modelNameOf, helperRef, splitHelperRef, favRef, toggleFavRef, effortClassifierOf, TOOL_ROUNDS_DEFAULT, TOOL_ROUNDS_MIN, TOOL_ROUNDS_BASE_MAX, TOOL_ROUNDS_MAX, toolRoundLimitOf, isToolRoundsUnlimited, GENERAL_PROMPT_TEXT, STARTUP_MODES, normStartup, PROMPT_RECALL_MODES, normPromptRecall, type PromptRecallMode, type Kind, type FeatureId, type DocPrefs, type ModelPrice } from '../store'
 import { normSkills, resolveSkill, validateCustomSkill, enabledSkills, BUILTIN_SKILLS, SKILL_TOOL_NAME, type SkillState } from '../skills'
 import { findDuplicatePairs, mergeMemory } from '../recall'
 import { TOOL_REGISTRY, can, stream } from '../engine'
@@ -2168,6 +2168,7 @@ function Look() {
         </div>
         <label className="flex items-center justify-between gap-3 text-sm">Show Favorites section<Toggle on={s.prefs.favoritesSection !== false} set={(favoritesSection) => s.patch({ prefs: { ...s.prefs, favoritesSection } })} label="Show Favorites section" /></label>
         <label className="flex items-center justify-between gap-3 text-sm">Hide favorites from provider lists<Toggle on={s.prefs.hideFavoritesInProviders !== false} set={(hideFavoritesInProviders) => s.patch({ prefs: { ...s.prefs, hideFavoritesInProviders } })} label="Hide favorites from provider lists" /></label>
+        <label className="flex items-center justify-between gap-3 text-sm">Show provider beside favorite names<Toggle on={s.prefs.hideFavoriteProvider !== true} set={(show) => s.patch({ prefs: { ...s.prefs, hideFavoriteProvider: !show } })} label="Show provider beside favorite names" /></label>
         {(s.favs?.length ?? 0) > 0 ? <>
           <div className="space-y-1">{(s.favs ?? []).map((ref) => {
             const [id, model] = splitHelperRef(ref)
@@ -2379,17 +2380,14 @@ function Chats() {
     <Panel id="chats">
       <Section title="Replies" desc="What each reply shows and how it is rendered.">
       {row('show-by', 'showBy', 'Show which model answered', 'Label each reply with the endpoint and model that produced it.')}
-      {row('show-log', 'showLog', 'Show model-use details', 'List every model called for a reply, including classifiers and failures.')}
+      {row('show-log', 'showLog', 'Show model-use details', 'Show the Process to answer panel under each reply: every helper, model round and tool call, with its timing, model and any failure.')}
       {row('show-tps', 'showTps', 'Show generation speed', 'Show tokens per second below each reply.')}
       {row('stream-md', 'streamMd', 'Render markdown while streaming', 'Format each completed line as markdown as it arrives instead of plain text. Off shows plain text until the reply finishes.')}
       {row('custom-search', 'customSearch', 'Custom find in conversation (Ctrl+F)', 'Enable the in-chat search box that highlights matches in text and code blocks.')}
-      <Anchor id="copy-markdown">
-      <div className="flex items-center justify-between gap-3 rounded-xl bg-surf p-3">
-        <div className="min-w-0">
-          <div className="text-sm font-medium">Copy replies as Markdown</div>
-          <div className="text-xs text-mu">Keep tables, code fences and links when copying a reply, with citations expanded to their real URLs. Off copies plain prose.</div>
-        </div>
-        <Toggle on={s.prefs.copyMarkdown !== false} set={(copyMarkdown) => s.patch({ prefs: { ...s.prefs, copyMarkdown } })} label="Copy replies as Markdown" />
+      <Anchor id="copy-replies">
+      <div className="rounded-xl bg-surf p-3">
+        <div className="text-sm font-medium">Copying replies</div>
+        <div className="text-xs text-mu">The copy button writes rich text, so headings, lists, tables and code blocks keep their formatting in a word processor. Shift-click copies Markdown with citation links; Ctrl/Cmd-click copies plain prose.</div>
       </div>
       </Anchor>
       <Anchor id="pinned-context">
@@ -2420,6 +2418,28 @@ function Chats() {
         </div>
       </div>
       </Anchor>
+      </Section>
+      <Section title="Process to answer" desc="The step list saved with each reply: what was called, how long it took, and why.">
+      <Anchor id="process-detail">
+      <div className="rounded-xl bg-surf p-3 space-y-2">
+        <div className="text-sm font-medium">Detail level</div>
+        <div className="text-xs text-mu">Compact keeps each step to its name and timing. Standard adds a short explanation and clips anything long behind a read-more. Detailed shows every saved explanation in full.</div>
+        <Seg v={s.prefs.logDetail ?? 'standard'} set={(v) => s.patch({ prefs: { ...s.prefs, logDetail: normLogDetail(v) } })} opts={[['compact', 'Compact'], ['standard', 'Standard'], ['verbose', 'Detailed']]} />
+      </div>
+      </Anchor>
+      <Anchor id="process-timing">
+      <div className="flex items-center justify-between gap-3 rounded-xl bg-surf p-3">
+        <div className="min-w-0"><div className="text-sm font-medium">Show step timings</div><div className="text-xs text-mu">Print each step's duration, and the panel total, on the right of its row.</div></div>
+        <Toggle on={s.prefs.logTiming !== false} set={(logTiming) => s.patch({ prefs: { ...s.prefs, logTiming } })} label="Show step timings" />
+      </div>
+      </Anchor>
+      <Anchor id="process-models">
+      <div className="flex items-center justify-between gap-3 rounded-xl bg-surf p-3">
+        <div className="min-w-0"><div className="text-sm font-medium">Show the model on each step</div><div className="text-xs text-mu">Label every step with the endpoint and model that served it, not just the endpoint name.</div></div>
+        <Toggle on={s.prefs.logModels !== false} set={(logModels) => s.patch({ prefs: { ...s.prefs, logModels } })} label="Show the model on each step" />
+      </div>
+      </Anchor>
+      <p className="px-1 text-xs text-mu">Per-step token counts, tool arguments and results, and the full system prompt live in Settings → Advanced → Diagnostics.</p>
       </Section>
       <Anchor id="temporary-chats">
       <Section title="Temporary chats" desc="Chats that are removed automatically after a while.">

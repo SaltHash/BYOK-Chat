@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type ButtonHTMLAttributes, type ImgHTMLAttributes, type InputHTMLAttributes, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type TextareaHTMLAttributes } from 'react'
+import { createPortal } from 'react-dom'
 import { Check, ChevronRight, CircleHelp, Star, TriangleAlert, X, type LucideIcon } from 'lucide-react'
 
 export type Ic = LucideIcon
@@ -234,15 +235,21 @@ export function Modal({ children, close, blur = true, opacity = 55, keyboard = t
 }
 
 /** Full-screen image viewer. Clicking the backdrop, the close button, or
- *  pressing Escape closes it; the image itself stays put. */
+ *  pressing Escape closes it; the image itself stays put.
+ *
+ *  Rendered into <body> instead of in place: the composer sets a transform (and
+ *  a backdrop filter when glass is on), and either one turns that element into
+ *  the containing block for `position: fixed`. An inline lightbox was therefore
+ *  caged inside the composer instead of covering the window. */
 export function ImageLightbox({ src, alt, close }: { src: string; alt?: string; close: () => void }) {
-  return (
+  return createPortal(
     <Modal close={close} blur={false} opacity={82}>
       <figure className="relative m-0 flex max-h-[94vh] w-full max-w-[min(96vw,1400px)] items-center justify-center">
         <img src={src} alt={alt ?? ''} className="max-h-[94vh] w-auto max-w-full rounded-lg object-contain shadow-2xl" />
         <Btn sm icon={X} title="Close full screen" onClick={close} className="absolute right-2 top-2 bg-black/60 text-white hover:bg-black/80" />
       </figure>
-    </Modal>
+    </Modal>,
+    document.body,
   )
 }
 
