@@ -262,6 +262,7 @@ export const SETTING_LINKS: SettingLink[] = [
   { tab: 'stats', anchor: 'messages-sent', title: 'Lifetime messages sent', keywords: 'messages sent edited resent lifetime' },
   { tab: 'stats', anchor: 'chats-started', title: 'Lifetime chats started', keywords: 'chats started first message lifetime' },
   { tab: 'stats', anchor: 'reset-stats', title: 'Reset stats', keywords: 'reset zero totals lifetime counters' },
+  { tab: 'stats', anchor: 'keep-usage-history', title: 'Keep usage history', keywords: 'keep usage history permanent temporary archived deleted expired chat stats retained clear history toggle' },
 
   // Data
   { tab: 'data', anchor: 'local-backups', title: 'Local backups', keywords: 'backup backups automatic daily local indexeddb restore snapshot' },

@@ -32,6 +32,8 @@ import { rankMemories, mergeMemory, RouteCache, orderEndpoints, recordRoute, typ
 import { DEFAULT_MEMORY_PREFS, normMemoryPrefs, memoryEnabledFor, memoryPolicyText, searchMemories, formatMemoryResults, type MemoryPrefs } from './memory'
 export type { RouteStat, RoutingMode }
 import { QUOTA_FLAG, prunePersisted, storageUsage, persistStorage, createPersistMapper, STORE_VERSION, withoutExpiredTemps } from './persistence'
+import { appendUsageRows, usageRowOf, usageRowsFromChats, usageTitlesFromChats, type UsageRow } from './usageStats'
+import { readUsageLedger, usageLedgerExists, writeUsageLedger } from './storage/usageLedger'
 import { providerPresetEntries } from './providerRegistry'
 import { accentHue, adjustThemeColors, type ThemeAdjustment } from './theme'
 import { normDensity, normSpacing, normStylePreset, type Density, type SpacingOverrides, type StylePreset } from './style'
@@ -339,6 +341,11 @@ export const BLANK: Record<Kind, () => any> = {
   mcps: () => ({ id: uid(), name: 'New MCP server', url: '', headers: '', on: true }),
 }
 const ZERO = (): Stats => ({ tin: 0, tout: 0, historyIn: 0, explicitIn: 0, sent: 0, chats: 0, since: Date.now(), cost: 0 })
+/* The permanent usage ledger is read once at store creation. It lives in its
+ * own localStorage key rather than the persisted payload (see
+ * storage/usageLedger.ts): it is written only when an attempt is added, so a
+ * growing history is not re-serialised on every settings or chat save. */
+const initialLedger = readUsageLedger()
 export const dl = (n: string, t: string, m: string) => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([t], { type: m })); a.download = n; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 999) }
 export const chatMd = (c: Chat) => `# ${c.title}\n\n` + c.msgs.map((m) => `**${m.r === 'user' ? 'You' : m.by || 'Assistant'}**\n\n${m.t}`).join('\n\n---\n\n')
 export const exportChat = () => {
@@ -394,7 +401,7 @@ export const normPromptRecall = (v: unknown): PromptRecallMode =>
 /* Default shapes for the settings objects a Data-tab import can replace
  * wholesale: keep the initial state and import "replace" mode on the same
  * literal so a sparse file can never leave undefined fields behind. */
-export const DEFAULT_PREFS: S['prefs'] = { showBy: true, showLog: true, showTps: false, enterSends: true, autoTitle: true, temporaryByDefault: false, seasonal: true, cues: false, showModelPricing: false, showContextMeter: true, customSearch: true, stylePreset: 'modern', density: 'comfortable', uiSpacing: {}, showTimestamps: false, alwaysShowActions: false, titleEp: '', titleModel: '', effortEp: '', effortModel: '', recallEp: '', recallModel: '', tempHours: 3, startup: 'recent', tempShow: 2, tempGlow: 1, tempGlowSent: 0.5, draftSurvive: 'both', fontBody: 'system', fontMono: 'system', fontHeader: 'system', modelPrimary: 'name', modelSecondary: 'none', paletteMax: 320, chatWidth: 'standard', settingsWidth: 1024, settingsHeight: 780, modelPickerHeight: 480, favoritesSection: true, hideFavoritesInProviders: true, collapsedProviders: [], sidebarWidth: 288, widgetWidth: 320, workspaceWidth: 0.4, workspaceSplit: 0.2,  modalBlur: 12, settingsOpacity: 55, streamFade: 0.3, streamMd: true, remoteImages: false, glassComposer: true, glassBlur: 14, glassOpacity: 80, showDisabledFeatures: false, proxyMode: 'auto', textScale: 100, codeWrap: false, reduceTransparency: false, promptRecall: 'empty', highContrast: false, copyMarkdown: true, codeLines: false, codeMaxHeight: 0, pinContext: true, pinContextPercent: 50 }
+export const DEFAULT_PREFS: S['prefs'] = { showBy: true, showLog: true, showTps: false, enterSends: true, autoTitle: true, temporaryByDefault: false, seasonal: true, cues: false, showModelPricing: false, showContextMeter: true, customSearch: true, stylePreset: 'modern', density: 'comfortable', uiSpacing: {}, showTimestamps: false, alwaysShowActions: false, titleEp: '', titleModel: '', effortEp: '', effortModel: '', recallEp: '', recallModel: '', tempHours: 3, startup: 'recent', tempShow: 2, tempGlow: 1, tempGlowSent: 0.5, draftSurvive: 'both', fontBody: 'system', fontMono: 'system', fontHeader: 'system', modelPrimary: 'name', modelSecondary: 'none', paletteMax: 320, chatWidth: 'standard', settingsWidth: 1024, settingsHeight: 780, modelPickerHeight: 480, favoritesSection: true, hideFavoritesInProviders: true, collapsedProviders: [], sidebarWidth: 288, widgetWidth: 320, workspaceWidth: 0.4, workspaceSplit: 0.2,  modalBlur: 12, settingsOpacity: 55, streamFade: 0.3, streamMd: true, remoteImages: false, glassComposer: true, glassBlur: 14, glassOpacity: 80, showDisabledFeatures: false, proxyMode: 'auto', textScale: 100, codeWrap: false, reduceTransparency: false, promptRecall: 'empty', highContrast: false, copyMarkdown: true, codeLines: false, codeMaxHeight: 0, pinContext: true, pinContextPercent: 50, keepUsageHistory: true }
 export const DEFAULT_PARAMS: S['params'] = { def: true, temp: 0.7, topp: 1, max: 4096, maxToolRounds: 8, highToolsUnlocked: false }
 export const DEFAULT_WIDGET_PREFS: S['widgetPrefs'] = { usageGroup: 'endpoint', usageMode: 'success', usageFormat: '{in}/{out}', usageTotal: false, usagePeriod: 'all', lastSpeed: true, timeUnit: 'auto', widgetOrder: WIDGETS.map(([k]) => k), shortcuts: KEYS.map(([k]) => k), contextLimit: 128000, showDisabledEndpoints: true, scratchRows: 6, snippetLimit: 20, costDecimals: 4, activePromptsOnly: false, charsPerToken: 4, hideDoneTodos: false }
 const SEARCH_VALID_PROVIDERS: SearchProvider[] = ['tinyfish', 'you', 'exa', 'firecrawl', 'brightdata', 'jina']
@@ -530,12 +537,20 @@ type S = {
   customDarkTheme: CustomTheme
   customLightTheme: CustomTheme
   setupDone: boolean
-  prefs: { showBy: boolean; showLog: boolean; showTps: boolean; enterSends: boolean; autoTitle: boolean; temporaryByDefault: boolean; seasonal?: boolean; cues?: boolean; showModelPricing: boolean; showContextMeter: boolean; customSearch?: boolean; /** Copy replies with markdown formatting and linked citations; off copies plain text. */ copyMarkdown?: boolean; /** Show line numbers in code blocks. */ codeLines?: boolean; /** Max code-block height in pixels before scrolling (0 = no cap). */ codeMaxHeight?: number; /** Include the pinned reply in the model context. */ pinContext?: boolean; /** Maximum slice of the context window the pinned reply may use (5–50%). */ pinContextPercent?: number; titleEp: string; titleModel?: string; effortEp: string; effortModel?: string; recallEp: string; recallModel?: string; tempHours: number; startup?: StartupMode; tempShow?: number; tempGlow?: number; tempGlowSent?: number; draftSurvive?: 'off' | 'new' | 'chats' | 'both'; fontBody: string; fontMono: string; fontHeader: string; modelPrimary: 'id' | 'name'; modelSecondary: 'none' | 'provider' | 'id' | 'name'; modelDisplay?: 'none' | 'name' | 'provider' | 'both'; paletteMax: number; chatWidth: 'narrow' | 'standard' | 'wide'; settingsWidth: number; settingsHeight: number; modelPickerHeight: number; /** Show a Favorites section at the top of the model picker. */ favoritesSection?: boolean; /** Hide starred models from their normal provider groups. */ hideFavoritesInProviders?: boolean; /** Endpoint ids whose provider groups are collapsed in the picker. */ collapsedProviders?: string[]; sidebarWidth?: number; widgetWidth?: number; workspaceWidth?: number; workspaceSplit?: number; modalBlur: number; settingsOpacity: number; routingMode?: RoutingMode; streamFade: number; streamMd: boolean; remoteImages?: boolean; glassComposer?: boolean; /** Composer glass backdrop blur in pixels (0–40). */ glassBlur?: number; /** Composer glass surface opacity percent (0–100). */ glassOpacity?: number; /** Keep settings for disabled features visible, marked off, instead of hiding them. */ showDisabledFeatures?: boolean; proxyMode?: 'auto' | 'always' | 'off';  stylePreset: StylePreset; density: Density; uiSpacing?: SpacingOverrides; showTimestamps?: boolean; alwaysShowActions?: boolean; /** Root font-size percent (50–200, 100 = unchanged). */ textScale?: number; /** Soft-wrap long lines inside code blocks instead of scrolling sideways. */ codeWrap?: boolean; /** Disable glass, blur and dropped shadows (flat, opaque surfaces). */ reduceTransparency?: boolean; /** When ↑/↓ recall sent prompts; 'off' also stops recording them. */ promptRecall?: PromptRecallMode; /** Raise muted-text and border contrast beyond the theme's values. */ highContrast?: boolean }
+  prefs: { showBy: boolean; showLog: boolean; showTps: boolean; enterSends: boolean; autoTitle: boolean; temporaryByDefault: boolean; seasonal?: boolean; cues?: boolean; showModelPricing: boolean; showContextMeter: boolean; customSearch?: boolean; /** Copy replies with markdown formatting and linked citations; off copies plain text. */ copyMarkdown?: boolean; /** Show line numbers in code blocks. */ codeLines?: boolean; /** Max code-block height in pixels before scrolling (0 = no cap). */ codeMaxHeight?: number; /** Include the pinned reply in the model context. */ pinContext?: boolean; /** Maximum slice of the context window the pinned reply may use (5–50%). */ pinContextPercent?: number; titleEp: string; titleModel?: string; effortEp: string; effortModel?: string; recallEp: string; recallModel?: string; tempHours: number; startup?: StartupMode; tempShow?: number; tempGlow?: number; tempGlowSent?: number; draftSurvive?: 'off' | 'new' | 'chats' | 'both'; fontBody: string; fontMono: string; fontHeader: string; modelPrimary: 'id' | 'name'; modelSecondary: 'none' | 'provider' | 'id' | 'name'; modelDisplay?: 'none' | 'name' | 'provider' | 'both'; paletteMax: number; chatWidth: 'narrow' | 'standard' | 'wide'; settingsWidth: number; settingsHeight: number; modelPickerHeight: number; /** Show a Favorites section at the top of the model picker. */ favoritesSection?: boolean; /** Hide starred models from their normal provider groups. */ hideFavoritesInProviders?: boolean; /** Endpoint ids whose provider groups are collapsed in the picker. */ collapsedProviders?: string[]; sidebarWidth?: number; widgetWidth?: number; workspaceWidth?: number; workspaceSplit?: number; modalBlur: number; settingsOpacity: number; routingMode?: RoutingMode; streamFade: number; streamMd: boolean; remoteImages?: boolean; glassComposer?: boolean; /** Composer glass backdrop blur in pixels (0–40). */ glassBlur?: number; /** Composer glass surface opacity percent (0–100). */ glassOpacity?: number; /** Keep settings for disabled features visible, marked off, instead of hiding them. */ showDisabledFeatures?: boolean; proxyMode?: 'auto' | 'always' | 'off';  stylePreset: StylePreset; density: Density; uiSpacing?: SpacingOverrides; showTimestamps?: boolean; alwaysShowActions?: boolean; /** Root font-size percent (50–200, 100 = unchanged). */ textScale?: number; /** Soft-wrap long lines inside code blocks instead of scrolling sideways. */ codeWrap?: boolean; /** Disable glass, blur and dropped shadows (flat, opaque surfaces). */ reduceTransparency?: boolean; /** When ↑/↓ recall sent prompts; 'off' also stops recording them. */ promptRecall?: PromptRecallMode; /** Raise muted-text and border contrast beyond the theme's values. */ highContrast?: boolean; /** Keep every attempt in a permanent ledger so usage survives deleting, archiving or expiring its chat. Off keeps only the attempts still on saved chats. */ keepUsageHistory?: boolean }
   widgets: Record<string, boolean>; widgetPrefs: { usageGroup: 'endpoint' | 'model'; usageMode: 'success' | 'tokens'; usageFormat: string; usageTotal: boolean; usagePeriod: 'session' | 'day' | 'week' | 'month' | 'custom' | 'all'; usageFrom?: string; usageTo?: string; lastSpeed: boolean; timeUnit: 'ms' | 's' | 'auto'; widgetOrder: string[]; shortcuts: string[]; contextLimit: number; showDisabledEndpoints: boolean; scratchRows: number; snippetLimit: number; costDecimals: number; activePromptsOnly: boolean; charsPerToken: number; hideDoneTodos: boolean }; rail: boolean; pad: string; snips: string[]
   params: { def: boolean; temp: number; topp: number; max: number; maxToolRounds: number; highToolsUnlocked: boolean }; effort: Record<string, string>
   workspacePrefs: WorkspacePrefs
   advanced: AdvancedPrefs
   stats: Stats; keys: Record<string, string>
+  /** Every attempt kept permanently in this browser, including attempts whose
+   *  chat was temporary, archived-away or deleted. Stored in its own key (see
+   *  storage/usageLedger.ts) so a growing ledger is not rewritten with every
+   *  settings/chat save. */
+  usage: UsageRow[]
+  /** Best-known title per kept chat id, so Activity can still label a chat
+   *  that no longer exists. */
+  usageTitles: Record<string, string>
   /** GitHub personal access token (gist scope) used by workspace sharing.
    *  Held in the store so it persists and rides device sync like every other
    *  config; it is only sent to GitHub when the user presses Share. */
@@ -579,6 +594,12 @@ type S = {
   updateResearchPlan: (mid: string, plan: ResearchPlan) => void
   stopResearch: (mid: string) => void
   resetStats: () => void
+  /** Seed the ledger from chats saved before it existed (first run only). */
+  seedUsageHistory: () => void
+  /** Turn permanent history on or off; enabling seeds the existing chats. */
+  setKeepUsageHistory: (on: boolean) => void
+  /** Delete every kept attempt (the available chats' own logs stay intact). */
+  clearUsageHistory: () => void
   compactStorage: () => string
   rename: (id: string, t: string) => void
   reorder: (k: Kind, from: string, to: string) => void
@@ -832,6 +853,25 @@ export const useS = create<S>()(
         set((s) => ({ stats: { ...s.stats, cost: s.stats.cost + cost } }))
       }
       const edit = (id: string, mid: string, f: (m: Msg) => Msg) => set((s) => ({ chats: s.chats.map((c) => (c.id === id ? { ...c, msgs: c.msgs.map((m) => (m.id === mid ? f(m) : m)) } : c)) }))
+      /* Permanent usage history: once a reply finishes, copy its attempts into
+       * the ledger so its tokens and cost keep counting after the chat is
+       * deleted, archived or expires. Chat titles ride along as labels, because
+       * a deleted chat cannot be renamed into something readable later. */
+      const keepUsage = (chatId: string, mid: string, log: Try[]) => {
+        if (!log.length) return
+        const st = get()
+        if (!featOn(st, 'stats') || st.prefs.keepUsageHistory === false) return
+        const chat = st.chats.find((c) => c.id === chatId)
+        const at = chat?.msgs.find((m) => m.id === mid)?.at ?? Date.now()
+        const rows = appendUsageRows(st.usage, log.map((t) => usageRowOf(chatId, mid, t, at)))
+        const titles = chat?.title ? { ...st.usageTitles, [chatId]: chat.title } : st.usageTitles
+        if (rows === st.usage && titles === st.usageTitles) return
+        set({ usage: rows, usageTitles: titles })
+        // A quota-limited write drops the oldest half: mirror what was actually
+        // stored so the page never shows rows that are not saved.
+        const saved = writeUsageLedger(rows, titles)
+        if (saved !== rows) set({ usage: saved })
+      }
       const warn = (n: Notice) => { set({ notice: n }); return false }
 
       /* Page-reader subagent: when enabled, the fetched page is summarized by
@@ -1158,6 +1198,9 @@ export const useS = create<S>()(
           }),
         }))
         edit(chatId, mid, (m) => ({ ...m, by: used ? `${used.name} · ${used.model} · Research plan` : (m.by || 'Research plan'), log }))
+        // The plan call is real spend; the report that follows replaces this
+        // message's log, so keep the plan attempts before they are gone.
+        keepUsage(chatId, mid, log)
         if (cur === r) { cur = null; set({ busy: false }) }
         // If the model decided the user explicitly asked to begin, start the run
         // now (the AI decides, not a regex on the user's message).
@@ -1473,6 +1516,9 @@ export const useS = create<S>()(
           patchRs(chatId, mid, (rs) => ({ ...rs, status: 'error', error: 'No model responded.', finishedAt: Date.now() }))
           edit(chatId, mid, (m) => ({ ...m, sys: system, log, err: !m.t, by: m.by || 'No model responded', t: m.t || log.filter((x) => x.err).map((x) => `${x.n}${x.m ? ' · ' + x.m : ''}: ${x.err}`).join('\n') }))
         }
+        // A stopped run still spent what it spent, so its attempts are kept even
+        // though the report never finished.
+        keepUsage(chatId, mid, log)
         useLive.getState().clear(mid)
         if (cur === r) { cur = null; set({ busy: false }) }
       }
@@ -1968,6 +2014,7 @@ export const useS = create<S>()(
         } else {
           edit(id, mid, (m) => ok ? { ...m, sys: system, log }
             : { ...m, sys: system, log, err: true, by: 'No model responded', t: log.filter((x) => x.err).map((x) => `${x.n}${x.m ? ' · ' + x.m : ''}: ${x.err}`).join('\n') + hint(log) })
+          keepUsage(id, mid, log)
           if (prev) edit(id, mid, (m) => ({ ...m, alts: [...prev, snap(m)], ai: prev.length }))
         }
         // Workspace cue: only for a reply that wrote a workspace and finished without an error.
@@ -2000,6 +2047,7 @@ export const useS = create<S>()(
         advanced: { ...DEFAULT_ADVANCED },
         sel: null, favs: [], pr: 'general', globalPrompt: { on: true, text: GENERAL_PROMPT_TEXT, qualities: [] }, features: { ...DEFAULT_FEATURES }, featureOrder: FEATURES.map(([id]) => id), libraryShow: { ...DEFAULT_LIBRARY_SHOW }, themeMode: 'dark', themeDark: 'plum', themeLight: 'paper', customDarkColors: { ...DEFAULT_CUSTOM_COLORS }, customLightColors: { ...DEFAULT_CUSTOM_LIGHT_COLORS }, customDarkTheme: { ...DEFAULT_CUSTOM_DARK_THEME }, customLightTheme: { ...DEFAULT_CUSTOM_LIGHT_THEME }, setupDone: false, prefs: { ...DEFAULT_PREFS },
         stats: ZERO(), keys: Object.fromEntries(KEYS.map(([k, , d]) => [k, d])), gistToken: '',
+        usage: initialLedger.rows, usageTitles: initialLedger.titles,
         projects: [], activeProject: '', price: { in: 0, out: 0 }, todos: [],
         routeStats: {}, shares: [], flashMsg: null,
         draft: '', busy: false, notice: null,
@@ -2349,6 +2397,29 @@ export const useS = create<S>()(
           return true
         },
         resetStats: () => set({ stats: ZERO() }),
+        seedUsageHistory: () => {
+          // Only a browser that has never written the ledger is seeded, so this
+          // cannot re-add attempts the viewer explicitly deleted.
+          if (usageLedgerExists() || get().prefs.keepUsageHistory === false) return
+          const s = get()
+          const rows = usageRowsFromChats(s.chats)
+          const titles = usageTitlesFromChats(s.chats)
+          set({ usage: rows, usageTitles: titles })
+          writeUsageLedger(rows, titles)
+        },
+        setKeepUsageHistory: (on) => {
+          set((s) => ({ prefs: { ...s.prefs, keepUsageHistory: on } }))
+          // Turning it back on adopts the history already on this device instead
+          // of starting blank until the next reply.
+          if (on) get().seedUsageHistory()
+        },
+        clearUsageHistory: () => {
+          // Write an empty ledger instead of deleting the key: a missing key is
+          // the signal that this browser has never kept history, and the next
+          // boot would copy the chats' attempts back in.
+          writeUsageLedger([], {})
+          set({ usage: [], usageTitles: {} })
+        },
         compactStorage: () => {
           const s = get(), now = Date.now()
           const before = JSON.stringify({ chats: s.chats, workspaces: s.workspaces }).length
@@ -2579,6 +2650,13 @@ export const useS = create<S>()(
         // The word fade-in feature was removed: drop its stale persisted
         // settings and per-message events so they never carry forward.
         if (p.prefs && typeof p.prefs === 'object' && 'fade' in p.prefs) delete p.prefs.fade
+        // Permanent usage history is on by default; installs and synced settings
+        // that predate the switch keep the default instead of reading as off.
+        if (typeof p.prefs?.keepUsageHistory !== 'boolean') p.prefs = { ...(p.prefs ?? DEFAULT_PREFS), keepUsageHistory: true }
+        // The ledger itself is stored outside this payload; the in-memory copy
+        // loaded at store creation must survive a merge that lacks the key.
+        if (!Array.isArray(p.usage)) p.usage = []
+        if (!p.usageTitles || typeof p.usageTitles !== 'object' || Array.isArray(p.usageTitles)) p.usageTitles = {}
         // A run cannot survive a reload, so reap any research card that was
         // mid-flight when the tab closed; otherwise it shows "researching"
         // forever. Cards waiting on the user (tier-pick / plan) are kept.
@@ -2615,8 +2693,12 @@ export const useS = create<S>()(
             if (id === '' ? mode === 'new' || mode === 'both' : mode === 'chats' || mode === 'both') kept[id] = t
           }
         }
+        // The permanent usage ledger has its own storage key (storage/usageLedger.ts):
+        // keeping it here would re-serialise the whole history on every save.
+        const { usage, usageTitles, ...rest } = s
+        void usage; void usageTitles
         return {
-          ...s, busy: false, draft: kept[s.chat ?? ''] ?? '', drafts: kept, notice: null, flashMsg: null, activeProject: '',
+          ...rest, busy: false, draft: kept[s.chat ?? ''] ?? '', drafts: kept, notice: null, flashMsg: null, activeProject: '',
           // Per-chat memoized: only the chat that changed is re-mapped.
           chats: mapPersistChats(withoutExpiredTemps(s.chats)),
         }
@@ -2631,7 +2713,7 @@ export const useS = create<S>()(
  * chunk, so they are off the streaming render path entirely. Components that
  * need any of these fields must use their own selector. */
 export const useSConfig = () => useS(useShallow((s) => {
-  const { chats, drafts, busy, draft, notice, flashMsg, ...config } = s
-  void chats; void drafts; void busy; void draft; void notice; void flashMsg
+  const { chats, drafts, busy, draft, notice, flashMsg, usage, usageTitles, ...config } = s
+  void chats; void drafts; void busy; void draft; void notice; void flashMsg; void usage; void usageTitles
   return config
 }))

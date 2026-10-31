@@ -16,7 +16,7 @@
 
 import type { Attempt, Chat, Ep } from './store'
 import { modelNameOf } from './models'
-import { allAttemptAts, allAttemptLogs, attemptCost, endpointNameOf, usageRange } from './usage'
+import { allAttemptAts, allAttemptLogs, attemptCost, endpointNameOf, usageRange, type UsageGroup } from './usage'
 
 export type UsagePeriod = 'session' | 'day' | 'week' | 'month' | 'all' | 'custom'
 
@@ -81,6 +81,9 @@ export type UsageRecord = {
   chatId: string
   chatTitle: string
   messageId: string
+  /** False when the owning chat no longer exists, so Activity cannot jump to
+   *  it. Undefined for callers that did not supply the live chat list. */
+  available?: boolean
   endpointId: string
   endpointName: string
   modelId: string
@@ -169,6 +172,230 @@ export function buildUsageRecordsFrom(logs: Attempt[][], ats: number[], contexts
     }
   }
   return out
+}
+
+/* ---- permanently kept usage history ----
+ *
+ * The dashboard used to derive everything from the attempt logs stored on
+ * assistant messages, so deleting a chat (or letting a temporary one expire)
+ * took its detailed usage with it. Every attempt is therefore also copied into
+ * a small ledger in this browser as soon as a reply finishes. The ledger is
+ * never pruned when its chat goes away; only the storage quota or the explicit
+ * cap can shorten it.
+ *
+ * Rows are the compact, serialisable form of one attempt: no message text, no
+ * tool payloads, nothing that could identify the conversation beyond its id and
+ * a best-known title. */
+
+export type UsageRow = {
+  at: number
+  chatId: string
+  messageId: string
+  /** Endpoint name as logged; helper suffixes (`(classifier)`, `(effort)`) stay. */
+  endpoint: string
+  model: string
+  tin: number
+  tout: number
+  cacheRead: number
+  cacheWrite: number
+  /** Provider-reported spend; 0 when the provider reported none. */
+  cost: number
+  /** Failed attempts count as attempts but never as usage. */
+  failed?: true
+}
+
+/** Attempts kept per browser. Unlike chat history this is deliberately
+ *  bounded: a ledger that grows forever would eventually crowd out chats in
+ *  the same storage, and every row past the newest MAX_USAGE_ROWS is older
+ *  history the dashboard can no longer show anyway. */
+export const MAX_USAGE_ROWS = 12000
+
+/** Identity of one attempt, so a ledger copy and the same attempt still on its
+ *  message never count twice. */
+export const usageRowKey = (r: UsageRow): string =>
+  `${r.chatId}\u0000${r.messageId}\u0000${r.at}\u0000${r.failed ? 1 : 0}\u0000${r.endpoint}\u0000${r.model}\u0000${r.tin}\u0000${r.tout}\u0000${r.cacheRead}\u0000${r.cacheWrite}\u0000${r.cost}`
+
+/** One attempt as a kept row. Tokens and timestamps are clamped exactly like
+ *  the dashboard clamps them, so a malformed value cannot poison the ledger. */
+export function usageRowOf(chatId: string, messageId: string, t: Attempt, fallbackAt: number): UsageRow {
+  const fallback = Number.isFinite(fallbackAt) ? fallbackAt : 0
+  const at = Number.isFinite(t.at) ? (t.at as number) : fallback
+  return {
+    at,
+    chatId: String(chatId),
+    messageId: String(messageId),
+    endpoint: String(t.n ?? ''),
+    model: String(t.m ?? ''),
+    tin: count(t.tin),
+    tout: count(t.tout),
+    cacheRead: count(t.cacheRead),
+    cacheWrite: count(t.cacheWrite),
+    cost: count(t.cost),
+    ...(t.err ? { failed: true as const } : {}),
+  }
+}
+
+/** Rows for every attempt already saved with these chats, oldest first. Used
+ *  to seed the ledger for installs that predate it. */
+export function usageRowsFromChats(chats: Chat[]): UsageRow[] {
+  const out: UsageRow[] = []
+  for (const chat of chats) for (const m of chat.msgs) {
+    if (!m.log?.length) continue
+    for (const t of m.log) out.push(usageRowOf(chat.id, m.id, t, m.at ?? 0))
+  }
+  // Chats are stored newest-first; the ledger is kept oldest-first so the cap
+  // and the "kept since" label refer to the oldest kept attempt.
+  out.sort((a, b) => a.at - b.at)
+  return out.length > MAX_USAGE_ROWS ? out.slice(out.length - MAX_USAGE_ROWS) : out
+}
+
+export function usageTitlesFromChats(chats: Chat[]): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const chat of chats) if (chat.title) out[chat.id] = chat.title
+  return out
+}
+
+/** Add rows the ledger does not hold yet and keep the newest MAX_USAGE_ROWS.
+ *  Returns the input array unchanged when nothing was added, so callers can
+ *  skip a write. */
+export function appendUsageRows(existing: UsageRow[], added: UsageRow[]): UsageRow[] {
+  if (!added.length) return existing
+  const seen = new Set(existing.map(usageRowKey))
+  const fresh: UsageRow[] = []
+  for (const row of added) {
+    const key = usageRowKey(row)
+    if (seen.has(key)) continue
+    seen.add(key)
+    fresh.push(row)
+  }
+  if (!fresh.length) return existing
+  const out = [...existing, ...fresh]
+  return out.length > MAX_USAGE_ROWS ? out.slice(out.length - MAX_USAGE_ROWS) : out
+}
+
+/** Read back a stored ledger defensively: anything unreadable is dropped
+ *  rather than trusted, and the cap applies to persisted data too. */
+export function normUsageRows(v: unknown): UsageRow[] {
+  if (!Array.isArray(v)) return []
+  const out: UsageRow[] = []
+  for (const raw of v) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) continue
+    const r = raw as Record<string, unknown>
+    if (typeof r.chatId !== 'string' || typeof r.messageId !== 'string') continue
+    const at = Number(r.at)
+    if (!Number.isFinite(at)) continue
+    out.push({
+      at,
+      chatId: r.chatId,
+      messageId: r.messageId,
+      endpoint: typeof r.endpoint === 'string' ? r.endpoint : '',
+      model: typeof r.model === 'string' ? r.model : '',
+      tin: count(r.tin),
+      tout: count(r.tout),
+      cacheRead: count(r.cacheRead),
+      cacheWrite: count(r.cacheWrite),
+      cost: count(r.cost),
+      ...(r.failed === true ? { failed: true as const } : {}),
+    })
+  }
+  return out.length > MAX_USAGE_ROWS ? out.slice(out.length - MAX_USAGE_ROWS) : out
+}
+
+/** Chat titles are best-effort labels for chats that may no longer exist. */
+export function normUsageTitles(v: unknown): Record<string, string> {
+  const out: Record<string, string> = {}
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return out
+  for (const [id, title] of Object.entries(v)) if (id && typeof title === 'string' && title) out[id] = title.slice(0, 80)
+  return out
+}
+
+/** Kept rows plus any attempt still present on a live chat, deduplicated and
+ *  ordered oldest first. The ledger is the long-lived source; live attempts
+ *  only fill gaps (a chat restored from sync, or a log written before the
+ *  ledger existed) so nothing is counted twice. */
+export function collectUsageRows(ledger: UsageRow[], logs: Attempt[][], ats: number[], contexts: string[]): UsageRow[] {
+  const rows: UsageRow[] = []
+  const seen = new Set<string>()
+  // A ledger restored from two sources (or written by two paths before it was
+  // deduplicated) must still count each attempt once.
+  for (const row of ledger) {
+    const key = usageRowKey(row)
+    if (seen.has(key)) continue
+    seen.add(key)
+    rows.push(row)
+  }
+  for (let i = 0; i < logs.length; i++) {
+    const [chatId, , messageId, messageAt] = decodeContext(contexts[i])
+    const fallback = Number.isFinite(ats[i]) ? ats[i] : messageAt
+    for (const t of logs[i]) {
+      const row = usageRowOf(chatId, messageId, t, fallback)
+      const key = usageRowKey(row)
+      if (seen.has(key)) continue
+      seen.add(key)
+      rows.push(row)
+    }
+  }
+  return rows.sort((a, b) => a.at - b.at)
+}
+
+/** Same roll-up as `groupUsage` in usage.ts, but from kept rows so the Usage
+ *  widget keeps counting usage whose chat no longer exists. */
+export function groupUsageRows(rows: UsageRow[], group: string | undefined, range: { start: number; end: number }): UsageGroup[] {
+  const grouped = new Map<string, UsageGroup>()
+  for (const r of rows) {
+    if (r.at < range.start || r.at > range.end) continue
+    const endpoint = endpointNameOf(r.endpoint)
+    const key = group === 'model' ? `${endpoint} · ${r.model || 'unknown model'}` : endpoint
+    const v = grouped.get(key) ?? { key, ok: 0, bad: 0, tin: 0, tout: 0 }
+    if (r.failed) v.bad++
+    else v.ok++
+    v.tin += r.tin
+    v.tout += r.tout
+    grouped.set(key, v)
+  }
+  return [...grouped.values()]
+}
+
+/** Dashboard records for kept rows. `titles` supplies the best-known name for
+ *  every chat (live chats override it); `live` marks which chats still exist
+ *  so Activity only offers a jump that can work. */
+export function buildRecordsFromRows(rows: UsageRow[], eps: Ep[], titles: Record<string, string> = {}, live?: Set<string>): UsageRecord[] {
+  return rows.map((r) => {
+    const ep = eps.find((e) => e.name === endpointNameOf(r.endpoint))
+    const priced = attemptCost(eps, { n: r.endpoint, m: r.model, tin: r.tin, tout: r.tout, cacheRead: r.cacheRead, cacheWrite: r.cacheWrite, cost: r.cost })
+    return {
+      at: r.at,
+      chatId: r.chatId,
+      chatTitle: titles[r.chatId] ?? '',
+      messageId: r.messageId,
+      ...(live ? { available: live.has(r.chatId) } : {}),
+      endpointId: ep?.id ?? '',
+      endpointName: ep?.name ?? 'Unknown endpoint',
+      modelId: r.model,
+      modelLabel: ep && r.model ? modelNameOf(ep, r.model) : r.model || 'Unknown model',
+      failed: r.failed === true,
+      tokens: tokensOf({ n: r.endpoint, m: r.model, tin: r.tin, tout: r.tout, cacheRead: r.cacheRead, cacheWrite: r.cacheWrite }),
+      cost: priced.cost,
+      estimated: priced.estimated,
+    }
+  })
+}
+
+/** The Stats page's single entry point: kept history merged with the attempts
+ *  still stored on live chats. Chat titles prefer the live title and fall back
+ *  to the last title seen before a chat was removed. */
+export function buildUsageRecordsFromHistory(input: {
+  ledger: UsageRow[]
+  titles?: Record<string, string>
+  logs: Attempt[][]
+  ats: number[]
+  contexts: string[]
+  eps: Ep[]
+  chats: Chat[]
+}): UsageRecord[] {
+  const titles = { ...(input.titles ?? {}), ...usageTitlesFromChats(input.chats) }
+  const live = new Set(input.chats.map((c) => c.id))
+  return buildRecordsFromRows(collectUsageRows(input.ledger, input.logs, input.ats, input.contexts), input.eps, titles, live)
 }
 
 /** Convenience wrapper used by tests and any caller that has full chats. */

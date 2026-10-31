@@ -7,6 +7,9 @@ const {
   modelKey, chartBuckets, bucketUnitFor, bucketStart, nextBucket, chartSpan,
   seriesTotals, rangeLabel, money, moneyExact, compactTokens, costPerMillion,
   percentOf, sharePct, USAGE_PERIODS,
+  usageRowsFromChats, usageTitlesFromChats, usageRowOf, appendUsageRows,
+  collectUsageRows, buildRecordsFromRows, buildUsageRecordsFromHistory,
+  normUsageRows, normUsageTitles, MAX_USAGE_ROWS,
 } = await import('./usageStats.ts')
 const { attemptCost, allAttemptLogs, allAttemptAts, SESSION_START } = await import('./usage.ts')
 
@@ -394,4 +397,118 @@ test('formatting helpers keep exact values and readable abbreviations', () => {
   assert.equal(money(null, 4), '—')
   assert.equal(moneyExact(0.00001234), '$0.00001234')
   assert.equal(moneyExact(null), 'Cost unavailable')
+})
+
+/* ---- permanently kept usage history ---- */
+
+test('kept rows capture every attempt, including helpers and failures', () => {
+  const chats = [chat([
+    { id: 'a1', r: 'assistant', at: at(2), log: [
+      attempt({ at: at(2) }),
+      { n: 'Alpha (effort)', m: 'high', tin: 7, tout: 0, at: at(2) },
+      { n: 'Alpha', m: 'm1', err: 'boom', at: at(2) },
+      { n: 'Routing', m: '', detail: 'order' },
+    ] },
+  ])]
+  const rows = usageRowsFromChats(chats)
+  assert.equal(rows.length, 4)
+  assert.equal(rows[0].chatId, 'c1')
+  assert.equal(rows[0].messageId, 'a1')
+  assert.equal(rows[0].tin, 100)
+  assert.equal(rows[0].cost, 0, 'no reported cost stays 0 so the price table can price it')
+  assert.equal(rows[1].endpoint, 'Alpha (effort)', 'helper suffixes survive for labelling')
+  assert.equal(rows[2].failed, true)
+  assert.equal(rows[2].tin, 0)
+  assert.equal(rows[3].at, at(2), 'attempts without a timestamp inherit the message time')
+  assert.deepEqual(usageTitlesFromChats(chats), { c1: 'First chat' })
+})
+
+test('an attempt still on a live chat is never counted twice', () => {
+  const chats = [chat([{ id: 'a1', r: 'assistant', at: at(0), log: [attempt()] }])]
+  const rows = usageRowsFromChats(chats)
+  const logs = allAttemptLogs(chats), ats = allAttemptAts(chats), contexts = attemptContexts(chats)
+  const merged = collectUsageRows(rows, logs, ats, contexts)
+  assert.equal(merged.length, 1)
+  assert.equal(buildRecordsFromRows(merged, eps).length, 1)
+  // A second copy (e.g. the same chat restored from sync) still dedupes.
+  assert.equal(collectUsageRows([...rows, ...rows], logs, ats, contexts).length, 1)
+})
+
+test('deleted chats keep their usage and are marked unavailable', () => {
+  const original = [chat([{ id: 'a1', r: 'assistant', at: at(0), log: [
+    attempt({ at: at(0) }),
+    attempt({ at: at(1), tin: 50, tout: 5 }),
+  ] }])]
+  const rows = usageRowsFromChats(original)
+  const records = buildRecordsFromRows(rows, eps, usageTitlesFromChats(original), new Set())
+  assert.equal(records.length, 2)
+  assert.equal(records[0].chatTitle, 'First chat')
+  assert.equal(records[0].available, false)
+  assert.equal(records[0].endpointId, 'e1')
+  assert.equal(records[0].tokens.total, 120)
+  assert.equal(summarize(records).totalTokens, 120 + 55)
+})
+
+test('the live title wins and kept history fills gaps beside live attempts', () => {
+  const live = [chat([{ id: 'a1', r: 'assistant', at: at(0), log: [attempt()] }])]
+  const kept = usageRowsFromChats(live)
+  const renamed = [{ ...live[0], title: 'Renamed' }]
+  const records = buildUsageRecordsFromHistory({
+    ledger: kept, titles: { c1: 'Old title' },
+    logs: allAttemptLogs(renamed), ats: allAttemptAts(renamed), contexts: attemptContexts(renamed),
+    eps, chats: renamed,
+  })
+  assert.equal(records.length, 1)
+  assert.equal(records[0].chatTitle, 'Renamed')
+  assert.equal(records[0].available, true)
+
+  // An attempt that exists only on a live chat (e.g. a chat restored from
+  // sync) is included once, and a deleted chat's rows keep their label.
+  const onlyLive = buildUsageRecordsFromHistory({
+    ledger: kept, titles: { c1: 'First chat' },
+    logs: allAttemptLogs(live), ats: allAttemptAts(live), contexts: attemptContexts(live),
+    eps, chats: [],
+  })
+  assert.equal(onlyLive.length, 1)
+  assert.equal(onlyLive[0].available, false)
+  assert.equal(onlyLive[0].chatTitle, 'First chat')
+})
+
+test('ledger appends dedupe, cap at the newest rows and reject malformed data', () => {
+  const a = usageRowOf('c1', 'a1', attempt(), at(0))
+  const existing = [a]
+  assert.strictEqual(appendUsageRows(existing, []), existing, 'an empty append keeps the same array')
+  assert.strictEqual(appendUsageRows(existing, [a]), existing, 'a duplicate-only append keeps the same array')
+  assert.equal(appendUsageRows([a], [a]).length, 1)
+
+  const many = Array.from({ length: MAX_USAGE_ROWS + 5 }, (_, i) => usageRowOf('c1', 'a1', attempt({ at: i }), 0))
+  const capped = appendUsageRows([], many)
+  assert.equal(capped.length, MAX_USAGE_ROWS)
+  assert.equal(capped[0].at, 5, 'the oldest rows fall off first')
+
+  assert.deepEqual(normUsageRows([
+    { at: 1, chatId: 'c', messageId: 'm', endpoint: 'Alpha', model: 'm1', tin: -5, cost: 'x' },
+    { nope: true },
+    'x',
+    { at: 'nope', chatId: 'c', messageId: 'm' },
+  ]), [{ at: 1, chatId: 'c', messageId: 'm', endpoint: 'Alpha', model: 'm1', tin: 0, tout: 0, cacheRead: 0, cacheWrite: 0, cost: 0 }])
+  assert.deepEqual(normUsageTitles({ a: 'One', b: 2, '': 'x' }), { a: 'One' })
+})
+
+test('widget roll-up groups kept rows by endpoint or model across a window', async () => {
+  const { groupUsageRows } = await import('./usageStats.ts')
+  const rows = [
+    usageRowOf('c1', 'a1', { n: 'Alpha', m: 'm1', tin: 10, tout: 1, at: at(0) }, 0),
+    usageRowOf('c1', 'a1', { n: 'Alpha', m: 'm1', tin: 20, tout: 2, at: at(2) }, 0),
+    usageRowOf('c2', 'a2', { n: 'Alpha (classifier)', m: 'cheap', tin: 5, tout: 0, at: at(2) }, 0),
+    usageRowOf('c2', 'a2', { n: 'Beta', m: 'm1', err: 'no', at: at(2) }, 0),
+  ]
+  const all = groupUsageRows(rows, undefined, { start: 0, end: Infinity })
+  const alpha = all.find((g) => g.key === 'Alpha')
+  assert.deepEqual(alpha, { key: 'Alpha', ok: 3, bad: 0, tin: 35, tout: 3 }, 'helper calls bill to their endpoint')
+  assert.deepEqual(all.find((g) => g.key === 'Beta'), { key: 'Beta', ok: 0, bad: 1, tin: 0, tout: 0 })
+  const byModel = groupUsageRows(rows, 'model', { start: 0, end: Infinity })
+  assert.equal(byModel.length, 3)
+  assert.equal(byModel.find((g) => g.key === 'Alpha · m1').tin, 30)
+  assert.deepEqual(groupUsageRows(rows, undefined, { start: at(1), end: Infinity }).map((g) => g.key), ['Alpha', 'Beta'])
 })

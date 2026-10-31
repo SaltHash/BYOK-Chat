@@ -35,6 +35,9 @@ void hydrateDurable((p) => useS.setState(p as Parameters<typeof useS.setState>[0
     persistStorage.flush()
     allowPersistWritesAfterBoot()
     useS.setState({})
+    // First run with permanent statistics: adopt the attempts already saved on
+    // this device, so old chats keep counting even after they are deleted.
+    useS.getState().seedUsageHistory()
     let prevChats: unknown = useS.getState().chats, prevWs: unknown = useS.getState().workspaces
     useS.subscribe((s) => {
       if (s.chats !== prevChats || s.workspaces !== prevWs) {

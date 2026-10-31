@@ -6,7 +6,8 @@ import { clampWidgetWidth } from '../layout'
 import { fmtDuration, KEYS, WIDGETS } from '../meta'
 import { estimateHistoryTokens, fmt } from '../engine'
 import { qualityPrompt } from '../flair'
-import { allAttemptAts, allAttemptLogs, groupUsage, lastLogMessage, usageRange } from '../usage'
+import { allAttemptAts, allAttemptLogs, lastLogMessage, usageRange } from '../usage'
+import { attemptContexts, collectUsageRows, groupUsageRows } from '../usageStats'
 import { Btn, Surface, cx, type Ic } from './ui'
 import { SortableList, type SortHandleProps } from './dnd'
 
@@ -78,14 +79,21 @@ const UsageWidget = memo(({ handle }: WidgetProps) => {
   const wp = useWidgetPrefs()
   const logs = useS(useShallow((s) => allAttemptLogs(s.chats)))
   const ats = useS(useShallow((s) => allAttemptAts(s.chats)))
+  // Kept history, so the widget keeps counting usage from chats that were
+  // deleted or expired (the Stats page uses the same merged source).
+  const ledger = useS((s) => s.usage)
   const { usagePeriod, usageFrom, usageTo, usageGroup, usageMode, usageFormat, usageTotal } = wp
   // Bucketed so the window refreshes on a later render instead of making the
   // memo depend on a value that changes on every render.
   const renderMinute = Math.floor(Date.now() / 60000)
   const grouped = useMemo(
-    () => groupUsage(logs, ats, usageGroup, usageRange({ period: usagePeriod, from: usageFrom, to: usageTo, now: Date.now() })),
+    () => groupUsageRows(
+      collectUsageRows(ledger, logs, ats, attemptContexts(useS.getState().chats)),
+      usageGroup,
+      usageRange({ period: usagePeriod, from: usageFrom, to: usageTo, now: Date.now() }),
+    ),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [logs, ats, usageGroup, usagePeriod, usageFrom, usageTo, renderMinute],
+    [ledger, logs, ats, usageGroup, usagePeriod, usageFrom, usageTo, renderMinute],
   )
   const usageText = (tin: number, tout: number) => usageFormat.replaceAll('{in}', tin.toLocaleString()).replaceAll('{out}', tout.toLocaleString())
   const totals = grouped.reduce((a, x) => ({ ok: a.ok + x.ok, bad: a.bad + x.bad, tin: a.tin + x.tin, tout: a.tout + x.tout }), { ok: 0, bad: 0, tin: 0, tout: 0 })

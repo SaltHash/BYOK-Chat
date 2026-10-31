@@ -131,7 +131,7 @@ const INFO: Record<string, string> = {
   voice: 'Dictate messages with the microphone and have replies read aloud. Both use the browser\u2019s own speech features, with the language and speed you choose.',
   memory: 'Optional local memory. When enabled, the memory tool summarizes durable details and adds selected memories to future requests.',
   widgets: 'Optional panels beside the chat. Widgets are off by default; enable them here and drag the grip in the panel to rearrange them.',
-  stats: 'Windowed usage dashboard built from saved replies: cost, tokens, models and recent attempts. The lifetime counters at the bottom are separate all-time totals that survive deleting chats.',
+  stats: 'Windowed usage dashboard built from every saved reply, including replies from temporary, archived and deleted chats: cost, tokens, models and recent attempts. The lifetime counters at the bottom are separate all-time totals that survive deleting chats.',
   keys: 'Click Change, then press the keys you want. Shortcuts need Ctrl/Cmd or Alt so they never fire while you type.',
   look: 'Theme, display options, and auto-generated chat names settings.',
   data: 'Export or import your setup. Exports leave API keys out unless you include them.',

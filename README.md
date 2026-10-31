@@ -129,7 +129,9 @@ Settings → Prompts offers the variables as buttons that append the placeholder
 
 ## Usage dashboard
 
-Settings → Stats (visible only while the Stats feature is on) is a local-first usage dashboard built from the attempt logs saved with each reply and the endpoint price tables. It does not call the backend and it does not use the all-time counters for its windowed numbers.
+Settings → Stats (visible only while the Stats feature is on) is a local-first usage dashboard built from every attempt the model makes and the endpoint price tables. It does not call the backend and it does not use the all-time counters for its windowed numbers.
+
+Each attempt is also copied into a permanent ledger in this browser as its reply finishes, so usage from temporary chats, archived chats and deleted chats keeps counting in every view, including Activity. The ledger has its own storage key (`byok.v1:usage`, rows plus the last known chat title) instead of riding the main persist payload, so a growing history is not rewritten with every streamed chunk. It is capped at the newest 12,000 attempts; under storage pressure the oldest half is dropped first, matching how chat history is compacted. **Keep usage from temporary, archived and deleted chats** at the bottom of the page is on by default; turning it off stops copying new attempts, and **Clear kept history** removes what was kept without touching the counters or the chats. Installs from before the ledger existed are seeded from their saved chats on first run. The ledger is device-local: it is not sent through device sync or included in a settings export, so another device keeps its own history.
 
 - **Overview** — total cost, total tokens, average cost per million priced tokens, most-used model, token mix, a compact trend and the top five models. The average card carries a model selector scoped to the selected period.
 - **Models** — the full per-model ranking, searchable and sortable, with share bars, token breakdowns, costs, averages, last-used times and row drill-downs. A model is keyed by endpoint + model id, because the same model can have different prices on two endpoints.
@@ -140,7 +142,7 @@ The period control (`Session`, `Last 24 hours`, `Last 7 days`, `Last 30 days`, `
 
 Costs prefer the provider-reported charge. When none was reported, the endpoint price table is used (cache reads and writes bill at their own rates when configured, otherwise at the input rate) and the value is marked as an estimate. Attempts with neither source stay unpriced: they show as “—” and are excluded from the average, never as free usage. Failed attempts are excluded from every metric but counted and labelled in Activity and model details. Cached tokens are counted once: uncached input already excludes cache reads and writes.
 
-The lifetime counters at the bottom are separate all-time totals (`s.stats`) and survive deleting chats; deleting a chat removes only its detailed usage history. Statistics logic and its tests live in `src/usageStats.ts` and `src/usageStats.test.mjs`.
+The lifetime counters at the bottom are separate all-time totals (`s.stats`) and survive deleting chats; the kept ledger is what preserves the detailed per-attempt usage of a deleted, archived or expired chat. Statistics logic and its tests live in `src/usageStats.ts` and `src/usageStats.test.mjs`.
 
 ## MCP servers (external tools)
 

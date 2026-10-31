@@ -9,16 +9,20 @@ import { useS, featOn, type Stats } from '../store'
 import { allAttemptAts, allAttemptLogs } from '../usage'
 import { settingDomId } from '../settingsCatalog'
 import {
-  attemptContexts, buildUsageRecordsFrom, chartBuckets, bucketUnitFor, BUCKET_LABEL,
+  attemptContexts, buildUsageRecordsFromHistory, chartBuckets, bucketUnitFor, BUCKET_LABEL,
   findModel, formatDate, formatDateTime, formatDay, money, moneyExact, modelKey,
   percentOf, periodLabel, rangeLabel, recordsInRange, sharePct, sortModels, statsRange,
-  summarize, seriesTotals, compactTokens, fmtInt, USAGE_PERIODS,
+  summarize, seriesTotals, compactTokens, fmtInt, MAX_USAGE_ROWS, USAGE_PERIODS,
   type Bucket, type ModelSortKey, type ModelUsage, type StatsRange, type TokenBreakdown,
   type UsagePeriod, type UsageRecord, type UsageSummary, type BucketUnit,
 } from '../usageStats'
-import { Btn, Confirm, HelpTip, Sel, Seg, Surface, cx, useEscapeClose } from './ui'
+import { Btn, Checkbox, Confirm, HelpTip, Sel, Seg, Surface, cx, useEscapeClose } from './ui'
 
-export const STATS_INFO = 'Cost, tokens and per-model usage derived from saved replies. The lifetime counters at the bottom are separate all-time totals that survive deleting chats.'
+export const STATS_INFO = 'Cost, tokens and per-model usage from every saved reply, including replies from temporary, archived and deleted chats. The lifetime counters at the bottom are separate all-time totals.'
+
+/** A kept attempt from a deleted chat has no live title; say so instead of
+ *  showing it as an untitled chat that still exists. */
+const chatLabelOf = (r: UsageRecord): string => r.chatTitle || (r.available === false ? 'Deleted chat' : 'Untitled chat')
 
 const VIEWS: [UsageView, string][] = [
   ['overview', 'Overview'],
@@ -685,7 +689,7 @@ function ActivityView({ records, summary, decimals, ui, setUi, onOpenChat }: {
         <section key={day} className="space-y-1.5" aria-label={day}>
           <h4 className="sticky top-24 z-10 bg-bg/95 py-1 text-xs font-semibold uppercase tracking-wide text-mu backdrop-blur">{day}</h4>
           {items.map((r, idx) => {
-            const canJump = !r.failed && !!r.chatId && !!r.messageId
+            const canJump = !r.failed && !!r.chatId && !!r.messageId && r.available !== false
             const content = (
               <>
                 <span className={cx('mt-1 size-1.5 shrink-0 rounded-full', r.failed ? 'bg-er' : 'bg-ac')} aria-hidden="true" />
@@ -693,7 +697,7 @@ function ActivityView({ records, summary, decimals, ui, setUi, onOpenChat }: {
                 <span className={cx('shrink-0 text-[11px] font-medium', r.failed ? 'text-er' : 'text-ac')}>{r.failed ? 'Failed' : 'OK'}</span>
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-sm" title={r.modelLabel}>{r.modelLabel}</span>
-                  <span className="block truncate text-xs text-mu" title={r.endpointName}>{r.endpointName} · {r.chatTitle || 'Untitled chat'}</span>
+                  <span className="block truncate text-xs text-mu" title={r.endpointName}>{r.endpointName} · {chatLabelOf(r)}</span>
                 </span>
                 <span className="shrink-0 text-right text-xs tabular-nums text-mu">
                   <span className="block">{fmtInt(r.tokens.total)} tok · {r.tokens.uncached} in / {r.tokens.output} out</span>
@@ -703,7 +707,7 @@ function ActivityView({ records, summary, decimals, ui, setUi, onOpenChat }: {
             )
             return canJump ? (
               <button key={`${r.messageId}-${idx}-${r.at}`} type="button" onClick={() => onOpenChat(r.chatId, r.messageId)}
-                title={`Open in chat: ${r.chatTitle || 'Untitled chat'}`}
+                title={`Open in chat: ${chatLabelOf(r)}`}
                 className="flex w-full items-start gap-2 rounded-lg px-2 py-2 text-left hover:bg-surf focus-visible:outline-2 focus-visible:outline-ac">{content}</button>
             ) : (
               <div key={`${r.messageId}-${idx}-${r.at}`} className="flex items-start gap-2 rounded-lg px-2 py-2">{content}</div>
@@ -935,12 +939,12 @@ function ModelDetail({ summary, records, range, now, decimals, eps, detail, from
       <Surface className="space-y-2">
         <h4 className="text-sm font-medium">Recent attempts</h4>
         {recent.length ? recent.map((r) => {
-          const canJump = !r.failed && !!r.chatId && !!r.messageId
+          const canJump = !r.failed && !!r.chatId && !!r.messageId && r.available !== false
           const body = (
             <>
               <span className={cx('text-[11px] font-medium', r.failed ? 'text-er' : 'text-ac')}>{r.failed ? 'Failed' : 'OK'}</span>
               <span className="w-24 shrink-0 text-xs tabular-nums text-mu" title={formatDateTime(r.at)}>{formatDay(r.at)}</span>
-              <span className="min-w-0 flex-1 truncate text-xs text-mu" title={r.chatTitle}>{r.chatTitle || 'Untitled chat'}</span>
+              <span className="min-w-0 flex-1 truncate text-xs text-mu" title={chatLabelOf(r)}>{chatLabelOf(r)}</span>
               <span className="shrink-0 text-xs tabular-nums text-mu">{fmtInt(r.tokens.total)} tok</span>
               <span className="w-20 shrink-0 text-right text-xs tabular-nums">{r.cost == null ? '—' : `${r.estimated ? '≈ ' : ''}${money(r.cost, decimals)}`}</span>
             </>
@@ -972,6 +976,10 @@ export function UsageStats({ onOpenChat }: { onOpenChat: (chatId: string, messag
   const logs = useS(useShallow((s) => allAttemptLogs(s.chats)))
   const ats = useS(useShallow((s) => allAttemptAts(s.chats)))
   const chatMeta = useS((s) => s.chats.map((c) => `${c.id}\u0000${c.title ?? ''}`).join('\u0001'))
+  // Kept history is the long-lived source; attempts still on live chats fill
+  // any gap without being counted twice (see buildUsageRecordsFromHistory).
+  const ledger = useS((s) => s.usage)
+  const ledgerTitles = useS((s) => s.usageTitles)
   const [ui, setUi] = useUi()
   const [now, setNow] = useState(() => Date.now())
   const [resetOpen, setResetOpen] = useState(false)
@@ -998,7 +1006,10 @@ export function UsageStats({ onOpenChat }: { onOpenChat: (chatId: string, messag
   const from = wp.usageFrom ?? ''
   const to = wp.usageTo ?? ''
   const range = useMemo(() => statsRange({ period, from, to, now }), [period, from, to, now])
-  const all = useMemo(() => buildUsageRecordsFrom(logs, ats, attemptContexts(useS.getState().chats), eps), [logs, ats, eps, chatMeta])
+  const all = useMemo(() => {
+    const chats = useS.getState().chats
+    return buildUsageRecordsFromHistory({ ledger, titles: ledgerTitles, logs, ats, contexts: attemptContexts(chats), eps, chats })
+  }, [ledger, ledgerTitles, logs, ats, eps, chatMeta])
   const records = useMemo(() => recordsInRange(all, range), [all, range])
   const summary = useMemo(() => summarize(records), [records])
   const decimals = Math.min(8, Math.max(0, Number(wp.costDecimals ?? 4)))
@@ -1150,6 +1161,11 @@ function Lifetime({ stats, resetOpen, setResetOpen }: {
   setResetOpen: (v: boolean) => void
 }) {
   const resetStats = useS((s) => s.resetStats)
+  const kept = useS((s) => s.usage.length)
+  const keptSince = useS((s) => s.usage[0]?.at ?? 0)
+  const keep = useS((s) => s.prefs.keepUsageHistory !== false)
+  const clearUsageHistory = useS((s) => s.clearUsageHistory)
+  const [clearOpen, setClearOpen] = useState(false)
   return (
     <div className="space-y-3 border-t border-bor pt-4">
       <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
@@ -1165,11 +1181,22 @@ function Lifetime({ stats, resetOpen, setResetOpen }: {
           <Anchor id="chats-started"><div className="rounded-lg bg-surf px-3 py-2"><div className="flex items-center gap-1.5 text-xs text-mu"><CalendarDays size={12} className="text-ac" />Chats started</div><div className="text-lg font-semibold tabular-nums">{stats.chats.toLocaleString()}</div><div className="text-[11px] text-mu">counted on the first message</div></div></Anchor>
         </div>
       </Anchor>
+      <Anchor id="keep-usage-history">
+        <Surface className="space-y-2">
+          <Checkbox checked={keep} set={(v) => useS.getState().setKeepUsageHistory(v)} label="Keep usage from temporary, archived and deleted chats" />
+          <p className="text-xs text-mu">{keep
+            ? `Each attempt is saved in this browser as its reply finishes, so its tokens and cost stay in the dashboard after the chat expires, is archived or is deleted.${kept ? ` ${fmtInt(kept)} attempt${kept === 1 ? '' : 's'} kept${keptSince ? ` since ${formatDate(keptSince)}` : ''}.` : ''}`
+            : 'Only attempts still stored on a chat are counted: deleting a chat, or letting a temporary one expire, removes its detailed usage from the dashboard.'}</p>
+          <p className="text-xs text-mu">The newest {fmtInt(MAX_USAGE_ROWS)} attempts are kept; a full browser storage may keep fewer. Lifetime counters below are unaffected by either choice.</p>
+          {kept > 0 && <Btn v="soft" onClick={() => setClearOpen(true)}>Clear kept history</Btn>}
+        </Surface>
+      </Anchor>
       <div className="flex flex-wrap items-center gap-2">
         <Anchor id="reset-stats"><Btn v="danger" icon={RotateCcw} onClick={() => setResetOpen(true)}>Reset stats</Btn></Anchor>
-        <p className="min-w-0 flex-1 text-xs text-mu">The dashboard above is derived from saved replies, so deleting a chat removes its detailed usage while these lifetime counters remain.</p>
+        <p className="min-w-0 flex-1 text-xs text-mu">Reset clears the all-time counters only; kept history is cleared separately above.</p>
       </div>
-      {resetOpen && <Confirm title="Reset all stats?" text="Tokens, messages and chats-started totals go back to zero. Detailed usage from saved replies is separate and is not deleted." ok="Reset" close={() => setResetOpen(false)} run={() => resetStats()} />}
+      {resetOpen && <Confirm title="Reset all stats?" text="Tokens, messages and chats-started totals go back to zero. Kept usage history and the attempts still stored on chats are not deleted." ok="Reset" close={() => setResetOpen(false)} run={() => resetStats()} />}
+      {clearOpen && <Confirm title="Clear kept usage history?" text="Attempts kept permanently in this browser are removed, including those from temporary, archived and deleted chats. Usage still stored on existing chats and the lifetime counters are not affected." ok="Clear" close={() => setClearOpen(false)} run={() => clearUsageHistory()} />}
     </div>
   )
 }
