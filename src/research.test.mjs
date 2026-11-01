@@ -78,6 +78,22 @@ test('the abstract prefers the closing round and falls back to narration', () =>
   assert.equal(r.researchAbstract({}), '')
 })
 
+test('only the text under an abstract label becomes the summary', () => {
+  const narration = 'I have a settled picture. Key tension resolved: vendors disagree.'
+  // A labelled abstract after a paragraph of narration keeps only the body.
+  assert.equal(
+    r.researchAbstract({ finalText: `${narration}\n\n**Abstract:** This report ranks 13 providers.` }),
+    'This report ranks 13 providers.',
+  )
+  assert.equal(r.researchAbstract({ finalText: `${narration}\n\nAbstract: The short answer is X.` }), 'The short answer is X.')
+  assert.equal(r.researchAbstract({ finalText: `${narration}\n\n## Abstract\n\nThe short answer is X.` }), 'The short answer is X.')
+  // The bold markers and the colon around the label are chrome, not summary.
+  assert.equal(r.abstractBody('**Abstract:** Done.'), 'Done.')
+  assert.equal(r.abstractBody('Nothing labelled here.'), '')
+  // The label must be at the start of a line, not mid-sentence.
+  assert.equal(r.abstractBody('See the abstract: it says so.'), '')
+})
+
 test('a closing text that is already a report is kept, not asked for twice', () => {
   assert.equal(r.looksLikeReport('## Summary\n\nIt is complicated.'), true)
   // A long reply with no headings is a runaway abstract, not a report.
@@ -91,6 +107,7 @@ test('a closing text that is already a report is kept, not asked for twice', () 
   assert.equal(r.looksLikeReport('# Some thoughts\n\nStill just an abstract.'), false)
   assert.equal(r.looksLikeReport(''), false)
   assert.equal(r.countReportSections('## Summary\n\n## Key findings\n\n## Sources note'), 3)
+  assert.equal(r.countReportSections('## Headline answer\n\n## Summary'), 2)
   // The sample text is the report's opening, not its raw head.
   const sample = r.reportSample('# Deep research\n\n## Summary\n\nFusion timelines slipped. Vendors disagree.')
   assert.equal(sample, 'Fusion timelines slipped. Vendors disagree.')
@@ -103,6 +120,9 @@ test('system note asks for citations and structure, then a short abstract', () =
   assert.match(note, /deep research on: fusion/)
   assert.match(note, /\[S1\]/)
   assert.match(note, /## Key findings/)
+  // The report opens with a direct answer before any summary.
+  assert.match(note, /## Headline answer/)
+  assert.match(r.RESEARCH_REPORT_ASK, /## Headline answer/)
   // The report itself is asked for later; the phase ends on a short abstract.
   assert.match(note, /short 2–3 sentence abstract/)
   assert.match(r.RESEARCH_REPORT_ASK, /## Key findings/)

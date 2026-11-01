@@ -816,9 +816,13 @@ export function Composer({ cfg }: { cfg: (t: string) => void }) {
                   <Item
                     icon={Globe}
                     on={g.on}
+                    toggle={{ on: g.on, set: (v) => s.patch({ globalPrompt: { ...g, on: v } }), label: 'Global system prompt' }}
                     onClick={() => s.patch({ globalPrompt: { ...g, on: !g.on } })}
                     title={g.on ? 'Turn the global system prompt off for every chat' : 'Add the global system prompt to every chat'}
                   >Global system prompt</Item>
+                  {/* The global prompt stacks on top of the named prompts rather
+                      than being one of them, so a rule separates it. */}
+                  <div role="separator" aria-hidden="true" className="mx-1 my-1.5 border-t border-bor/60" />
                   <Item icon={X} on={!s.pr} onClick={() => { s.patch({ pr: '' }); close() }}>No override</Item>
                   {s.prompts.map((p) => <Item key={p.id} icon={ScrollText} on={s.pr === p.id} onClick={() => { s.patch({ pr: p.id }); close() }}>{p.name}</Item>)}
                   <Item icon={Settings} onClick={() => { close(); cfg('prompts') }}>Manage…</Item>

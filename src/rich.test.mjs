@@ -42,3 +42,14 @@ test('relative images still render immediately', () => {
   const html = render('![x](/assets/a.png)\n')
   assert.match(html, /<img[^>]*\/assets\/a\.png/)
 })
+
+/* A model that escapes a digit while writing a numeric range ("~5–\\6") is
+ * not writing markdown or math; the stray backslash must not reach the page. */
+test('stray backslashes before digits are dropped, code excepted', () => {
+  const html = render('Plan for ~5–\\6 months of runway.\n')
+  assert.match(html, /~5–6 months of runway/, html)
+  assert.ok(!html.includes('\\6'), html)
+  // Inline code is left exactly as the model wrote it.
+  const code = render('Run `echo 5–\\6` now.\n')
+  assert.match(code, /5–\\6/, code)
+})

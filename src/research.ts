@@ -313,7 +313,8 @@ export function estimateResearchUsage(tier: ResearchTier, price?: { input: numbe
  * truth shared by the research system note and the report ask, so the two can
  * never drift. */
 const REPORT_SECTIONS_SPEC: [string, string][] = [
-  ['Summary', '3–6 sentences: what the question is, what the headline answer is, how confident it is.'],
+  ['Headline answer', 'Open with the direct answer to the user’s question, in one or two plain sentences they can act on. When the answer ranks, compares, or recommends (2+ options, or a best pick), put it in a compact Markdown table instead of a sentence: options as rows, the criterion and the result as columns, citations in the cells, a legend for any score or symbol, and a one-line footnote under the table for the main caveat. Never bury the answer mid-sentence in Summary. If the prompt has no single answerable question, lead with the most important takeaway.'],
+  ['Summary', '3–6 sentences: what the question is, how the headline answer was reached, and how confident it is.'],
   ['Key findings', 'Bulleted findings, one claim per bullet, each ending in its citation(s). Group related bullets under bold sub-heads when there are more than ~6.'],
   ['Evidence', 'One subsection per major claim. Quote or paraphrase the supporting snippet, then cite it. When comparing 2+ options, products, or approaches across multiple criteria — or weighing tradeoffs — add a Markdown table: options as rows, criteria as columns, citations in the cells, a legend for any scores or symbols, then 1–2 sentences of takeaway per table.'],
   ['Limitations', 'Bulleted list: what is uncertain, contested, or missing; what would change the answer.'],
@@ -346,6 +347,7 @@ export function researchSystemNote(query: string, tier: ResearchTier, now: Date 
     `5. Work across diverse angles, sources, and domains. Prefer primary sources, and read only pages whose snippets suggest they will settle a claim.`,
     `6. Distinguish sourced facts from inference in every note and in the final report, and keep a tight search → reflect → refine loop instead of a wide parallel burst. Do not stop after one or two searches.`,
     `7. Verify before you close: confirm each load-bearing claim against a second, independent source. If a claim stays contested or one-sided, say so in the report rather than asserting it.`,
+    `8. Answer the user's actual question. When the prompt asks for a verdict, ranking, recommendation, or comparison, commit to one and make it the first thing the report says — never bury it mid-sentence in the Summary. When the prompt has no single answerable question, lead with the most important takeaway instead.`,
     ``,
     ...planBlock,
     `# Budgets: hard caps, not goals`,
@@ -386,6 +388,7 @@ export const RESEARCH_REPORT_ASK = [
   ...REPORT_SECTIONS_SPEC.map(([h, b]) => `## ${h} — ${b}`),
   '',
   'Cover every item of the agreed plan. Where a plan item stayed unresolved, say so in Limitations instead of inventing an answer.',
+  'The reader must get the answer from the first lines: lead with the direct answer the prompt asked for (a table when it ranks or compares options), not with background, a restatement of the question, or a caveat.',
   'Citations: every factual claim must carry an inline [S1], [S2], etc. citation from the evidence blocks (group as [S1, S2] when several support one claim). A report with unsupported claims is a failure; never invent a source or an id, and never cite an id that is not in the evidence above.',
   'Comparisons: when comparing 2+ options or tradeoffs across criteria, add a Markdown table (options as rows, criteria as columns, citations in cells, legend for scores/symbols) plus a 1–2 sentence takeaway per table.',
   '',
@@ -413,7 +416,7 @@ export function citationUncitedAsk(valid: string[]): string {
 
 /* ---- Report detection / samples ---- */
 
-const REPORT_SECTIONS = /\n#{1,4}\s*(summary|key findings|evidence|limitations|sources note)\b/gi
+const REPORT_SECTIONS = /\n#{1,4}\s*(headline answer|summary|key findings|evidence|limitations|sources note)\b/gi
 
 /** How many of the fixed report section headings appear in `text`. */
 export function countReportSections(text: string): number {
@@ -453,12 +456,32 @@ export function withStepLead(rs: ResearchState, step: ResearchStep): ResearchSta
  * be an abstract, so raw narration never lands in the card as its summary. */
 export function researchAbstract(x: { text?: string; finalText?: string; rounds?: { text: string }[] }): string {
   for (const cand of [x.finalText, x.rounds?.[x.rounds.length - 1]?.text, x.text]) {
-    const t = String(cand ?? '').trim()
-    if (!t) continue
-    if (/^\s*[[{]/.test(t) || t.length > 2000) continue
+    const raw = String(cand ?? '').trim()
+    if (!raw) continue
+    if (/^\s*[[{]/.test(raw)) continue
+    // Models often narrate first and only then label the abstract, so keep the
+    // body under the label and drop the narration that came before it.
+    const t = abstractBody(raw) || raw
+    if (t.length > 2000) continue
     return t
   }
   return ''
+}
+
+/** A model-written abstract usually carries its own label — `**Abstract:**`,
+ * `Abstract:`, or a heading such as `## Abstract`. The label is chrome, and
+ * anything written before it is narration, not summary, so both are dropped. */
+const ABSTRACT_LABEL = /(?:^|\n)[ \t]*(?:#{1,6}[ \t]+(?:\*\*|__)?[ \t]*abstract[ \t]*:?[ \t]*(?:\*\*|__)?|(?:\*\*|__)[ \t]*abstract[ \t]*:?[ \t]*(?:\*\*|__)[ \t]*:?|abstract[ \t]*:)[ \t]*/gi
+
+/** The text after the last abstract label, or '' when the reply has none. */
+export function abstractBody(text: string): string {
+  const t = String(text ?? '')
+  let cut = -1
+  for (const m of t.matchAll(ABSTRACT_LABEL)) {
+    if (m.index == null) continue
+    cut = m.index + m[0].length
+  }
+  return cut < 0 ? '' : t.slice(cut).replace(/^\s+/, '').trim()
 }
 
 /** Filter round texts already shown as step leads, so the reasoning views

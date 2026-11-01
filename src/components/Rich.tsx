@@ -32,6 +32,9 @@ const defs = (t: string) =>
 
 const fix = (t: string) =>
   t.split(INLINE).map((p, i) => (i % 2 ? p : p
+    // Models sometimes escape a digit ("~5–\\6") as if a numeric range were
+    // arithmetic; a backslash before a digit is never markdown, so drop it.
+    .replace(/\\(?=\d)/g, '')
     .replace(/\\\(([\s\S]*?)\\\)/g, (_, m) => '$$' + m + '$$')                              // \( x \) -> inline math
     .replace(/\\\[([\s\S]*?)\\\]/g, (_, m) => '\n\n$$\n' + m.trim() + '\n$$\n\n')             // \[ x \] -> display math
     .replace(/\$(?=\d[\d,]*(?:\.\d+)?(?:\s|$|[.,;:!?)\]]))/g, '\\$')                          // "$5 and $10" is money, not math
