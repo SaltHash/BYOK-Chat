@@ -141,8 +141,18 @@ html[data-contrast] { --mu: color-mix(in srgb, var(--mu) 55%, var(--tx)); --bor:
 
 /* The search / deep-research banner fuses to the composer's edges whatever the
  * density: its negative margins mirror the composer padding token (the fixed
- * -12px utilities underneath only match the comfortable default). */
-.composer-shell .mention-banner { margin: calc(-1 * var(--ui-composer-pad)) calc(-1 * var(--ui-composer-pad)) 0.75rem; }
+ * -12px utilities underneath only match the comfortable default), plus the
+ * frame's own hairline so the banner's border sits exactly over the composer
+ * frame instead of beside it. Its padding follows the same token as the
+ * composer's own content, and its border keeps a colour of its own (the accent
+ * mixed with the app edge), so hovering or focusing the composer never
+ * recolours the banner. */
+.composer-shell .mention-banner {
+  --mention-border: color-mix(in srgb, var(--ac) 32%, var(--bor));
+  margin: calc(-1 * var(--ui-composer-pad) - 1px) calc(-1 * var(--ui-composer-pad) - 1px) 0.75rem;
+  padding: calc(var(--ui-composer-pad) * 0.7) var(--ui-composer-pad);
+  border: 1px solid var(--mention-border);
+}
 
 /* Code wrap (`data-codewrap`): long lines in fenced code blocks soft-wrap
  * instead of scrolling sideways. Inline code always flows. */
@@ -280,11 +290,11 @@ html[data-codewrap] .md pre code { white-space: pre-wrap; overflow-wrap: anywher
 /* Composer frame: hover, focus and open menus (+ attach / model / prompt) or
    dictation all lift the border to the app edge colour (the same brighter
    hairline as the sidebar's right edge), so the active surface reads as
-   focused without pulling in the accent colour. Menus and dictation go a
-   step brighter than the plain focused edge. */
-.composer-shell:hover { border-color: var(--bor); }
-.composer-shell:focus-within { border-color: var(--bor); }
-.composer-shell[data-lit] { border-color: color-mix(in srgb, var(--tx) 10%, var(--bor)); }
+   focused without pulling in the accent colour. Every active state shares
+   that one colour — a selected composer is no brighter than a hovered one. */
+.composer-shell:hover,
+.composer-shell:focus-within,
+.composer-shell[data-lit] { border-color: var(--bor); }
 
 /* Plum and Obsidian have bright muted tones, which makes the default mix read
    as a drawn line. Lean further toward each theme's surface colour so the

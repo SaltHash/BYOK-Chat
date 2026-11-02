@@ -67,7 +67,7 @@ export function MentionBanner({ kind, onDismiss, warning, onEnable }: { kind: 's
   const label = kind === 'research' ? 'Deep research' : 'Search'
   const action = `Cancel ${label.toLowerCase()}`
   return (
-    <div role="status" aria-live="polite" className="mention-banner -mx-3 -mt-3 mb-3 flex flex-wrap items-center gap-2 rounded-t-2xl border-b border-ac/25 bg-ac/10 px-3.5 py-2">
+    <div role="status" aria-live="polite" className="mention-banner flex flex-wrap items-center gap-2 rounded-t-2xl bg-ac/10">
       <I size={14} className="shrink-0 text-ac" aria-hidden="true" />
       <span className="truncate text-xs font-semibold tracking-wide text-ac">{label}</span>
       {warning && (
