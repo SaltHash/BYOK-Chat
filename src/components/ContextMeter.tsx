@@ -66,7 +66,7 @@ function ContextBar({ limit, cpt, busy }: { limit: number; cpt: number; busy: bo
         aria-valuenow={Math.round(used)}
         aria-valuetext={`${fmtInt(used)} of ${fmtInt(max)} estimated tokens${auto ? `; compacts at ${fmtInt(threshold)}` : '; automatic compaction is off'}`}
         title={`${fmtInt(used)} of ${fmtInt(max)} estimated tokens${auto ? `; compacts at ${fmtInt(threshold)}` : '; automatic compaction is off'}`}
-        className="relative h-2 rounded-full bg-hov"
+        className="relative h-2.5 w-full rounded-full bg-black/25 shadow-inner ring-1 ring-inset ring-bor/70"
       >
         <div className="h-full rounded-full bg-ac" style={{ width: `${pct}%` }} />
         {auto && <span aria-hidden="true" title={`Compacts at ${fmtTokens(threshold)}`} className="absolute -inset-y-1 w-0.5 -translate-x-1/2 rounded-full bg-tx/80 shadow-[0_0_0_1px_var(--bg)]" style={{ left: `${mark}%` }} />}
