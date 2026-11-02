@@ -623,7 +623,12 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
                     the muted tone — work that happened on the way to the
                     answer. Only a call that is still running animates. */}
                 <ol className="process-tree">
-                  {count === 0 && <li className="process-node text-mu"><span className="process-dot" aria-hidden="true" />{thinkingLine(m.id)}</li>}
+                  {count === 0 && (
+                    <li className="process-node text-mu">
+                      <span className={busy && last ? 'process-ring' : 'process-dot'} data-live={busy && last ? '' : undefined} aria-hidden="true" />
+                      {thinkingLine(m.id)}
+                    </li>
+                  )}
                   {steps.map((t, i) => (
                     <ProcessStep key={`step-${i}`} t={t} detail={logDetail} timing={logTiming} models={logModels} tokens={!!adv?.showTokenCounts} open={!!expanded[`step-${i}`]} toggle={() => togglePayload(`step-${i}`)} />
                   ))}
@@ -631,10 +636,10 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
                     const [head, desc] = toolNode(toolStep(call.name, call.arguments, call.result), call.name)
                     return (
                       <li key={`tool-${i}`} className="process-node">
-                        <span className="process-ring" data-err={call.error ? '' : undefined} aria-hidden="true" />
+                        <span className="process-dot" data-tool="" data-err={call.error ? '' : undefined} aria-hidden="true" />
                         <div className="min-w-0">
                           <span className="flex flex-wrap items-baseline gap-x-2">
-                            <span className={cx('min-w-0 break-words text-mu', call.error && 'text-er')}>{head}</span>
+                            <span className={cx('min-w-0 break-words text-tx', call.error && 'text-er')}>{head}</span>
                             {logTiming && call.ms != null && <span className={cx('ml-auto shrink-0 pl-2 text-xs tabular-nums text-mu', call.error && 'text-er')}>{duration(call.ms).trim()}</span>}
                           </span>
                           {desc && <div className={cx('mt-0.5 break-words text-xs text-mu', call.error && 'text-er')}>{desc}</div>}
@@ -655,7 +660,7 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
                       <li key={`pending-${i}`} className="process-node">
                         <span className="process-ring" data-live={running ? '' : undefined} aria-hidden="true" />
                         <div className="min-w-0">
-                          <div className="break-words text-mu">{head}</div>
+                          <div className="break-words text-tx">{head}</div>
                           {desc && <div className="mt-0.5 break-words text-xs text-mu">{desc}</div>}
                         </div>
                       </li>

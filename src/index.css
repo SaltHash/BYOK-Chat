@@ -374,24 +374,34 @@ html[data-codewrap] .md pre code { white-space: pre-wrap; overflow-wrap: anywher
    two unrelated rows. The line stops at the first and last dot. */
 .process-tree { position:relative; }
 .process-node { position:relative; padding:.3rem 0 .3rem 1.15rem; }
-.process-node::before { content:''; position:absolute; left:.2rem; top:0; bottom:0; width:1px; background:color-mix(in srgb, var(--mu) 30%, transparent); }
+.process-node::before { content:''; position:absolute; left:4px; top:0; bottom:0; width:1px; background:color-mix(in srgb, var(--mu) 30%, transparent); }
 .process-node:first-child::before { top:.68rem; }
 .process-node:last-child::before { bottom:auto; height:.68rem; }
 .process-dot, .process-ring { position:absolute; left:0; top:.68rem; box-sizing:border-box; width:9px; height:9px; border-radius:50%; }
 /* Model rounds are finished dots. */
 .process-dot { background:color-mix(in srgb, var(--ac) 80%, transparent); box-shadow:0 0 0 2.5px color-mix(in srgb, var(--ac) 14%, transparent); }
 .process-dot[data-err] { background:color-mix(in srgb, var(--er) 85%, transparent); box-shadow:0 0 0 2.5px color-mix(in srgb, var(--er) 14%, transparent); }
-/* Tool calls are open circles in the muted tone: things that happened on the
-   way to the answer, not another finished model step. */
-.process-ring { border:1.5px solid color-mix(in srgb, var(--mu) 60%, transparent); }
+/* A tool call closes its circle once it lands, so a finished step never wears
+   the hollow ring that means "still running"; it sits on the rail in the muted
+   tone, which still keeps it apart from the accent model rounds. */
+.process-dot[data-tool] { background:color-mix(in srgb, var(--mu) 65%, transparent); box-shadow:0 0 0 2.5px color-mix(in srgb, var(--mu) 12%, transparent); }
+.process-dot[data-tool][data-err] { background:color-mix(in srgb, var(--er) 85%, transparent); box-shadow:0 0 0 2.5px color-mix(in srgb, var(--er) 14%, transparent); }
+/* The open circle is a hole in the rail: it carries the panel's own colour, so
+   the hairline is never seen through the middle of a running step. */
+.process-ring { border:1.5px solid color-mix(in srgb, var(--mu) 60%, transparent); background:var(--surf); }
 .process-ring[data-err] { border-color:color-mix(in srgb, var(--er) 80%, transparent); }
-/* Only a call that is still running animates — a slow halo, no spinner. */
-.process-ring[data-live] { border-color:color-mix(in srgb, var(--ac) 75%, transparent); animation:process-ring 1.9s ease-out infinite; }
-@keyframes process-ring {
-  0% { box-shadow:0 0 0 0 color-mix(in srgb, var(--ac) 40%, transparent); }
-  75%, 100% { box-shadow:0 0 0 6px transparent; }
+/* Only a call that is still running stays open, and it wears a shine that
+   travels around its rim — busy, without a spinner. */
+.process-ring[data-live] { border-color:color-mix(in srgb, var(--ac) 70%, transparent); box-shadow:0 0 0 2.5px color-mix(in srgb, var(--ac) 12%, transparent); }
+.process-ring[data-live]::after {
+  content:''; position:absolute; inset:-1px; border-radius:50%;
+  background:conic-gradient(from 0deg, transparent 0deg 200deg, color-mix(in srgb, var(--ac) 85%, transparent) 300deg, transparent 360deg);
+  -webkit-mask:radial-gradient(farthest-side, transparent calc(100% - 2.5px), #000 calc(100% - 2.5px));
+  mask:radial-gradient(farthest-side, transparent calc(100% - 2.5px), #000 calc(100% - 2.5px));
+  animation:process-shine 1.4s linear infinite;
 }
-@media (prefers-reduced-motion: reduce) { .process-ring[data-live] { animation:none; } }
+@keyframes process-shine { to { transform:rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .process-ring[data-live]::after { animation:none; opacity:.5; } }
 .reply-dots { position:relative; display:inline-block; width:1.35rem; height:1.2rem; margin:0 .45rem; flex:none; }
 .reply-dots i { position:absolute; width:.42rem; height:.42rem; border-radius:50%; background:var(--ac); box-shadow:0 0 4px color-mix(in srgb,var(--ac) 30%,transparent);
   animation:
