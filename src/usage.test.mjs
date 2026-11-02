@@ -124,6 +124,24 @@ test('deriveUsage with no logs reports an empty meter at the manual limit', () =
   assert.equal(u.chatCost, 0)
 })
 
+test('deriveUsage sums whole-chat tokens across replies, cache included', () => {
+  const logs = [
+    [{ n: 'A', m: 'm', tin: 100, tout: 10, cacheRead: 60, cacheWrite: 5, at: 1 }],
+    [{ n: 'A', m: 'm', tin: 200, tout: 20, cacheRead: 150, at: 2 }],
+  ]
+  const u = deriveUsage({ logs, lastBy: 'A', eps: [], sel: null, manualLimit: 1000 })
+  assert.deepEqual(
+    { tin: u.chatTin, tout: u.chatTout, read: u.chatCacheRead, write: u.chatCacheWrite, uncached: u.chatUncached },
+    { tin: 300, tout: 30, read: 210, write: 5, uncached: 85 },
+    'chat totals cover every reply, not just the last one',
+  )
+  assert.deepEqual(
+    { read: u.cacheRead, write: u.cacheWrite, uncached: u.uncached },
+    { read: 150, write: 0, uncached: 50 },
+    'the reply breakdown stays scoped to the last reply',
+  )
+})
+
 test('uncached input never goes negative when cache reads exceed input', () => {
   const logs = [[{ n: 'A', m: 'm', tin: 10, tout: 1, cacheRead: 100, cacheWrite: 5, at: 1 }]]
   const u = deriveUsage({ logs, lastBy: '', eps: [], sel: null, manualLimit: 1000 })

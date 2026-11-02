@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useMemo, type ReactNode } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import { TrendingUp } from 'lucide-react'
 import { useS, featOn } from '../store'
@@ -16,15 +16,23 @@ const fmtInt = (n: number) => Math.max(0, Math.round(Number(n) || 0)).toLocaleSt
 const Row = ({ k, v }: { k: string; v: string }) => (
   <div className="flex items-baseline justify-between gap-4 px-2 py-1 text-sm">
     <span className="text-mu">{k}</span>
-    <span className="truncate font-medium">{v}</span>
+    <span className="truncate font-medium tabular-nums">{v}</span>
+  </div>
+)
+
+const Section = ({ title, className, children }: { title: string; className?: string; children: ReactNode }) => (
+  <div className={className}>
+    <div className="px-2 pb-1 text-xs text-mu">{title}</div>
+    {children}
   </div>
 )
 
 /* Header context meter: a ring showing verified (provider-reported) tokens
  * in the open chat as a share of the configured limit, plus the whole
  * chat's cost to the right of the ring. The ring stays empty until the
- * first answer reports its usage; the popover shows the last reply's
- * breakdown (input / output / cache read / cache write / provider / cost).
+ * first answer reports its usage; the popover breaks the last reply and the
+ * whole chat into the same four token categories (uncached input, cached
+ * input, cache write, output) plus each one's cost.
  *
  * Subscriptions are deliberately narrow: everything here is derived from
  * attempt logs, and a streamed chunk keeps its message's `log` reference, so
@@ -41,11 +49,12 @@ export function ContextMeter({ cfg }: { cfg: (t: string) => void }) {
   const u = useMemo(() => deriveUsage({ logs, lastBy, eps, sel, manualLimit }), [logs, lastBy, eps, sel, manualLimit])
   if (!show) return null
 
-  const { hasReply, tok, limit, pct, over, tin, contextTin, contextTout, tout, cacheRead, cacheWrite, uncached, replyCost, chatCost, modelLabel } = u
-  const costLabel = chatCost > 0 ? `≈ $${chatCost.toFixed(decimals)}` : '$0.00'
+  const { hasReply, tok, limit, pct, over, tout, cacheRead, cacheWrite, uncached, replyCost, chatCost, chatTout, chatCacheRead, chatCacheWrite, chatUncached, modelLabel } = u
+  // Both sections price the same way: an estimate marker when there is spend
+  // to show, an em dash when the provider reported no price at all.
+  const money = (n: number) => (n > 0 ? `≈ $${n.toFixed(decimals)}` : '—')
   // Header label: no "≈" and always 3 decimals, independent of the popup's decimals setting.
   const costHeader = `$${chatCost.toFixed(3)}`
-  const cost = replyCost
 
   const R = 15.5, C = 2 * Math.PI * R
   const label = `${fmtTokens(tok)} of ${fmtTokens(limit)} tokens${hasReply ? ` · last reply by ${lastBy || 'unknown model'}` : ''}`
@@ -85,28 +94,28 @@ export function ContextMeter({ cfg }: { cfg: (t: string) => void }) {
       >
         {(close) => (
           <div className="space-y-2 p-2">
-            <div className="px-2 pt-1 text-sm font-medium">Context usage</div>
+            <div className="px-2 pt-1 text-sm font-medium">Usage</div>
             {hasReply ? (
-              <div>
-                <div className="px-2 pb-1 text-xs text-mu">Last reply{modelLabel ? ` · ${modelLabel}` : ''}</div>
-                <Row k="Input (final round)" v={fmtInt(contextTin)} />
-                <Row k="Output (final round)" v={fmtInt(contextTout)} />
-                <Row k="Uncached input (all rounds)" v={fmtInt(uncached)} />
-                <Row k="Output (all rounds)" v={fmtInt(tout)} />
-                <Row k="Cache read (all rounds)" v={fmtInt(cacheRead)} />
-                <Row k="Cache write (all rounds)" v={fmtInt(cacheWrite)} />
-                <Row k="Prompt total (all rounds)" v={fmtInt(tin)} />
-                <Row k="Cost estimate" v={cost > 0 ? `≈ $${cost.toFixed(decimals)}` : 'no priced usage'} />
-              </div>
+              <>
+                <Section title={`Last reply${modelLabel ? ` · ${modelLabel}` : ''}`}>
+                  <Row k="Uncached input" v={fmtInt(uncached)} />
+                  <Row k="Cached input" v={fmtInt(cacheRead)} />
+                  <Row k="Cache write" v={fmtInt(cacheWrite)} />
+                  <Row k="Output" v={fmtInt(tout)} />
+                  <Row k="Cost" v={money(replyCost)} />
+                </Section>
+                <Section title="This chat" className="border-t border-bor pt-2">
+                  <Row k="Uncached input" v={fmtInt(chatUncached)} />
+                  <Row k="Cached input" v={fmtInt(chatCacheRead)} />
+                  <Row k="Cache write" v={fmtInt(chatCacheWrite)} />
+                  <Row k="Output" v={fmtInt(chatTout)} />
+                  <Row k="Cost" v={money(chatCost)} />
+                </Section>
+                {over && <p className="px-2 text-xs text-er">Over budget: oldest messages are trimmed from requests until it fits.</p>}
+              </>
             ) : (
               <p className="px-2 text-xs text-mu">No replies yet — reported tokens appear here after the first answer.</p>
             )}
-            <div className="border-t border-bor pt-2">
-              <div className="px-2 pb-1 text-xs text-mu">This chat</div>
-              <Row k="Context tokens" v={`${fmtInt(tok)} of ${fmtInt(limit)}`} />
-              <Row k="Cost" v={costLabel} />
-              {over && <p className="px-2 text-xs text-er">Over budget: oldest messages are trimmed from requests until it fits.</p>}
-            </div>
             {statsOn && (
               <div className="border-t border-bor pt-2">
                 <button

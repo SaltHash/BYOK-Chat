@@ -155,6 +155,14 @@ export type Usage = {
   uncached: number
   replyCost: number
   chatCost: number
+  /** Whole-chat token totals across every reply, in the same categories as
+   *  the last reply's breakdown. `chatTin` counts the full prompt (cached
+   *  tokens included), so uncached is derived the same way as `uncached`. */
+  chatTin: number
+  chatTout: number
+  chatCacheRead: number
+  chatCacheWrite: number
+  chatUncached: number
   modelLabel: string
 }
 
@@ -234,10 +242,17 @@ export function deriveUsage({ logs, lastBy, eps, sel, manualLimit }: UsageSource
   const priced = tin > 0 || tout > 0 ? entries.reduce((a, t) => a + costOf(eps, t), 0) : 0
   const replyCost = reported > 0 ? reported : priced
 
-  // Whole-chat cost: every logged entry in the chat (not just the last reply),
-  // per entry preferring reported spend and falling back to the price table.
-  let chatCost = 0
-  for (const log of logs) for (const t of log) if (billable(t)) chatCost += costOf(eps, t)
+  // Whole-chat totals: every logged entry in the chat (not just the last
+  // reply), per entry preferring reported spend and falling back to the price
+  // table. Tokens use the same categories the last reply's breakdown shows.
+  let chatCost = 0, chatTin = 0, chatTout = 0, chatCacheRead = 0, chatCacheWrite = 0
+  for (const log of logs) for (const t of log) if (billable(t)) {
+    chatCost += costOf(eps, t)
+    chatTin += t.tin ?? 0
+    chatTout += t.tout ?? 0
+    chatCacheRead += t.cacheRead ?? 0
+    chatCacheWrite += t.cacheWrite ?? 0
+  }
 
   const tok = contextTin + contextTout
   return {
@@ -255,6 +270,11 @@ export function deriveUsage({ logs, lastBy, eps, sel, manualLimit }: UsageSource
     uncached: Math.max(0, tin - cacheRead - cacheWrite),
     replyCost,
     chatCost,
+    chatTin,
+    chatTout,
+    chatCacheRead,
+    chatCacheWrite,
+    chatUncached: Math.max(0, chatTin - chatCacheRead - chatCacheWrite),
     modelLabel,
   }
 }
