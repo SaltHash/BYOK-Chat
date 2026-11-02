@@ -4,6 +4,7 @@ import { GitBranch, ChevronLeft, ChevronRight, ChevronDown, Server, Cpu, Copy, C
 import { useS, useLive, usable, featOn, previewSysFor, activeWorkspaceForChat, pinnedReplyOf, type LogDetail, type Msg } from '../store'
 import { clampWorkspaceFrac, roundFrac, CHAT_WIDTH } from '../layout'
 import { focusComposer, startPointerDrag } from '../hooks'
+import { useProcessLogEpoch } from '../uiSignals'
 import { createFrameThrottle } from '../throttle'
 import { CI, fmtDuration } from '../meta'
 import { formatMsgDateTime, formatMsgTime } from '../time'
@@ -447,6 +448,10 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
     return () => clearTimeout(t)
   }, [flash, m.id])
   const [log, setLog] = useState(false)
+  // Header → Actions → Collapse process logs closes every open panel in the
+  // transcript, including this one, without touching the saved steps.
+  const logEpoch = useProcessLogEpoch()
+  useEffect(() => { if (logEpoch > 0) setLog(false) }, [logEpoch])
   const [thinkingOpen, setThinkingOpen] = useState(false)
   const [ok, setOk] = useState(false)
   const [srcOpen, setSrcOpen] = useState<boolean | null>(null)

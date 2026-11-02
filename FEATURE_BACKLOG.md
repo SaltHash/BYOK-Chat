@@ -6,8 +6,6 @@ partly addresses an idea, the remaining gap is described explicitly.
 
 ## Chat & conversation
 
-- **Collapse all process logs** — one control to close every open "Process to
-  answer" panel after reviewing a long tool-heavy reply.
 - **Reply bookmarks** — bookmark individual messages and list them in the
   sidebar (distinct from chat pinning).
 
@@ -106,6 +104,9 @@ round limit. What is still missing, roughly by value:
 - **Partial-read precision** — any line-range read currently satisfies
   read-before-write; track the covered ranges so a patch outside them asks for
   another read.
+- **Serialize MCP side effects** — MCP calls run in parallel today. Use the
+  server's `readOnlyHint` annotations to parallelize reads and run the rest in
+  order, so two writes cannot race.
 - **Approval policy for side effects** — MCP tools and workspace deletes run
   without asking. Add per-server approval for destructive tools, remembered per
   server, matching the sandbox-vs-approval split coding agents use.

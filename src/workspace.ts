@@ -1795,6 +1795,9 @@ export function applyWorkspaceCall(
         }],
       }
       scaffolded = tpl.files.length
+      // A fresh scaffold is fully known to the model: it chose the template, so
+      // its first edits of those files must not demand a redundant read.
+      for (const f of tpl.files) ctx.seen?.add(sanitizePath(f.path))
     }
   } else if (!next[targetId]) {
     throw Error(`Workspace not found: ${input.workspaceId}`)

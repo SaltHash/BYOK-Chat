@@ -1,10 +1,11 @@
 import { useState } from 'react'
-import { PanelLeft, PanelRight, Download, Command, Share2, MoreVertical, Bookmark, Hourglass, Settings2 } from 'lucide-react'
+import { PanelLeft, PanelRight, Download, Command, Share2, MoreVertical, Bookmark, Hourglass, Settings2, ListCollapse } from 'lucide-react'
 import { useShallow } from 'zustand/react/shallow'
 import { useS, exportChat, featOn, DEFAULT_ADVANCED } from '../store'
 import { Btn, Pop, Toggle, RangeSlider, Item, cx } from './ui'
 import { ContextMeter } from './ContextMeter'
 import { ShareDialog } from './ShareDialog'
+import { collapseAllProcessLogs } from '../uiSignals'
 
 const Slider = ({ l, v, min, max, step, set, off }: { l: string; v: number; min: number; max: number; step: number; set: (n: number) => void; off: boolean }) => (
   <div className={off ? 'opacity-40' : ''}>
@@ -60,6 +61,7 @@ export function Header({ side, toggle, cfg, pal, title }: { side: boolean; toggl
   // Narrow boolean slices: the header re-renders only when these flip, not on
   // every streamed chunk of the open chat.
   const hasChat = useS((s) => s.chats.some((c) => c.id === s.chat))
+  const showLog = useS((s) => s.prefs.showLog)
   const curTemporary = useS((s) => { const c = s.chats.find((x) => x.id === s.chat); return c?.temporary === true || (s.chat === '' && s.newChatPending === 'temporary') })
   const tempExpiresAt = useS((s) => { const c = s.chats.find((x) => x.id === s.chat); return c?.temporary ? c.expiresAt : undefined })
   const tempHours = useS((s) => s.prefs.tempHours)
@@ -95,6 +97,7 @@ export function Header({ side, toggle, cfg, pal, title }: { side: boolean; toggl
               <Item icon={Command} onClick={() => { close(); pal() }}>Command palette</Item>
               <Item icon={Share2} off={!hasChat} onClick={() => { close(); openShare() }}>Share read-only link</Item>
               <Item icon={Download} onClick={() => { close(); exportChat() }}>Export chat</Item>
+              {showLog && <Item icon={ListCollapse} onClick={() => { close(); collapseAllProcessLogs() }}>Collapse process logs</Item>}
               <Item icon={Bookmark} off={!curTemporary} onClick={() => { close(); keepPermanent() }}>Save as permanent chat</Item>
               {featOn({ features }, 'widgets') && <Item icon={PanelRight} on={anyW && rail} onClick={() => { close(); anyW ? patch({ rail: !rail }) : cfg('widgets') }}>Widgets panel</Item>}
               {paramsOn && (
