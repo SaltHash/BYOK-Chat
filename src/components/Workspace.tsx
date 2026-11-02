@@ -461,7 +461,7 @@ export function WorkspacePanel({ msg, live, workspace, selectedRevisionId, setSe
     if (busy) return
     const file = selectedFile
     if (file) {
-      void send(`Please restore file "${file.path}" to the selected revision. Call workspace_upsert with action "update", the same path, and that version's exact content.`, [])
+      void send(`Please restore file "${file.path}" to the selected revision. Call workspace_upsert with action "update", the same path, and that version's exact content. Read the file in this turn before editing it.`, [])
     }
   }
 
@@ -515,7 +515,7 @@ export function WorkspacePanel({ msg, live, workspace, selectedRevisionId, setSe
   const askAboutFile = () => {
     if (busy || !selectedFile) return
     const clipped = selectedFile.content.length > 8000 ? selectedFile.content.slice(0, 8000) + '\n…[truncated]' : selectedFile.content
-    void send(`About \`${selectedFile.path}\` in workspace "${workspace.name}" (workspaceId "${workspace.id}"):\n${fence(highlightLanguageFor(selectedFile.path, selectedFile.language), clipped)}\n\nReply with your thoughts, and apply any changes I ask for with workspace_upsert calls against that workspaceId.`, [])
+    void send(`About \`${selectedFile.path}\` in workspace "${workspace.name}" (workspaceId "${workspace.id}"):\n${fence(highlightLanguageFor(selectedFile.path, selectedFile.language), clipped)}\n\nReply with your thoughts, and apply any changes I ask for with workspace_upsert calls against that workspaceId. Read the file in this turn before editing it.`, [])
   }
 
   const saveName = () => {

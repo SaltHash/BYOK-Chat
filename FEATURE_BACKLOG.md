@@ -74,3 +74,48 @@ partly addresses an idea, the remaining gap is described explicitly.
   but revealing older messages widens it; investigate true two-sided windowing
   without losing scroll position or accessibility.
 - **Settings tab code splitting** — load heavy tabs (Endpoints, Tools) lazily.
+
+## Tool pipeline audit (2026-11)
+
+The audit shipped read-before-write for workspace edits, ordered workspace
+writes, a 100k-character tool-result cap, and a tool-free wrap-up turn at the
+round limit. What is still missing, roughly by value:
+
+- **Strict tool schemas** — OpenAI accepts `strict: true` and Anthropic
+  compiles `input_schema` with `strict`; both require every property in
+  `required`, which the shared schemas do not satisfy yet. Emit strict schemas
+  per provider so invalid arguments fail in the sampler instead of at runtime.
+- **Tool choice control** — let the user (or a chat setting) pick Auto,
+  Required or None for a turn, including `disable_parallel_tool_use`, instead
+  of always offering every enabled tool.
+- **Deferred tool definitions** — MCP servers can add dozens of tools whose
+  schemas are re-sent on every round. Past ~20 tools, list names and
+  descriptions only and expose a `tool_search` loader.
+- **MCP result paging** — results are capped now, but the model cannot ask an
+  MCP tool for a range or cursor; add a limit/cursor argument where the server
+  schema allows and label a cut result as partial, not complete.
+- **Portable tool errors** — OpenAI has no `is_error` flag. Prefix error
+  results with `ERROR:` plus a retry hint so non-Anthropic models treat them as
+  failures rather than reference data.
+- **Citation support check** — the repair passes fix invented and missing ids;
+  add a claim-level pass that checks the cited snippet actually supports the
+  sentence (the citation-agent pattern) and rewrites only the failures.
+- **Multi-query search** — one query per call is right for chat, but research
+  pays a round trip per query. Accept 2–3 partitioned queries in one call,
+  dedupe by URL, and keep run-wide source ids.
+- **Partial-read precision** — any line-range read currently satisfies
+  read-before-write; track the covered ranges so a patch outside them asks for
+  another read.
+- **Approval policy for side effects** — MCP tools and workspace deletes run
+  without asking. Add per-server approval for destructive tools, remembered per
+  server, matching the sandbox-vs-approval split coding agents use.
+- **Retry one failed step** — a tool error is explained to the model, but the
+  user cannot retry just that call from the process panel.
+- **Truncation badge** — a result cut at the size cap looks complete in the
+  payload viewer; mark it explicitly and offer the narrower follow-up.
+- **Live MCP progress** — an MCP call shows one spinner; stream progress
+  notifications when the server sends them.
+- **Research spend ceiling** — tiers cap searches and time, not money. Add an
+  optional dollar ceiling that stops the run and reports what it gathered.
+- **Process-tree keyboard order** — the tree is reachable but reading order and
+  focus order differ when a payload expands; verify with a screen reader.

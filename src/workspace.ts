@@ -1605,7 +1605,14 @@ function applyOneFileOp(files: WorkspaceFile[], op: WorkspaceFileOp): { files: W
 export function applyWorkspaceCall(
   workspaces: Record<string, Workspace>,
   input: WorkspaceCallInput,
-  ctx: { msgId: string; uid: () => string; now?: number },
+  ctx: {
+    msgId: string
+    uid: () => string
+    now?: number
+    /** Paths this reply has read or written. Read-before-write is enforced
+     *  against it, so an edit is only accepted for text the model has seen. */
+    seen?: Set<string>
+  },
 ): { workspaces: Record<string, Workspace>; selectedRevisionId: string; result: WorkspaceCallResult } {
   const now = ctx.now ?? Date.now()
   const action = String(input.action ?? '')
@@ -1685,6 +1692,7 @@ export function applyWorkspaceCall(
     }
 
     if (action === 'read') {
+      ctx.seen?.add(file.path)
       const truncatedFile = file.truncated === true || isTruncatedContent(file.content)
       const range = readWorkspaceRange(file.content, { startLine: input.startLine, endLine: input.endLine })
       const rangeText = range.startLine === range.endLine
@@ -1799,6 +1807,17 @@ export function applyWorkspaceCall(
   const sameMessage = latest?.msgId === ctx.msgId
   let files = sameMessage ? latest.files : (latest?.files ?? [])
 
+  // Read-before-write: an edit against a file the model never opened can only
+  // be blind, and a "create" over an existing path would silently replace a
+  // file it has not seen. The check is per reply because completed replies drop
+  // their tool rounds from the request, so the file is no longer in context.
+  const seenPath = sanitizePath(input.path ?? '')
+  const replacesExisting = action === 'create' && files.some((f) => f.path === seenPath)
+  const mustRead = ['update', 'patch', 'continue', 'move', 'delete'].includes(action) || replacesExisting
+  if (ctx.seen && mustRead && !(action === 'patch' && input.dryRun === true) && !ctx.seen.has(seenPath)) {
+    throw Error(`Read ${seenPath} before changing it: call workspace_upsert with action "read" (a line range is enough for a local change), then retry the ${action}. Nothing was written.`)
+  }
+
   // A dry-run patch proves the diff applies and shows the result without
   // touching the workspace or adding a revision. This is the safe way to
   // preview a risky edit before committing it.
@@ -1830,6 +1849,11 @@ export function applyWorkspaceCall(
   const notes: string[] = []
   {
     const r = applyOneFileOp(files, { action, path: input.path ?? '', language: input.language, content: input.content, to: input.to })
+    // A successful write also counts as knowing the file, so a follow-up patch
+    // in the same reply does not need another read.
+    ctx.seen?.add(sanitizePath(input.path ?? ''))
+    if (action === 'move') ctx.seen?.add(sanitizePath(input.to ?? ''))
+    if (action === 'delete') ctx.seen?.delete(sanitizePath(input.path ?? ''))
     files = r.files
     notes.push(r.note)
   }

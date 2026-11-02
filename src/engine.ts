@@ -378,6 +378,18 @@ export function toolsFor(enabled: Record<string, boolean>, provider: Ep['type'])
   })
 }
 
+/* One tool can return a whole page, a grep across a project, or an MCP
+ * payload; an unbounded result crowds everything else out of the model's
+ * attention budget. Claude Code caps tool responses near 25k tokens, so cap
+ * ours at the same order of magnitude and tell the model how to ask for less
+ * instead of silently losing the tail. */
+export const MAX_TOOL_RESULT_CHARS = 100_000
+
+export function capToolResult(result: string): string {
+  if (result.length <= MAX_TOOL_RESULT_CHARS) return result
+  return `${result.slice(0, MAX_TOOL_RESULT_CHARS)}\n\n[Result cut at ${MAX_TOOL_RESULT_CHARS.toLocaleString()} characters to protect the context window. Ask for less next time: a narrower query, fewer results, a line range, or a shorter page excerpt.]`
+}
+
 export async function executeTool(call: ToolCall, enabled: Record<string, boolean>, handlers: Record<string, (args: any) => unknown | Promise<unknown>> = {}): Promise<ToolResult> {
   const started = performance.now()
   try {
@@ -405,7 +417,7 @@ export async function executeTool(call: ToolCall, enabled: Record<string, boolea
       }
       if ((prop.type === 'string' && typeof value !== 'string') || (prop.type === 'number' && typeof value !== 'number') || (prop.type === 'integer' && !Number.isInteger(value))) throw Error(`Invalid argument: ${key}`)
     }
-    const result = String(await (handlers[call.name] ? handlers[call.name](args) : spec.run(args)))
+    const result = capToolResult(String(await (handlers[call.name] ? handlers[call.name](args) : spec.run(args))))
     return { ...call, result, ms: Math.round(performance.now() - started) }
   } catch (error: any) { return { ...call, result: error?.message || 'Tool execution failed', error: true, ms: Math.round(performance.now() - started) } }
 }
@@ -1040,9 +1052,17 @@ export async function stream(e: Ep, sys: string, ms: Wire[], on: (t: string) => 
   return { text: all, toolCalls: [...calls.values()], tin: tin || est(JSON.stringify(ms) + sys), tout: tout || est(all + callText), cost, cacheRead, cacheWrite, finish }
 }
 
+/* Appended to the system prompt for the one final turn after the tool-round
+ * cap. The model already has every result; withholding the tools and asking
+ * it to answer is better than discarding a nearly finished reply. */
+export const TOOL_BUDGET_NOTE = 'The tool budget for this reply is used up, so no further tool calls can run. Answer now from the results already gathered. State what the evidence supports, and name anything that is still unverified instead of guessing or asking for another search.'
+
 export async function runToolLoop(e: Ep, sys: string, messages: (rounds: { text: string; calls: ToolResult[] }[]) => Wire[], enabled: Record<string, boolean>, on: (text: string) => void, ac: AbortController, o: O = {}, onSummary: (text: string) => void = () => {}, onRound: (rounds: { text: string; calls: ToolResult[] }[]) => void = () => {}, maxRounds = 8, handlers: Record<string, (args: any) => unknown | Promise<unknown>> = {}, onToolDelta: (calls: ToolCall[]) => void = () => {}, execTools: { serialize?: string[]; maxParallel?: number } = {}) {
   const rounds: { text: string; calls: ToolResult[] }[] = []
   let text = '', finalText = '', tin = 0, tout = 0, contextTin = 0, contextTout = 0, cost = 0, cacheRead = 0, cacheWrite = 0, roundCount = 0
+  /* True when the round cap was reached and the reply had to be written from
+   * the results already gathered (surfaced to the user as a partial answer). */
+  let capped = false
   /* Stop reason of the final (non-tool) round, surfaced to the store so a
      reply cut off by the output cap can offer to continue. */
   let finish: string | null = null
@@ -1091,14 +1111,48 @@ export async function runToolLoop(e: Ep, sys: string, messages: (rounds: { text:
     if (typeof (x as { cacheWrite?: unknown }).cacheWrite === 'number' && Number.isFinite((x as { cacheWrite?: number }).cacheWrite!)) cacheWrite += (x as { cacheWrite?: number }).cacheWrite!
     if (!x.toolCalls.length) { finalText = x.text; finish = (x as { finish?: string | null }).finish ?? null; break }
     const limited = Number.isFinite(maxRounds) && maxRounds > 0
-    if (limited && roundCount >= maxRounds) throw withCode(`Tool execution limit reached (${maxRounds} rounds).`, 'tool_limit')
+    if (limited && roundCount >= maxRounds) {
+      // The cap is a stopping condition, not a crash: make one last call with
+      // tools withheld so the work already done becomes an answer. The old
+      // behaviour threw away the whole reply.
+      capped = true
+      pendingSep = true
+      let wrapped = false
+      const onWrap = (t: string) => {
+        if (!t) return
+        if (!wrapped) {
+          wrapped = true
+          if (text && !/\s$/.test(text) && !/^\s/.test(t)) { text += '\n\n'; on('\n\n') }
+        }
+        text += t
+        on(t)
+      }
+      const wrapStart = Date.now()
+      let w: Awaited<ReturnType<typeof stream>>
+      try {
+        w = await stream(e, `${sys}${sys ? '\n\n' : ''}${TOOL_BUDGET_NOTE}`, messages(rounds), onWrap, ac, o, onSummary, [], onToolDelta)
+      } catch {
+        streamMs += Math.max(0, Date.now() - wrapStart)
+        throw withCode(`Tool execution limit reached (${maxRounds} rounds).`, 'tool_limit')
+      }
+      streamMs += Math.max(0, Date.now() - wrapStart)
+      tin += w.tin; tout += w.tout
+      contextTin = w.tin; contextTout = w.tout
+      if (Number.isFinite(w.cost) && w.cost > 0) cost += w.cost
+      cacheRead += w.cacheRead || 0
+      cacheWrite += w.cacheWrite || 0
+      if (w.toolCalls.length) throw withCode(`Tool execution limit reached (${maxRounds} rounds).`, 'tool_limit')
+      finalText = w.text
+      finish = w.finish ?? finish
+      break
+    }
     roundCount++
     const calls = await executeToolCalls(x.toolCalls, enabled, handlers, execTools)
     rounds.push({ text: x.text, calls })
     onRound(rounds)
     pendingSep = true
   }
-  return { text, finalText, rounds, tin, tout, contextTin, contextTout, streamMs, cost, cacheRead, cacheWrite, finish }
+  return { text, finalText, rounds, tin, tout, contextTin, contextTout, streamMs, cost, cacheRead, cacheWrite, finish, capped }
 }
 
 export async function testEp(e: Ep) {

@@ -1390,7 +1390,7 @@ export const useS = create<S>()(
             if (featOn(get(), 'skills') && (p.skills ?? []).length) toolHandlers[SKILL_TOOL_NAME] = skillHandler
             const onToolDeltaCb = (calls: ToolCall[]) => { useLive.getState().set(mid, calls.map((c) => ({ ...c }))) }
             // One page read at a time; searches in small parallel batches.
-            const execTools = { serialize: ['fetch_page'], maxParallel: 3 }
+            const execTools = { serialize: ['fetch_page', 'workspace_upsert'], maxParallel: 3 }
             // Run the loop seeded from the evidence gathered so far. onRound
             // snapshots the accumulated rounds, so a retry (or the min-evidence
             // nudge below) continues the transcript instead of restarting it.
@@ -1750,6 +1750,10 @@ export const useS = create<S>()(
             // the live preview cannot show text the committed reply does not.
             useLive.getState().clear(mid)
             const toolRounds: { text: string; calls: ToolResult[] }[] = []
+            // Files this reply has read (or written) already. Workspace edits
+            // are refused for anything else, so the model cannot patch text it
+            // has never seen in this conversation turn.
+            const seenWorkspacePaths = new Set<string>()
             let responseTokensIn = 0, responseTokensOut = 0
             // Generation-speed accounting: runToolLoop reports the total time
             // spent inside stream() across every round, so intermediate
@@ -1920,7 +1924,7 @@ export const useS = create<S>()(
                     revisionName, action, path, language, content, template,
                     startLine, endLine, query, regex, caseSensitive, glob, contextLines, maxResults, to, against, dryRun,
                   },
-                  { msgId: mid, uid },
+                  { msgId: mid, uid, seen: seenWorkspacePaths },
                 )
                 const wid = result.workspaceId
                 if (!inspection) {
@@ -1951,7 +1955,7 @@ export const useS = create<S>()(
               },
               // Live tool deltas feed the ephemeral streaming preview; rewritten
               // wholesale each chunk so backspaces re-render instead of appending.
-            }, (calls) => { useLive.getState().set(mid, calls.map((c) => ({ ...c }))) })
+            }, (calls) => { useLive.getState().set(mid, calls.map((c) => ({ ...c }))) }, { serialize: ['workspace_upsert'], maxParallel: 4 })
               txt = x.text
               responseTokensIn = x.tin; responseTokensOut = x.tout
               const current = get().chats.find(c => c.id === id)
@@ -1974,7 +1978,7 @@ export const useS = create<S>()(
               // the tool result — a newly created workspace only has an id in
               // its result).
               const workspaceIds = extractWorkspaceIds(toolRounds.flatMap((r) => r.calls))
-              edit(id, mid, (m) => ({ ...m, tps: Math.round(responseTokensOut / Math.max(genMs / 1000, 0.001) * 10) / 10, toolRounds, ...(toolRounds.length ? { toolFinal: x.text } : {}), ...(x.finish === 'length' || x.finish === 'max_tokens' ? { trunc: true } : {}), workspaceIds: [...new Set([...(m.workspaceIds ?? []), ...workspaceIds])] }))
+              edit(id, mid, (m) => ({ ...m, tps: Math.round(responseTokensOut / Math.max(genMs / 1000, 0.001) * 10) / 10, toolRounds, ...(toolRounds.length ? { toolFinal: x.text } : {}), ...(x.finish === 'length' || x.finish === 'max_tokens' ? { trunc: true } : {}), ...((x as { capped?: boolean }).capped ? { capped: true } : {}), workspaceIds: [...new Set([...(m.workspaceIds ?? []), ...workspaceIds])] }))
               usedEp = e
               break
             } catch (x: any) {

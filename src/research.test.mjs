@@ -196,6 +196,18 @@ test('system note absorbs the approved plan and asks for verification', () => {
   assert.doesNotMatch(r.researchSystemNote('fusion power', r.tierOf('standard')), /already approved/)
 })
 
+test('system note states stopping rules, source quality and evidence absence', () => {
+  const note = r.researchSystemNote('fusion', r.tierOf('standard'))
+  assert.match(note, /absence of evidence/i)
+  assert.match(note, /evidence of absence/i)
+  assert.match(note, /primary sources/i)
+  assert.match(note, /content farms/i)
+  assert.match(note, /never average them/i)
+  assert.match(note, /two independent sources/i)
+  const reportAsk = r.RESEARCH_REPORT_ASK
+  assert.match(reportAsk, /evidence is simply absent|evidence is absent|evidence simply absent/i)
+})
+
 test('tiers carry search and read budgets with hard-cap wording', () => {
   assert.deepEqual(r.RESEARCH_TIERS.map((t) => t.maxSearches), [8, 24, 60])
   for (const t of r.RESEARCH_TIERS) assert.match(t.blurb, /reads/)

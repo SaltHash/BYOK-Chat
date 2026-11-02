@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 
 const { TOOLS } = await import('./meta.ts')
-const { executeTool, executeToolCalls, runToolLoop, stream, toolsFor, wire, searchWeb, fetchPage, formatPage, clearSessionCache } = await import('./engine.ts')
+const { executeTool, executeToolCalls, runToolLoop, stream, toolsFor, wire, searchWeb, fetchPage, formatPage, clearSessionCache, MAX_TOOL_RESULT_CHARS, TOOL_BUDGET_NOTE } = await import('./engine.ts')
 const { normSearch, searchCountOf, readerKeyOf, fetchOptsOf } = await import('./store.ts')
 const jsonResponse = (value) => new Response(JSON.stringify(value), { headers: { 'content-type': 'application/json' } })
 const openai = { type: 'openai', url: 'https://provider.example/v1', key: 'test-key', model: 'test-model' }
@@ -313,6 +313,38 @@ test('a handler can withdraw its own tool mid-run so the model must answer in te
     assert.ok(requests[0].tools.some((t) => t.function.name === 'calc'), 'tool is offered in the first round')
     assert.equal(requests[1].tools, undefined, 'withdrawn tool is absent from the next request')
     assert.equal(result.rounds[0].calls[0].result, 'Search budget reached. Write the final report now.')
+  } finally { globalThis.fetch = originalFetch; globalThis.requestAnimationFrame = originalRaf }
+})
+
+test('a tool result is capped with guidance instead of flooding the context', async () => {
+  const huge = 'x'.repeat(MAX_TOOL_RESULT_CHARS + 5000)
+  const r = await executeTool({ id: 'c1', name: 'calc', arguments: '{"expression":"1"}' }, { calc: true }, { calc: () => huge })
+  assert.ok(r.result.length > MAX_TOOL_RESULT_CHARS)
+  assert.ok(r.result.length < huge.length, 'the tail is dropped')
+  assert.match(r.result, /Result cut at/)
+  assert.match(r.result, /Ask for less/)
+  assert.equal(r.error, undefined)
+})
+
+test('the round cap ends with a tool-free answer instead of discarding the reply', async () => {
+  const requests = []
+  const originalFetch = globalThis.fetch, originalRaf = globalThis.requestAnimationFrame
+  globalThis.requestAnimationFrame = (fn) => setTimeout(fn, 0)
+  globalThis.fetch = async (_url, init) => {
+    const body = JSON.parse(init.body)
+    requests.push(body)
+    if (requests.length <= 2) return jsonResponse({ choices: [{ message: { tool_calls: [{ id: `s${requests.length}`, type: 'function', function: { name: 'calc', arguments: '{"expression":"2+2"}' } }] } }] })
+    return jsonResponse({ choices: [{ message: { content: 'The answer is 4, from the calculation already run.' } }] })
+  }
+  try {
+    const result = await runToolLoop(openai, 'You are helpful.', (rounds) => wire(openai, [{ id: 'a', r: 'assistant', t: '', toolRounds: rounds }]), { calc: true }, () => {}, new AbortController(), {}, () => {}, () => {}, 1)
+    assert.equal(result.capped, true)
+    assert.equal(result.finalText, 'The answer is 4, from the calculation already run.')
+    assert.equal(requests.length, 3, 'two tool rounds, then one tool-free answer')
+    assert.equal(requests[2].tools, undefined, 'no tools are offered once the budget is spent')
+    assert.match(requests[2].messages[0].content, /tool budget/i)
+    assert.match(requests[2].messages[0].content, /already gathered/i)
+    assert.equal(result.rounds.length, 1)
   } finally { globalThis.fetch = originalFetch; globalThis.requestAnimationFrame = originalRaf }
 })
 

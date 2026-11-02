@@ -317,7 +317,7 @@ const REPORT_SECTIONS_SPEC: [string, string][] = [
   ['Summary', '3–6 sentences: what the question is, how the headline answer was reached, and how confident it is.'],
   ['Key findings', 'Bulleted findings, one claim per bullet, each ending in its citation(s). Group related bullets under bold sub-heads when there are more than ~6.'],
   ['Evidence', 'One subsection per major claim. Quote or paraphrase the supporting snippet, then cite it. When comparing 2+ options, products, or approaches across multiple criteria — or weighing tradeoffs — add a Markdown table: options as rows, criteria as columns, citations in the cells, a legend for any scores or symbols, then 1–2 sentences of takeaway per table.'],
-  ['Limitations', 'Bulleted list: what is uncertain, contested, or missing; what would change the answer.'],
+  ['Limitations', 'Bulleted list: what is uncertain, contested, or missing. Say when the evidence is simply absent rather than implying the opposite claim is true. Note where sources disagree, which side is better evidenced, and what would change the answer.'],
   ['Sources note', '2–4 sentences on source quality (primary vs secondary, recency, agreement/disagreement). No new factual claims here.'],
 ]
 
@@ -347,7 +347,9 @@ export function researchSystemNote(query: string, tier: ResearchTier, now: Date 
     `5. Work across diverse angles, sources, and domains. Prefer primary sources, and read only pages whose snippets suggest they will settle a claim.`,
     `6. Distinguish sourced facts from inference in every note and in the final report, and keep a tight search → reflect → refine loop instead of a wide parallel burst. Do not stop after one or two searches.`,
     `7. Verify before you close: confirm each load-bearing claim against a second, independent source. If a claim stays contested or one-sided, say so in the report rather than asserting it.`,
-    `8. Answer the user's actual question. When the prompt asks for a verdict, ranking, recommendation, or comparison, commit to one and make it the first thing the report says — never bury it mid-sentence in the Summary. When the prompt has no single answerable question, lead with the most important takeaway instead.`,
+    `8. Stop deliberately, not when you run out of budget: close once every load-bearing claim has support from two independent sources, or one primary source when no second exists. Distinguish absence of evidence ("I found no source for this") from evidence of absence ("sources show it is not the case") and never turn the first into the second.`,
+    `9. Judge the source, not just the result: prefer primary sources (official announcements, filings, specifications, papers, first-party documentation) over SEO roundups, content farms, undated aggregators and marketing copy. When reputable sources disagree, report both positions and say which is better evidenced and why; never average them into a false middle.`,
+    `10. Answer the user's actual question. When the prompt asks for a verdict, ranking, recommendation, or comparison, commit to one and make it the first thing the report says — never bury it mid-sentence in the Summary. When the prompt has no single answerable question, lead with the most important takeaway instead.`,
     ``,
     ...planBlock,
     `# Budgets: hard caps, not goals`,

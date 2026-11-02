@@ -725,7 +725,7 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
       {m.capped && !m.err && (
         <div className="mt-2 flex flex-wrap items-center gap-2 rounded-xl border border-er/30 bg-er/10 px-3 py-2 text-xs text-mu">
           <TriangleAlert size={13} className="shrink-0 text-er" />
-          Tool execution limit reached — the partial reply above was kept.
+          Tool budget reached — the answer above was written from the evidence gathered so far and may be incomplete.
           <button onClick={() => cfg('tools')} className="rounded-lg bg-ac px-2.5 py-1 text-xs font-medium text-acx transition-opacity hover:opacity-90">Raise tool limit</button>
         </div>
       )}

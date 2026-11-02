@@ -1,7 +1,37 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-const { sanitizePath, parseWorkspaceArgsPartial, truncateWorkspaceContent, groupWorkspaceVersions, countWorkspaceFiles, compactWorkspaceHistory, buildZipEntries, zipFilename, WORKSPACE_MAX_CONTENT, migrateLegacyCanvasGroups, applyUnifiedDiff, diffLines, diffStat, changedFilesBetween, sanitizeHtmlPreview, previewKindFor, parseCsvPreview, WORKSPACE_TEMPLATES, templateById, pendingLiveCalls, findWritingPath, readWorkspaceRange, searchWorkspaceFiles, workspaceTree, workspacePathMatches, unifiedDiffFor, isWorkspaceReadAction, WORKSPACE_READ_MAX_LINES } = await import('./workspace.ts')
+const { applyWorkspaceCall, sanitizePath, parseWorkspaceArgsPartial, truncateWorkspaceContent, groupWorkspaceVersions, countWorkspaceFiles, compactWorkspaceHistory, buildZipEntries, zipFilename, WORKSPACE_MAX_CONTENT, migrateLegacyCanvasGroups, applyUnifiedDiff, diffLines, diffStat, changedFilesBetween, sanitizeHtmlPreview, previewKindFor, parseCsvPreview, WORKSPACE_TEMPLATES, templateById, pendingLiveCalls, findWritingPath, readWorkspaceRange, searchWorkspaceFiles, workspaceTree, workspacePathMatches, unifiedDiffFor, isWorkspaceReadAction, WORKSPACE_READ_MAX_LINES } = await import('./workspace.ts')
+
+test('workspace edits require the file to have been read in the same reply', () => {
+  const uid = (() => { let n = 0; return () => `id-${++n}` })()
+  const seen = new Set()
+  const ctx = { msgId: 'm1', uid, now: 1, seen }
+  const created = applyWorkspaceCall({}, { action: 'create', createNew: true, workspaceName: 'Demo', revisionName: 'Init', path: 'app.js', content: 'const a = 1\n' }, ctx)
+  const workspaces = created.workspaces
+  const workspaceId = created.result.workspaceId
+  // A write in the same reply counts as knowing the file.
+  assert.ok(seen.has('app.js'))
+  const patch = { workspaceId, action: 'patch', revisionName: 'Edit', path: 'app.js', content: '@@\n-const a = 1\n+const a = 2\n' }
+  const fresh = new Set()
+  assert.throws(
+    () => applyWorkspaceCall(workspaces, patch, { msgId: 'm2', uid, now: 2, seen: fresh }),
+    /Read app\.js before changing it/,
+  )
+  assert.equal(applyWorkspaceCall(workspaces, { workspaceId, action: 'read', path: 'app.js' }, { msgId: 'm2', uid, now: 2, seen: fresh }).result.action, 'read')
+  assert.equal(applyWorkspaceCall(workspaces, patch, { msgId: 'm2', uid, now: 2, seen: fresh }).result.action, 'ready')
+})
+
+test('creating over an existing file also requires a read', () => {
+  const uid = (() => { let n = 0; return () => `id-${++n}` })()
+  const seen = new Set()
+  const first = applyWorkspaceCall({}, { action: 'create', createNew: true, workspaceName: 'Demo', revisionName: 'Init', path: 'a.txt', content: 'one' }, { msgId: 'm1', uid, seen })
+  assert.throws(
+    () => applyWorkspaceCall(first.workspaces, { workspaceId: first.result.workspaceId, action: 'create', revisionName: 'Replace', path: 'a.txt', content: 'two' }, { msgId: 'm2', uid, seen: new Set() }),
+    /Read a\.txt before changing it/,
+  )
+  assert.equal(applyWorkspaceCall(first.workspaces, { workspaceId: first.result.workspaceId, action: 'create', revisionName: 'New', path: 'b.txt', content: 'two' }, { msgId: 'm2', uid, seen: new Set() }).result.action, 'ready')
+})
 
 test('sanitizePath keeps valid relative paths and never throws', () => {
   assert.equal(sanitizePath('src/app.py'), 'src/app.py')
