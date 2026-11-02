@@ -4,10 +4,13 @@ import { useS, featOn, type Msg } from '../store'
 import { tokenizeMentions, bannerOf, sentBodyText, isPill } from '../mentions'
 import { MentionChip, SentMentionBanner } from './Mention'
 import { Btn, cx } from './ui'
+import { loadChunk } from '../chunkLoad'
 import type { CiteMap } from './Rich'
 
-// The full renderer (tables, math, highlighting) loads on first use to keep the first paint light.
-const Rich = lazy(() => import('./Rich'))
+// The full renderer (tables, math, highlighting) loads on first use to keep the
+// first paint light. A tab left open across a deploy holds an older shell whose
+// chunk names no longer exist, so the load recovers instead of 404ing.
+const Rich = lazy(() => loadChunk(() => import('./Rich')))
 
 export function Md({ t, bare = false, cites, blocks = false, fadeFrom }: { t: string; bare?: boolean; cites?: CiteMap; blocks?: boolean; fadeFrom?: number }) {
   return (

@@ -10,6 +10,7 @@ import rehypeHighlight from 'rehype-highlight'
 import { common } from 'lowlight'
 import { Check, Copy, ImageOff } from 'lucide-react'
 import { cx, ZoomableImage } from './ui'
+import { loadChunk } from '../chunkLoad'
 import { useS } from '../store'
 import type { CiteSource } from '../citations'
 
@@ -133,10 +134,12 @@ const fadeNew = ({ at }: { at: number }) => (tree: any) => {
  * plain text (remark-math's fallback), which is readable and stable. */
 let katexPlugins: any[] | null = null
 let katexLoad: Promise<void> | null = null
-const loadKatex = (): Promise<void> => (katexLoad ??= Promise.all([
+const loadKatex = (): Promise<void> => (katexLoad ??= loadChunk(() => Promise.all([
   import('rehype-katex'),
   import('katex/dist/katex.min.css'),
-]).then(([m]) => { katexPlugins = [[m.default, { throwOnError: false, strict: 'ignore', errorColor: 'var(--er)' }]] }))
+])).then(([m]) => { katexPlugins = [[m.default, { throwOnError: false, strict: 'ignore', errorColor: 'var(--er)' }]] })
+  // A failed load must not be memoised: the next reply with math has to retry.
+  .catch((error) => { katexLoad = null; throw error }))
 
 /* ---- components ---- */
 const E = (T: string, c: string) => ({ node, className, ...p }: any) => createElement(T, { ...p, className: cx(c, className) })
