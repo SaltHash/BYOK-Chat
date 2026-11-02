@@ -61,6 +61,12 @@ test('quota compaction keeps the newest visible messages and drops regenerable p
   assert.equal('reasoning' in small.msgs[0], false)
 })
 
+test('pruneChatForPersist keeps a context handoff on the chat', () => {
+  const compact = { text: 'memo', through: 'a1', at: 1, messages: 2, tokens: 3, before: 40 }
+  const out = pruneChatForPersist({ msgs: [{ id: 'u1', r: 'user', t: 'hi' }, { id: 'a1', r: 'assistant', t: 'hello' }], compact })
+  assert.deepEqual(out.compact, compact)
+})
+
 test('pruneChatForPersist drops empty assistant placeholders and keeps real messages', () => {
   const chat = {
     id: 'c1',

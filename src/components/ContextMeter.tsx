@@ -1,8 +1,11 @@
-import { useMemo, type ReactNode } from 'react'
+import { useMemo, useState, type ReactNode } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import { TrendingUp } from 'lucide-react'
 import { useS, featOn } from '../store'
 import { chatAttemptLogs, deriveUsage, lastReplyBy } from '../usage'
+import { estimateHistoryTokens } from '../engine'
+import { compactThreshold, normCompactAt, withCompaction } from '../compaction'
+import { qualityPrompt } from '../flair'
 import { Pop, cx } from './ui'
 
 const fmtTokens = (n: number) => {
@@ -27,6 +30,65 @@ const Section = ({ title, className, children }: { title: string; className?: st
   </div>
 )
 
+/** Live context bar for the popover. It estimates the request that would be
+ *  sent now (including a stored handoff), so manually compacting updates it
+ *  immediately instead of waiting for the next provider-reported usage. */
+function ContextBar({ limit, cpt, busy }: { limit: number; cpt: number; busy: boolean }) {
+  const msgs = useS((s) => s.chats.find((c) => c.id === s.chat)?.msgs)
+  const compact = useS((s) => s.chats.find((c) => c.id === s.chat)?.compact)
+  const auto = useS((s) => s.prefs.compactAuto !== false)
+  const at = useS((s) => normCompactAt(s.prefs.compactAt))
+  const global = useS((s) => s.globalPrompt)
+  const prompt = useS((s) => s.prompts.find((p) => p.id === s.pr)?.text ?? '')
+  const [working, setWorking] = useState(false)
+  const sysLen = (global?.on ? global.text + ((global.qualities?.length ?? 0) ? '\n\n' + qualityPrompt(global.qualities) : '') : '') + prompt
+  const used = estimateHistoryTokens(withCompaction(msgs ?? [], compact), sysLen, cpt)
+  const max = Math.max(1, limit)
+  const pct = Math.max(0, Math.min(100, used / max * 100))
+  const threshold = compactThreshold(max, at)
+  const mark = Math.max(0, Math.min(100, threshold / max * 100))
+  const compactNow = async () => {
+    if (busy || working) return
+    setWorking(true)
+    try { await useS.getState().compactChat() } finally { setWorking(false) }
+  }
+  return (
+    <div className="space-y-2 px-2 pt-1">
+      <div className="flex items-baseline justify-between gap-3">
+        <span className="text-sm font-medium">Context</span>
+        <span className="text-xs tabular-nums text-mu">{fmtTokens(used)} / {fmtTokens(max)} · {Math.round(pct)}%</span>
+      </div>
+      <div
+        role="progressbar"
+        aria-label="Context size"
+        aria-valuemin={0}
+        aria-valuemax={max}
+        aria-valuenow={Math.round(used)}
+        aria-valuetext={`${fmtInt(used)} of ${fmtInt(max)} estimated tokens${auto ? `; compacts at ${fmtInt(threshold)}` : '; automatic compaction is off'}`}
+        title={`${fmtInt(used)} of ${fmtInt(max)} estimated tokens${auto ? `; compacts at ${fmtInt(threshold)}` : '; automatic compaction is off'}`}
+        className="relative h-2 rounded-full bg-hov"
+      >
+        <div className="h-full rounded-full bg-ac" style={{ width: `${pct}%` }} />
+        {auto && <span aria-hidden="true" title={`Compacts at ${fmtTokens(threshold)}`} className="absolute -inset-y-1 w-0.5 -translate-x-1/2 rounded-full bg-tx/80 shadow-[0_0_0_1px_var(--bg)]" style={{ left: `${mark}%` }} />}
+      </div>
+      <div className="flex items-center justify-between gap-3 text-xs">
+        <span className="text-mu">
+          {auto ? <>Compacts at <span className="font-medium text-tx">{fmtTokens(threshold)}</span></> : 'Auto-compact off'}
+        </span>
+        <button
+          type="button"
+          disabled={busy || working}
+          onClick={compactNow}
+          title="Replace older messages with a model-written handoff now"
+          className="rounded-md px-2 py-1 font-medium text-ac hover:bg-hov disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {working ? 'Compacting…' : 'Compact'}
+        </button>
+      </div>
+    </div>
+  )
+}
+
 /* Header context meter: a ring showing verified (provider-reported) tokens
  * in the open chat as a share of the configured limit, plus the whole
  * chat's cost to the right of the ring. The ring stays empty until the
@@ -45,6 +107,8 @@ export function ContextMeter({ cfg }: { cfg: (t: string) => void }) {
   const eps = useS((s) => s.eps)
   const sel = useS((s) => s.sel)
   const manualLimit = useS((s) => Math.max(1000, Math.floor(Number(s.widgetPrefs?.contextLimit) || 128000)))
+  const charsPerToken = useS((s) => Math.min(10, Math.max(1, Number(s.widgetPrefs?.charsPerToken) || 4)))
+  const busy = useS((s) => s.busy)
   const decimals = useS((s) => Math.min(8, Math.max(0, Number(s.widgetPrefs?.costDecimals ?? 4))))
   const u = useMemo(() => deriveUsage({ logs, lastBy, eps, sel, manualLimit }), [logs, lastBy, eps, sel, manualLimit])
   if (!show) return null
@@ -94,6 +158,8 @@ export function ContextMeter({ cfg }: { cfg: (t: string) => void }) {
       >
         {(close) => (
           <div className="space-y-2 p-2">
+            <ContextBar limit={limit} cpt={charsPerToken} busy={busy} />
+            <div className="border-t border-bor" />
             <div className="px-2 pt-1 text-sm font-medium">Usage</div>
             {hasReply ? (
               <>
@@ -111,7 +177,7 @@ export function ContextMeter({ cfg }: { cfg: (t: string) => void }) {
                   <Row k="Output" v={fmtInt(chatTout)} />
                   <Row k="Cost" v={money(chatCost)} />
                 </Section>
-                {over && <p className="px-2 text-xs text-er">Over budget: oldest messages are trimmed from requests until it fits.</p>}
+                {over && <p className="px-2 text-xs text-er">Over budget: older messages are compacted or trimmed from requests until it fits.</p>}
               </>
             ) : (
               <p className="px-2 text-xs text-mu">No replies yet — reported tokens appear here after the first answer.</p>

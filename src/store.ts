@@ -2,7 +2,8 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { useShallow } from 'zustand/react/shallow'
 import { DEFAULT_TOOLS, KEYS, WIDGETS } from './meta'
-import { est, redact, stream, wire, trimHistory, estimateHistoryTokens, runToolLoop, type ToolCall, type ToolResult, searchWeb, formatSearch, fetchPage, formatPage, can, ocrImage, clearSessionCache, setDynamicTools, DYNAMIC_TOOLS, type ToolSpec, type PageExcerpt } from './engine'
+import { est, redact, stream, wire, trimHistory, estimateHistoryTokens, estimateTokens, runToolLoop, type ToolCall, type ToolResult, searchWeb, formatSearch, fetchPage, formatPage, can, ocrImage, clearSessionCache, setDynamicTools, DYNAMIC_TOOLS, type ToolSpec, type PageExcerpt } from './engine'
+import { withCompaction, shouldCompact, selectCompactionMessages, transcriptFor, compactionSystemPrompt, compactionAsk, compactionOutputTokens, compactionInputChars, compactionAnchor, compactionDetail, isHandoff, type CompactionRecord } from './compaction'
 import { normMcpServers, mcpBindings, callMcpTool, toolParameters, type McpServer, type McpTool } from './mcp'
 import { uniqueAttachmentNames, anonymizeAttachmentNames, promptNameOf } from './attachments'
 import { generateImages, normImageGen, BLANK_IMAGE_GEN, imageSummary, type ImageGenPrefs } from './imagegen'
@@ -63,7 +64,7 @@ export type Att = Attachment
 export type Message = { id: string; r: 'user' | 'assistant'; t: string; at?: number; by?: string; tps?: number; log?: Attempt[]; att?: Attachment[]; err?: boolean; trunc?: boolean; capped?: boolean; full?: string; ctx?: string[]; fx?: string; cmd?: string; alts?: Snap[]; ai?: number; historyTokens?: number; explicitTokens?: number; reasoning?: string; toolRounds?: { text: string; calls: ToolResult[] }[]; toolFinal?: string; sys?: string; workspaceIds?: string[]; research?: ResearchState; /** Kept visible under the header and added to the model context (see prefs.pinContext). */ pin?: boolean }
 export type Msg = Message
 export type Snap = { t: string; by?: string; tps?: number; log?: Try[]; err?: boolean; toolRounds?: { text: string; calls: ToolResult[] }[]; toolFinal?: string; workspaceIds?: string[] }
-export type Chat = { id: string; title: string; pin?: boolean; started?: boolean; project?: string; msgs: Msg[]; temporary?: boolean; expiresAt?: number; titleAuto?: boolean; /** Hidden from the normal sidebar until the Archived filter is opened. */ archived?: boolean }
+export type Chat = { id: string; title: string; pin?: boolean; started?: boolean; project?: string; msgs: Msg[]; temporary?: boolean; expiresAt?: number; titleAuto?: boolean; /** Hidden from the normal sidebar until the Archived filter is opened. */ archived?: boolean; /** Model-written handoff that replaces the messages up to `through` in requests. The stored transcript is untouched. */ compact?: CompactionRecord }
 /** An optional context file attached to a project: name and size for display,
  *  plus the extracted text the AI may consult. Text is capped at import time. */
 export type ProjectFile = { id: string; name: string; size: string; mime?: string; text: string }
@@ -407,7 +408,7 @@ export const normPromptRecall = (v: unknown): PromptRecallMode =>
 export type LogDetail = 'compact' | 'standard' | 'verbose'
 export const normLogDetail = (v: unknown): LogDetail => v === 'compact' || v === 'verbose' ? v : 'standard'
 
-export const DEFAULT_PREFS: S['prefs'] = { showBy: true, showLog: true, showTps: false, enterSends: true, autoTitle: true, temporaryByDefault: false, seasonal: true, cues: false, showModelPricing: false, showContextMeter: true, customSearch: true, stylePreset: 'modern', density: 'comfortable', uiSpacing: {}, showTimestamps: false, alwaysShowActions: false, titleEp: '', titleModel: '', effortEp: '', effortModel: '', recallEp: '', recallModel: '', tempHours: 3, startup: 'recent', tempShow: 2, tempGlow: 1, tempGlowSent: 0.5, draftSurvive: 'both', fontBody: 'system', fontMono: 'system', fontHeader: 'system', modelPrimary: 'name', modelSecondary: 'none', paletteMax: 320, chatWidth: 'standard', settingsWidth: 1024, settingsHeight: 780, modelPickerHeight: 480, favoritesSection: true, hideFavoritesInProviders: true, collapsedProviders: [], sidebarWidth: 288, widgetWidth: 320, workspaceWidth: 0.4, workspaceSplit: 0.2,  modalBlur: 12, settingsOpacity: 55, streamFade: 0.3, streamMd: true, remoteImages: false, glassComposer: true, glassBlur: 14, glassOpacity: 80, showDisabledFeatures: false, proxyMode: 'auto', textScale: 100, codeWrap: false, reduceTransparency: false, promptRecall: 'empty', highContrast: false, hideFavoriteProvider: false, logDetail: 'standard', logTiming: true, logModels: true, codeLines: false, codeMaxHeight: 0, pinContext: true, pinContextPercent: 50, keepUsageHistory: true }
+export const DEFAULT_PREFS: S['prefs'] = { showBy: true, showLog: true, showTps: false, enterSends: true, autoTitle: true, temporaryByDefault: false, seasonal: true, cues: false, showModelPricing: false, showContextMeter: true, customSearch: true, stylePreset: 'modern', density: 'comfortable', uiSpacing: {}, showTimestamps: false, alwaysShowActions: false, titleEp: '', titleModel: '', effortEp: '', effortModel: '', recallEp: '', recallModel: '', tempHours: 3, startup: 'recent', tempShow: 2, tempGlow: 1, tempGlowSent: 0.5, draftSurvive: 'both', fontBody: 'system', fontMono: 'system', fontHeader: 'system', modelPrimary: 'name', modelSecondary: 'none', paletteMax: 320, chatWidth: 'standard', settingsWidth: 1024, settingsHeight: 780, modelPickerHeight: 480, favoritesSection: true, hideFavoritesInProviders: true, collapsedProviders: [], sidebarWidth: 288, widgetWidth: 320, workspaceWidth: 0.4, workspaceSplit: 0.2,  modalBlur: 12, settingsOpacity: 55, streamFade: 0.3, streamMd: true, remoteImages: false, glassComposer: true, glassBlur: 14, glassOpacity: 80, showDisabledFeatures: false, proxyMode: 'auto', textScale: 100, codeWrap: false, reduceTransparency: false, promptRecall: 'empty', highContrast: false, hideFavoriteProvider: false, logDetail: 'standard', logTiming: true, logModels: true, codeLines: false, codeMaxHeight: 0, pinContext: true, pinContextPercent: 50, keepUsageHistory: true, compactAuto: true, compactAt: 80 }
 export const DEFAULT_PARAMS: S['params'] = { def: true, temp: 0.7, topp: 1, max: 4096, maxToolRounds: 8, highToolsUnlocked: false }
 export const DEFAULT_WIDGET_PREFS: S['widgetPrefs'] = { usageGroup: 'endpoint', usageMode: 'success', usageFormat: '{in}/{out}', usageTotal: false, usagePeriod: 'all', lastSpeed: true, timeUnit: 'auto', widgetOrder: WIDGETS.map(([k]) => k), shortcuts: KEYS.map(([k]) => k), contextLimit: 128000, showDisabledEndpoints: true, scratchRows: 6, snippetLimit: 20, costDecimals: 4, activePromptsOnly: false, charsPerToken: 4, hideDoneTodos: false }
 const SEARCH_VALID_PROVIDERS: SearchProvider[] = ['tinyfish', 'you', 'exa', 'firecrawl', 'brightdata', 'jina']
@@ -543,7 +544,7 @@ type S = {
   customDarkTheme: CustomTheme
   customLightTheme: CustomTheme
   setupDone: boolean
-  prefs: { showBy: boolean; showLog: boolean; showTps: boolean; enterSends: boolean; autoTitle: boolean; temporaryByDefault: boolean; seasonal?: boolean; cues?: boolean; showModelPricing: boolean; showContextMeter: boolean; customSearch?: boolean; /** Hide the provider name beside starred models in the picker's Favorites section. */ hideFavoriteProvider?: boolean; /** How much detail the Process-to-answer panel shows per step. */ logDetail?: LogDetail; /** Show each step's duration in the process log. */ logTiming?: boolean; /** Show the model beside each step in the process log. */ logModels?: boolean; /** Show line numbers in code blocks. */ codeLines?: boolean; /** Max code-block height in pixels before scrolling (0 = no cap). */ codeMaxHeight?: number; /** Include the pinned reply in the model context. */ pinContext?: boolean; /** Maximum slice of the context window the pinned reply may use (5–50%). */ pinContextPercent?: number; titleEp: string; titleModel?: string; effortEp: string; effortModel?: string; recallEp: string; recallModel?: string; tempHours: number; startup?: StartupMode; tempShow?: number; tempGlow?: number; tempGlowSent?: number; draftSurvive?: 'off' | 'new' | 'chats' | 'both'; fontBody: string; fontMono: string; fontHeader: string; modelPrimary: 'id' | 'name'; modelSecondary: 'none' | 'provider' | 'id' | 'name'; modelDisplay?: 'none' | 'name' | 'provider' | 'both'; paletteMax: number; chatWidth: 'narrow' | 'standard' | 'wide'; settingsWidth: number; settingsHeight: number; modelPickerHeight: number; /** Show a Favorites section at the top of the model picker. */ favoritesSection?: boolean; /** Hide starred models from their normal provider groups. */ hideFavoritesInProviders?: boolean; /** Endpoint ids whose provider groups are collapsed in the picker. */ collapsedProviders?: string[]; sidebarWidth?: number; widgetWidth?: number; workspaceWidth?: number; workspaceSplit?: number; modalBlur: number; settingsOpacity: number; routingMode?: RoutingMode; streamFade: number; streamMd: boolean; remoteImages?: boolean; glassComposer?: boolean; /** Composer glass backdrop blur in pixels (0–40). */ glassBlur?: number; /** Composer glass surface opacity percent (0–100). */ glassOpacity?: number; /** Keep settings for disabled features visible, marked off, instead of hiding them. */ showDisabledFeatures?: boolean; proxyMode?: 'auto' | 'always' | 'off';  stylePreset: StylePreset; density: Density; uiSpacing?: SpacingOverrides; showTimestamps?: boolean; alwaysShowActions?: boolean; /** Root font-size percent (50–200, 100 = unchanged). */ textScale?: number; /** Soft-wrap long lines inside code blocks instead of scrolling sideways. */ codeWrap?: boolean; /** Disable glass, blur and dropped shadows (flat, opaque surfaces). */ reduceTransparency?: boolean; /** When ↑/↓ recall sent prompts; 'off' also stops recording them. */ promptRecall?: PromptRecallMode; /** Raise muted-text and border contrast beyond the theme's values. */ highContrast?: boolean; /** Keep every attempt in a permanent ledger so usage survives deleting, archiving or expiring its chat. Off keeps only the attempts still on saved chats. */ keepUsageHistory?: boolean }
+  prefs: { showBy: boolean; showLog: boolean; showTps: boolean; enterSends: boolean; autoTitle: boolean; temporaryByDefault: boolean; seasonal?: boolean; cues?: boolean; showModelPricing: boolean; showContextMeter: boolean; customSearch?: boolean; /** Hide the provider name beside starred models in the picker's Favorites section. */ hideFavoriteProvider?: boolean; /** How much detail the Process-to-answer panel shows per step. */ logDetail?: LogDetail; /** Show each step's duration in the process log. */ logTiming?: boolean; /** Show the model beside each step in the process log. */ logModels?: boolean; /** Show line numbers in code blocks. */ codeLines?: boolean; /** Max code-block height in pixels before scrolling (0 = no cap). */ codeMaxHeight?: number; /** Include the pinned reply in the model context. */ pinContext?: boolean; /** Maximum slice of the context window the pinned reply may use (5–50%). */ pinContextPercent?: number; /** Replace older turns with a model-written handoff when the context nears the limit. */ compactAuto?: boolean; /** Context share at which auto-compaction starts (5–100, in 5% steps). */ compactAt?: number; titleEp: string; titleModel?: string; effortEp: string; effortModel?: string; recallEp: string; recallModel?: string; tempHours: number; startup?: StartupMode; tempShow?: number; tempGlow?: number; tempGlowSent?: number; draftSurvive?: 'off' | 'new' | 'chats' | 'both'; fontBody: string; fontMono: string; fontHeader: string; modelPrimary: 'id' | 'name'; modelSecondary: 'none' | 'provider' | 'id' | 'name'; modelDisplay?: 'none' | 'name' | 'provider' | 'both'; paletteMax: number; chatWidth: 'narrow' | 'standard' | 'wide'; settingsWidth: number; settingsHeight: number; modelPickerHeight: number; /** Show a Favorites section at the top of the model picker. */ favoritesSection?: boolean; /** Hide starred models from their normal provider groups. */ hideFavoritesInProviders?: boolean; /** Endpoint ids whose provider groups are collapsed in the picker. */ collapsedProviders?: string[]; sidebarWidth?: number; widgetWidth?: number; workspaceWidth?: number; workspaceSplit?: number; modalBlur: number; settingsOpacity: number; routingMode?: RoutingMode; streamFade: number; streamMd: boolean; remoteImages?: boolean; glassComposer?: boolean; /** Composer glass backdrop blur in pixels (0–40). */ glassBlur?: number; /** Composer glass surface opacity percent (0–100). */ glassOpacity?: number; /** Keep settings for disabled features visible, marked off, instead of hiding them. */ showDisabledFeatures?: boolean; proxyMode?: 'auto' | 'always' | 'off';  stylePreset: StylePreset; density: Density; uiSpacing?: SpacingOverrides; showTimestamps?: boolean; alwaysShowActions?: boolean; /** Root font-size percent (50–200, 100 = unchanged). */ textScale?: number; /** Soft-wrap long lines inside code blocks instead of scrolling sideways. */ codeWrap?: boolean; /** Disable glass, blur and dropped shadows (flat, opaque surfaces). */ reduceTransparency?: boolean; /** When ↑/↓ recall sent prompts; 'off' also stops recording them. */ promptRecall?: PromptRecallMode; /** Raise muted-text and border contrast beyond the theme's values. */ highContrast?: boolean; /** Keep every attempt in a permanent ledger so usage survives deleting, archiving or expiring its chat. Off keeps only the attempts still on saved chats. */ keepUsageHistory?: boolean }
   widgets: Record<string, boolean>; widgetPrefs: { usageGroup: 'endpoint' | 'model'; usageMode: 'success' | 'tokens'; usageFormat: string; usageTotal: boolean; usagePeriod: 'session' | 'day' | 'week' | 'month' | 'custom' | 'all'; usageFrom?: string; usageTo?: string; lastSpeed: boolean; timeUnit: 'ms' | 's' | 'auto'; widgetOrder: string[]; shortcuts: string[]; contextLimit: number; showDisabledEndpoints: boolean; scratchRows: number; snippetLimit: number; costDecimals: number; activePromptsOnly: boolean; charsPerToken: number; hideDoneTodos: boolean }; rail: boolean; pad: string; snips: string[]
   params: { def: boolean; temp: number; topp: number; max: number; maxToolRounds: number; highToolsUnlocked: boolean }; effort: Record<string, string>
   workspacePrefs: WorkspacePrefs
@@ -607,6 +608,8 @@ type S = {
   /** Delete every kept attempt (the available chats' own logs stay intact). */
   clearUsageHistory: () => void
   compactStorage: () => string
+  /** Write a model-authored handoff for the current chat and use it in later requests. */
+  compactChat: () => Promise<boolean>
   rename: (id: string, t: string) => void
   reorder: (k: Kind, from: string, to: string) => void
   addProject: (name?: string, context?: ProjectFile[]) => string
@@ -659,6 +662,20 @@ const snap = (m: Msg): Snap => ({ t: m.t, by: m.by, tps: m.tps, log: m.log, err:
 
 function plan(s: S, um: Msg) {
   return planRequest(s, um, DEFAULT_FEATURES)
+}
+
+/** Context budget shared by the reply loop, auto-compaction and the meter. */
+function contextBudget(st: S, cand: Ep[]) {
+  const configured = Math.max(1000, Math.floor(Number(st.widgetPrefs?.contextLimit) || 128000))
+  // Respect the smallest context window among the candidates: a fallback
+  // model with 32k must not receive a request budgeted for 128k just because
+  // it is not the first choice.
+  const known = cand.map((e) => Number(e.modelContext?.[e.model]) || 0).filter((n) => n > 0)
+  const limit = known.length ? Math.min(configured, Math.min(...known)) : configured
+  const cpt = Math.min(10, Math.max(1, Number(st.widgetPrefs?.charsPerToken) || 4))
+  const outReserve = st.params?.def ? 8000 : Math.max(4096, Math.floor(Number(st.params?.max) || 4096) + 4000)
+  const reserve = Math.min(16000, Math.max(4000, Math.min(Math.floor(limit * 0.1), outReserve)))
+  return { limit, cpt, reserve }
 }
 
 /* System prompt for the process log when a reply has no saved `sys` (older
@@ -878,6 +895,70 @@ export const useS = create<S>()(
         const saved = writeUsageLedger(rows, titles)
         if (saved !== rows) set({ usage: saved })
       }
+      /* Write a model-authored handoff for the messages before `excludeId`
+       * (or for the whole chat) and store it on the chat. The visible
+       * transcript is untouched; the next request swaps the covered messages
+       * for the memo. A failure is logged and leaves the trim path in charge,
+       * so compaction can never fail a reply. */
+      async function writeCompaction(chatId: string, opts: {
+        ctl: AbortController
+        excludeId?: string
+        ep?: Ep
+        log?: Try[]
+        hostMsgId?: string
+      }): Promise<CompactionRecord | null> {
+        const st = get(), chat = st.chats.find((c) => c.id === chatId)
+        if (!chat) return null
+        const um = [...chat.msgs].reverse().find((m) => m.r === 'user') ?? { id: 'compaction', r: 'user' as const, t: '' }
+        const p = plan(st, um)
+        const ep = opts.ep && usable(opts.ep) ? opts.ep : p.cand[0]
+        if (!ep) {
+          opts.log?.push({ n: 'Context compaction', m: '', err: 'No usable endpoint could write a handoff; older messages will be trimmed instead.', at: Date.now() })
+          return null
+        }
+        const { limit, cpt } = contextBudget(st, p.cand.length ? p.cand : [ep])
+        const effective = withCompaction(chat.msgs, chat.compact)
+        const chunk = selectCompactionMessages(effective, opts.excludeId, compactionInputChars(limit, cpt))
+        const anchor = compactionAnchor(chunk, chat.compact?.through)
+        const real = chunk.filter((m) => !isHandoff(m))
+        if (!anchor || !real.length) {
+          opts.log?.push({ n: 'Context compaction', m: '', detail: 'Nothing older than the current message needed a handoff.', at: Date.now() })
+          return null
+        }
+        const transcript = transcriptFor(chunk, compactionInputChars(limit, cpt))
+        if (transcript.trim().length < 80) return null
+        const t0 = Date.now()
+        try {
+          const x = await stream(ep, compactionSystemPrompt(limit), [{ role: 'user', content: compactionAsk(transcript) }], () => {}, opts.ctl, { cap: compactionOutputTokens(limit) })
+          const raw = x.text.trim()
+          if (!raw) throw Error('the handoff was empty')
+          const maxChars = Math.max(2000, compactionOutputTokens(limit) * cpt)
+          const text = raw.length > maxChars ? `${raw.slice(0, maxChars).trimEnd()}\n\n[Handoff truncated to fit its context allowance.]` : raw
+          const rec: CompactionRecord = {
+            text,
+            through: anchor,
+            at: Date.now(),
+            messages: real.length,
+            tokens: estimateTokens(text, cpt),
+            before: estimateTokens(transcript, cpt),
+            model: `${ep.name} · ${ep.model}`,
+          }
+          set((s) => ({ chats: s.chats.map((c) => (c.id === chatId ? { ...c, compact: rec } : c)) }))
+          bump(x.tin, x.tout)
+          addCost(ep, ep.model, x.tin, x.tout, (x as any).cost ?? 0, x)
+          const entry: Try = { n: 'Context compaction', m: `${ep.name} · ${ep.model}`, detail: compactionDetail(rec), ms: Date.now() - t0, tin: x.tin, tout: x.tout, cacheRead: (x as any).cacheRead ?? 0, cacheWrite: (x as any).cacheWrite ?? 0, cost: (x as any).cost ?? 0, at: Date.now() }
+          if (opts.log) opts.log.push(entry)
+          else if (opts.hostMsgId) {
+            edit(chatId, opts.hostMsgId, (m) => ({ ...m, log: [...(m.log ?? []), entry] }))
+            keepUsage(chatId, opts.hostMsgId, [entry])
+          }
+          return rec
+        } catch (x: any) {
+          if (!opts.ctl.signal.aborted) opts.log?.push({ n: 'Context compaction', m: `${ep.name} · ${ep.model}`, err: `Could not write a handoff (${errText(ep, (x as Error)?.message)}); older messages will be trimmed instead.`, at: Date.now() })
+          return null
+        }
+      }
+
       const warn = (n: Notice) => { set({ notice: n }); return false }
 
       /* Page-reader subagent: when enabled, the fetched page is summarized by
@@ -1298,7 +1379,9 @@ export const useS = create<S>()(
             // Trim only the chat history (oldest-first); the research message
             // and its evidence are always kept, since dropping them would
             // leave the model with nothing to search or write from.
-            const hist = trimHistory(histFor(), { limit: ctxLimit, sys: system, charsPerToken: cpt }).msgs
+            const hc = get().chats.find((c) => c.id === chatId)?.compact
+            const base = withCompaction(histFor(), hc)
+            const hist = trimHistory(base, { limit: ctxLimit, sys: system, charsPerToken: cpt, keepStart: base[0] && isHandoff(base[0]) ? 1 : 0 }).msgs
             return wire(cand, [...hist, built, ...tail])
           }
           try {
@@ -1548,19 +1631,7 @@ export const useS = create<S>()(
         // Context budgeting: the wire payload (not stored history) is trimmed
         // oldest-first so system + history fits the meter's limit minus a
         // reserve for the reply. The trim is reported in the process log.
-        const budgetOf = () => {
-          const st = get()
-          const configured = Math.max(1000, Math.floor(Number(st.widgetPrefs?.contextLimit) || 128000))
-          // Respect the smallest context window among the candidates: a fallback
-          // model with 32k must not receive a request budgeted for 128k just
-          // because it is not the first choice.
-          const known = p.cand.map((e) => Number(e.modelContext?.[e.model]) || 0).filter((n) => n > 0)
-          const limit = known.length ? Math.min(configured, Math.min(...known)) : configured
-          const cpt = Math.min(10, Math.max(1, Number(st.widgetPrefs?.charsPerToken) || 4))
-          const outReserve = st.params?.def ? 8000 : Math.max(4096, Math.floor(Number(st.params?.max) || 4096) + 4000)
-          const reserve = Math.min(16000, Math.max(4000, Math.min(Math.floor(limit * 0.1), outReserve)))
-          return { limit, cpt, reserve }
-        }
+        const budgetOf = () => contextBudget(get(), p.cand)
         // The pinned reply is part of the system prompt: it is re-sent every
         // round and never trimmed away with old history. Its own size is
         // capped at a share of the same context limit.
@@ -1576,15 +1647,36 @@ export const useS = create<S>()(
         }
         let trimLogged = false
         const histFor = () => {
-          const h = hist()
+          const c = get().chats.find((x) => x.id === id)
+          const h = withCompaction(hist(), c?.compact)
           if (h.length <= 1) return h
           const { limit, cpt, reserve } = budgetOf()
-          const { msgs, dropped, estimated, budget } = trimHistory(h, { limit, reserve, charsPerToken: cpt, sys: system })
+          const keepStart = isHandoff(h[0]) ? 1 : 0
+          const { msgs, dropped, estimated, budget } = trimHistory(h, { limit, reserve, charsPerToken: cpt, sys: system, keepStart })
           if (dropped > 0 && !trimLogged) {
             trimLogged = true
             log.push({ n: 'Context trim', m: '', detail: `Dropped ${dropped} older message${dropped > 1 ? 's' : ''} (sent the latest ${msgs.length} of ${h.length}) to fit ~${estimated.toLocaleString()} into a ${budget.toLocaleString()}-token budget. Full history stays in the chat.`, at: Date.now() })
           }
           return msgs
+        }
+        // Auto-compaction runs at most once per reply, after the system prompt
+        // is assembled, so the trigger reflects the real request size. A
+        // failure is logged and the existing trim path still protects the
+        // request; it never fails the answer.
+        let compactionChecked = false
+        const maybeCompact = async (ep: Ep) => {
+          if (compactionChecked) return
+          compactionChecked = true
+          const g = get()
+          if (g.prefs.compactAuto === false) return
+          const chat = g.chats.find((c) => c.id === id)
+          if (!chat) return
+          const { limit, cpt } = budgetOf()
+          const effective = withCompaction(chat.msgs.filter((m) => m.id !== mid), chat.compact)
+          if (!shouldCompact(estimateHistoryTokens(effective, system, cpt), limit, g.prefs.compactAt)) return
+          r.ctl = new AbortController()
+          try { await writeCompaction(id, { ctl: r.ctl, excludeId: um.id, ep, log }) }
+          catch { /* compaction must never fail the answer */ }
         }
         const memoryState = get(), mp = memoryState.memoryPrefs
         const memoryChat = memoryState.chats.find((c) => c.id === id)
@@ -1749,6 +1841,8 @@ export const useS = create<S>()(
             // A failed attempt leaves its streamed chunks behind; clear them so
             // the live preview cannot show text the committed reply does not.
             useLive.getState().clear(mid)
+            await maybeCompact(e)
+            if (r.stopped) break
             const toolRounds: { text: string; calls: ToolResult[] }[] = []
             // Files this reply has read (or written) already. Workspace edits
             // are refused for anything else, so the model cannot patch text it
@@ -2397,7 +2491,12 @@ export const useS = create<S>()(
           const m = t.match(/^\/(\S+)(?:\s+([\s\S]*))?$/), cmd = m && featOn(s, 'commands') ? s.cmds.find((x) => x.name === m[1]) : (!m && featOn(s, 'commands') ? s.cmds.find((x) => x.id === o.cmd) : undefined)
           const um: Msg = { ...o, t: t.trim(), cmd: cmd?.id, full: full(body(cmd, m && cmd ? (m[2] ?? '').trim() : t.trim()), o.ctx, o.fx) }
           { const pre = plan(s, um); if (pre.err) { set({ notice: pre.err }); return false } }
-          set((st) => ({ chats: st.chats.map((x) => (x.id === c.id ? { ...x, msgs: [...c.msgs.slice(0, i), um] } : x)), stats: featOn(st, 'stats') ? { ...st.stats, sent: st.stats.sent + 1 } : st.stats } ))
+          // A handoff summarizes messages at or before its anchor. Editing one
+          // of those makes the memo stale, and keeping it would hide the edit
+          // from the model, so drop the handoff and rebuild it next time.
+          const anchorAt = c.compact ? c.msgs.findIndex((x) => x.id === c.compact!.through) : -1
+          const stale = anchorAt >= 0 && i <= anchorAt
+          set((st) => ({ chats: st.chats.map((x) => (x.id === c.id ? { ...x, ...(stale ? { compact: undefined } : {}), msgs: [...c.msgs.slice(0, i), um] } : x)), stats: featOn(st, 'stats') ? { ...st.stats, sent: st.stats.sent + 1 } : st.stats } ))
           // Editing a message into a @research request re-enters the research
           // flow (tier pick) instead of a plain reply.
           const rreq = parseResearchRequest(um.t ?? '')
@@ -2431,6 +2530,31 @@ export const useS = create<S>()(
           // boot would copy the chats' attempts back in.
           writeUsageLedger([], {})
           set({ usage: [], usageTitles: {} })
+        },
+        compactChat: async () => {
+          const s = get()
+          if (s.busy) { set({ notice: { t: 'A reply is still in progress. Stop it first, then compact.' } }); return false }
+          const c = s.chats.find((x) => x.id === s.chat)
+          if (!c) return false
+          if (c.msgs.length < 2) { set({ notice: { t: 'Not enough conversation to compact yet. Send a message first.' } }); return false }
+          const last = c.msgs[c.msgs.length - 1]
+          const hostMsgId = [...c.msgs].reverse().find((m) => m.r === 'assistant')?.id
+          const ctl = new AbortController()
+          const run: Run = { stopped: false, ctl }
+          cur = run
+          set({ busy: true, notice: null })
+          try {
+            const rec = await writeCompaction(c.id, { ctl, excludeId: last.r === 'user' ? last.id : undefined, hostMsgId })
+            if (!ctl.signal.aborted) {
+              set({ notice: rec
+                ? { t: `Compacted ${rec.messages} earlier message${rec.messages === 1 ? '' : 's'} into a ${rec.tokens.toLocaleString()}-token handoff. Later requests use it; the full transcript stays in this chat.` }
+                : { t: 'Could not compact this conversation. Older messages will still be trimmed when a request needs the room.' } })
+            }
+            return !!rec
+          } finally {
+            if (cur === run) cur = null
+            set({ busy: false })
+          }
         },
         compactStorage: () => {
           const s = get(), now = Date.now()
@@ -2470,7 +2594,12 @@ export const useS = create<S>()(
           const n: Chat = { id: uid(), title: (c.title + ' (branch)').slice(0, 80), project: c.project, started: true, msgs: c.msgs.slice(0, i + 1).map((m) => ({ ...m, id: uid() })) }
           return { chats: [n, ...s.chats], chat: n.id }
         }),
-        variant: (mid, idx) => set((s) => ({ chats: s.chats.map((c) => ({ ...c, msgs: c.msgs.map((m) => { const v = m.alts?.[idx]; return m.id === mid && v ? { ...m, ...v, ai: idx } : m }) })) }))
+        variant: (mid, idx) => set((s) => ({ chats: s.chats.map((c) => {
+          const at = c.compact ? c.msgs.findIndex((m) => m.id === c.compact!.through) : -1
+          const i = c.msgs.findIndex((m) => m.id === mid)
+          const stale = at >= 0 && i >= 0 && i <= at
+          return { ...c, ...(stale ? { compact: undefined } : {}), msgs: c.msgs.map((m) => { const v = m.alts?.[idx]; return m.id === mid && v ? { ...m, ...v, ai: idx } : m }) }
+        }) }))
       }
     },
     {

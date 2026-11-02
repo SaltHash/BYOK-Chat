@@ -198,6 +198,7 @@ export const SETTING_LINKS: SettingLink[] = [
   { tab: 'look', anchor: 'message-times', title: 'Message times', keywords: 'message times timestamps clock sent at' },
   { tab: 'look', anchor: 'message-actions', title: 'Always show message actions', keywords: 'message actions hover always show copy regenerate delete' },
   { tab: 'widgets', anchor: 'context-meter', title: 'Context meter', keywords: 'context meter tokens circle header appearance' },
+  { tab: 'widgets', anchor: 'context-compact', title: 'Auto-compact context', keywords: 'context compaction compact summarize handoff threshold percent auto' },
   { tab: 'look', anchor: 'context-limit', title: 'Context meter limit', keywords: 'context limit estimated meter tokens' },
   { tab: 'look', anchor: 'theme-picker', title: 'Theme picker', keywords: 'theme plum claude obsidian graphite paper sage frost sunset custom' },
   { tab: 'look', anchor: 'custom-colors', title: 'Custom theme sliders', keywords: 'custom theme base hue saturation brightness contrast sliders hex colors reset defaults' },

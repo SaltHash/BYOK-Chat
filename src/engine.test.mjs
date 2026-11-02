@@ -641,6 +641,21 @@ test('trimHistory drops oldest-first, always keeps the latest message, and fits 
   assert.equal(single.dropped, 0)
 })
 
+test('trimHistory can pin a prefix such as a compaction handoff', () => {
+  const msgs = [
+    { id: 'h', r: 'user', t: 'handoff '.repeat(20) },
+    { id: 'u1', r: 'user', t: 'x'.repeat(4000) },
+    { id: 'a1', r: 'assistant', t: 'y'.repeat(4000) },
+    { id: 'u2', r: 'user', t: 'latest' },
+  ]
+  const full = estimateHistoryTokens(msgs)
+  const out = trimHistory(msgs, { limit: Math.floor(full / 2) + 1000, reserve: 0, keepStart: 1 })
+  assert.equal(out.msgs[0].id, 'h')
+  assert.ok(out.dropped > 0)
+  assert.ok(out.estimated <= out.budget)
+  assert.equal(out.msgs[out.msgs.length - 1].id, 'u2')
+})
+
 test('OpenAI wire omits PDFs with a note instead of an image_url block', () => {
   const pdf = { id: 'u', r: 'user', t: 'read this', att: [{ name: 'doc.pdf', kind: 'pdf', size: '1 KB', mime: 'application/pdf', data: 'AAA' }] }
   const ow = wire(openai, [pdf])

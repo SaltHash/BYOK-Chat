@@ -24,6 +24,7 @@ import { normVoice, VOICE_LANGS, speak, stopSpeaking, speechAvailable, dictation
 import { DENSITIES, DENSITY_IDS, SPACING_LIMITS, STYLE_PRESETS, STYLE_PRESET_IDS, hasSpacingOverrides, resolveSpacing } from '../style'
 import { accentOnlyColors } from '../theme'
 import { USAGE_PERIODS } from '../usageStats'
+import { normCompactAt } from '../compaction'
 import { UsageStats } from './UsageStats'
 
 const TABS = SETTINGS_TABS
@@ -1856,6 +1857,19 @@ function WidgetsTab() {
         <div className="text-xs text-mu">A ring in the chat header showing estimated tokens in the open chat. Click it for the reported input, output, and cache-token breakdown.</div>
         <Anchor id="context-limit"><Field label="Manual context limit" hint="Fallback scale when the model has no published context size. This does not change the model's actual context window."><Input type="number" min="1000" step="1000" value={s.widgetPrefs.contextLimit} set={(v) => s.patch({ widgetPrefs: { ...s.widgetPrefs, contextLimit: Math.max(1000, Number(v) || 1000) } })} /></Field></Anchor>
         <Field label="Characters per estimated token" hint="A rough estimate; 4 is a common default for English text."><Input type="number" min="1" max="10" value={s.widgetPrefs.charsPerToken} set={(v) => s.patch({ widgetPrefs: { ...s.widgetPrefs, charsPerToken: Math.min(10, Math.max(1, Number(v) || 4)) } })} /></Field>
+        <Anchor id="context-compact">
+        <div className="space-y-2 border-t border-bor pt-3">
+          <label className="flex items-center justify-between gap-3 text-sm">Compact automatically<Toggle on={s.prefs.compactAuto !== false} set={(compactAuto) => s.patch({ prefs: { ...s.prefs, compactAuto } })} label="Compact automatically" /></label>
+          <div className={cx('space-y-2', s.prefs.compactAuto === false && 'opacity-50')}>
+            <div className="flex items-center gap-3">
+              <RangeSlider label="Auto-compact threshold" min={5} max={100} step={5} disabled={s.prefs.compactAuto === false} value={normCompactAt(s.prefs.compactAt)} set={(compactAt) => s.patch({ prefs: { ...s.prefs, compactAt: normCompactAt(compactAt) } })} className="flex-1" />
+              <span className="w-12 text-right text-sm">{normCompactAt(s.prefs.compactAt)}%</span>
+            </div>
+            <p className="text-[11px] text-mu">When the estimated context reaches this share of the model's window, the model writes a handoff memo of the older conversation. Later requests send the memo instead of the messages it covers; the full transcript stays in the chat. 100% waits until the window is full.</p>
+          </div>
+          <p className="text-[11px] text-mu">The header meter's popover shows the same threshold as a line on the context bar, with a Compact button for doing it now.</p>
+        </div>
+        </Anchor>
       </div>
       </Anchor>
       </Section>

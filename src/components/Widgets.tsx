@@ -52,7 +52,7 @@ const ContextMeterWidget = memo(({ handle }: WidgetProps) => {
   return (
     <WidgetCard handle={handle} icon={Gauge} t="Context meter">
       <div className="h-2 overflow-hidden rounded-full bg-bg"><div className="h-full bg-ac" style={{ width: Math.min(100, tokens / (limit / 100)) + '%' }} /></div>
-      <p className="text-xs text-mu">About {tokens.toLocaleString()} of {limit.toLocaleString()} tokens (estimate){overBudget ? ' — over budget: oldest messages are trimmed from requests until it fits' : ''}</p>
+      <p className="text-xs text-mu">About {tokens.toLocaleString()} of {limit.toLocaleString()} tokens (estimate){overBudget ? ' — over budget: older messages are compacted or trimmed from requests until it fits' : ''}</p>
     </WidgetCard>
   )
 })

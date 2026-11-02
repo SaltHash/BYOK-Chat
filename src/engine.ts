@@ -67,7 +67,7 @@ export function estimateHistoryTokens(msgs: Msg[], sys = '', charsPerToken = 4):
   const live = liveRoundsIndex(msgs)
   return estimateTokens(sys, charsPerToken) + msgs.reduce((a, m, i) => a + msgSize(m, charsPerToken, i === live), 0)
 }
-export function trimHistory(msgs: Msg[], opts: { limit?: number; reserve?: number; charsPerToken?: number; sys?: string } = {}): { msgs: Msg[]; dropped: number; estimated: number; budget: number } {
+export function trimHistory(msgs: Msg[], opts: { limit?: number; reserve?: number; charsPerToken?: number; sys?: string; keepStart?: number } = {}): { msgs: Msg[]; dropped: number; estimated: number; budget: number } {
   const limit = Math.max(1000, Math.floor(Number(opts.limit) || DEFAULT_CONTEXT_LIMIT))
   const reserve = Math.max(0, Math.floor(Number(opts.reserve) || 0))
   const cpt = Math.min(10, Math.max(1, Number(opts.charsPerToken) || 4))
@@ -77,13 +77,17 @@ export function trimHistory(msgs: Msg[], opts: { limit?: number; reserve?: numbe
   const sizes = msgs.map((m, i) => msgSize(m, cpt, i === live))
   let estimated = estimateTokens(sys, cpt) + sizes.reduce((a, n) => a + n, 0)
   if (estimated <= budget || msgs.length <= 1) return { msgs, dropped: 0, estimated, budget }
-  // Drop oldest-first, never dropping the latest message (the active request).
-  let start = 0
+  // Keep an optional prefix (a compaction handoff) while dropping the oldest
+  // messages after it. Without this the summary itself was the first thing
+  // trimmed, which discarded exactly the context compaction had preserved.
+  const keep = Math.max(0, Math.min(msgs.length - 1, Math.floor(Number(opts.keepStart) || 0)))
+  let start = keep
   while (start < msgs.length - 1 && estimated > budget) {
     estimated -= sizes[start]
     start++
   }
-  return { msgs: msgs.slice(start), dropped: start, estimated, budget }
+  if (start === 0) return { msgs, dropped: 0, estimated, budget }
+  return { msgs: [...msgs.slice(0, keep), ...msgs.slice(start)], dropped: start - keep, estimated, budget }
 }
 
 export type UsageBreakdown = { input: number; output: number; cacheRead: number; cacheWrite: number; total: number }
