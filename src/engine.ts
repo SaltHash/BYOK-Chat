@@ -153,41 +153,134 @@ export type ToolSpec = {
 }
 const textArg = (description: string) => ({ type: 'string', description })
 
-/* Safe arithmetic evaluator: tokenizes + parses without eval/Function.
- * Supports + - * / % ^ (**), parentheses, unary +/-, decimals and
- * scientific notation (1e3). Rejects over-long input, too many tokens,
- * and non-finite / runaway exponent results. */
-export const CALC_MAX_INPUT = 200
-const CALC_MAX_TOKENS = 120
+/* Safe arithmetic evaluator: tokenizes and parses without eval/Function.
+ * Supports + - * / % ^ (**), parentheses and brackets, unary +/-, decimals,
+ * scientific notation (1e3), implicit multiplication (2pi, 3(4+5)), the
+ * constants pi/e/tau, the usual maths functions, and a comma-separated list of
+ * expressions (optionally wrapped in brackets) that returns one result per
+ * entry. Rejects over-long input, too many tokens, and non-finite results. */
+export const CALC_MAX_INPUT = 400
+const CALC_MAX_TOKENS = 200
 const CALC_MAX_EXP = 1e6
-export function evaluateArithmetic(raw: string): number {
-  if (typeof raw !== 'string') throw Error('Provide a basic arithmetic expression.')
-  const expr = raw.trim()
-  if (!expr || expr.length > CALC_MAX_INPUT || !/^[\d\s+\-*/%().^eE]+$/.test(expr)) throw Error('Provide a basic arithmetic expression.')
-  // Tokenize numbers (incl. scientific), operators, parens. `**` is one token.
+class CalcError extends Error {}
+const CALC_HELP = 'Use + - * / % ^, parentheses, sqrt, cbrt, abs, exp, ln, log (base 10), log2, sin, cos, tan, asin, acos, atan, atan2, floor, ceil, round, trunc, sign, min, max, pow, hypot, and the constants pi, e and tau. Trigonometry is in radians; ^ is power and * is multiplication.'
+const CALC_CONSTANTS: Record<string, number> = { pi: Math.PI, 'π': Math.PI, e: Math.E, tau: Math.PI * 2 }
+const CALC_FUNCTIONS: Record<string, { arity: number | 'many'; fn: (...n: number[]) => number }> = {
+  sqrt: { arity: 1, fn: Math.sqrt },
+  cbrt: { arity: 1, fn: Math.cbrt },
+  abs: { arity: 1, fn: Math.abs },
+  exp: { arity: 1, fn: Math.exp },
+  ln: { arity: 1, fn: Math.log },
+  log: { arity: 1, fn: Math.log10 },
+  log2: { arity: 1, fn: Math.log2 },
+  sin: { arity: 1, fn: Math.sin },
+  cos: { arity: 1, fn: Math.cos },
+  tan: { arity: 1, fn: Math.tan },
+  asin: { arity: 1, fn: Math.asin },
+  acos: { arity: 1, fn: Math.acos },
+  atan: { arity: 1, fn: Math.atan },
+  atan2: { arity: 2, fn: Math.atan2 },
+  floor: { arity: 1, fn: Math.floor },
+  ceil: { arity: 1, fn: Math.ceil },
+  round: { arity: 1, fn: Math.round },
+  trunc: { arity: 1, fn: Math.trunc },
+  sign: { arity: 1, fn: Math.sign },
+  min: { arity: 'many', fn: (...n) => Math.min(...n) },
+  max: { arity: 'many', fn: (...n) => Math.max(...n) },
+  pow: { arity: 2, fn: Math.pow },
+  hypot: { arity: 'many', fn: Math.hypot },
+}
+/* Typed maths symbols are normalised first, so a pasted formula with ×, ÷, a
+ * minus sign or a root symbol still evaluates instead of failing outright. */
+const CALC_ALIASES: [RegExp, string][] = [[/×/g, '*'], [/÷/g, '/'], [/[−–—]/g, '-'], [/√/g, 'sqrt']]
+const normalizeCalc = (raw: string) => CALC_ALIASES.reduce((s, [re, to]) => s.replace(re, to), raw)
+/* Floating point noise is trimmed, so a result reads the way a calculator
+ * shows it: 0.1 + 0.2 is 0.3, not 0.30000000000000004. */
+const tidy = (n: number): number => {
+  if (typeof n !== 'number' || !Number.isFinite(n)) throw new CalcError('The result is not a finite number.')
+  if (Number.isInteger(n) && Math.abs(n) < 1e15) return n === 0 ? 0 : n
+  const rounded = Number(n.toPrecision(12))
+  return Number.isFinite(rounded) ? rounded : n
+}
+const shortCalc = (s: string, n = 60) => s.length > n ? `${s.slice(0, n)}…` : s
+/** True when the whole string is one bracket group, so its brackets can go. */
+function calcWholeGroup(s: string): boolean {
+  const open = s[0]
+  if (open !== '(' && open !== '[') return false
+  const close = open === '(' ? ')' : ']'
+  if (s[s.length - 1] !== close) return false
+  let depth = 0
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i]
+    if (c === '(' || c === '[') depth++
+    else if (c === ')' || c === ']') {
+      depth--
+      if (depth === 0) return i === s.length - 1
+    }
+  }
+  return false
+}
+/** Split a comma-separated list at the top level, so `[a, b]` is two
+ *  expressions rather than a tuple the parser would refuse. */
+function calcParts(expr: string): string[] {
+  const body = calcWholeGroup(expr) ? expr.slice(1, -1) : expr
+  const parts: string[] = []
+  let depth = 0
+  let start = 0
+  for (let i = 0; i < body.length; i++) {
+    const c = body[i]
+    if (c === '(' || c === '[') depth++
+    else if (c === ')' || c === ']') depth--
+    else if (c === ',' && depth === 0) { parts.push(body.slice(start, i)); start = i + 1 }
+  }
+  parts.push(body.slice(start))
+  return parts.map((p) => p.trim()).filter(Boolean)
+}
+export function evaluateArithmetic(raw: string): number | string {
+  if (typeof raw !== 'string') throw new CalcError('Pass the expression as a string, like "sqrt(2)*3".')
+  const input = normalizeCalc(raw).trim()
+  if (!input) throw new CalcError('The expression is empty.')
+  if (input.length > CALC_MAX_INPUT) throw new CalcError(`The expression is longer than ${CALC_MAX_INPUT} characters; split it across separate calls.`)
+  const parts = calcParts(input)
+  if (!parts.length) throw new CalcError('The expression is empty.')
+  const values = parts.map((part) => tidy(evalExpression(part)))
+  return values.length === 1 ? values[0] : values.join(', ')
+}
+function evalExpression(expr: string): number {
+  const source = expr.replace(/\^/g, '**').replace(/\[/g, '(').replace(/\]/g, ')')
   const tokens: (number | string)[] = []
   let i = 0
-  const s = expr.replace(/\^/g, '**')
-  while (i < s.length) {
-    const c = s[i]
+  while (i < source.length) {
+    const c = source[i]
     if (/\s/.test(c)) { i++; continue }
-    if (c === '(' || c === ')' || c === '%' || c === ',') { tokens.push(c); i++; continue }
-    if (c === '*' && s[i + 1] === '*') { tokens.push('**'); i += 2; continue }
+    if (c === '(' || c === ')' || c === ',' || c === '%') { tokens.push(c); i++; continue }
+    if (c === '*' && source[i + 1] === '*') { tokens.push('**'); i += 2; continue }
     if (c === '+' || c === '-' || c === '*' || c === '/') { tokens.push(c); i++; continue }
-    const num = /^[0-9]*\.?[0-9]+(?:[eE][+-]?[0-9]+)?/.exec(s.slice(i))
-    if (num) { tokens.push(parseFloat(num[0])); i += num[0].length; continue }
-    if (c === '.') throw Error('Provide a basic arithmetic expression.')
-    throw Error('Provide a basic arithmetic expression.')
+    const num = /^(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?/.exec(source.slice(i))
+    if (num) {
+      if (source[i + num[0].length] === '.') throw new CalcError(`"${shortCalc(expr)}" has a malformed number.`)
+      tokens.push(parseFloat(num[0]))
+      i += num[0].length
+      continue
+    }
+    const name = /^(?:[A-Za-z_][A-Za-z0-9_]*|π)/.exec(source.slice(i))
+    if (name) { tokens.push(name[0].toLowerCase()); i += name[0].length; continue }
+    throw new CalcError(`"${shortCalc(expr)}" contains "${c}", which the calculator cannot read. ${CALC_HELP}`)
   }
-  if (tokens.length > CALC_MAX_TOKENS || !tokens.length) throw Error('Provide a basic arithmetic expression.')
+  if (tokens.length > CALC_MAX_TOKENS) throw new CalcError('The expression has too many parts to evaluate.')
+  if (!tokens.length) throw new CalcError('The expression is empty.')
   let pos = 0
   const peek = (): number | string | undefined => tokens[pos]
-  const consume = (): number | string | undefined => tokens[pos++]
+  const take = (): number | string | undefined => tokens[pos++]
+  const isName = (t: number | string | undefined): t is string => typeof t === 'string' && /^(?:[a-z_][a-z0-9_]*|π)$/.test(t)
+  /* Anything that can begin an operand: a number, a name, or an open paren.
+   * Seeing one right after a factor means the writer left out the `*`. */
+  const startsOperand = (t: number | string | undefined) => typeof t === 'number' || (typeof t === 'string' && (t === '(' || isName(t)))
   const parseExpr = (): number => {
     let v = parseTerm()
     for (;;) {
       const t = peek()
-      if (t === '+' || t === '-') { consume(); v = t === '+' ? v + parseTerm() : v - parseTerm() }
+      if (t === '+' || t === '-') { take(); v = t === '+' ? v + parseTerm() : v - parseTerm() }
       else return v
     }
   }
@@ -196,55 +289,75 @@ export function evaluateArithmetic(raw: string): number {
     for (;;) {
       const t = peek()
       if (t === '*' || t === '/' || t === '%') {
-        consume()
+        take()
         const r = parseFactor()
         v = t === '*' ? v * r : t === '/' ? v / r : v % r
-      } else return v
+        continue
+      }
+      if (startsOperand(t)) { v *= parseFactor(); continue }
+      return v
     }
   }
   // Right-associative exponent.
   const parseFactor = (): number => {
     const base = parseUnary()
     if (peek() === '**') {
-      consume()
+      take()
       const exp = parseFactor()
-      if (!Number.isFinite(exp) || Math.abs(exp) > CALC_MAX_EXP) throw Error('The result is not a finite number')
-      const v = base ** exp
-      if (typeof v !== 'number' || !Number.isFinite(v)) throw Error('The result is not a finite number')
-      return v
+      if (!Number.isFinite(exp) || Math.abs(exp) > CALC_MAX_EXP) throw new CalcError('The exponent is too large to evaluate.')
+      return base ** exp
     }
     return base
   }
   const parseUnary = (): number => {
     const t = peek()
-    if (t === '+') { consume(); return parseUnary() }
-    if (t === '-') { consume(); return -parseUnary() }
+    if (t === '+') { take(); return parseUnary() }
+    if (t === '-') { take(); return -parseUnary() }
     return parsePrimary()
   }
   const parsePrimary = (): number => {
-    const t = consume()
-    if (typeof t === 'number') {
-      if (!Number.isFinite(t)) throw Error('The result is not a finite number')
-      return t
-    }
+    const t = take()
+    if (typeof t === 'number') return t
     if (t === '(') {
       const v = parseExpr()
-      if (consume() !== ')') throw Error('Provide a basic arithmetic expression.')
+      if (take() !== ')') throw new CalcError('A parenthesis is not closed.')
       return v
     }
-    throw Error('Provide a basic arithmetic expression.')
+    if (isName(t)) {
+      if (Object.prototype.hasOwnProperty.call(CALC_CONSTANTS, t)) return CALC_CONSTANTS[t]
+      const spec = CALC_FUNCTIONS[t]
+      if (!spec) throw new CalcError(`Unknown name "${t}". ${CALC_HELP}`)
+      if (peek() !== '(') throw new CalcError(`"${t}" needs parentheses, like ${t}(2).`)
+      take()
+      const args: number[] = []
+      if (peek() === ')') take()
+      else {
+        for (;;) {
+          args.push(parseExpr())
+          const sep = take()
+          if (sep === ',') continue
+          if (sep === ')') break
+          throw new CalcError(`"${t}" is missing a closing parenthesis.`)
+        }
+      }
+      if (spec.arity === 1 && args.length !== 1) throw new CalcError(`"${t}" takes one argument.`)
+      if (spec.arity === 2 && args.length !== 2) throw new CalcError(`"${t}" takes two arguments.`)
+      if (spec.arity !== 'many' && !args.length) throw new CalcError(`"${t}" needs an argument.`)
+      return spec.fn(...args)
+    }
+    throw new CalcError(t === undefined ? `"${shortCalc(expr)}" ends too early.` : `"${shortCalc(expr)}" has an unexpected "${String(t)}".`)
   }
   const value = parseExpr()
-  if (pos !== tokens.length) throw Error('Provide a basic arithmetic expression.')
-  if (typeof value !== 'number' || !Number.isFinite(value)) throw Error('The result is not a finite number')
+  if (pos !== tokens.length) throw new CalcError(`"${shortCalc(expr)}" has an unexpected "${String(tokens[pos])}".`)
+  if (typeof value !== 'number' || !Number.isFinite(value)) throw new CalcError('The result is not a finite number.')
   return value
 }
 export const TOOL_REGISTRY: Record<string, ToolSpec> = {
   time: { description: 'Read the device date, time, and time zone.', parameters: { type: 'object', properties: {}, additionalProperties: false }, run: () => new Date().toString() },
   date: { description: 'Read the current local date.', parameters: { type: 'object', properties: {}, additionalProperties: false }, run: () => new Date().toLocaleDateString() },
   clipboard: { description: 'Read the current clipboard text.', parameters: { type: 'object', properties: {}, additionalProperties: false }, run: () => navigator.clipboard.readText() },
-  calc: { description: 'Evaluate a basic arithmetic expression.', parameters: { type: 'object', properties: { expression: textArg('Arithmetic expression.') }, required: ['expression'], additionalProperties: false }, run: ({ expression }) => {
-    if (typeof expression !== 'string') throw Error('Provide a basic arithmetic expression.')
+  calc: { description: 'Evaluate arithmetic locally and exactly. Supports + - * / % ^, parentheses or brackets, implicit multiplication (2pi, 3(4+5)), the constants pi, e and tau, and the functions sqrt, cbrt, abs, exp, ln, log (base 10), log2, sin, cos, tan, asin, acos, atan, atan2, floor, ceil, round, trunc, sign, min, max, pow and hypot (trigonometry is in radians). Pass a comma-separated list, optionally in brackets, to evaluate several expressions in one call, like [100+0.7*33, 15*sqrt(1-0.49)]. Spell roots as sqrt(x) rather than √, and write * for multiplication.', parameters: { type: 'object', properties: { expression: textArg('Arithmetic expression, or a comma-separated list of them.') }, required: ['expression'], additionalProperties: false }, run: ({ expression }) => {
+    if (typeof expression !== 'string') throw Error('Pass the expression as a string, like "sqrt(2)*3".')
     return evaluateArithmetic(expression)
   } },
   count: { description: 'Count characters, words, and lines in text.', parameters: { type: 'object', properties: { text: textArg('Text to count.') }, required: ['text'], additionalProperties: false }, run: ({ text }) => {

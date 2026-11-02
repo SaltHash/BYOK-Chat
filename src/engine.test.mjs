@@ -46,6 +46,35 @@ test('registered handlers execute with validated arguments and return structured
   } finally { globalThis.fetch = searchFetch }
 })
 
+test('calculator handles functions, constants, implicit multiplication and lists', async () => {
+  const { evaluateArithmetic } = await import('./engine.ts')
+  const near = (expr, want) => {
+    const got = evaluateArithmetic(expr)
+    assert.equal(typeof got, 'number', `${expr} should be one number`)
+    assert.ok(Math.abs(got - want) < 1e-9, `${expr} = ${got}, want ${want}`)
+  }
+  near('2*(3+4)', 14)
+  near('2(3+4)', 14)
+  near('15*sqrt(1-0.49)', 15 * Math.sqrt(0.51))
+  near('sqrt(16)+cbrt(27)', 7)
+  near('2pi', 2 * Math.PI)
+  near('sin(pi/2)', 1)
+  near('max(3, 7, 5)', 7)
+  near('1e3', 1000)
+  near('10%3', 1)
+  near('0.1+0.2', 0.3)
+  near('√(9)×2', 6)
+  // A list evaluates every entry, in order, and reports them together.
+  assert.equal(evaluateArithmetic('[100+0.7*33, 15*sqrt(1-0.49), 1]'), '123.1, 10.7121426428, 1')
+  assert.equal(evaluateArithmetic('2+2, 3+3'), '4, 6')
+  // Failures name the problem so the model can correct its next call.
+  assert.throws(() => evaluateArithmetic('sqrtx(4)'), /Unknown name/)
+  assert.throws(() => evaluateArithmetic('(1+2'), /not closed/)
+  assert.throws(() => evaluateArithmetic('1/0'), /not a finite number/)
+  assert.throws(() => evaluateArithmetic('sqrt()'), /one argument/)
+  assert.throws(() => evaluateArithmetic('2 +'), /ends too early|unexpected/)
+})
+
 test('older assistant messages keep only their text; tool calls/results are dropped from history', () => {
   const old = { id: 'a1', r: 'assistant', t: 'First answer.', toolFinal: 'First answer.', toolRounds: [
     { text: 'Working on it.', calls: [{ id: 'c1', name: 'calc', arguments: '{"expression":"2*7"}', result: '14' }] },
