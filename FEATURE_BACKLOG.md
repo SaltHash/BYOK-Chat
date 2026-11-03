@@ -9,6 +9,29 @@ partly addresses an idea, the remaining gap is described explicitly.
 - **Reply bookmarks** — bookmark individual messages and list them in the
   sidebar (distinct from chat pinning).
 
+## Multitasking
+
+Several chats can stream at once now; these are the gaps that remain around
+watching, steering and switching between them.
+
+- **Background finish markers** — a chat that finished while another was open
+  keeps a quiet marker until it is read, so the streaming dot is not the only
+  cue and nothing has to be counted.
+- **Queued sends** — sending into a chat that is already replying currently
+  asks for a stop first; queue the message instead and dispatch it when the run
+  ends.
+- **Per-chat model and parameters** — endpoint, model and sampling settings are
+  global, so switching chats changes what the next send uses. Let a chat keep
+  the model it started with.
+- **Jump to running chats** — a command-palette section listing the chats that
+  are streaming right now, so a background chat can be reached without
+  scanning the sidebar.
+- **Stop every running reply** — one command that aborts all streaming chats,
+  alongside the existing per-chat stop.
+- **Step hint on the row dot** — the row indicator could name the current step
+  (searching, writing) on hover, so progress is readable without opening the
+  chat.
+
 ## Composer
 
 - **Attachment reorder focus** — keep focus on the moved attachment after using

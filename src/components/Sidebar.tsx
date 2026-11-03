@@ -28,10 +28,11 @@ type RowDnd = { register: (id: string) => (el: HTMLDivElement | null) => void; h
 type RowProps = { c: Chat; mv: (id: string, x: number, y: number) => void; del: (id: string, shift: boolean) => void; dnd: RowDnd | null; container: string; index: number; /** Extra trailing label (temporary chats show the time they have left). */ time?: string }
 
 function RowBody({ c, mv, del, dnd, container, index, time }: RowProps) {
-  // The only store field a row renders is whether it is the open chat; the
-  // actions are stable and read on demand, so a streamed chunk or a keystroke
-  // in the composer does not re-render the list.
+  // The only store fields a row renders are whether it is the open chat and
+  // whether it is still replying; the actions are stable and read on demand, so
+  // a streamed chunk or a keystroke in the composer does not re-render the list.
   const selected = useS((s) => s.chat === c.id)
+  const busy = useS((s) => s.busyChats?.[c.id] === true)
   const [ed, setEd] = useState(false)
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null)
   const dragging = dnd?.activeId === c.id
@@ -62,7 +63,11 @@ function RowBody({ c, mv, del, dnd, container, index, time }: RowProps) {
       {ed ? <Name v={c.title} save={(t) => useS.getState().rename(c.id, t)} done={() => setEd(false)} /> : (
         <button onDoubleClick={() => setEd(true)} onClick={() => useS.getState().patch({ chat: c.id, activeProject: '' })} className="side-item flex min-w-0 flex-1 items-center gap-2.5 px-2.5 text-left">
           {c.pin ? <Pin size={15} className="shrink-0 text-ac" /> : c.temporary ? <Clock size={15} className="shrink-0 text-mu" /> : <MessageSquare size={15} className="shrink-0 text-mu" />}
-          <span className="truncate">{c.title}{c.temporary && container !== 'temporary' ? ' · temporary' : ''}</span>
+          <span className="flex min-w-0 flex-1 items-center gap-1.5">
+            <span className="truncate">{c.title}{c.temporary && container !== 'temporary' ? ' · temporary' : ''}</span>
+            {/* A running reply stays visible from anywhere: a small pulsing dot, no counter. */}
+            {busy && <><span aria-hidden="true" title="Replying" className="size-1.5 shrink-0 animate-pulse rounded-full bg-ac motion-reduce:animate-none" /><span className="sr-only">Replying</span></>}
+          </span>
         </button>
       )}
       {time && <span title={c.expiresAt ? `Deletes in ${time}` : 'Deletes when you leave'} className="shrink-0 text-xs text-mu">{time}</span>}
@@ -97,7 +102,7 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
      re-render the whole list. Actions are stable, so subscribing to them is
      free and keeps the call sites unchanged. */
   const s = useS(useShallow((st) => ({
-    chats: st.chats, chat: st.chat, projects: st.projects, activeProject: st.activeProject, prefs: st.prefs,
+    chats: st.chats, chat: st.chat, busyChats: st.busyChats, projects: st.projects, activeProject: st.activeProject, prefs: st.prefs,
     themeMode: st.themeMode, themeLight: st.themeLight, themeDark: st.themeDark, customLightColors: st.customLightColors, customDarkColors: st.customDarkColors, libraryShow: st.libraryShow,
     eps: st.eps, pls: st.pls, prompts: st.prompts, cmds: st.cmds, tools: st.tools, memories: st.memories, widgets: st.widgets, features: st.features,
     patch: st.patch, newChat: st.newChat, renameProject: st.renameProject, delProject: st.delProject, openProject: st.openProject, moveChat: st.moveChat, promoteChat: st.promoteChat,
@@ -483,8 +488,14 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
   // means everything.
   const tempPref = s.prefs.tempShow ?? 2
   const tempBase = tempPref >= 6 ? temporary : tempPref === 0 ? temporary.filter((c) => c.id === s.chat) : temporary.slice(0, tempPref)
-  const tempVisible = tempOpen ? temporary : tempBase
-  const tempMore = temporary.length - tempBase.length
+  // A temporary chat that is still replying stays listed past that limit, so a
+  // background chat cannot vanish from the sidebar mid-answer. Expanding the
+  // section lists everything regardless; the setting turns the exception off.
+  const keepStreaming = s.prefs.tempShowStreaming !== false
+  const tempVisible = tempOpen ? temporary
+    : keepStreaming ? temporary.filter((c) => tempBase.includes(c) || s.busyChats?.[c.id] === true)
+    : tempBase
+  const tempMore = temporary.filter((c) => !tempVisible.includes(c)).length
   const item = 'side-item flex w-full items-center gap-2.5 rounded-lg px-2.5 text-left text-sm hover:bg-surf'
   const safeWidth = clampSidebarWidth(width)
   return (

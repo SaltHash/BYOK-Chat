@@ -225,6 +225,7 @@ export const SETTING_LINKS: SettingLink[] = [
   { tab: 'chats', anchor: 'stream-fade', title: 'Reply fade-in', keywords: 'fade in streaming chunks duration ms' },
   { tab: 'chats', anchor: 'startup', title: 'Open on load', keywords: 'startup open load launch new temporary recent permanent conversation' },
   { tab: 'chats', anchor: 'temp-visible', title: 'Temporary chats shown', keywords: 'temporary chats sidebar shown expand collapse count' },
+  { tab: 'chats', anchor: 'temp-streaming', title: 'Keep replying temporary chats listed', keywords: 'temporary streaming replying sidebar current only listed running background' },
   { tab: 'chats', anchor: 'stream-md', title: 'Render markdown while streaming', keywords: 'markdown streaming live rich text format incremental' },
   { tab: 'chats', anchor: 'copy-replies', title: 'Copying replies', keywords: 'copy rich html formatting markdown plain text shift ctrl click word processor google docs tables code links clipboard' },
   { tab: 'chats', anchor: 'process-detail', title: 'Process detail level', keywords: 'process to answer log detail compact standard detailed verbose steps explanation' },

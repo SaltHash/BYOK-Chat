@@ -7,6 +7,7 @@
 
 import { modelsOf, modelNameOf } from './models'
 import type { Attempt, Chat, Ep, Message } from './store'
+import type { UsageRow } from './usageStats'
 
 export type Selection = { k?: string; id?: string; model?: string } | null | undefined
 
@@ -31,6 +32,34 @@ export function chatAttemptLogs(chats: Chat[], chatId: string | null | undefined
   const out: Attempt[][] = []
   for (const m of chat.msgs) if (m.r === 'assistant' && m.log?.length) out.push(m.log)
   return out
+}
+
+/** Rebuild per-message attempt logs from the permanent ledger. Sync shaping
+ *  deliberately leaves process logs out of the cloud copy, so a message that
+ *  came back from sync can have no `log` while the ledger still has its
+ *  tokens and cost. Rows are already oldest-first, so grouping by message id
+ *  preserves the order the meter needs. */
+export function attemptLogsFromRows(rows: UsageRow[], chatId: string | null | undefined): Attempt[][] {
+  if (!chatId) return NO_LOGS
+  const grouped = new Map<string, Attempt[]>()
+  for (const row of rows) {
+    if (row.chatId !== chatId) continue
+    const attempt: Attempt = {
+      n: row.endpoint,
+      m: row.model,
+      tin: row.tin,
+      tout: row.tout,
+      ...(row.cacheRead ? { cacheRead: row.cacheRead } : {}),
+      ...(row.cacheWrite ? { cacheWrite: row.cacheWrite } : {}),
+      cost: row.cost,
+      at: row.at,
+      ...(row.failed ? { err: 'failed' } : {}),
+    }
+    const list = grouped.get(row.messageId)
+    if (list) list.push(attempt)
+    else grouped.set(row.messageId, [attempt])
+  }
+  return grouped.size ? [...grouped.values()] : NO_LOGS
 }
 
 /** `by` of the newest assistant message that reported usage (tooltip

@@ -356,7 +356,7 @@ function ModelsEditor({ e, update }: { e: any; update: (p: object) => void }) {
     document.addEventListener('keydown', dismiss, true)
     return () => document.removeEventListener('keydown', dismiss, true)
   }, [picker])
-  const setModels = (next: string[]) => update({ models: next, model: next.find((m) => m.trim())?.trim() ?? '' })
+  const setModels = (next: string[]) => update({ models: next, model: next.find((m) => m.trim())?.trim() ?? '', modelsAt: Date.now() })
   // Stable row identities (value + occurrence) so rows keep their content across reorders.
   const rowIds = useMemo(() => {
     const seen = new Map<string, number>()
@@ -413,7 +413,7 @@ function ModelsEditor({ e, update }: { e: any; update: (p: object) => void }) {
     const modelNames = Object.fromEntries(adding.flatMap(id => { const name = itemFor(id)?.name; return name ? [[id, name] as const] : [] }))
     const modelCtx = Object.fromEntries(adding.flatMap(id => { const ctx = itemFor(id)?.context; return ctx && Number(ctx) > 0 ? [[id, Number(ctx)] as const] : [] }))
     const modelPrices = Object.fromEntries(adding.flatMap(id => { const price = priceFrom(itemFor(id)); return price && !e.prices?.[id] ? [[id, price] as const] : [] }))
-    update({ models: next, model: next[0] ?? '', modelNames: { ...e.modelNames, ...modelNames }, modelContext: { ...e.modelContext, ...modelCtx }, ...(Object.keys(modelPrices).length ? { prices: { ...e.prices, ...modelPrices } } : {}), modelEfforts: { ...e.modelEfforts, ...Object.fromEntries(effortEntries) }, modelEffortSource: { ...e.modelEffortSource, ...Object.fromEntries(effortEntries.map(([id, levels]) => [id, levels.length ? 'auto' : itemFor(id)?.source ?? 'manual'])) } })
+    update({ models: next, model: next[0] ?? '', modelsAt: Date.now(), modelNames: { ...e.modelNames, ...modelNames }, modelContext: { ...e.modelContext, ...modelCtx }, ...(Object.keys(modelPrices).length ? { prices: { ...e.prices, ...modelPrices } } : {}), modelEfforts: { ...e.modelEfforts, ...Object.fromEntries(effortEntries) }, modelEffortSource: { ...e.modelEffortSource, ...Object.fromEntries(effortEntries.map(([id, levels]) => [id, levels.length ? 'auto' : itemFor(id)?.source ?? 'manual'])) } })
     setPicker(false); setSelectedModels([]); setSearchIdea(null)
   }
   return <div className="space-y-2">
@@ -765,6 +765,7 @@ function Eps() {
     s.upd('eps', endpoint.id, {
       models,
       model: provider.model || models[0] || '',
+      modelsAt: Date.now(),
       ...(Object.keys(names).length ? { modelNames: { ...live.modelNames, ...names } } : {}),
       ...(Object.keys(contexts).length ? { modelContext: { ...live.modelContext, ...contexts } } : {}),
     })
@@ -2473,6 +2474,12 @@ function Chats() {
           <RangeSlider label="Temporary chats shown" min={0} max={6} step={1} value={s.prefs.tempShow ?? 2} set={(tempShow) => s.patch({ prefs: { ...s.prefs, tempShow } })} className="flex-1" />
           <span className="w-28 text-right text-sm">{(s.prefs.tempShow ?? 2) === 0 ? 'Current only' : (s.prefs.tempShow ?? 2) >= 6 ? 'All' : `${s.prefs.tempShow ?? 2} chat${(s.prefs.tempShow ?? 2) === 1 ? '' : 's'}`}</span>
         </div>
+      </div>
+      </Anchor>
+      <Anchor id="temp-streaming">
+      <div className="flex items-center justify-between gap-3 rounded-xl bg-surf p-3">
+        <div className="min-w-0"><div className="text-sm font-medium">Keep replying temporary chats listed</div><div className="text-xs text-mu">A temporary chat that is still writing stays in the sidebar even when the list above shows only the chat you have open, so you can watch over it from another chat. Turn this off to hide it like any other chat past the limit.</div></div>
+        <Toggle on={s.prefs.tempShowStreaming !== false} set={(tempShowStreaming) => s.patch({ prefs: { ...s.prefs, tempShowStreaming } })} label="Keep replying temporary chats listed" />
       </div>
       </Anchor>
       <div className="pt-1"><Btn v="soft" icon={Sparkles} onClick={() => goSetting('look#temp-glow')}>Open glow settings</Btn></div>

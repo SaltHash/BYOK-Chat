@@ -369,7 +369,7 @@ export function WorkspacePanel({ msg, live, workspace, selectedRevisionId, setSe
   setSelectedRevisionId: (id: string) => void; onClose: () => void; initialFilePath?: string; focus?: number; sharedOf?: string
 }) {
   const send = useS((s) => s.send)
-  const busy = useS((s) => s.busy)
+  const busy = useS((s) => s.busyChats?.[s.chat] === true)
   const workspacePrefs = useS((s) => s.workspacePrefs ?? { defaultView: 'latest', autoOpen: true, autoFollow: true })
   const storedSplit = useS((s) => s.prefs.workspaceSplit)
   const [editing, setEditing] = useState(false)

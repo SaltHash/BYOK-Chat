@@ -4,6 +4,13 @@ import { useS, useLive, type Msg } from '../store'
 import { PLAN_INTRO, RESEARCH_TIERS, countedSteps, dedupTrace, reasoningBlocks, tierOf, type ResearchPlan, type ResearchPlanStep, type ResearchTierId } from '../research'
 import { claimForCitation, collectMessageSources, linkifyCitations, stripCitations } from '../citations'
 import { Md } from './Md'
+
+/** A research card follows its own chat, not whichever chat happens to be
+ *  open: while another chat streams, this card's controls stay usable. */
+const useMsgBusy = (mid: string) => useS((s) => {
+  const c = s.chats.find((x) => x.msgs.some((m) => m.id === mid))
+  return !!c && s.busyChats?.[c.id] === true
+})
 import { SourcesPanel, scrollToSource } from './Sources'
 import { Btn, cx } from './ui'
 
@@ -45,7 +52,7 @@ export function ResearchPlanCard({ msg }: { msg: Msg }) {
   const start = useS((s) => s.startResearch)
   const stop = useS((s) => s.stopResearch)
   const save = useS((s) => s.updateResearchPlan)
-  const busy = useS((s) => s.busy)
+  const busy = useMsgBusy(msg.id)
   const rs = msg.research
   const [draft, setDraft] = useState<ResearchPlan | null>(rs?.plan ?? null)
   // `mode` is the edit button's two-state behaviour:
@@ -173,7 +180,7 @@ export function ResearchPlanCard({ msg }: { msg: Msg }) {
 export function ResearchTierPicker({ msg }: { msg: Msg }) {
   const choose = useS((s) => s.chooseResearchTier)
   const stop = useS((s) => s.stopResearch)
-  const busy = useS((s) => s.busy)
+  const busy = useMsgBusy(msg.id)
   const rs = msg.research
   if (!rs || rs.status !== 'tier-pick') return null
   return (
@@ -207,7 +214,7 @@ export function ResearchTierPicker({ msg }: { msg: Msg }) {
 export function ResearchProgressCard({ msg }: { msg: Msg }) {
   const stop = useS((s) => s.stopResearch)
   const resume = useS((s) => s.resumeResearch)
-  const busy = useS((s) => s.busy)
+  const busy = useMsgBusy(msg.id)
   const rs = msg.research
   const live = useLive((l) => l.tools[msg.id]) as { name?: string }[] | undefined
   const toolBusy = !!live?.some((c) => c.name === 'search' || c.name === 'fetch_page')

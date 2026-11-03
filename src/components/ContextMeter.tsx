@@ -2,7 +2,7 @@ import { useMemo, useState, type ReactNode } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import { TrendingUp } from 'lucide-react'
 import { useS, featOn } from '../store'
-import { chatAttemptLogs, deriveUsage, lastReplyBy } from '../usage'
+import { attemptLogsFromRows, chatAttemptLogs, deriveUsage, lastReplyBy } from '../usage'
 import { estimateHistoryTokens } from '../engine'
 import { compactThreshold, normCompactAt, withCompaction } from '../compaction'
 import { qualityPrompt } from '../flair'
@@ -102,15 +102,23 @@ function ContextBar({ limit, cpt, busy }: { limit: number; cpt: number; busy: bo
 export function ContextMeter({ cfg }: { cfg: (t: string) => void }) {
   const show = useS((s) => s.prefs.showContextMeter !== false)
   const statsOn = useS((s) => featOn(s, 'stats'))
+  const chatId = useS((s) => s.chat)
   const logs = useS(useShallow((s) => chatAttemptLogs(s.chats, s.chat)))
   const lastBy = useS((s) => lastReplyBy(s.chats, s.chat))
+  const ledger = useS((s) => s.usage)
+  const ledgerLogs = useMemo(() => attemptLogsFromRows(ledger, chatId), [ledger, chatId])
   const eps = useS((s) => s.eps)
   const sel = useS((s) => s.sel)
   const manualLimit = useS((s) => Math.max(1000, Math.floor(Number(s.widgetPrefs?.contextLimit) || 128000)))
   const charsPerToken = useS((s) => Math.min(10, Math.max(1, Number(s.widgetPrefs?.charsPerToken) || 4)))
-  const busy = useS((s) => s.busy)
+  const busy = useS((s) => s.busyChats?.[s.chat] === true)
   const decimals = useS((s) => Math.min(8, Math.max(0, Number(s.widgetPrefs?.costDecimals ?? 4))))
-  const u = useMemo(() => deriveUsage({ logs, lastBy, eps, sel, manualLimit }), [logs, lastBy, eps, sel, manualLimit])
+  // A message restored from a cloud copy has no process log (sync intentionally
+  // omits it), but the permanent ledger still has the spend. Fall back to the
+  // ledger so a reload does not make every chat look unused.
+  const effectiveLogs = logs.length ? logs : ledgerLogs
+  const effectiveLastBy = logs.length ? lastBy : (ledgerLogs[ledgerLogs.length - 1]?.[0]?.n ?? '')
+  const u = useMemo(() => deriveUsage({ logs: effectiveLogs, lastBy: effectiveLastBy, eps, sel, manualLimit }), [effectiveLogs, effectiveLastBy, eps, sel, manualLimit])
   if (!show) return null
 
   const { hasReply, tok, limit, pct, over, tout, cacheRead, cacheWrite, uncached, replyCost, chatCost, chatTout, chatCacheRead, chatCacheWrite, chatUncached, modelLabel } = u
@@ -121,7 +129,7 @@ export function ContextMeter({ cfg }: { cfg: (t: string) => void }) {
   const costHeader = `$${chatCost.toFixed(3)}`
 
   const R = 15.5, C = 2 * Math.PI * R
-  const label = `${fmtTokens(tok)} of ${fmtTokens(limit)} tokens${hasReply ? ` · last reply by ${lastBy || 'unknown model'}` : ''}`
+  const label = `${fmtTokens(tok)} of ${fmtTokens(limit)} tokens${hasReply ? ` · last reply by ${modelLabel || effectiveLastBy || 'unknown model'}` : ''}`
   return (
     <div className="flex items-center gap-1.5">
       <Pop

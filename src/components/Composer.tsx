@@ -16,6 +16,10 @@ import { getPromptHistory, pushPromptHistory } from '../promptHistory'
 
 const chip = 'flex h-9 min-w-0 items-center gap-2 rounded-lg px-2.5 text-sm text-mu hover:bg-hov hover:text-tx'
 
+/* The Stop glyph is a solid square. Lucide's Square is stroke-only, so it read
+ * as an outlined control next to the filled Send arrow. */
+const StopIcon = (({ size = 16 }: { size?: number }) => <Square size={size} fill="currentColor" strokeWidth={0} />) as Ic
+
 /* The composer is a contenteditable surface, so the DOM is the source of truth
  * while the user types. These helpers keep the DOM and the plain-text draft in
  * lockstep without fighting the native caret. */
@@ -272,6 +276,9 @@ export function Composer({ cfg }: { cfg: (t: string) => void }) {
   const histIdx = useRef<number | null>(null)
   const histDraft = useRef('')
   const v = s.draft
+  // Streaming is per chat: a reply running in another chat leaves this
+  // composer free to send, and Stop here cancels only this chat's reply.
+  const streaming = !!s.busyChats?.[s.chat]
   const [hi, setHi] = useState(0)
   // Focus the composer on load so typing starts here straight away. Skip when
   // a dialog (welcome, settings, palette) owns focus, and never scroll the chat.
@@ -456,7 +463,7 @@ export function Composer({ cfg }: { cfg: (t: string) => void }) {
   }
   const ready = !!v.trim() || att.length > 0
   const submit = async () => {
-    if (s.busy) return
+    if (streaming) return
     if (!s.eps.length) {
       s.add('eps')
       s.patch({ notice: { t: 'No endpoint is ready yet. Choose a provider preset, add a model and key, test the connection, then send again.', tab: 'eps', label: 'Add endpoint' } })
@@ -724,7 +731,7 @@ export function Composer({ cfg }: { cfg: (t: string) => void }) {
                 }
               }
               if (e.key === 'Enter') {
-                if (!e.shiftKey && s.prefs.enterSends && !s.busy) { e.preventDefault(); void submit(); return }
+                if (!e.shiftKey && s.prefs.enterSends && !streaming) { e.preventDefault(); void submit(); return }
                 // Shift+Enter (or Enter when send-on-enter is off) inserts a
                 // real line break instead of letting the browser invent divs.
                 e.preventDefault()
@@ -843,7 +850,7 @@ export function Composer({ cfg }: { cfg: (t: string) => void }) {
               <Mic size={18} />
             </button>
           )}
-          <Btn icon={s.busy ? Square : ArrowUp} v={s.busy || ready ? 'solid' : 'soft'} onClick={s.busy ? s.stop : submit} title={s.busy ? 'Stop' : 'Send'} className="rounded-full" />
+          <Btn icon={streaming ? StopIcon : ArrowUp} v={streaming || ready ? 'solid' : 'soft'} onClick={streaming ? s.stop : submit} title={streaming ? 'Stop' : 'Send'} className="rounded-full" />
         </div>
       </div>
       </div>

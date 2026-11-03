@@ -421,7 +421,7 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
   const logDetail = prefs.logDetail ?? 'standard'
   const logTiming = prefs.logTiming !== false
   const logModels = prefs.logModels !== false
-  const busy = useS((s) => s.busy)
+  const busy = useS((s) => s.busyChats?.[s.chat] === true)
   const advanced = useS((s) => s.advanced)
   const features = useS((s) => s.features)
   const workspaces = useS((s) => s.workspaces)
@@ -893,7 +893,7 @@ export function Chat({ side, toggle, cfg, pal }: { side: boolean; toggle: () => 
     setAtEnd((was) => (was === near ? was : near))
   }
   const liveTools = useLive((l) => l.tools)
-  const busy = useS((st) => st.busy)
+  const busy = useS((st) => st.busyChats?.[st.chat] === true)
   const voicePrefs = useS((st) => st.voicePrefs)
   // Auto read-aloud: speak each reply once, after it finishes streaming.
   const spoken = useRef('')

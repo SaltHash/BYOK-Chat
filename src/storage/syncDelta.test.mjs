@@ -286,3 +286,28 @@ test('a delta only collapses a chat duplicate it actually introduces', () => {
   // Replaying the same delta is idempotent.
   assert.deepEqual(applySyncDelta(applied, delta).chats.map((c) => c.id), ['a', 'b'])
 })
+
+test('a stale settings delta cannot restore an endpoint model deleted here', () => {
+  const ep = (models, modelsAt) => ({ id: 'e1', name: 'Endpoint', models, model: models[0] ?? '', modelsAt })
+  const local = { ...empty(), settings: { eps: [ep(['a'], 200)] } }
+  const stale = { v: 1, at: 100, settings: { set: { eps: [ep(['a', 'b'], 100)] } } }
+  assert.deepEqual(applySyncDelta(local, stale).settings.eps[0].models, ['a'])
+
+  // A model added after the delete is a newer edit and does arrive.
+  const fresh = { v: 1, at: 300, settings: { set: { eps: [ep(['a', 'b'], 300)] } } }
+  assert.deepEqual(applySyncDelta(local, fresh).settings.eps[0].models, ['a', 'b'])
+})
+
+test('a pulled message keeps a local attempt log until its text changes', () => {
+  const log = [{ n: 'A', m: 'model', tin: 120, tout: 30, cost: 0.01, at: 1000 }]
+  const local = { ...empty(), chats: [chat('c1', 'T', [
+    { id: 'a1', r: 'assistant', t: 'answer', at: 1000, log },
+  ])] }
+  const update = (text) => ({ v: 1, at: 2000, chats: { ops: [{ id: 'c1', update: [{ id: 'a1', r: 'assistant', t: text, at: 1000 }] }] } })
+
+  assert.equal(applySyncDelta(local, update('answer')).chats[0].msgs[0].log, log)
+  assert.equal('log' in applySyncDelta(local, update('edited')).chats[0].msgs[0], false)
+
+  const full = { v: 1, at: 2000, chats: { ops: [{ id: 'c1', full: chat('c1', 'T', [{ id: 'a1', r: 'assistant', t: 'answer', at: 1000 }]) }] } }
+  assert.equal(applySyncDelta(local, full).chats[0].msgs[0].log, log)
+})

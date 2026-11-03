@@ -57,6 +57,45 @@ export const chatFingerprint = (c: AnyChat): string | null => {
   return `${String(c.title ?? '')}|${ids.join(',')}`
 }
 
+/* Sync shaping strips process logs from messages because they contain local
+ * tool output and request details. A replaced message therefore looks like a
+ * message that never had a log. Keep this device's log when the visible
+ * message is unchanged; the ledger has the same spend, but the process panel
+ * and context meter still need the richer local copy. */
+export function keepLocalAttemptLog(incoming: unknown, local: unknown): unknown {
+  if (!isObj(incoming) || !isObj(local)) return incoming
+  if (incoming.log !== undefined) return incoming
+  if (!Array.isArray(local.log) || !local.log.length) return incoming
+  if (incoming.t !== local.t || incoming.at !== local.at) return incoming
+  return { ...incoming, log: local.log }
+}
+
+/** Keep local attempt logs while adopting an incoming chat, matching messages
+ *  by id and only where their visible content did not change. */
+export function keepLocalChatLogs(incoming: unknown, local: unknown): unknown {
+  if (!isObj(incoming) || !isObj(local)) return incoming
+  const mine = new Map<string, Obj>()
+  for (const m of asArr(local.msgs)) {
+    if (isObj(m) && typeof m.id === 'string') mine.set(m.id, m)
+  }
+  return {
+    ...incoming,
+    msgs: asArr(incoming.msgs).map((m) => {
+      const localMsg = isObj(m) && typeof m.id === 'string' ? mine.get(m.id) : undefined
+      return localMsg ? keepLocalAttemptLog(m, localMsg) : m
+    }),
+  }
+}
+
+const keepLocalChatsLogs = (localChats: unknown[], remoteChats: unknown[]): unknown[] => {
+  const mine = new Map<string, Obj>()
+  for (const c of localChats) if (isObj(c) && typeof c.id === 'string') mine.set(c.id, c)
+  return remoteChats.map((c) => {
+    const local = isObj(c) && typeof c.id === 'string' ? mine.get(c.id) : undefined
+    return local ? keepLocalChatLogs(c, local) : c
+  })
+}
+
 export function mergeChats(localChats: unknown[], remoteChats: unknown[]): unknown[] {
   const byId = new Map<string, AnyChat>()
   const order: string[] = []
@@ -69,7 +108,7 @@ export function mergeChats(localChats: unknown[], remoteChats: unknown[]): unkno
     if (!allowReplace) return
     const newer = chatRecency(chat) > chatRecency(prev)
     const richer = chatRecency(chat) === chatRecency(prev) && asArr(chat.msgs).length > asArr(prev.msgs).length
-    if (newer || richer) byId.set(id, chat)
+    if (newer || richer) byId.set(id, keepLocalChatLogs(chat, prev) as AnyChat)
   }
   for (const c of localChats) add(c, false)
   for (const c of remoteChats) add(c, true)
@@ -229,6 +268,50 @@ export function mergeSearch(local: unknown, remote: unknown): Obj {
  *  "cleared". */
 const CRED_FIELDS: Record<string, string> = { eps: 'key', mcps: 'headers' }
 
+const modelsAtOf = (endpoint: Obj): number => {
+  const at = Number(endpoint.modelsAt)
+  return Number.isFinite(at) && at > 0 ? at : 0
+}
+
+const useModelList = (out: Obj, source: Obj): Obj => {
+  if (Array.isArray(source.models)) out.models = source.models
+  if (typeof source.model === 'string') out.model = source.model
+  out.modelsAt = modelsAtOf(source)
+  return out
+}
+
+/** Merge two copies of one endpoint. Model rows are an ordered list with no
+ *  ids, so a union cannot represent a deletion: keep the list from the newest
+ *  edit instead. Everything else stays local-wins, as before. */
+export function mergeEndpoint(local: Obj, remote: Obj): Obj {
+  const out: Obj = { ...remote, ...local }
+  const localAt = modelsAtOf(local)
+  const remoteAt = modelsAtOf(remote)
+  if (remoteAt > localAt) useModelList(out, remote)
+  else if (localAt) out.modelsAt = localAt
+  return out
+}
+
+/** When adopting another device's settings, keep newer local model-list edits
+ *  without replacing the adopted endpoint list itself. This is what stops a
+ *  just-deleted model from being restored by a stale cloud copy. */
+export function keepLocalModelEdits(localEps: unknown, incoming: Obj): Obj {
+  const out: Obj = { ...incoming }
+  if (!Array.isArray(incoming.eps)) return out
+  const mine = new Map<string, Obj>()
+  for (const item of asArr(localEps)) {
+    const endpoint = asObj(item)
+    if (typeof endpoint.id === 'string') mine.set(endpoint.id, endpoint)
+  }
+  out.eps = incoming.eps.map((item) => {
+    const endpoint = asObj(item)
+    const local = typeof endpoint.id === 'string' ? mine.get(endpoint.id) : undefined
+    if (!local || modelsAtOf(local) <= modelsAtOf(endpoint)) return item
+    return useModelList({ ...endpoint }, local)
+  })
+  return out
+}
+
 /** Adopt an incoming settings object while keeping this device's credentials on
  *  the entries it shares. Everything else about an adopted copy is the newer
  *  truth; its credential fields are blank by construction (they never travel),
@@ -282,6 +365,8 @@ export function mergeSettings(local: Obj, remote: Obj, projects: Obj[]): Obj {
       out[k] = dedupeByText(unionById(asArr(local[k]), asArr(remote[k]), (a, b) => (Number(b.updatedAt ?? 0) > Number(a.updatedAt ?? 0) ? b : a)))
     } else if (k === 'todos') {
       out[k] = dedupeByText(unionById(asArr(local[k]), asArr(remote[k])))
+    } else if (k === 'eps') {
+      out[k] = unionById(asArr(local[k]), asArr(remote[k]), mergeEndpoint)
     } else {
       out[k] = unionById(asArr(local[k]), asArr(remote[k]))
     }
@@ -348,11 +433,15 @@ export function mergeSyncData(local: SyncData, remote: SyncData, mode: SyncMerge
   if (mode === 'remote') {
     // Credentials never travel, so adopting a copy must not erase the ones
     // only this device holds (endpoint keys, MCP headers, search keys).
-    const settings: Obj = keepLocalCredentials(local.settings, { ...local.settings, ...remote.settings })
+    const adopted: Obj = keepLocalCredentials(local.settings, { ...local.settings, ...remote.settings })
     // Adopting the other device's settings still must not erase credentials
     // that only exist on this device (the remote copy never carries them).
-    if (isObj(local.settings.search) || isObj(remote.settings.search)) settings.search = mergeSearch(local.settings.search, remote.settings.search)
-    return { settings: resolveChatPointer(local.settings.chat, settings, remote.chats), chats: remote.chats, workspaces: { ...asObj(remote.workspaces) }, selectedRevision: { ...asObj(remote.selectedRevision) } }
+    if (isObj(local.settings.search) || isObj(remote.settings.search)) adopted.search = mergeSearch(local.settings.search, remote.settings.search)
+    // A model row removed here is absent from the adopted list too, which is
+    // indistinguishable from an old cloud copy that still has it. Keep the
+    // newer model-list edit on shared endpoints.
+    const settings = keepLocalModelEdits(local.settings.eps, adopted)
+    return { settings: resolveChatPointer(local.settings.chat, settings, remote.chats), chats: keepLocalChatsLogs(local.chats, remote.chats), workspaces: { ...asObj(remote.workspaces) }, selectedRevision: { ...asObj(remote.selectedRevision) } }
   }
   if (mode === 'local') {
     return { settings: resolveChatPointer(local.settings.chat, { ...remote.settings, ...local.settings }, local.chats), chats: local.chats, workspaces: { ...asObj(local.workspaces) }, selectedRevision: { ...asObj(local.selectedRevision) } }

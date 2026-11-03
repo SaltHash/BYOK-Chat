@@ -205,7 +205,7 @@ function PollCard({ call, busy, used, onSend }: {
 
 /** Follow-up chips and inline polls attached to an assistant reply. */
 export function MessageActions({ calls }: { calls: ToolCall[] }) {
-  const busy = useS((s) => s.busy)
+  const busy = useS((s) => s.busyChats?.[s.chat] === true)
   const [used, setUsed] = useState<Record<string, boolean>>({})
   const actions = calls.filter((call) => !call.error && (call.name === 'prompt_chip' || call.name === 'inline_poll'))
   if (!actions.length) return null

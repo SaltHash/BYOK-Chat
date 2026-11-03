@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 
 const {
-  chatAttemptLogs, lastReplyBy, lastLogMessage, allAttemptLogs, allAttemptAts,
+  attemptLogsFromRows, chatAttemptLogs, lastReplyBy, lastLogMessage, allAttemptLogs, allAttemptAts,
   deriveUsage, groupUsage, usageRange, SESSION_START, NO_LOGS,
 } = await import('./usage.ts')
 
@@ -146,4 +146,24 @@ test('uncached input never goes negative when cache reads exceed input', () => {
   const logs = [[{ n: 'A', m: 'm', tin: 10, tout: 1, cacheRead: 100, cacheWrite: 5, at: 1 }]]
   const u = deriveUsage({ logs, lastBy: '', eps: [], sel: null, manualLimit: 1000 })
   assert.equal(u.uncached, 0)
+})
+
+test('kept usage rows rebuild the meter after process logs are gone', () => {
+  const rows = [
+    { at: 1000, chatId: 'c1', messageId: 'a1', endpoint: 'A', model: 'a-model', tin: 100, tout: 20, cacheRead: 0, cacheWrite: 0, cost: 0 },
+    { at: 2000, chatId: 'c1', messageId: 'a2', endpoint: 'A', model: 'a-model', tin: 300, tout: 40, cacheRead: 50, cacheWrite: 0, cost: 0.5 },
+    { at: 3000, chatId: 'other', messageId: 'b1', endpoint: 'B', model: 'b-model', tin: 9, tout: 1, cacheRead: 0, cacheWrite: 0, cost: 0 },
+  ]
+  const logs = attemptLogsFromRows(rows, 'c1')
+  assert.equal(logs.length, 2)
+  assert.equal(logs[0][0].tin, 100)
+  const u = deriveUsage({ logs, lastBy: 'A', eps: [{ id: 'e1', name: 'A', prices: { 'a-model': { input: 1, output: 2 } } }], sel: null, manualLimit: 1000 })
+  assert.equal(u.hasReply, true)
+  assert.equal(u.tin, 300)
+  assert.equal(u.tout, 40)
+  assert.equal(u.chatTin, 400)
+  assert.equal(u.chatTout, 60)
+  assert.equal(u.replyCost, 0.5)
+  assert.equal(u.chatCost, 0.5 + (100 + 20 * 2) / 1e6)
+  assert.deepEqual(attemptLogsFromRows(rows, 'missing'), NO_LOGS)
 })

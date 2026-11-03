@@ -178,3 +178,50 @@ test('the local open chat survives the merge even when the remote had a differen
   assert.equal(out.settings.chat, 'tmp')
   assert.deepEqual(out.chats.map((c) => c.id), ['tmp', 'perm'])
 })
+
+test('the newest endpoint model list wins so a deleted model does not return', () => {
+  const ep = (models, modelsAt, name = 'Endpoint') => ({ id: 'e1', name, models, model: models[0] ?? '', modelsAt })
+  const local = empty({ settings: { eps: [ep(['a'], 200, 'Mine')] } })
+  const remote = empty({ settings: { eps: [ep(['a', 'b'], 100, 'Cloud')] } })
+
+  const merged = mergeSyncData(local, remote)
+  assert.deepEqual(merged.settings.eps[0].models, ['a'])
+  assert.equal(merged.settings.eps[0].name, 'Mine')
+
+  // The deletion also survives the initial "take the other device" link: the
+  // adopted endpoint keeps the remote fields, but not the stale model row.
+  const adopted = mergeSyncData(local, remote, 'remote')
+  assert.deepEqual(adopted.settings.eps[0].models, ['a'])
+  assert.equal(adopted.settings.eps[0].name, 'Cloud')
+
+  // An edit made after the delete is a real re-add and must win.
+  const readded = mergeSyncData(local, { ...remote, settings: { eps: [ep(['a', 'b'], 300, 'Cloud')] } })
+  assert.deepEqual(readded.settings.eps[0].models, ['a', 'b'])
+
+  // A legacy cloud copy has no stamp, so the local delete still wins.
+  const legacy = mergeSyncData(local, { ...remote, settings: { eps: [{ ...ep(['a', 'b'], undefined, 'Cloud'), modelsAt: undefined }] } }, 'remote')
+  assert.deepEqual(legacy.settings.eps[0].models, ['a'])
+})
+
+test('a newer cloud chat keeps local attempt logs for unchanged messages', () => {
+  const log = [{ n: 'A', m: 'model', tin: 120, tout: 30, cost: 0.01, at: 1000 }]
+  const local = empty({ chats: [{ id: 'c1', title: 'T', msgs: [
+    { id: 'u1', r: 'user', t: 'hi', at: 900 },
+    { id: 'a1', r: 'assistant', t: 'answer', at: 1000, log },
+  ] }] })
+  const remoteChat = (text = 'answer') => ({ id: 'c1', title: 'T', msgs: [
+    { id: 'u1', r: 'user', t: 'hi', at: 900 },
+    { id: 'a1', r: 'assistant', t: text, at: 1000 },
+    { id: 'a2', r: 'assistant', t: 'later', at: 2000 },
+  ] })
+
+  const merged = mergeSyncData(local, empty({ chats: [remoteChat()] }))
+  assert.equal(merged.chats[0].msgs[1].log, log)
+
+  const adopted = mergeSyncData(local, empty({ chats: [remoteChat()] }), 'remote')
+  assert.equal(adopted.chats[0].msgs[1].log, log)
+
+  // A changed reply is a new answer; its old usage must not be attached to it.
+  const changed = mergeSyncData(local, empty({ chats: [remoteChat('edited')] }))
+  assert.equal('log' in changed.chats[0].msgs[1], false)
+})

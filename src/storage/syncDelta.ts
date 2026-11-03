@@ -20,7 +20,7 @@
  * messages, revisions or settings.
  */
 
-import { chatFingerprint, mergeSelectedRevision, mergeSettings, mergeWorkspace, resolveChatPointer, type SyncData } from './syncMerge'
+import { chatFingerprint, keepLocalAttemptLog, keepLocalChatLogs, mergeSelectedRevision, mergeSettings, mergeWorkspace, resolveChatPointer, type SyncData } from './syncMerge'
 
 type Obj = Record<string, unknown>
 
@@ -299,10 +299,12 @@ export function applySyncDelta(local: SyncData, delta: SyncDelta): SyncData {
       if (op.full && isObj(op.full)) {
         // A whole-chat delta exists only when its messages have no stable ids,
         // so there is nothing to merge by id: the remote copy is the change.
-        byId.set(op.id, { ...op.full, id: op.id })
+        // Keep any attempt logs this device already has for identical messages.
+        const full = existing ? keepLocalChatLogs(op.full, existing) : op.full
+        byId.set(op.id, { ...asObj(full), id: op.id })
         continue
       }
-      const base: Obj = existing ? { ...existing, msgs: asArr(existing.msgs) } : { id: op.id, title: 'Untitled chat', msgs: [] }
+      const base: Obj = existing ? { ...existing, msgs: [...asArr(existing.msgs)] } : { id: op.id, title: 'Untitled chat', msgs: [] }
       const withMeta = op.meta && isObj(op.meta) ? { ...base, ...op.meta, id: op.id, msgs: base.msgs } : { ...base }
       let msgs = asArr(withMeta.msgs)
       const index = new Map<string, number>()
@@ -310,7 +312,11 @@ export function applySyncDelta(local: SyncData, delta: SyncDelta): SyncData {
       const put = (msg: unknown) => {
         if (!isObj(msg)) return
         const id = msgId(msg)
-        if (id && index.has(id)) { msgs[index.get(id)!] = msg; return }
+        if (id && index.has(id)) {
+          const at = index.get(id)!
+          msgs[at] = keepLocalAttemptLog(msg, msgs[at])
+          return
+        }
         msgs.push(msg)
         if (id) index.set(id, msgs.length - 1)
       }
