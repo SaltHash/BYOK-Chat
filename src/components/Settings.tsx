@@ -1378,7 +1378,7 @@ function Tools() {
           </div></Anchor>}
           {k === 'search' && <div className="space-y-3 rounded-xl bg-bg p-3">
             <Anchor id="search-provider">
-            <Field label="API provider" hint="Your searches run through this provider with your own key below. The results ground the reply and become its sources. Jina AI works without a key at a lower rate limit.">
+            <Field label="API provider" hint="Your searches run through this provider with your own key below. The results ground the reply and become its sources. Jina AI works without a key at a lower rate limit. The Google, OpenAI and Anthropic options use a fixed small model with that vendor's built-in web search, so they can cost more than a search-only API.">
               <Sel value={search.provider} set={(provider) => { setShowSearchKey(false); setSearch({ provider: provider as typeof search.provider }) }} opts={SEARCH_PROVIDERS.map(([id, label]) => [id, label] as [string, string])} />
             </Field>
             </Anchor>
@@ -1439,21 +1439,17 @@ function Tools() {
             <div className="flex items-center justify-between gap-3"><div><div className="text-sm font-medium">Page reader</div><div className="text-xs text-mu">Let the model open a search result to read the full page. Turn off to keep grounding to snippets.</div></div><Toggle on={search.reader} set={(reader) => setSearch({ reader })} /></div>
             </Anchor>
             <Anchor id="reader-api">
-            <Field label="Reader API" hint="Which service reads a page when the model opens a search result. Pick a different service than your search API to use a separate provider and key.">
+            <Field label="Page reader API" hint="Which service reads a page when the model opens a search result. Every provider that supports page extraction is a first-class choice; direct fetch needs no key. Pick a different service than your search API to use a separate provider and key.">
               <Sel value={search.readerProvider} set={(readerProvider) => setSearch({ readerProvider: readerProvider as typeof search.readerProvider })} opts={READER_PROVIDERS.map(([id, label]) => [id, label] as [string, string])} />
             </Field>
             </Anchor>
-            {search.readerProvider !== 'builtin' && <>
+            {search.readerProvider !== 'direct' && <>
               <Anchor id="reader-key">
-              <Field label="Reader API key" hint={search.readerProvider === 'exa'
-                ? 'Required by Exa. Stored in this browser like the search key. Your Exa search key is reused when this is empty.'
-                : search.readerProvider === 'jina'
-                  ? 'Optional for Jina Reader. Leave empty to use Jina without a key.'
-                  : search.readerProvider === 'firecrawl'
-                    ? 'Optional for Firecrawl. Leave empty to use your Firecrawl search key.'
-                    : 'Optional. Sent as a bearer token to your reader service.'}>
+              <Field label="Reader API key" hint={search.readerProvider === 'custom'
+                ? 'Optional. Sent as a bearer token to your reader service.'
+                : 'Required by Exa, Tavily, Parallel, Valyu, Linkup and Octen. Optional for Jina and Firecrawl. Stored in this browser like the search key; your matching search key is reused when this is empty.'}>
                 <div className="relative">
-                  <Input type={showReaderKey ? 'text' : 'password'} value={search.readerKey} set={(v) => setSearch({ readerKey: v })} placeholder={search.readerProvider === 'exa' ? 'Paste your reader API key' : 'Optional'} />
+                  <Input type={showReaderKey ? 'text' : 'password'} value={search.readerKey} set={(v) => setSearch({ readerKey: v })} placeholder={search.readerProvider === 'custom' ? 'Optional' : 'Paste your reader API key'} />
                   <button onClick={() => setShowReaderKey(!showReaderKey)} title="Show or hide key" className="absolute right-2 top-1/2 -translate-y-1/2 text-mu hover:text-tx">{showReaderKey ? <EyeOff size={16} /> : <Eye size={16} />}</button>
                 </div>
               </Field>
@@ -1463,7 +1459,7 @@ function Tools() {
                 <Input value={search.readerUrl} set={(v) => setSearch({ readerUrl: v })} placeholder="https://example.com/read?url={url}" />
               </Field>
               </Anchor>}
-              <div className="flex items-center justify-between gap-3"><div><div className="text-sm font-medium">Fall back to the built-in reader</div><div className="text-xs text-mu">If the reader API fails or has no key, read the page directly instead of failing the read.</div></div><Toggle on={search.readerFallback} set={(readerFallback) => setSearch({ readerFallback })} /></div>
+              <div className="flex items-center justify-between gap-3"><div><div className="text-sm font-medium">Fall back to direct page fetch</div><div className="text-xs text-mu">If the reader API fails or has no key, fetch the page directly instead of failing the read.</div></div><Toggle on={search.readerFallback} set={(readerFallback) => setSearch({ readerFallback })} /></div>
             </>}
             <Anchor id="reader-summary">
             <div className="flex items-center justify-between gap-3"><div><div className="text-sm font-medium">Summarize pages with another model</div><div className="text-xs text-mu">Send the page to a second model that returns a clean summary. The main model then gets the summary instead of the whole page, which keeps long articles from filling up the context.</div></div><Toggle on={search.readerSummary} set={(readerSummary) => setSearch({ readerSummary })} /></div>

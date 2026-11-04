@@ -83,6 +83,9 @@ const shapeMsg = (m: unknown): unknown => {
           followUps: Array.isArray(a.followUps)
             ? (a.followUps as Obj[]).slice(-3).map((f) => ({ ...obj(f), q: clip(f.q, 600), a: clip(f.a, 3000) }))
             : a.followUps,
+          followUpErrors: Array.isArray(a.followUpErrors)
+            ? (a.followUpErrors as unknown[]).slice(-4).map((e) => clip(e, 600))
+            : a.followUpErrors,
         })),
       } : {}),
       steps: arr(rs.steps).map((step) => {

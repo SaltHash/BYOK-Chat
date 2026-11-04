@@ -237,27 +237,37 @@ export async function fetchPageText(url, { timeoutMs = 8000, maxChars = EXTRACT_
 export { isPublicHttp }
 
 /* ---- Optional page-reader APIs ----
- * The built-in reader fetches the page directly. Some users prefer a hosted
- * extraction API instead (Jina, Firecrawl, Exa) or their own service. Those
+ * The direct reader fetches the page itself. Some users prefer a hosted
+ * extraction API instead (Jina, Firecrawl, Exa, and others) or their own service. Those
  * requests go through /api/reader so a reader key never appears in a URL. */
 
 export const READER_PROVIDERS = {
-  builtin: { label: 'Built-in reader' },
+  direct: { label: 'Direct page fetch' },
   jina: { label: 'Jina Reader', endpoint: 'https://r.jina.ai/' },
   firecrawl: { label: 'Firecrawl', endpoint: 'https://api.firecrawl.dev/v2/scrape', optionalKey: true },
   exa: { label: 'Exa', endpoint: 'https://api.exa.ai/contents', requiresKey: true },
+  tavily: { label: 'Tavily Extract', endpoint: 'https://api.tavily.com/extract', requiresKey: true },
+  parallel: { label: 'Parallel Extract', endpoint: 'https://api.parallel.ai/v1/extract', requiresKey: true },
+  valyu: { label: 'Valyu Contents', endpoint: 'https://api.valyu.ai/v1/contents', requiresKey: true },
+  linkup: { label: 'Linkup Fetch', endpoint: 'https://api.linkup.so/v1/fetch', requiresKey: true },
+  octen: { label: 'Octen Extract', endpoint: 'https://api.octen.ai/extract', requiresKey: true },
   custom: { label: 'Custom reader API' },
 }
 
 const READER_ALIASES = {
-  builtin: 'builtin', direct: 'builtin', fetch: 'builtin', 'built-in': 'builtin',
+  direct: 'direct', builtin: 'direct', fetch: 'direct', 'built-in': 'direct', 'built-in reader': 'direct',
   jina: 'jina', 'jina.ai': 'jina', 'jina-reader': 'jina', reader: 'jina',
   firecrawl: 'firecrawl',
   exa: 'exa', 'exa.ai': 'exa',
+  tavily: 'tavily',
+  parallel: 'parallel',
+  valyu: 'valyu',
+  linkup: 'linkup',
+  octen: 'octen',
   custom: 'custom', own: 'custom', self: 'custom',
 }
 
-export function normalizeReaderProvider(value, fallback = 'builtin') {
+export function normalizeReaderProvider(value, fallback = 'direct') {
   const v = String(value || '').trim().toLowerCase()
   if (READER_ALIASES[v]) return READER_ALIASES[v]
   if (READER_PROVIDERS[v]) return v
@@ -368,14 +378,24 @@ function pickReaderText(body) {
   const candidates = [
     body?.text, body?.content, body?.markdown, body?.data?.text, body?.data?.content, body?.data?.markdown,
     body?.data?.content?.markdown, body?.data?.content?.text, body?.data?.data?.content,
+    body?.raw_content, body?.full_content,
     body?.results?.[0]?.text, body?.results?.[0]?.content, body?.results?.[0]?.markdown,
+    body?.results?.[0]?.raw_content, body?.results?.[0]?.full_content, body?.results?.[0]?.excerpts,
+    body?.data?.results?.[0]?.content, body?.data?.results?.[0]?.full_content, body?.data?.results?.[0]?.markdown,
+    body?.data?.results?.[0]?.highlights,
   ]
-  for (const value of candidates) if (typeof value === 'string' && value.trim()) return value
+  for (const value of candidates) {
+    if (typeof value === 'string' && value.trim()) return value
+    if (Array.isArray(value)) {
+      const joined = value.filter((x) => typeof x === 'string' && x.trim()).join('\n\n')
+      if (joined) return joined
+    }
+  }
   return ''
 }
 
 function pickReaderTitle(body) {
-  const candidates = [body?.title, body?.data?.title, body?.data?.metadata?.title, body?.metadata?.title, body?.results?.[0]?.title]
+  const candidates = [body?.title, body?.data?.title, body?.data?.metadata?.title, body?.metadata?.title, body?.results?.[0]?.title, body?.data?.results?.[0]?.title]
   for (const value of candidates) if (typeof value === 'string' && value.trim()) return value
   return ''
 }
@@ -400,6 +420,12 @@ function readerTarget(url, base, placeholderMode = false) {
     return target
   }
   return `${baseUrl.replace(/\/+$/, '')}/${url}`
+}
+
+// Reader APIs disagree on the header name; keep the wire spelling exact.
+function keyHeaderFor(provider) {
+  if (provider === 'tavily' || provider === 'linkup' || provider === 'octen') return 'authorization'
+  return 'x-api-key'
 }
 
 async function runReaderProvider(provider, targetUrl, { apiKey, baseUrl, timeoutMs, maxRetries, retryBaseMs, fetchFn, limit }) {
@@ -448,6 +474,24 @@ async function runReaderProvider(provider, targetUrl, { apiKey, baseUrl, timeout
       return { title: pickReaderTitle(body), text: pickReaderText(body) }
     }, { timeoutMs, maxRetries, retryBaseMs, label: meta.label })
   }
+  if (provider === 'tavily' || provider === 'parallel' || provider === 'valyu' || provider === 'linkup' || provider === 'octen') {
+    if (!key) throw readerFailure(`${meta.label} needs a reader API key. Paste one in Settings → Tools → Page reader, or use the matching search key.`, { code: 'missing_key' })
+    if (!base) throw readerFailure(`Add the ${meta.label} reader URL.`, { code: 'missing_key' })
+    if (!isPublicHttp(base)) throw readerFailure('The reader URL must be a public http(s) address.', { code: 'bad_url' })
+    return withReaderRetry(async (signal) => {
+      const headers = { accept: 'application/json', 'content-type': 'application/json', 'user-agent': 'byok-chat-reader/1.0' }
+      headers[keyHeaderFor(provider)] = provider === 'tavily' || provider === 'linkup' || provider === 'octen' ? `Bearer ${key}` : key
+      let body
+      if (provider === 'tavily') body = { urls: [targetUrl], extract_depth: 'basic', format: 'markdown' }
+      else if (provider === 'parallel') body = { urls: [targetUrl], objective: 'Extract the full readable page content.', advanced_settings: { full_content: true } }
+      else if (provider === 'valyu') body = { urls: [targetUrl], response_length: 'short', extract_effort: 'auto' }
+      else if (provider === 'linkup') body = { url: targetUrl, includeRawContent: false, renderJs: false, mode: 'standard' }
+      else body = { urls: [targetUrl], format: 'markdown' }
+      const res = await fetchFn(base, { method: 'POST', signal, headers, body: JSON.stringify(body) })
+      const data = await responseJson(res)
+      return { title: pickReaderTitle(data), text: pickReaderText(data) }
+    }, { timeoutMs, maxRetries, retryBaseMs, label: meta.label })
+  }
   // Custom service: `{url}` is replaced when present, otherwise ?url= is appended.
   if (!base) throw readerFailure('Add your reader API URL in Settings → Tools → Page reader.', { code: 'missing_key' })
   const endpoint = readerTarget(targetUrl, base, true)
@@ -472,11 +516,11 @@ async function runReaderProvider(provider, targetUrl, { apiKey, baseUrl, timeout
   }, { timeoutMs, maxRetries, retryBaseMs, label: meta.label })
 }
 
-/* Read a page through a chosen extraction API. Falls back to the built-in
- * reader when configured, so a transient reader-API failure does not break
+/* Read a page through a chosen extraction API. Falls back to the direct page
+ * fetch when configured, so a transient reader-API failure does not break
  * grounding. */
 export async function fetchPageViaProvider(url, {
-  provider = 'builtin',
+  provider = 'direct',
   apiKey = '',
   baseUrl = '',
   fallback = true,
@@ -487,7 +531,7 @@ export async function fetchPageViaProvider(url, {
   fetchFn = fetch,
 } = {}) {
   const id = normalizeReaderProvider(provider)
-  if (id === 'builtin') return fetchPageText(url, { timeoutMs, maxChars, maxRetries, retryBaseMs, fetchFn })
+  if (id === 'direct') return fetchPageText(url, { timeoutMs, maxChars, maxRetries, retryBaseMs, fetchFn })
   if (!isPublicHttp(url)) {
     const e = Error('Only public http(s) pages can be read.')
     e.code = 'bad_url'
@@ -513,7 +557,7 @@ export async function fetchPageViaProvider(url, {
   } catch (e) {
     if (fallback !== false && e?.code !== 'bad_url') {
       const data = await fetchPageText(url, { timeoutMs, maxChars, maxRetries, retryBaseMs, fetchFn })
-      return { ...data, reader: 'builtin', fallbackUsed: true }
+      return { ...data, reader: 'direct', fallbackUsed: true }
     }
     throw e
   }

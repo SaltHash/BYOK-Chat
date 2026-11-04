@@ -52,13 +52,13 @@ test('a replace of a saved copy keeps credentials the file never carried', () =>
   // Restoring a local backup or moving a save passes merge=false; the file has
   // no keys at all, but the device's own keys must survive either way.
   const current = normSearch({ provider: 'tinyfish', keys: { tinyfish: 'tf-local' } })
-  const incoming = normSearch({ provider: 'exa', keys: {}, readerProvider: 'builtin', readerKey: '' })
+  const incoming = normSearch({ provider: 'exa', keys: {}, readerProvider: 'direct', readerKey: '' })
   const merged = mergeImportedSearch(current, incoming)
   assert.equal(merged.keys.tinyfish, 'tf-local')
   assert.equal(merged.readerKey, '')
   // Ordinary settings from the file still apply.
   assert.equal(merged.provider, 'exa')
-  assert.equal(merged.readerProvider, 'builtin')
+  assert.equal(merged.readerProvider, 'direct')
 })
 
 test('credentials the file does carry replace the stored ones', () => {

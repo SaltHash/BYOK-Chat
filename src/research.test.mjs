@@ -267,8 +267,8 @@ test('system note absorbs the approved plan and asks for verification', () => {
   const plan = r.fallbackPlan('fusion power')
   const note = r.researchSystemNote('fusion power', r.tierOf('standard'), new Date(Date.UTC(2026, 9, 15)), plan)
   assert.match(note, /# Plan \(already approved by the user\)/)
-  assert.match(note, /Research Websites/)
-  assert.match(note, /Create Report/)
+  assert.match(note, /Find sources/)
+  assert.match(note, /Write report/)
   assert.match(note, /second, independent source/)
   // Without a plan the plan block is absent, keeping the prompt lean.
   assert.doesNotMatch(r.researchSystemNote('fusion power', r.tierOf('standard')), /already approved/)
@@ -326,6 +326,12 @@ test('plans parse from messy model output and always yield a usable plan', () =>
   assert.ok(fb.steps.some((s) => s.kind === 'analyze'))
   assert.equal(fb.steps[fb.steps.length - 1].kind, 'report')
   assert.match(fb.title, /ocean currents/)
+  // A wrapped plan and step strings are usable too; models occasionally
+  // return either shape when asked for strict JSON.
+  const wrapped = r.parseResearchPlan(JSON.stringify({ plan: { title: 'Wrapped', steps: [{ label: 'Find sources', items: '(1) a' }, 'Compare findings', { kind: 'report', label: 'Write report' }] } }))
+  assert.equal(wrapped.title, 'Wrapped')
+  assert.deepEqual(wrapped.steps[0].items, ['(1) a'])
+  assert.equal(wrapped.steps[1].kind, 'analyze')
 })
 
 test('sanitizeCitations removes ids with no matching source and keeps known ones', () => {
@@ -351,11 +357,28 @@ test('sanitizeCitations removes ids with no matching source and keeps known ones
 test('a usage estimate scales with the tier and only costs when priced', () => {
   const std = r.estimateResearchUsage(r.tierOf('standard'))
   const quick = r.estimateResearchUsage(r.tierOf('quick'))
-  assert.equal(std.searches, 24 + r.PLAN_SCOPE_MAX)
+  assert.ok(std.searches > quick.searches)
+  assert.ok(std.searches < 24 + r.PLAN_SCOPE_MAX, 'the estimate leaves headroom below the cap')
   assert.ok(std.inputTokens > quick.inputTokens)
   assert.equal(std.costUsd, null)
   const priced = r.estimateResearchUsage(r.tierOf('quick'), { input: 1, output: 2 })
   assert.ok(priced.costUsd > 0)
+  const thorough = r.estimateResearchUsage(r.tierOf('thorough'), { input: 1, output: 2 })
+  assert.ok(thorough.agentCostUsd > 0)
+  assert.ok(thorough.roundCostUsd > thorough.agentCostUsd, 'a full round costs more than one agent')
+})
+
+test('subagents get an explicit depth and rounds can stop after the first', () => {
+  const tier = r.tierOf('thorough')
+  assert.equal(r.normResearchDepth('nonsense'), 'standard')
+  assert.equal(r.normResearchDepth('deep'), 'deep')
+  const note = r.agentSystemNote('fusion', tier, { label: 'Policy', brief: 'Find the rules.', depth: 'deep' })
+  assert.match(note, /Depth expected: deep/)
+  assert.match(note, /primary sources/i)
+  const team = r.researchTeamNote(tier)
+  assert.match(team, /One round can be the whole run/)
+  assert.match(team, /Round 1 is broad reconnaissance/)
+  assert.match(team, /later round is only for unresolved load-bearing claims/i)
 })
 
 test('older tool rounds compact while keeping citation ids citable', () => {

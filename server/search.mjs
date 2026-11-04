@@ -110,6 +110,102 @@ export const SEARCH_API_PROVIDERS = {
     optionalKey: true,
     envKeys: ['JINA_API_KEY'],
   },
+  tavily: {
+    label: 'Tavily',
+    endpoint: 'https://api.tavily.com/search',
+    method: 'POST',
+    keyHeader: 'Authorization',
+    bearer: true,
+    envKeys: ['TAVILY_API_KEY'],
+  },
+  parallel: {
+    label: 'Parallel',
+    endpoint: 'https://api.parallel.ai/v1/search',
+    method: 'POST',
+    keyHeader: 'x-api-key',
+    envKeys: ['PARALLEL_API_KEY'],
+  },
+  valyu: {
+    label: 'Valyu',
+    endpoint: 'https://api.valyu.ai/v1/search',
+    method: 'POST',
+    keyHeader: 'X-API-Key',
+    envKeys: ['VALYU_API_KEY'],
+  },
+  perplexity: {
+    label: 'Perplexity',
+    endpoint: 'https://api.perplexity.ai/search',
+    method: 'POST',
+    keyHeader: 'Authorization',
+    bearer: true,
+    envKeys: ['PERPLEXITY_API_KEY', 'PPLX_API_KEY'],
+  },
+  serper: {
+    label: 'Serper',
+    endpoint: 'https://google.serper.dev/search',
+    method: 'POST',
+    keyHeader: 'X-API-KEY',
+    envKeys: ['SERPER_API_KEY'],
+  },
+  brave: {
+    label: 'Brave Search API',
+    endpoint: 'https://api.search.brave.com/res/v1/web/search',
+    method: 'GET',
+    keyHeader: 'X-Subscription-Token',
+    envKeys: ['BRAVE_SEARCH_API_KEY', 'BRAVE_API_KEY'],
+  },
+  serpapi: {
+    label: 'SerpAPI',
+    endpoint: 'https://serpapi.com/search.json',
+    method: 'GET',
+    keyHeader: 'Authorization',
+    envKeys: ['SERPAPI_API_KEY', 'SERP_API_KEY'],
+  },
+  linkup: {
+    label: 'Linkup',
+    endpoint: 'https://api.linkup.so/v1/search',
+    method: 'POST',
+    keyHeader: 'Authorization',
+    bearer: true,
+    envKeys: ['LINKUP_API_KEY'],
+  },
+  octen: {
+    label: 'Octen',
+    endpoint: 'https://api.octen.ai/search',
+    method: 'POST',
+    keyHeader: 'Authorization',
+    bearer: true,
+    envKeys: ['OCTEN_API_KEY'],
+  },
+  google: {
+    label: 'Google Gemini grounding',
+    endpoint: 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent',
+    method: 'POST',
+    keyHeader: 'x-goog-api-key',
+    envKeys: ['GOOGLE_API_KEY', 'GEMINI_API_KEY'],
+  },
+  openai: {
+    label: 'OpenAI web search',
+    endpoint: 'https://api.openai.com/v1/responses',
+    method: 'POST',
+    keyHeader: 'Authorization',
+    bearer: true,
+    envKeys: ['OPENAI_API_KEY'],
+  },
+  anthropic: {
+    label: 'Anthropic web search',
+    endpoint: 'https://api.anthropic.com/v1/messages',
+    method: 'POST',
+    keyHeader: 'x-api-key',
+    envKeys: ['ANTHROPIC_API_KEY'],
+  },
+  azure: {
+    label: 'Azure Bing grounding',
+    endpoint: 'https://api.bing.microsoft.com/v7.0/search',
+    method: 'GET',
+    keyHeader: 'Ocp-Apim-Subscription-Key',
+    envKeys: ['BING_SEARCH_API_KEY', 'AZURE_BING_API_KEY', 'BING_API_KEY'],
+  },
 }
 
 const PROVIDER_ALIASES = {
@@ -119,6 +215,19 @@ const PROVIDER_ALIASES = {
   firecrawl: 'firecrawl',
   brightdata: 'brightdata', 'bright-data': 'brightdata', 'bright data': 'brightdata', bright: 'brightdata',
   jina: 'jina', 'jina.ai': 'jina', 'jina-ai': 'jina', 'jina ai': 'jina', jinaai: 'jina', 'jina search': 'jina', 's.jina.ai': 'jina',
+  tavily: 'tavily', 'tavily ai': 'tavily',
+  parallel: 'parallel', 'parallel ai': 'parallel', 'parallel web': 'parallel',
+  valyu: 'valyu', 'valyu ai': 'valyu',
+  perplexity: 'perplexity', pplx: 'perplexity', 'perplexity ai': 'perplexity',
+  serper: 'serper', 'serper.dev': 'serper', 'serper api': 'serper',
+  brave: 'brave', 'brave search': 'brave', 'brave search api': 'brave', 'brave api': 'brave',
+  serpapi: 'serpapi', 'serp api': 'serpapi', 'serpapi.com': 'serpapi',
+  linkup: 'linkup', 'linkup.so': 'linkup',
+  octen: 'octen', 'octen ai': 'octen',
+  google: 'google', 'google gemini': 'google', 'google gemini grounding': 'google', gemini: 'google', 'gemini grounding': 'google', 'google grounding': 'google',
+  openai: 'openai', 'openai web search': 'openai', 'openai search': 'openai',
+  anthropic: 'anthropic', 'anthropic web search': 'anthropic', claude: 'anthropic', 'claude web search': 'anthropic',
+  azure: 'azure', bing: 'azure', 'azure bing': 'azure', 'azure bing grounding': 'azure', 'bing grounding': 'azure', 'azure grounding': 'azure', 'azure grounding with bing': 'azure',
 }
 
 export function normalizeProvider(value, fallback = 'tinyfish') {
@@ -238,6 +347,91 @@ export function buildApiRequest(provider, query, { apiKey = '', zone = '', count
     url.searchParams.set('q', q)
     return { url: url.toString(), options: { method: 'GET', headers: { ...wire, accept: 'application/json' } } }
   }
+  if (id === 'tavily') {
+    return { url: endpoint, options: { method: 'POST', headers: wire, body: JSON.stringify({
+      query: q, max_results: Math.max(1, Math.min(10, count || 8)), search_depth: 'basic', include_answer: false, include_raw_content: false,
+    }) } }
+  }
+  if (id === 'parallel') {
+    return { url: endpoint, options: { method: 'POST', headers: wire, body: JSON.stringify({
+      objective: q, search_queries: [q], mode: 'fast',
+    }) } }
+  }
+  if (id === 'valyu') {
+    return { url: endpoint, options: { method: 'POST', headers: wire, body: JSON.stringify({
+      query: q, max_num_results: Math.max(1, Math.min(10, count || 8)), search_type: 'web', response_length: 'short',
+    }) } }
+  }
+  if (id === 'perplexity') {
+    return { url: endpoint, options: { method: 'POST', headers: wire, body: JSON.stringify({
+      query: q, max_results: Math.max(1, Math.min(10, count || 8)), search_type: 'web', max_tokens_per_page: 1200,
+    }) } }
+  }
+  if (id === 'serper') {
+    return { url: endpoint, options: { method: 'POST', headers: wire, body: JSON.stringify({
+      q, num: Math.max(1, Math.min(10, count || 8)), gl: 'us', hl: 'en',
+    }) } }
+  }
+  if (id === 'brave') {
+    const url = new URL(endpoint)
+    url.searchParams.set('q', q)
+    url.searchParams.set('count', String(Math.max(1, Math.min(20, count || 8))))
+    url.searchParams.set('country', 'us')
+    url.searchParams.set('search_lang', 'en')
+    url.searchParams.set('text_decorations', 'false')
+    url.searchParams.set('extra_snippets', 'true')
+    return { url: url.toString(), options: { method: 'GET', headers: { ...wire, accept: 'application/json' } } }
+  }
+  if (id === 'serpapi') {
+    const url = new URL(endpoint)
+    url.searchParams.set('engine', 'google')
+    url.searchParams.set('q', q)
+    url.searchParams.set('num', String(Math.max(1, Math.min(10, count || 8))))
+    url.searchParams.set('hl', 'en')
+    url.searchParams.set('gl', 'us')
+    url.searchParams.set('api_key', key)
+    // SerpAPI authenticates with the query parameter, not the bearer header.
+    const { Authorization: _auth, ...headers } = wire
+    return { url: url.toString(), options: { method: 'GET', headers: { ...headers, accept: 'application/json' } } }
+  }
+  if (id === 'linkup') {
+    return { url: endpoint, options: { method: 'POST', headers: wire, body: JSON.stringify({
+      q, depth: 'fast', outputType: 'searchResults', maxResults: Math.max(1, Math.min(10, count || 8)),
+    }) } }
+  }
+  if (id === 'octen') {
+    return { url: endpoint, options: { method: 'POST', headers: wire, body: JSON.stringify({
+      query: q, count: Math.max(1, Math.min(10, count || 8)), format: 'markdown',
+    }) } }
+  }
+  if (id === 'google') {
+    return { url: endpoint, options: { method: 'POST', headers: { ...wire, 'content-type': 'application/json' }, body: JSON.stringify({
+      contents: [{ role: 'user', parts: [{ text: q }] }],
+      tools: [{ google_search: {} }],
+      generationConfig: { maxOutputTokens: 1024 },
+    }) } }
+  }
+  if (id === 'openai') {
+    return { url: endpoint, options: { method: 'POST', headers: wire, body: JSON.stringify({
+      model: 'gpt-4.1-mini', tools: [{ type: 'web_search' }], tool_choice: 'auto', input: q,
+    }) } }
+  }
+  if (id === 'anthropic') {
+    return { url: endpoint, options: { method: 'POST', headers: { ...wire, 'anthropic-version': '2023-06-01' }, body: JSON.stringify({
+      model: 'claude-sonnet-4-20250514', max_tokens: 1024, messages: [{ role: 'user', content: q }],
+      tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 3 }],
+    }) } }
+  }
+  if (id === 'azure') {
+    const url = new URL(endpoint)
+    url.searchParams.set('q', q)
+    url.searchParams.set('count', String(Math.max(1, Math.min(10, count || 8))))
+    url.searchParams.set('mkt', 'en-US')
+    url.searchParams.set('responseFilter', 'Webpages')
+    url.searchParams.set('textDecorations', 'false')
+    url.searchParams.set('textFormat', 'Raw')
+    return { url: url.toString(), options: { method: 'GET', headers: { ...wire, accept: 'application/json' } } }
+  }
   throw new Error(`Unsupported search API provider: ${provider}`)
 }
 
@@ -301,6 +495,91 @@ export function parseApiResponse(provider, body) {
       engine: 'jina.ai',
       score: rows.length - i,
     }))
+  }
+  if (id === 'tavily') {
+    const rows = Array.isArray(body.results) ? body.results : []
+    return rows.map((x, i) => ({ title: x?.title, url: x?.url, content: x?.content || x?.raw_content, engine: 'tavily', score: Number.isFinite(Number(x?.score)) ? Number(x.score) : rows.length - i }))
+  }
+  if (id === 'parallel') {
+    const rows = Array.isArray(body.results) ? body.results : []
+    return rows.map((x, i) => ({ title: x?.title, url: x?.url, content: joinSnippet([x?.excerpts, x?.content, x?.snippet]), engine: 'parallel', score: rows.length - i }))
+  }
+  if (id === 'valyu') {
+    const rows = Array.isArray(body.results) ? body.results : []
+    return rows.map((x, i) => ({ title: x?.title, url: x?.url, content: joinSnippet([x?.content, x?.description]), engine: 'valyu', score: Number.isFinite(Number(x?.relevance_score)) ? Number(x.relevance_score) : rows.length - i }))
+  }
+  if (id === 'perplexity') {
+    const rows = Array.isArray(body.results) ? body.results : []
+    return rows.map((x, i) => ({ title: x?.title, url: x?.url, content: x?.snippet || x?.content, engine: 'perplexity', score: rows.length - i }))
+  }
+  if (id === 'serper') {
+    const rows = Array.isArray(body.organic) ? body.organic : []
+    return rows.map((x, i) => ({ title: x?.title, url: x?.link, content: x?.snippet, engine: 'serper', score: Number.isFinite(Number(x?.position)) ? 100 - Number(x.position) : rows.length - i }))
+  }
+  if (id === 'brave') {
+    const rows = Array.isArray(body.web?.results) ? body.web.results : []
+    return rows.map((x, i) => ({ title: x?.title, url: x?.url, content: joinSnippet([x?.description, x?.extra_snippets]), engine: 'brave', score: rows.length - i }))
+  }
+  if (id === 'serpapi') {
+    const rows = Array.isArray(body.organic_results) ? body.organic_results : []
+    return rows.map((x, i) => ({ title: x?.title, url: x?.link, content: x?.snippet, engine: 'serpapi', score: Number.isFinite(Number(x?.position)) ? 100 - Number(x.position) : rows.length - i }))
+  }
+  if (id === 'linkup') {
+    const rows = Array.isArray(body.results) ? body.results : []
+    return rows.map((x, i) => ({ title: x?.name || x?.title, url: x?.url, content: x?.content, engine: 'linkup', score: rows.length - i }))
+  }
+  if (id === 'octen') {
+    const rows = Array.isArray(body.data?.results) ? body.data.results : Array.isArray(body.results) ? body.results : []
+    return rows.map((x, i) => ({ title: x?.title, url: x?.url, content: joinSnippet([x?.highlight, x?.highlights, x?.full_content, x?.content]), engine: 'octen', score: rows.length - i }))
+  }
+  if (id === 'google') {
+    const meta = body.candidates?.[0]?.groundingMetadata || {}
+    const chunks = Array.isArray(meta.groundingChunks) ? meta.groundingChunks : []
+    const supports = Array.isArray(meta.groundingSupports) ? meta.groundingSupports : []
+    return chunks.map((chunk, i) => {
+      const web = chunk?.web || {}
+      const cited = supports.filter((s) => Array.isArray(s?.groundingChunkIndices) && s.groundingChunkIndices.includes(i)).map((s) => s?.segment?.text)
+      return { title: web.title, url: web.uri, content: joinSnippet([cited]) || web.title, engine: 'google', score: chunks.length - i }
+    })
+  }
+  if (id === 'openai') {
+    const rows = []
+    const outputText = String(body.output_text || '')
+    for (const item of Array.isArray(body.output) ? body.output : []) {
+      if (item?.type !== 'message') continue
+      const text = joinSnippet(Array.isArray(item.content) ? item.content.map((c) => c?.text) : [], 4000) || outputText
+      for (const content of Array.isArray(item.content) ? item.content : []) {
+        for (const annotation of Array.isArray(content?.annotations) ? content.annotations : []) {
+          if (annotation?.type === 'url_citation' && annotation.url) rows.push({ title: annotation.title, url: annotation.url, content: text || annotation.title, engine: 'openai' })
+        }
+      }
+    }
+    for (const item of Array.isArray(body.output) ? body.output : []) {
+      for (const source of Array.isArray(item?.action?.sources) ? item.action.sources : []) {
+        if (source?.url) rows.push({ title: source.title, url: source.url, content: source.snippet || source.title, engine: 'openai' })
+      }
+    }
+    return rows.map((x, i) => ({ ...x, score: rows.length - i }))
+  }
+  if (id === 'anthropic') {
+    const rows = []
+    for (const block of Array.isArray(body.content) ? body.content : []) {
+      if (block?.type === 'text') {
+        for (const cite of Array.isArray(block.citations) ? block.citations : []) {
+          if (cite?.url) rows.push({ title: cite.title, url: cite.url, content: cite.cited_text || cite.text || cite.title, engine: 'anthropic' })
+        }
+      }
+      if (block?.type === 'web_search_tool_result') {
+        for (const result of Array.isArray(block.content) ? block.content : []) {
+          if (result?.url) rows.push({ title: result.title, url: result.url, content: result.snippet || result.title, engine: 'anthropic' })
+        }
+      }
+    }
+    return rows.map((x, i) => ({ ...x, score: rows.length - i }))
+  }
+  if (id === 'azure') {
+    const rows = Array.isArray(body.webPages?.value) ? body.webPages.value : []
+    return rows.map((x, i) => ({ title: x?.name, url: x?.url, content: x?.snippet, engine: 'azure-bing', score: rows.length - i }))
   }
   return []
 }

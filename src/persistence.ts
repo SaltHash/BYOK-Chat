@@ -91,6 +91,7 @@ export const prunePersisted = (raw: string): string | null => {
             error: cap(a.error, 600),
             sources: Array.isArray(a.sources) ? (a.sources as unknown[]).slice(0, 40) : a.sources,
             followUps: Array.isArray(a.followUps) ? (a.followUps as Record<string, unknown>[]).slice(-3).map((f) => ({ ...f, q: cap(f.q, 600), a: cap(f.a, 4000) })) : a.followUps,
+            followUpErrors: Array.isArray(a.followUpErrors) ? (a.followUpErrors as unknown[]).slice(-4).map((e) => cap(e, 600)) : a.followUpErrors,
           })) : rs.agents
           // Up to three plan questions plus the optional "anything else" note.
           const answers = Array.isArray(rs.answers) ? (rs.answers as unknown[]).slice(0, 4).map((a) => (a && typeof a === 'object' ? { ...(a as object), question: cap((a as Record<string, unknown>).question, 400), answer: cap((a as Record<string, unknown>).answer, 1500) } : a)) : rs.answers

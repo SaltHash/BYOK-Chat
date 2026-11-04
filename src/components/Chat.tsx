@@ -14,6 +14,7 @@ import { ProjectOverview } from './ProjectOverview'
 import { Header } from './Header'
 import { MessageActions } from './ReplyActions'
 import { GraphCards, hasPlacedGraphs } from './Graph'
+import { ArtifactCards } from './Artifact'
 import { Tutorial } from './Extra'
 import { Md, UserText } from './Md'
 import { activityLine, flairLine, thinkingLine, TEMPORARY_NOTE } from '../flair'
@@ -33,6 +34,7 @@ function toolStep(name: string, rawArgs: string, result?: string) {
   const query = typeof args.query === 'string' ? args.query : ''
   const expression = typeof args.expression === 'string' ? args.expression : ''
   const text = typeof args.text === 'string' ? args.text : ''
+  if (name === 'show_artifact') return `Artifact · ${typeof args.title === 'string' ? args.title : 'Interactive'}`
   if (name === 'prompt_chip') return `Follow-up · ${typeof args.label === 'string' ? args.label : 'Continue'}`
   if (name === 'inline_poll') {
     const questions = Array.isArray(args.questions) ? args.questions : []
@@ -732,6 +734,7 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
         {!m.err && <div className="clear-both" aria-hidden="true" />}
       </div>
       {!m.err && <GeneratedImages rounds={m.toolRounds} />}
+      {!m.err && <ArtifactCards rounds={m.toolRounds} />}
       {m.capped && !m.err && (
         <div className="mt-2 flex flex-wrap items-center gap-2 rounded-xl border border-er/30 bg-er/10 px-3 py-2 text-xs text-mu">
           <TriangleAlert size={13} className="shrink-0 text-er" />
@@ -1151,6 +1154,7 @@ export function Chat({ side, toggle, cfg, pal }: { side: boolean; toggle: () => 
    * reader selected it: the conversational gesture that used to require
    * copying into the composer by hand. */
   const [quote, setQuote] = useState<{ text: string; x: number; y: number } | null>(null)
+  const [draftQuote, setDraftQuote] = useState('')
   const captureQuote = () => {
     const sel = window.getSelection()
     if (!sel || sel.isCollapsed || !sel.rangeCount) { setQuote(null); return }
@@ -1163,6 +1167,10 @@ export function Chat({ side, toggle, cfg, pal }: { side: boolean; toggle: () => 
     setQuote({ text, x: Math.max(90, Math.min(window.innerWidth - 90, rect.left + rect.width / 2)), y: rect.top })
   }
   useEffect(() => {
+    setDraftQuote('')
+    setQuote(null)
+  }, [s.chat])
+  useEffect(() => {
     if (!quote && !findOpen) return
     const f = (e: KeyboardEvent) => { if (e.key === 'Escape') { setQuote(null); setFindOpen(false) } }
     window.addEventListener('keydown', f)
@@ -1170,9 +1178,7 @@ export function Chat({ side, toggle, cfg, pal }: { side: boolean; toggle: () => 
   }, [quote, findOpen])
   const quoteReply = () => {
     if (!quote) return
-    const quoted = quote.text.split('\n').map((line) => `> ${line}`).join('\n')
-    const st = useS.getState()
-    st.patch({ draft: `${quoted}\n\n${st.draft}` })
+    setDraftQuote(quote.text)
     setQuote(null)
     window.getSelection()?.removeAllRanges()
     requestAnimationFrame(() => document.getElementById('composer')?.focus())
@@ -1295,7 +1301,7 @@ export function Chat({ side, toggle, cfg, pal }: { side: boolean; toggle: () => 
                 {isTemp && <div className="mb-6 px-8 text-center text-xs leading-relaxed text-mu">{TEMPORARY_NOTE}</div>}
               </>
             )}
-            <Composer cfg={cfg} />
+            <Composer cfg={cfg} quote={draftQuote} onClearQuote={() => setDraftQuote('')} />
           </div>
         </div>
         {workspaceMsg && workspace && workspacePanel && (

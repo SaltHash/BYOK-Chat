@@ -84,7 +84,7 @@ const wait = async (fn, ms = 5000) => {
 const resetStore = () => {
   const s = useS.getState()
   useS.setState({
-    eps: [{ id: 'e1', name: 'Test', type: 'openai', url: 'https://api.test/v1', key: 'k', model: 'm1', models: ['m1'], modelsMode: 'separate', on: true }],
+    eps: [{ id: 'e1', name: 'Test', type: 'openai', url: 'https://api.test/v1', key: 'k', model: 'm1', models: ['m1'], modelsMode: 'separate', prices: { m1: { input: 1, output: 2 } }, on: true }],
     sel: { k: 'ep', id: 'e1', model: 'm1' },
     chats: [], chat: '', busy: false, queued: {}, notice: null, researchRounds: 3,
     search: { ...s.search, provider: 'tinyfish', keys: { tinyfish: 'k', you: '', exa: '', firecrawl: '', brightdata: '' }, reader: true },
@@ -284,6 +284,7 @@ test('a thorough run delegates a team, asks a follow-up, and merges agent source
   assert.equal(agents.length, 2, 'both delegated agents are kept on the run')
   assert.ok(agents.every((a) => a.status === 'done'))
   assert.equal(agents[0].followUps.length, 1, 'the follow-up is stored on the agent')
+  assert.ok(agents.every((a) => a.costUsd > 0), 'each subagent records its own spend for the round estimate')
   assert.equal(seen.agentSearches, 2, 'each subagent searched once')
   assert.equal(seen.followups, 1, 'the follow-up answered from existing evidence')
   assert.equal(seen.steerInjected, true, 'a mid-run focus reaches the lead on its next round')
@@ -343,6 +344,33 @@ test('a finished report can be re-run as a fresh card', async () => {
   const fresh = msgsOf().find((m) => m.research && !oldIds.has(m.id))
   assert.equal(fresh.research.plan.title, 'Fusion Power')
   assert.equal(fresh.research.query, 'rerun test')
+})
+
+test('a prose planning reply is repaired into a usable plan', async () => {
+  let repairs = 0
+  globalThis.fetch = async (url, init) => {
+    const u = String(url)
+    if (u.includes('/api/search')) return json({ query: 'fusion', results: [{ id: 'S1', title: 'Src', url: 'https://s1.test/p', snippet: 'snippet' }], searchedAt: 'now', provider: 'tinyfish' })
+    if (u.includes('/api/extract')) return json({ url: 'https://s1.test/p', title: 'Page', text: 'body' })
+    if (u.includes('/chat/completions')) {
+      const body = JSON.parse(init.body)
+      const lastUser = [...body.messages].reverse().find((m) => m.role === 'user' && typeof m.content === 'string')?.content ?? ''
+      if (String(lastUser).includes('previous reply did not contain a usable plan')) {
+        repairs++
+        return openai({ content: PLAN })
+      }
+      return openai({ content: 'I need to look into this. I will outline the work in prose for now.' })
+    }
+    throw new Error('unexpected fetch ' + u)
+  }
+  resetStore()
+  await useS.getState().send('@research[quick](repair test)', [])
+  const pick = lastResearch()
+  useS.getState().chooseResearchTier(pick.id, 'quick')
+  assert.equal(await wait(() => msgById(pick.id).research.status === 'plan'), true, 'the plan is ready after repair')
+  assert.equal(repairs, 1, 'the planning reply was repaired once')
+  assert.equal(msgById(pick.id).research.plan.title, 'Fusion Power')
+  assert.equal(msgById(pick.id).research.error, undefined, 'no fallback warning is shown')
 })
 
 test.after(() => { globalThis.fetch = realFetch })
@@ -459,7 +487,7 @@ test('a run that closes after a single search is nudged to keep researching', as
   assert.ok(done.research.steps.filter((s) => s.kind === 'search').length >= 2, 'the nudge produced a second search')
 })
 
-test('the shown estimate uses the most expensive candidate price, not just the first', async () => {
+test('the shown estimate blends candidate prices instead of assuming the priciest failover', async () => {
   globalThis.fetch = baseFetch
   searchN = 0
   resetStore()
@@ -475,9 +503,12 @@ test('the shown estimate uses the most expensive candidate price, not just the f
   useS.getState().chooseResearchTier(pick.id, 'quick')
   assert.equal(await wait(() => msgById(pick.id).research.status === 'plan'), true, 'plan should be ready')
   const { estimateResearchUsage, tierOf } = await import('../src/research.ts')
-  const expected = estimateResearchUsage(tierOf('quick'), { input: 100, output: 200 }).costUsd
-  assert.ok(expected > 0)
-  assert.equal(msgById(pick.id).research.estimate.costUsd, expected, 'the ceiling reflects the priciest candidate')
+  const blended = { input: (1 + 100) / 2 * 1.08, output: (1 + 200) / 2 * 1.08 }
+  const expected = estimateResearchUsage(tierOf('quick'), blended).costUsd
+  const cheap = estimateResearchUsage(tierOf('quick'), { input: 1, output: 1 }).costUsd
+  const pricey = estimateResearchUsage(tierOf('quick'), { input: 100, output: 200 }).costUsd
+  assert.ok(cheap < expected && expected < pricey, 'the estimate blends the candidate prices')
+  assert.equal(msgById(pick.id).research.estimate.costUsd, expected, 'the shown cost uses the blended price')
 })
 
 test('failed searches and unreadable pages never spend the research budget', async () => {
@@ -537,4 +568,61 @@ test('failed searches and unreadable pages never spend the research budget', asy
   assert.ok(failedRead.every((s) => s.label === 'Read failed'))
   assert.equal(countedSteps(steps, 'search'), 2)
   assert.equal(countedSteps(steps, 'read'), 1)
+})
+
+test('a failed follow-up is recorded and returned as a tool error', async () => {
+  let followAttempted = false
+  let sawToolError = false
+  globalThis.fetch = async (url, init) => {
+    const u = String(url)
+    if (u.includes('/chat/completions')) {
+      const body = JSON.parse(init.body)
+      const sys = body.messages[0]?.content ?? ''
+      const msgs = body.messages
+      const lastUser = [...msgs].reverse().find((m) => m.role === 'user' && typeof m.content === 'string')
+      if (sys.includes('You draft a deep-research plan')) return openai({ content: PLAN })
+      if (sys.includes('You are a research subagent')) {
+        if (sys.includes('Follow-up from the lead researcher')) {
+          followAttempted = true
+          return openai({ content: '' })
+        }
+        if (!msgs.some((m) => m.role === 'tool')) {
+          return openai({ content: 'Starting.', tool_calls: [{ id: 's1', type: 'function', function: { name: 'search', arguments: JSON.stringify({ query: 'solo research' }) } }] })
+        }
+        return openai({ content: '## Findings\n- The milestone is confirmed [S1].\n\n## Sources\n[S1] Source 1 — https://s1.test/p' })
+      }
+      if (typeof lastUser?.content === 'string' && lastUser.content.includes('Now write the final report')) {
+        return openai({ content: '## Summary\nThe evidence is limited [S1].\n\n## Key findings\n- One fact [S1].\n\n## Evidence\nSupported [S1].\n\n## Limitations\nA follow-up failed.\n\n## Sources note\nOne source.' })
+      }
+      if (msgs.some((m) => m.role === 'tool' && String(m.content).includes('follow-up with Solo failed'))) {
+        sawToolError = true
+        return openai({ content: 'The follow-up failed, so I am closing with what the team established.' })
+      }
+      if (!msgs.some((m) => m.role === 'tool' && String(m.content).includes('[Subagent Solo'))) {
+        return openai({ content: 'Delegating one focused angle.', tool_calls: [{ id: 'd1', type: 'function', function: {
+          name: 'delegate_research',
+          arguments: JSON.stringify({ tasks: [{ label: 'Solo', brief: 'Find the confirmed milestone.', depth: 'scan', avoid: 'Unrelated policy' }] }),
+        } }] })
+      }
+      return openai({ content: 'Checking the thin point with Solo.', tool_calls: [{ id: 'f1', type: 'function', function: { name: 'ask_research_agent', arguments: JSON.stringify({ agent: 'Solo', question: 'Which milestone is confirmed?' }) } }] })
+    }
+    return baseFetch(url, init)
+  }
+  searchN = 0
+  resetStore()
+  await useS.getState().send('@research[thorough](failed follow-up)', [])
+  const pick = lastResearch()
+  useS.getState().chooseResearchTier(pick.id, 'thorough')
+  assert.equal(await wait(() => msgById(pick.id).research.status === 'plan', 10000), true, 'plan should be ready')
+  useS.getState().startResearch(pick.id)
+  assert.equal(await wait(() => msgById(pick.id).research.status === 'done', 20000), true, 'run should finish')
+  const done = msgById(pick.id)
+  const agent = done.research.agents[0]
+  assert.equal(followAttempted, true, 'the follow-up was attempted')
+  assert.equal(sawToolError, true, 'the lead received a real tool error')
+  assert.ok(agent.followUpErrors?.length, 'the failed follow-up is stored on the agent')
+  assert.match(agent.followUpErrors[0], /empty response|no answer/i)
+  const followCall = done.toolRounds.flatMap((r) => r.calls).find((c) => c.name === 'ask_research_agent')
+  assert.equal(followCall.error, true)
+  assert.match(followCall.result, /follow-up with Solo failed/i)
 })

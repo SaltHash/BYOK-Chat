@@ -4,6 +4,8 @@ import { useS, useLive, type Msg } from '../store'
 import { PLAN_INTRO, RESEARCH_TIERS, agentRoundsUsed, agentSources, countedSteps, dedupTrace, reasoningBlocks, tierOf, type ResearchAgent, type ResearchPlan, type ResearchPlanStep, type ResearchTierId } from '../research'
 import { claimForCitation, collectMessageSources, linkifyCitations, mergeSources, stripCitations } from '../citations'
 import { Md } from './Md'
+import { ArtifactCard } from './Artifact'
+import { extractArtifactBlocks } from '../artifacts'
 
 /** A research card follows its own chat, not whichever chat happens to be
  *  open: while another chat streams, this card's controls stay usable. */
@@ -15,6 +17,7 @@ import { SourcesPanel, scrollToSource } from './Sources'
 import { Btn, cx } from './ui'
 
 const PLAN_ICONS = { search: Globe, analyze: ListFilter, report: FileText, other: Sparkles } as const
+const fmtEstimate = (n: number) => `≈$${n < 0.01 ? n.toFixed(3) : n.toFixed(2)}`
 
 /** One plan step: its icon, label and the numbered research directions under
  * it. Read-only here; editing happens in `ResearchPlanCard`. */
@@ -43,12 +46,15 @@ function PlanEstimate({ msg }: { msg: Msg }) {
   const tier = tierOf(rs?.tier ?? 'standard', configuredRounds)
   const team = tier.agentRounds > 0 ? `${tier.agentRounds} rounds × ${tier.agentsPerRound} agents · ` : ''
   const cost = est.costUsd != null
-    ? `≈$${est.costUsd < 0.01 ? est.costUsd.toFixed(3) : est.costUsd.toFixed(2)}`
+    ? fmtEstimate(est.costUsd)
     : `≈${Math.round(est.inputTokens / 1000)}k in / ${Math.round(est.outputTokens / 1000)}k out tokens`
-  return <p className="text-xs text-mu">{team}{est.searches} searches · {est.reads} reads · {cost} (ceiling estimate)</p>
+  const perAgent = est.agentCostUsd != null ? ` · ${fmtEstimate(est.agentCostUsd)}/agent` : ''
+  const perRound = est.roundCostUsd != null ? ` · ${fmtEstimate(est.roundCostUsd)}/round` : ''
+  return <p className="text-xs text-mu" title="A moderate-use estimate with a small buffer; runs often finish below it. Agent and round figures use the same expected depth.">{team}~{est.searches} searches · ~{est.reads} reads · {cost} estimated{perAgent}{perRound}</p>
 }
 
-function AgentStatus({ status }: { status: ResearchAgent['status'] }) {
+function AgentStatus({ status, failed }: { status: ResearchAgent['status']; failed?: boolean }) {
+  if (failed) return <span title="A follow-up failed" aria-label="A follow-up failed" className="inline-flex shrink-0"><X size={12} className="text-er" /></span>
   if (status === 'running') return <span className="size-2 shrink-0 animate-pulse rounded-full bg-ac" />
   if (status === 'done') return <Check size={12} className="shrink-0 text-ac" />
   return <X size={12} className="shrink-0 text-er" />
@@ -56,16 +62,20 @@ function AgentStatus({ status }: { status: ResearchAgent['status'] }) {
 
 /** One delegated researcher: spending, brief, report, and follow-ups. */
 function AgentRow({ agent }: { agent: ResearchAgent }) {
+  const failedFollowUps = agent.followUpErrors?.length ?? 0
   return (
     <details>
       <summary className="flex cursor-pointer items-center gap-2 rounded px-1 py-0.5 text-xs hover:bg-hov">
-        <AgentStatus status={agent.status} />
+        <AgentStatus status={agent.status} failed={failedFollowUps > 0} />
         <span className="min-w-0 flex-1 truncate">{agent.label}</span>
-        <span className="shrink-0 text-mu">{agent.searches} searches · {agent.reads} reads{agent.followUps?.length ? ` · ${agent.followUps.length} follow-ups` : ''}</span>
+        <span className="shrink-0 text-mu">{agent.depth ?? 'standard'} · {agent.searches} searches · {agent.reads} reads{agent.followUps?.length ? ` · ${agent.followUps.length} follow-ups` : ''}{failedFollowUps ? ` · ${failedFollowUps} failed` : ''}{agent.costUsd ? ` · ${fmtEstimate(agent.costUsd)}` : ''}</span>
       </summary>
       <div className="space-y-1 px-3 pb-1 pt-1.5">
         <p className="text-xs leading-relaxed text-mu">{agent.brief}</p>
         {agent.error && <p className="text-xs text-er">{agent.error}</p>}
+        {agent.followUpErrors?.map((e, i) => (
+          <p key={i} className="text-xs text-er">Follow-up failed: {e}</p>
+        ))}
         {agent.answer && <p className="max-h-64 overflow-y-auto whitespace-pre-wrap text-xs leading-relaxed">{agent.answer}</p>}
         {(agent.followUps ?? []).map((f, i) => (
           <div key={i} className="space-y-0.5 border-l-2 border-bor pl-2">
@@ -98,7 +108,7 @@ function ResearchTeam({ agents, rounds }: { agents: ResearchAgent[]; rounds: num
             <div className="flex items-center gap-2 px-1 text-[11px] font-medium uppercase tracking-wide text-mu">
               <span>Round {round}</span>
               <span aria-hidden="true" className="h-px flex-1 bg-hov" />
-              <span>{list.filter((a) => a.status === 'done').length}/{list.length} done</span>
+              <span>{list.filter((a) => a.status === 'done').length}/{list.length} done{(() => { const n = list.filter((a) => a.followUpErrors?.length).length; return n ? ` · ${n} follow-up failed` : '' })()}</span>
             </div>
           )}
           {list.map((a) => <AgentRow key={a.id} agent={a} />)}
@@ -207,6 +217,7 @@ export function ResearchPlanCard({ msg }: { msg: Msg }) {
   // the edit state) whenever the stored plan or the status changes.
   useEffect(() => { setDraft(rs?.plan ?? null); setMode('view') }, [rs?.plan, rs?.status])
   const planning = rs?.status === 'planning'
+  const liveDraft = rs?.planDraft
   const plan = draft ?? rs?.plan
   // Trim trailing whitespace only when the plan is committed, never on every
   // keystroke: rewriting the controlled value mid-edit makes React reset the
@@ -257,13 +268,21 @@ export function ResearchPlanCard({ msg }: { msg: Msg }) {
     <div className="max-w-xl space-y-3">
       <p className="text-sm">{PLAN_INTRO}</p>
       <section aria-label="Research plan" aria-live="polite" className="space-y-4 rounded-2xl border border-bor bg-surf p-4">
-        <h3 className="text-sm font-medium">{plan?.title || rs.query.slice(0, 90)}</h3>
+        <h3 className="text-sm font-medium">{plan?.title || (planning ? liveDraft?.title : '') || rs.query.slice(0, 90)}</h3>
         {plan?.intro && <p className="text-xs leading-relaxed text-mu">{plan.intro}</p>}
         {planning ? (
-          <p role="status" aria-label="Generating research plan" className="flex items-center text-sm text-mu">
-            <span className="reply-dots" aria-hidden="true"><i /><i /><i /></span>
-            <span className="ml-2">{rs.scope ? `Getting context · ${rs.scope} ${rs.scope === 1 ? 'search' : 'searches'}…` : 'Generating research plan…'}</span>
-          </p>
+          <div className="space-y-2" aria-live="polite">
+            <p role="status" aria-label="Generating research plan" className="flex items-center text-sm text-mu">
+              <span className="reply-dots" aria-hidden="true"><i /><i /><i /></span>
+              <span className="ml-2">{liveDraft?.title ? 'Drafting the research plan…' : rs.scope ? `Getting context · ${rs.scope} ${rs.scope === 1 ? 'search' : 'searches'}…` : 'Generating research plan…'}</span>
+            </p>
+            {liveDraft?.title && <p className="text-sm font-medium">{liveDraft.title}</p>}
+            {!!liveDraft?.steps.length && (
+              <ol className="space-y-1">
+                {liveDraft.steps.map((label, i) => <li key={`${label}-${i}`} className="text-xs leading-relaxed text-mu">{i + 1}. {label}</li>)}
+              </ol>
+            )}
+          </div>
         ) : plan ? (
           mode === 'edit' ? (
             <div className="space-y-4">
@@ -401,6 +420,7 @@ export function ResearchProgressCard({ msg }: { msg: Msg }) {
   const roundsUsed = agentRoundsUsed(agents)
   const teamSearches = agents.reduce((n, a) => n + a.searches, 0)
   const teamReads = agents.reduce((n, a) => n + a.reads, 0)
+  const teamCost = agents.reduce((n, a) => n + (a.costUsd ?? 0), 0)
   const activeFocus = (rs.steer ?? '').trim()
   const usedSearches = countedSteps(rs.steps, 'search')
   const canResume = rs.status === 'stopped' && usedSearches < tier.maxSearches && !!msg.toolRounds?.length
@@ -456,7 +476,7 @@ export function ResearchProgressCard({ msg }: { msg: Msg }) {
         <div className="space-y-2 rounded-lg bg-bg/60 p-2.5">
           <div className="flex items-center justify-between gap-2">
             <p className="text-xs font-medium text-mu">Research team · {roundsUsed}/{tier.agentRounds} rounds</p>
-            <p className="shrink-0 text-[11px] text-mu">{teamSearches} searches · {teamReads} reads</p>
+            <p className="shrink-0 text-[11px] text-mu">{teamSearches} searches · {teamReads} reads{teamCost > 0 ? ` · ${fmtEstimate(teamCost)} spent` : ''}{rs.estimate?.costUsd != null ? ` · ${fmtEstimate(rs.estimate.costUsd)} est.` : ''}</p>
           </div>
           <div role="progressbar" aria-label="Subagent rounds used" aria-valuemin={0} aria-valuemax={tier.agentRounds} aria-valuenow={roundsUsed} className="h-1 overflow-hidden rounded-full bg-hov">
             <div className="h-full rounded-full bg-ac transition-all" style={{ width: `${Math.min(100, (roundsUsed / Math.max(1, tier.agentRounds)) * 100)}%` }} />
@@ -560,17 +580,18 @@ export function ResearchPanel({ msg, onClose }: { msg: Msg; onClose: () => void 
   const configuredRounds = useS((s) => s.researchRounds)
   const rerun = useS((s) => s.rerunResearch)
   const sources = useMemo(() => mergeSources(collectMessageSources(msg.toolRounds), agentSources(msg.research?.agents)), [msg.toolRounds, msg.research?.agents])
-  const cited = useMemo(() => citeStyle === 'off' ? stripCitations(msg.toolFinal ?? msg.t) : linkifyCitations(msg.toolFinal ?? msg.t, sources), [msg.toolFinal, msg.t, sources, citeStyle])
+  const report = useMemo(() => extractArtifactBlocks(msg.toolFinal ?? msg.t ?? ''), [msg.toolFinal, msg.t])
+  const cited = useMemo(() => citeStyle === 'off' ? stripCitations(report.text) : linkifyCitations(report.text, sources), [report.text, sources, citeStyle])
   const cites = useMemo(() => citeStyle === 'pills' && sources.length ? {
     sources,
     onCite: (citeId: string) => {
       setTab('sources')
       setSrcFlash(citeId.toUpperCase())
-      setSrcClaim(claimForCitation(msg.toolFinal ?? msg.t, citeId))
+      setSrcClaim(claimForCitation(report.text, citeId))
       window.setTimeout(() => scrollToSource(msg.id, citeId), 60)
       window.setTimeout(() => setSrcFlash((v) => (v === citeId.toUpperCase() ? null : v)), 1800)
     },
-  } : undefined, [citeStyle, sources, msg.id])
+  } : undefined, [citeStyle, sources, msg.id, report.text])
   const trace = useMemo(() => {
     const texts: string[] = []
     for (const round of msg.toolRounds ?? []) {
@@ -603,7 +624,7 @@ export function ResearchPanel({ msg, onClose }: { msg: Msg; onClose: () => void 
   }, [cited, tab, writing, pinned])
   const download = () => {
     const name = `${(rs?.query ?? 'research').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'research'}.md`
-    const body = `# Deep research: ${rs?.query ?? ''}\n\n_Tier: ${rs?.tier ?? ''} · ${sources.length} sources_\n\n${msg.toolFinal ?? msg.t}\n\n## Sources\n\n${sources.map((s) => `- [${s.citeId}] ${s.title} — ${s.url}`).join('\n')}\n`
+    const body = `# Deep research: ${rs?.query ?? ''}\n\n_Tier: ${rs?.tier ?? ''} · ${sources.length} sources_\n\n${report.text}\n\n## Sources\n\n${sources.map((s) => `- [${s.citeId}] ${s.title} — ${s.url}`).join('\n')}\n`
     const a = document.createElement('a')
     a.href = URL.createObjectURL(new Blob([body], { type: 'text/markdown' }))
     a.download = name
@@ -626,14 +647,21 @@ export function ResearchPanel({ msg, onClose }: { msg: Msg; onClose: () => void 
           <Btn sm icon={RotateCcw} title="Re-run this plan against fresh sources" onClick={() => rerun(msg.id)} />
         )}
         <Btn sm icon={Download} title="Download report as Markdown" onClick={download} />
-        <Btn sm icon={copied ? Check : Copy} title="Copy report" onClick={() => { void navigator.clipboard?.writeText(msg.toolFinal ?? msg.t).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1200) }).catch(() => {}) }} />
+        <Btn sm icon={copied ? Check : Copy} title="Copy report" onClick={() => { void navigator.clipboard?.writeText(report.text).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1200) }).catch(() => {}) }} />
         <Btn sm icon={X} title="Close research panel" onClick={onClose} />
       </div>
       <div ref={scrollRef} onScroll={onScroll} className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
         {tab === 'report' ? (
-          <article className="leading-7"><Md t={cited} cites={cites} /></article>
+          <>
+            <article className="leading-7"><Md t={cited} cites={cites} /></article>
+            {report.artifacts.length > 0 && (
+              <div className="mt-4 space-y-3">
+                {report.artifacts.map((spec, i) => <ArtifactCard key={`${spec.title}-${i}`} spec={spec} />)}
+              </div>
+            )}
+          </>
         ) : tab === 'sources' ? (
-          <SourcesPanel msgId={msg.id} text={msg.toolFinal ?? msg.t} sources={sources} defaultOpen strict={false} flash={srcFlash} claim={srcClaim} />
+          <SourcesPanel msgId={msg.id} text={report.text} sources={sources} defaultOpen strict={false} flash={srcFlash} claim={srcClaim} />
         ) : (
           <div className="space-y-3">
             {agentList.length > 0 && (

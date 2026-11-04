@@ -61,7 +61,7 @@ Keys are created in the [AIHubMix console](https://console.aihubmix.com/) and ca
 
 ## AI search providers
 
-Search is bring-your-own-key: paste a provider key in Settings → Tools → Web search and grounding. It is stored only in the browser (like model keys) and sent with each search request; the server never stores browser keys. Server-side keys remain supported as a shared fallback when the browser sends none. Providers: TinyFish, You.com, Exa, Firecrawl, Bright Data, or Jina AI.
+Search is bring-your-own-key: paste a provider key in Settings → Tools → Web search and grounding. It is stored only in the browser (like model keys) and sent with each search request; the server never stores browser keys. Server-side keys remain supported as a shared fallback when the browser sends none. Search providers: TinyFish, You.com, Exa, Tavily, Parallel, Valyu, Firecrawl, Jina AI, Bright Data, Perplexity, Serper, Brave Search API, SerpAPI, Linkup, Octen, Google Gemini grounding, OpenAI web search, Anthropic web search, and Azure Bing grounding. Page readers are the same kind of provider selector: direct fetch, Jina, Firecrawl, Exa, Tavily, Parallel, Valyu, Linkup, Octen, or a custom reader API.
 
 Server configuration (hosting environment only; no `.env` files):
 
@@ -72,7 +72,20 @@ SEARCH_API_KEY=...
 TINYFISH_API_KEY=...
 YOU_API_KEY=...
 EXA_API_KEY=...
+TAVILY_API_KEY=...
+PARALLEL_API_KEY=...
+VALYU_API_KEY=...
 FIRECRAWL_API_KEY=...
+PERPLEXITY_API_KEY=...
+SERPER_API_KEY=...
+BRAVE_SEARCH_API_KEY=...
+SERPAPI_API_KEY=...
+LINKUP_API_KEY=...
+OCTEN_API_KEY=...
+GOOGLE_API_KEY=...           # Google Gemini grounding
+OPENAI_API_KEY=...          # OpenAI web search
+ANTHROPIC_API_KEY=...       # Anthropic web search
+BING_SEARCH_API_KEY=...     # Azure Bing grounding
 BRIGHTDATA_API_KEY=...
 SEARCH_API_ZONE=your-serp-zone  # Bright Data only
 # optional endpoint override:
@@ -81,7 +94,7 @@ SEARCH_API_URL=
 
 `/api/search` accepts `{ query, provider, apiKey, zone, count, timeoutMs, maxSnippetChars, evidenceBudget, maxRetries, retryBaseMs }` and returns `{ query, results, searchedAt, provider, mode }`. `/api/health` reports which providers have server keys.
 
-`POST /api/reader` reads one page through the page-reader API chosen in Settings → Tools → Page reader: the built-in reader, Jina Reader, Firecrawl, Exa, or a custom service. The body is `{ url, provider, apiKey, baseUrl, fallback, timeoutMs, maxChars, maxRetries, retryBaseMs }`; the key travels in the body, never in a URL. A custom service receives the page address in a `{url}` placeholder (or a `?url=` parameter) and may answer with JSON containing a `text` field or with plain text. `READER_API_KEY` and `READER_API_URL` (plus `READER_API_KEY_<PROVIDER>` / `READER_API_URL_<PROVIDER>`) work as server-side defaults.
+`POST /api/reader` reads one page through the page-reader provider chosen in Settings → Tools → Page reader: direct page fetch, Jina Reader, Firecrawl, Exa Contents, Tavily Extract, Parallel Extract, Valyu Contents, Linkup Fetch, Octen Extract, or a custom service. The body is `{ url, provider, apiKey, baseUrl, fallback, timeoutMs, maxChars, maxRetries, retryBaseMs }`; the key travels in the body, never in a URL. A custom service receives the page address in a `{url}` placeholder (or a `?url=` parameter) and may answer with JSON containing a `text` field or with plain text. `READER_API_KEY` and `READER_API_URL` (plus `READER_API_KEY_<PROVIDER>` / `READER_API_URL_<PROVIDER>`) work as server-side defaults.
 
 Failures return structured JSON `{ error, code, provider, retryable }` with a matching HTTP status instead of a blanket 503:
 
@@ -102,6 +115,16 @@ Provider request details (verified against each provider's official documentatio
 - Firecrawl: `POST https://api.firecrawl.dev/v2/search` with an optional `Authorization: Bearer` header and `{ query, limit }`. The key is optional: search works keyless at lower limits ([docs](https://docs.firecrawl.dev/api-reference/endpoint/search)).
 - Bright Data: `POST https://api.brightdata.com/request` with an `Authorization: Bearer` header and `{ zone, url, format: "raw", data_format: "parsed_light" }`; a SERP zone is required ([docs](https://docs.brightdata.com/products/serp-api/introduction)).
 - Jina AI: `GET https://s.jina.ai/?q=…` with an optional `Authorization: Bearer` header. The key is optional: Jina Search works keyless at lower rate limits, and it is the same service as Jina Reader, so one key covers both search and page reads ([docs](https://docs.jina.ai/api-reference/search)).
+- Tavily: `POST https://api.tavily.com/search` with a Bearer key and `{ query, max_results, search_depth }`; page reads use `POST https://api.tavily.com/extract` with `{ urls }` ([search docs](https://docs.tavily.com/documentation/api-reference/endpoint/search), [extract docs](https://docs.tavily.com/documentation/api-reference/endpoint/extract)).
+- Parallel: `POST https://api.parallel.ai/v1/search` with an `x-api-key` header and `{ objective, search_queries, mode }`; page reads use `POST https://api.parallel.ai/v1/extract` with `{ urls, objective, advanced_settings: { full_content: true } }` ([search docs](https://docs.parallel.ai/search/search-quickstart), [extract docs](https://docs.parallel.ai/extract/extract-quickstart)).
+- Valyu: `POST https://api.valyu.ai/v1/search` with an `X-API-Key` header and `{ query, max_num_results, search_type }`; page reads use `POST https://api.valyu.ai/v1/contents` ([search docs](https://docs.valyu.ai/api-reference/endpoint/search), [contents docs](https://docs.valyu.ai/api-reference/endpoint/contents)).
+- Perplexity: `POST https://api.perplexity.ai/search` with a Bearer key and `{ query, max_results, search_type }` ([docs](https://docs.perplexity.ai/api-reference/search-post)).
+- Serper: `POST https://google.serper.dev/search` with an `X-API-KEY` header and `{ q, num }`.
+- Brave Search API: `GET https://api.search.brave.com/res/v1/web/search` with an `X-Subscription-Token` header ([docs](https://api-dashboard.search.brave.com/documentation/services/web-search)).
+- SerpAPI: `GET https://serpapi.com/search.json` with `engine=google`, `q`, and `api_key` ([docs](https://serpapi.com/search-api)).
+- Linkup: `POST https://api.linkup.so/v1/search` with a Bearer key and `{ q, depth, outputType }`; page reads use `POST https://api.linkup.so/v1/fetch` ([search docs](https://docs.linkup.so/pages/documentation/endpoints/search/reference), [fetch docs](https://docs.linkup.so/pages/documentation/endpoints/fetch/reference)).
+- Octen: `POST https://api.octen.ai/search` with a Bearer key and `{ query, count }`; page reads use `POST https://api.octen.ai/extract` ([docs](https://docs.octen.ai/api-reference/search)).
+- Google Gemini grounding: `POST https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent` with an `x-goog-api-key` header and the `google_search` tool. OpenAI and Anthropic web search use their native Responses and Messages APIs with the `web_search` tool. Azure Bing grounding uses `GET https://api.bing.microsoft.com/v7.0/search` with an `Ocp-Apim-Subscription-Key` header.
 
 Without any keys, You.com and Exa answer with HTTP 402 (billing/payment required) and Bright Data/TinyFish with HTTP 401, which the backend surfaces as `billing` / `upstream_auth` rather than an outage. Jina AI and Firecrawl answer without a key.
 
@@ -257,7 +280,7 @@ Citation ids are numbered **for the whole reply**, not per search: the first sou
 
 Every grounded reply shows a **Sources** button below the workspaces and above the message options. Expanding it lists each source with its truncated snippet, host, engine, and query, plus per-source actions: **Open** (new tab), **Read page** (full excerpt via the reader), **Copy link**, **Copy cite**. Unknown ids and uncited grounded replies are flagged, with optional strict warnings.
 
-`GET /api/extract?url=…` reads one public `http(s)` page through the backend (SSRF-blocked private hosts, 8s default timeout, 1.5MB HTML cap, 12k-character default excerpt, 10-minute cache) and backs both the `fetch_page` model tool and the per-source Read page button. It accepts optional `timeoutMs`, `maxChars` (up to 50k), `maxRetries` and `retryBaseMs` parameters from the reader settings. `POST /api/reader` does the same through a different reader API when one is configured (Jina, Firecrawl, Exa, or your own service), with a fallback to the built-in reader when the reader API fails. The process log shows each search as `Web search · query (N sources · provider)` and each read as `Page reader · title · host`; the live status reads Searching… / Reading page…. Related settings (citation style, expand-by-default, strict warnings) live in Settings → Tools → Web search → Sources & transparency; the reader settings (page reader on/off, reader API and key, page timeout, text kept per page, page retries, page summary model) live under the Page reader tool in Settings → Tools → Page reader.
+`GET /api/extract?url=…` reads one public `http(s)` page through the backend (SSRF-blocked private hosts, 8s default timeout, 1.5MB HTML cap, 12k-character default excerpt, 10-minute cache) and backs both the `fetch_page` model tool and the per-source Read page button. It accepts optional `timeoutMs`, `maxChars` (up to 50k), `maxRetries` and `retryBaseMs` parameters from the reader settings. `POST /api/reader` does the same through a different reader API when one is configured (Jina, Firecrawl, Exa, Tavily, Parallel, Valyu, Linkup, Octen, or your own service), with a fallback to direct page fetch when the reader API fails. The process log shows each search as `Web search · query (N sources · provider)` and each read as `Page reader · title · host`; the live status reads Searching… / Reading page…. Related settings (citation style, expand-by-default, strict warnings) live in Settings → Tools → Web search → Sources & transparency; the reader settings (page reader on/off, page reader API and key, page timeout, text kept per page, page retries, page summary model) live under the Page reader tool in Settings → Tools → Page reader.
 
 ### Page summaries (reader subagent)
 
@@ -296,7 +319,7 @@ Every reply keeps the attempts it made — helpers (memory recall, routing class
 
 Settings → Chats → Process to answer controls the presentation. **Detail level** is Compact (name and timing only), Standard (a short explanation, with long text clipped behind a read-more), or Detailed (every saved explanation in full). **Show step timings** and **Show the model on each step** can be turned off independently. Per-step token counts, tool arguments and results, and the full system prompt stay in Settings → Advanced → Diagnostics, and the whole panel disappears when **Show model-use details** is off. Entries are stored with the reply, so the panel always describes what that reply actually did rather than what the current settings would do. Sending while the same chat is replying queues the message by default; Settings → Chats → Behavior can switch to requiring a stop first.
 
-Reply copying is rich text by default: the copy button writes the rendered answer as HTML (headings, lists, tables, code blocks and linked citations survive a paste into a word processor) plus its plain-text fallback. Shift-click copies Markdown with the citation links expanded, and Ctrl/Cmd-click copies plain prose. Browsers that refuse HTML clipboard writes fall back to Markdown rather than failing silently.
+Reply copying is rich text by default: the copy button writes the rendered answer as HTML (headings, lists, tables, code blocks and linked citations survive a paste into a word processor) plus its plain-text fallback. Shift-click copies Markdown with the citation links expanded, and Ctrl/Cmd-click copies plain prose. Browsers that refuse HTML clipboard writes fall back to Markdown rather than failing silently. Selecting text inside a reply offers **Reply with quote**; the quote is stored as a leading blockquote and rendered as the same attached banner style as a search or deep-research request, both in the composer and in the sent message.
 
 ## UI contract
 

@@ -8,6 +8,7 @@ import { buildStreamRequest, splitSseBuffer } from './streamRequest'
 import { mapNetworkError, providerError, resolveProvider } from './providerAdapter'
 import { providerFetch, ProxyUnavailableError } from './net'
 import { normalizeGraphSpec, summarizeGraphSpec } from './graph'
+import { ARTIFACT_INSTRUCTIONS } from './artifacts'
 
 export { supportsEffort } from './streamRequest'
 
@@ -371,7 +372,7 @@ export const TOOL_REGISTRY: Record<string, ToolSpec> = {
     parameters: { type: 'object', properties: { url: textArg('Page URL, preferably a search-result URL.'), info: { type: 'string', description: 'What you need from this page: a question or the specific information you want (names, numbers, dates, claims, caveats). Optional; when page summaries are on, the summary model uses this to focus the summary.' } }, required: ['url'], additionalProperties: false },
     run: async ({ url }) => { if (typeof url !== 'string') throw Error('url must be a string'); return formatPage(await fetchPage(url)) } },
   delegate_research: {
-    description: 'Delegate one round of research subagents (Thorough deep research only). Each task starts an independent agent with its own context and a generous search/page-read budget; it works the web on its own and returns a clean, cited report. Put 1-3 genuinely separable angles in one call (distinct entities, time periods, source classes, or sub-questions) and state what each must not cover so agents never duplicate work. Results come back as reports with run-wide [S<n>] citations; you can delegate another round after reading them, or ask an agent a follow-up with ask_research_agent. You write the final report yourself.',
+    description: 'Delegate one round of research subagents (Thorough deep research only). Each task starts an independent agent with its own context, an explicit depth, and a generous search/page-read budget; it works the web on its own and returns a clean, cited report. Put 1-3 genuinely separable angles in one call (distinct entities, time periods, source classes, or sub-questions) and state what each must not cover so agents never duplicate work. Round 1 should be broad reconnaissance; later rounds must target a named gap, contradiction, or verification need and become narrower each time. One round can be the whole run: if the reports settle the question, close with your abstract instead of spending the remaining rounds. Results come back as reports with run-wide [S<n>] citations; you can ask an agent a follow-up with ask_research_agent. You write the final report yourself.',
     parameters: {
       type: 'object',
       properties: {
@@ -382,10 +383,11 @@ export const TOOL_REGISTRY: Record<string, ToolSpec> = {
             type: 'object',
             properties: {
               label: textArg('Short name for the agent, e.g. "Regulatory timeline". Used to ask it follow-ups.'),
-              brief: textArg('Self-contained assignment: the objective and the concrete facts to find (names, dates, figures, comparisons), plus the scope boundary. A vague brief causes duplicated work.'),
+              brief: textArg('Self-contained assignment: the objective and the concrete facts to find (names, dates, figures, comparisons), the evidence bar, and the scope boundary. A vague brief causes duplicated work.'),
+              depth: { type: 'string', enum: ['scan', 'standard', 'deep'], description: 'Explicit depth for this agent: scan = 2-4 searches, map the landscape; standard = 6-10 searches, cited facts; deep = 12+ searches, primary-source verification and contradictions.' },
               avoid: textArg('What this agent must not cover, because another agent owns it. Optional but strongly recommended.'),
             },
-            required: ['brief'],
+            required: ['brief', 'depth'],
             additionalProperties: false,
           },
         },
@@ -477,6 +479,20 @@ export const TOOL_REGISTRY: Record<string, ToolSpec> = {
       placement: { type: 'string', enum: ['left', 'right', 'below'], description: 'Where the figure sits relative to your reply text. left (default) floats it beside the prose with text wrapping on its right; right floats it on the other side; below puts it after the writing. Choose left or right when you write an explanation next to the figure, and below only when the text should come first.' },
     }, additionalProperties: false },
     run: (args) => summarizeGraphSpec(normalizeGraphSpec(args)),
+  },
+  show_artifact: {
+    description: `Show a compact interactive HTML artifact inside the conversation. Use it when an interactive control, calculator, filterable table, or small visual explains something better than prose. ${ARTIFACT_INSTRUCTIONS}`,
+    parameters: {
+      type: 'object',
+      properties: {
+        title: textArg('Short title shown above the artifact.'),
+        html: textArg('Semantic HTML body. Prefer no classes; use only the documented artifact-* classes. No styling, colors, external assets, or network requests.'),
+        height: { type: 'number', minimum: 160, maximum: 720, description: 'Optional frame height in pixels (160-720). Defaults to 340.' },
+      },
+      required: ['title', 'html'],
+      additionalProperties: false,
+    },
+    run: ({ title }: { title?: unknown }) => `Artifact ready${typeof title === 'string' && title.trim() ? `: ${title.trim().slice(0, 120)}` : ''}. It is rendered in the conversation; do not repeat its HTML in your reply.`,
   },
   generate_image: { description: 'Generate one or more images from a text prompt and show them beside the reply. Only use when the user asks for a picture, illustration, logo concept, photo, or other visual; do not use it for diagrams that text or code can describe. Write a specific, visual prompt (subject, style, lighting, composition) in the language the user is using.', parameters: { type: 'object', properties: { prompt: textArg('Detailed visual description of the image to generate.'), size: textArg('Output size such as 1024x1024, 1024x1536, 1536x1024, 1024x1792, 1792x1024, 512x512, or 256x256. Optional; the user setting is used when omitted.'), count: { type: 'integer', minimum: 1, maximum: 4, description: 'How many images to generate (1-4). Optional; the user setting is used when omitted.' } }, required: ['prompt'], additionalProperties: false }, run: () => { throw Error('Image generation is not available in this context.') } },
   run_code: { description: 'Run a short JavaScript or Python snippet locally and return its stdout and result. Use for exact arithmetic, data transformations, text or date processing, trying an algorithm, or verifying output. The sandbox has no DOM, files, packages, or (for JavaScript) network, and each run starts fresh, so print everything needed and pass data in the code itself. Keep snippets small; output and run time are capped. Python must be enabled in settings by the user.', parameters: { type: 'object', properties: { language: { type: 'string', enum: ['javascript', 'python'], description: 'Runtime for the snippet.' }, code: textArg('Complete snippet. Use console.log or print for output; the last expression is also returned. Top-level await/return work in JavaScript.') }, required: ['language', 'code'], additionalProperties: false }, run: () => { throw Error('Code execution is not available in this context.') } },
@@ -648,8 +664,10 @@ export type PageExcerpt = { url: string; title: string; text: string; truncated?
 export async function fetchPage(url: string, opts: { cache?: boolean; timeoutMs?: number; maxChars?: number; maxRetries?: number; retryBaseMs?: number; provider?: string; apiKey?: string; baseUrl?: string; fallback?: boolean } = {}): Promise<PageExcerpt> {
   const u = String(url || '').trim().slice(0, 2000)
   if (!u) throw Error('Enter a page URL to read.')
-  const provider = String(opts.provider || 'builtin').toLowerCase()
-  const remote = provider !== 'builtin'
+  const provider = String(opts.provider || 'direct').toLowerCase()
+  // `builtin` was the old name for direct page fetches; keep old callers and
+  // saved settings working without exposing a special "built-in" choice.
+  const remote = provider !== 'direct' && provider !== 'builtin'
   const cacheKey = `p:${remote ? `${provider}:${opts.baseUrl ?? ''}` : ''}:${opts.maxChars ?? ''}:${u.toLowerCase()}`
   if (opts.cache) {
     const cached = cacheGet<PageExcerpt>(cacheKey)

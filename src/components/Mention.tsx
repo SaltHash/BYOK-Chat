@@ -1,5 +1,5 @@
 import type { CSSProperties } from 'react'
-import { BookOpen, Search, TriangleAlert, Wrench, X, type LucideIcon } from 'lucide-react'
+import { BookOpen, Quote, Search, TriangleAlert, Wrench, X, type LucideIcon } from 'lucide-react'
 import { CI, TOOLS } from '../meta'
 import type { Mention } from '../mentions'
 import type { Cmd } from '../store'
@@ -35,6 +35,37 @@ export function MentionChip({ m, cmds }: { m: Mention; cmds: Cmd[] }) {
 /** Static strip fused to the top of a sent user message that invoked search
  * or deep research. Same attached strip styling as the composer banner,
  * without the dismiss control (there is nothing left to cancel once sent). */
+/** The selected text attached to a user message, shown as the same kind of
+ * header strip as a search or deep-research request. */
+export function SentQuoteBanner({ text }: { text: string }) {
+  return (
+    <div className="mention-banner flex items-start gap-2 rounded-t-2xl border-b border-ac/20 bg-ac/5 px-4 py-2">
+      <Quote size={13} className="mt-0.5 shrink-0 text-ac" aria-hidden="true" />
+      <div className="min-w-0">
+        <span className="block text-xs font-semibold tracking-wide text-ac">Quoted reply</span>
+        <p className="line-clamp-3 whitespace-pre-wrap text-xs leading-relaxed text-mu">{text}</p>
+      </div>
+    </div>
+  )
+}
+
+/** Composer-side version of the quote strip. The × detaches the quote without
+ * touching the draft, just like cancelling a search or research banner. */
+export function QuoteBanner({ text, onDismiss }: { text: string; onDismiss: () => void }) {
+  return (
+    <div role="status" aria-live="polite" className="mention-banner flex items-start gap-2 rounded-t-2xl bg-ac/10">
+      <Quote size={14} className="mt-0.5 shrink-0 text-ac" aria-hidden="true" />
+      <div className="min-w-0 flex-1">
+        <span className="block text-xs font-semibold tracking-wide text-ac">Quoted reply</span>
+        <p className="line-clamp-2 whitespace-pre-wrap text-xs leading-relaxed text-mu">{text}</p>
+      </div>
+      <button type="button" onClick={onDismiss} aria-label="Remove quote" title="Remove quote" className="grid size-5 shrink-0 place-items-center rounded-full text-ac/70 transition-colors hover:bg-ac/15 hover:text-ac">
+        <X size={12} />
+      </button>
+    </div>
+  )
+}
+
 export function SentMentionBanner({ kind }: { kind: 'search' | 'research' }) {
   const I = kind === 'research' ? BookOpen : Search
   const label = kind === 'research' ? 'Deep research' : 'Search'

@@ -2,7 +2,8 @@ import { lazy, Suspense, useLayoutEffect, useMemo, useRef, useState } from 'reac
 import { Check, Copy, GitBranch, Pencil, Trash2 } from 'lucide-react'
 import { useS, featOn, type Msg } from '../store'
 import { tokenizeMentions, bannerOf, sentBodyText, isPill } from '../mentions'
-import { MentionChip, SentMentionBanner } from './Mention'
+import { MentionChip, SentMentionBanner, SentQuoteBanner } from './Mention'
+import { splitQuotedReply } from '../quote'
 import { Btn, cx } from './ui'
 import { loadChunk } from '../chunkLoad'
 import type { CiteMap } from './Rich'
@@ -29,9 +30,11 @@ export function UserText({ m, searchQuery, searchOpen }: { m: Msg; searchQuery?:
   const [ed, setEd] = useState(false)
   const [v, setV] = useState(m.t)
   const [copied, setCopied] = useState(false)
-  const segs = useMemo(() => tokenizeMentions(m.t, { cmds, tools, commandsOn: featOn({ features }, 'commands'), toolsOn: featOn({ features }, 'tools') }), [m.t, cmds, tools, features])
-  const sentBanner = useMemo(() => bannerOf(m.t, segs), [m.t, segs])
-  const bodyText = useMemo(() => sentBodyText(m.t, sentBanner), [m.t, sentBanner])
+  const quoted = useMemo(() => splitQuotedReply(m.t), [m.t])
+  const messageText = quoted?.body ?? m.t
+  const segs = useMemo(() => tokenizeMentions(messageText, { cmds, tools, commandsOn: featOn({ features }, 'commands'), toolsOn: featOn({ features }, 'tools') }), [messageText, cmds, tools, features])
+  const sentBanner = useMemo(() => bannerOf(messageText, segs), [messageText, segs])
+  const bodyText = useMemo(() => sentBodyText(messageText, sentBanner), [messageText, sentBanner])
   const cmdMsg = segs[0]?.kind === 'mention' && segs[0].m.kind === 'command'
   const hasMention = segs.some((s) => s.kind === 'mention')
   const contentRef = useRef<HTMLDivElement>(null)
@@ -76,7 +79,7 @@ export function UserText({ m, searchQuery, searchOpen }: { m: Msg; searchQuery?:
       }
     }
     walk(el)
-  }, [searchQuery, searchOpen, m.t, segs, bodyText, sentBanner])
+  }, [searchQuery, searchOpen, m.t, messageText, segs, bodyText, sentBanner])
   if (ed)
     return (
       <div className="space-y-2">
@@ -91,18 +94,21 @@ export function UserText({ m, searchQuery, searchOpen }: { m: Msg; searchQuery?:
   return (
     <div className="group/u flex flex-col items-end gap-1">
       <div className={cx('max-w-full overflow-hidden rounded-2xl', cmdMsg ? 'min-w-40 border border-ac/40 bg-ac/5 shadow-sm' : 'bg-surf')}>
+        {quoted && <SentQuoteBanner text={quoted.quote} />}
         {sentBanner && <SentMentionBanner kind={sentBanner.kind} />}
-        <div ref={contentRef} className="whitespace-pre-wrap" style={{ padding: 'calc(var(--ui-composer-pad) - 2px) calc(var(--ui-composer-pad) + 4px)' }}>
-          {sentBanner
-            ? bodyText
-            : hasMention
-              ? segs.map((sg, i) => sg.kind === 'text'
-                ? <span key={i}>{sg.text}</span>
-                : isPill(sg.m)
-                  ? <MentionChip key={i} m={sg.m} cmds={cmds} />
-                  : <span key={i}>{sg.m.label}</span>)
-              : m.t}
-        </div>
+        {(messageText || sentBanner) && (
+          <div ref={contentRef} className="whitespace-pre-wrap" style={{ padding: 'calc(var(--ui-composer-pad) - 2px) calc(var(--ui-composer-pad) + 4px)' }}>
+            {sentBanner
+              ? bodyText
+              : hasMention
+                ? segs.map((sg, i) => sg.kind === 'text'
+                  ? <span key={i}>{sg.text}</span>
+                  : isPill(sg.m)
+                    ? <MentionChip key={i} m={sg.m} cmds={cmds} />
+                    : <span key={i}>{sg.m.label}</span>)
+                : messageText}
+          </div>
+        )}
       </div>
       <span className="flex shrink-0 flex-wrap gap-0.5 opacity-100 transition-opacity md:opacity-0 md:group-hover/u:opacity-100 md:focus-within:opacity-100">
         <Btn sm icon={copied ? Check : Copy} title="Copy" onClick={() => { void navigator.clipboard?.writeText(m.t).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1200) }).catch(() => {}) }} />

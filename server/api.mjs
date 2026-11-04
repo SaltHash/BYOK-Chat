@@ -40,7 +40,7 @@ export function searchStatus(env = {}) {
     searchConfigured: true,
     apiProviders: Object.fromEntries(Object.entries(SEARCH_API_PROVIDERS).map(([id, meta]) => [id, { label: meta.label, configured: apiKeys[id], needsZone: Boolean(meta.needsZone), optionalKey: Boolean(meta.optionalKey) }])),
     apiConfigured,
-    readerProviders: Object.fromEntries(Object.entries(READER_PROVIDERS).map(([id, meta]) => [id, { label: meta.label }])),
+    readerProviders: Object.fromEntries(Object.entries(READER_PROVIDERS).map(([id, meta]) => [id, { label: meta.label, requiresKey: Boolean(meta.requiresKey), optionalKey: Boolean(meta.optionalKey) }])),
   }
 }
 
@@ -180,7 +180,7 @@ export async function apiExtract(req, env = process.env, opts = {}) {
 
 /* POST /api/reader reads one page through a selected reader API. The key is
  * in the JSON body (never a URL) and is redacted from all logs. GET
- * /api/extract keeps the direct built-in reader for compatibility. */
+ * /api/extract keeps the direct page fetch for compatibility. */
 export async function apiReader(req, env = process.env, opts = {}) {
   if (req.method !== 'POST') return jsonResult(405, { error: 'Method not allowed' }, { allow: 'POST' })
   if (!sameOrigin(headerValue(req, 'origin'), requestHost(req))) return jsonResult(403, { error: 'Cross-origin request refused' })
@@ -194,7 +194,7 @@ export async function apiReader(req, env = process.env, opts = {}) {
   try { parsed = JSON.parse(raw) } catch { return jsonResult(400, { error: 'Expected JSON with a url field' }) }
   const target = typeof parsed?.url === 'string' ? parsed.url.trim().slice(0, 2000) : ''
   if (!target) return jsonResult(400, { error: 'Missing url parameter' })
-  const provider = normalizeReaderProvider(parsed?.provider ?? 'builtin', 'builtin')
+  const provider = normalizeReaderProvider(parsed?.provider ?? 'direct', 'direct')
   const clientKey = typeof parsed?.apiKey === 'string' ? parsed.apiKey.slice(0, 500) : ''
   const clientUrl = typeof parsed?.baseUrl === 'string' ? parsed.baseUrl.trim().slice(0, 500) : ''
   const envSuffix = provider.toUpperCase()

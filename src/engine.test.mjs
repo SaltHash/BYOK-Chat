@@ -548,18 +548,19 @@ test('search results-per-search defaults to the user max and never exceeds it', 
 
 test('page-reader preferences keep a separate API, key and summary model', () => {
   const blank = normSearch({})
-  assert.equal(blank.readerProvider, 'builtin')
+  assert.equal(blank.readerProvider, 'direct')
   assert.equal(blank.readerKey, '')
   assert.equal(blank.readerFallback, true)
   assert.equal(blank.readerSummary, false)
   assert.equal(blank.readerSummaryChars, 2400)
   assert.equal(normSearch({ readerProvider: 'jina' }).readerProvider, 'jina')
-  assert.equal(normSearch({ readerProvider: 'nope' }).readerProvider, 'builtin')
+  assert.equal(normSearch({ readerProvider: 'nope' }).readerProvider, 'direct')
+  assert.equal(normSearch({ readerProvider: 'builtin' }).readerProvider, 'direct')
   assert.equal(normSearch({ readerFallback: false }).readerFallback, false)
   assert.equal(normSearch({ readerSummary: true, readerSummaryEp: 'e1', readerSummaryModel: 'm1' }).readerSummaryEp, 'e1')
   assert.equal(normSearch({ readerSummaryChars: 99999 }).readerSummaryChars, 8000)
   assert.equal(normSearch({ readerSummaryChars: 10 }).readerSummaryChars, 400)
-  // A reader key falls back to the matching search key for Firecrawl and Exa.
+  // A reader key falls back to the matching search key.
   const prefs = normSearch({ readerProvider: 'exa', keys: { exa: 'exa-key' } })
   assert.equal(readerKeyOf(prefs), 'exa-key')
   assert.equal(readerKeyOf(normSearch({ readerProvider: 'exa', readerKey: 'own' })), 'own')
@@ -883,7 +884,7 @@ test('a remote page reader posts to the reader API and keeps its own cache entry
   }
 })
 
-test('the built-in page reader keeps using the extract endpoint', async () => {
+test('direct page reading keeps using the extract endpoint', async () => {
   const realFetch = globalThis.fetch
   const calls = []
   globalThis.fetch = async (url) => {
@@ -891,7 +892,7 @@ test('the built-in page reader keeps using the extract endpoint', async () => {
     return jsonResponse({ url: 'https://a.test/page', title: 'A', text: 'body' })
   }
   try {
-    await fetchPage('https://a.test/page', { provider: 'builtin' })
+    await fetchPage('https://a.test/page', { provider: 'direct' })
     assert.match(calls[0], /^\/api\/extract\?/)
   } finally {
     globalThis.fetch = realFetch

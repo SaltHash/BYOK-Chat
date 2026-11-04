@@ -9,10 +9,11 @@ import { fitDoc } from '../docs'
 import { bannerOf, armMention, isPill, mentionsOf, stripMention, tokenizeMentions, type Mention, type Seg as MentionSeg } from '../mentions'
 import { Btn, Item, Pop, Seg, RangeSlider, ImageLightbox, cx, type Ic } from './ui'
 import { SortableList } from './dnd'
-import { MentionBanner, MentionInfo } from './Mention'
+import { MentionBanner, MentionInfo, QuoteBanner } from './Mention'
 import { Notice } from './Extra'
 import { dictationAvailable, startDictation, stopSpeaking, normVoice, type Dictation } from '../voice'
 import { getPromptHistory, pushPromptHistory } from '../promptHistory'
+import { quoteForSend } from '../quote'
 
 const chip = 'flex h-9 min-w-0 items-center gap-2 rounded-lg px-2.5 text-sm text-mu hover:bg-hov hover:text-tx'
 
@@ -262,7 +263,7 @@ function ModelMenu({ close, cfg }: { close: () => void; cfg: (t: string) => void
   )
 }
 
-export function Composer({ cfg }: { cfg: (t: string) => void }) {
+export function Composer({ cfg, quote, onClearQuote }: { cfg: (t: string) => void; quote?: string; onClearQuote?: () => void }) {
   const s = useS(useShallow((st) => { const { chats, ...rest } = st; void chats; return rest }))
   const [att, setAtt] = useState<Att[]>([])
   const ta = useRef<HTMLDivElement>(null)
@@ -463,7 +464,7 @@ export function Composer({ cfg }: { cfg: (t: string) => void }) {
     } catch (x: any) { setOcrStatus(''); s.patch({ notice: { t: `Transcription did not finish (${String(x?.message ?? x)}). Try again, or pick a different endpoint in Settings.` } }) }
     finally { setOcrBusy(null) }
   }
-  const ready = !!v.trim() || att.length > 0
+  const ready = !!v.trim() || att.length > 0 || !!quote
   const submit = async () => {
     if (streaming && !queueMode) return
     if (!s.eps.length) {
@@ -476,18 +477,21 @@ export function Composer({ cfg }: { cfg: (t: string) => void }) {
     stopDict()
     stopSpeaking()
     // An armed banner sends as the real call so the tool loop and the deep
-    // research planner still receive exactly what they expect.
-    const raw = armed ? `@${armed}(${v.trim()})` : v, files = att
+    // research planner still receive exactly what they expect. A quote is
+    // kept as the leading Markdown blockquote so it survives reload and copy.
+    const quoted = quote ? quoteForSend(quote) : ''
+    const raw = armed ? `@${armed}(${quoted}${v.trim()})` : `${quoted}${v}`, files = att
     if (await s.send(raw, files)) {
       // The history records what the user composed (the visible draft), not
       // the armed `@tool(…)` wrapper, so recall reproduces the typing. With
       // recall off nothing is recorded at all.
-      if ((s.prefs.promptRecall ?? 'edges') !== 'off') pushPromptHistory(v)
+      if ((s.prefs.promptRecall ?? 'edges') !== 'off' && (v.trim() || quote)) pushPromptHistory(v)
       histIdx.current = null
       if (useS.getState().draft === v) { pending.current = 'end'; s.patch({ draft: '' }) }
       setArmed(null)
       setAtt([])
       setActive(null)
+      onClearQuote?.()
     }
   }
   /* The contenteditable DOM owns typing, so its plain-text serialization is the
@@ -573,12 +577,13 @@ export function Composer({ cfg }: { cfg: (t: string) => void }) {
     if (typed?.kind === 'research') { pending.current = 'end'; s.patch({ draft: typed.query ?? '' }); ta.current?.focus(); return }
     if (typed?.kind === 'search' && typed.m) { pending.current = 'end'; s.patch({ draft: stripMention(v, typed.m) }); ta.current?.focus() }
   }
-  const placeholder = armed === 'search' ? 'What should I search for?' : armed === 'research' ? 'What should I research?' : s.eps.some(usable) ? (featOn(s, 'commands') && featOn(s, 'tools') ? 'Message, / for commands, @ for tools' : featOn(s, 'commands') ? 'Message, / for commands' : featOn(s, 'tools') ? 'Message, @ for tools' : 'Message') : 'Add a model endpoint to start (press Send for a walkthrough)'
+  const placeholder = quote ? 'Write a reply to the quoted text…' : armed === 'search' ? 'What should I search for?' : armed === 'research' ? 'What should I research?' : s.eps.some(usable) ? (featOn(s, 'commands') && featOn(s, 'tools') ? 'Message, / for commands, @ for tools' : featOn(s, 'commands') ? 'Message, / for commands' : featOn(s, 'tools') ? 'Message, @ for tools' : 'Message') : 'Add a model endpoint to start (press Send for a walkthrough)'
   return (
     <div className="w-full self-center">
       <div className="mx-auto w-full" style={{ maxWidth: composerWidth(s.prefs.chatWidth), paddingLeft: 'var(--ui-chat-pad-x)', paddingRight: 'var(--ui-chat-pad-x)' }}>
       <Notice cfg={cfg} />
       <div ref={box} style={{ padding: 'var(--ui-composer-pad)', '--glass-blur': `${s.prefs.glassBlur ?? 14}px`, '--glass-opacity': `${s.prefs.glassOpacity ?? 80}%` } as CSSProperties} className={cx('composer-shell relative rounded-2xl transition-colors', s.prefs.glassComposer !== false ? 'glass-composer border border-hov hover:border-bor focus-within:border-bor shadow-lg shadow-black/10' : 'edge-border bg-surf hover:border-bor focus-within:border-bor')} data-lit={menusOpen || listening || typing ? '1' : undefined} onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); add(e.dataTransfer.files) }}>
+        {quote && <QuoteBanner text={quote} onDismiss={() => { onClearQuote?.(); ta.current?.focus() }} />}
         {banner && <MentionBanner kind={banner} onDismiss={dismissBanner} warning={banner === 'search' && !searchEnabled ? 'Web search is off.' : undefined} onEnable={banner === 'search' && !searchEnabled ? () => { s.patch({ features: { ...s.features, tools: true }, tools: { ...s.tools, search: true } }) } : undefined} />}
         {menu && !menuOff && (
           <div className="edge-border absolute inset-x-0 bottom-full mb-2 rounded-xl bg-hov p-1.5">

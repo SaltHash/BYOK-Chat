@@ -1,3 +1,5 @@
+import { ARTIFACT_REPORT_NOTE } from './artifacts'
+
 /* Deep research helpers. Pure + unit-testable; no DOM, no store imports.
  * The model drafts a plan first, then drives the whole run through the search
  * and fetch_page tools within the tier's budgets, then writes a long cited
@@ -132,6 +134,15 @@ export function planUserAsk(query: string, tier: ResearchTier, now: Date = new D
   return parts.join('\n')
 }
 
+/** A tool-free retry used when the first planning reply is prose, is cut off,
+ * or otherwise has no parseable plan. The previous reply is included only as
+ * context; the model is told explicitly what shape is required. */
+export function planRepairAsk(query: string, tier: ResearchTier, previous: string, now: Date = new Date(), followUp?: string, answers?: ResearchAnswer[]): string {
+  const base = planUserAsk(query, tier, now, followUp, answers)
+  const prior = String(previous ?? '').replace(/\s+/g, ' ').trim().slice(-3000)
+  return `${base}\n\nYour previous reply did not contain a usable plan. Return the plan now as strict JSON only, with no prose or markdown fences. It must have "title", "intro", and 3 to 5 "steps"; every step needs a non-empty "label" and "items"; the first step's kind is "search", include an "analyze" step, and finish with a "report" step.${prior ? `\n\nPrevious reply (possibly incomplete):\n${prior}` : ''}`
+}
+
 const KIND_BY_LABEL = (label: string): ResearchPlanStepKind => {
   const l = label.toLowerCase()
   if (/\breport|write|summar|draft\b/.test(l)) return 'report'
@@ -149,22 +160,30 @@ const normKind = (v: unknown, label: string): ResearchPlanStepKind => {
  * nothing worth showing (no steps). Never throws. */
 export function normalizePlan(v: any): ResearchPlan | null {
   if (!v || typeof v !== 'object' || Array.isArray(v)) return null
-  const rawSteps = Array.isArray(v.steps) ? v.steps : []
+  // Some models wrap the plan in {"plan":{...}}; accept that without making
+  // the normal shape ambiguous. A top-level plan always wins.
+  const plan = v.plan && typeof v.plan === 'object' && !Array.isArray(v.plan) ? v.plan : v
+  const rawSteps = Array.isArray(plan.steps) ? plan.steps : []
   const steps: ResearchPlanStep[] = rawSteps.slice(0, 6).flatMap((s: any, i: number): ResearchPlanStep[] => {
+    if (typeof s === 'string') {
+      const label = s.trim().replace(/\s+/g, ' ').slice(0, 60)
+      return label ? [{ id: `p${i + 1}`, kind: normKind('', label), label, items: [] }] : []
+    }
     const label = String(s?.label ?? s?.title ?? '').trim().slice(0, 60)
     if (!label) return []
-    const items = (Array.isArray(s?.items) ? s.items : Array.isArray(s?.details) ? s.details : [])
+    const rawItems = Array.isArray(s?.items) ? s.items : Array.isArray(s?.details) ? s.details : typeof s?.items === 'string' ? [s.items] : []
+    const items = rawItems
       .map((x: any) => String(x ?? '').replace(/\s+/g, ' ').trim().slice(0, 400))
       .filter(Boolean)
       .slice(0, 10)
     return [{ id: `p${i + 1}`, kind: normKind(s?.kind, label), label, items }]
   })
   if (!steps.length) return null
-  const title = String(v.title ?? '').trim().replace(/\s+/g, ' ').slice(0, 90)
-  const intro = String(v.intro ?? '').trim().replace(/\s+/g, ' ').slice(0, 240)
-  const startNow = typeof v.startNow === 'boolean' ? v.startNow : false
+  const title = String(plan.title ?? '').trim().replace(/\s+/g, ' ').slice(0, 90)
+  const intro = String(plan.intro ?? '').trim().replace(/\s+/g, ' ').slice(0, 240)
+  const startNow = typeof plan.startNow === 'boolean' ? plan.startNow : false
   const seen = new Set<string>()
-  const questions: ResearchQuestion[] = (Array.isArray(v.questions) ? v.questions : []).flatMap((q: any, i: number): ResearchQuestion[] => {
+  const questions: ResearchQuestion[] = (Array.isArray(plan.questions) ? plan.questions : []).flatMap((q: any, i: number): ResearchQuestion[] => {
     const question = String(q?.question ?? (typeof q === 'string' ? q : '')).replace(/\s+/g, ' ').trim().slice(0, 240)
     if (question.length < 8) return []
     const key = question.toLowerCase()
@@ -178,6 +197,17 @@ export function normalizePlan(v: any): ResearchPlan | null {
     return [{ id: `q${i + 1}`, question, options }]
   }).slice(0, 3)
   return { title, intro, steps, startNow, ...(questions.length ? { questions } : {}) }
+}
+
+/** Pull readable title/label fragments out of a partially streamed plan. The
+ * planning call returns strict JSON, so there is no parseable object until the
+ * end; this gives the card something honest to show while it streams. */
+export function planPreview(raw: string): { title?: string; steps: string[] } {
+  const clean = String(raw ?? '').replace(/```(?:json)?/gi, '').replace(/```/g, '')
+  const read = (v: string) => v.replace(/\\n/g, ' ').replace(/\\"/g, '"').replace(/\\\\/g, '\\').replace(/\s+/g, ' ').trim()
+  const title = /"title"\s*:\s*"([^"]*)/.exec(clean)?.[1]
+  const steps = [...clean.matchAll(/"label"\s*:\s*"([^"]*)/g)].map((m) => read(m[1])).filter(Boolean).slice(0, 6)
+  return { title: title ? read(title).slice(0, 120) : undefined, steps: [...new Set(steps)] }
 }
 
 /** Pull the first JSON object out of a model reply (it may be fenced or have
@@ -211,20 +241,20 @@ export function parseResearchPlan(raw: string): ResearchPlan | null {
 /** A deterministic plan used when the planning call fails or returns junk, so
  * the research flow can always proceed. */
 export function fallbackPlan(query: string): ResearchPlan {
-  const topic = String(query ?? '').trim().slice(0, 90)
+  const topic = String(query ?? '').trim().slice(0, 90) || 'this topic'
   return {
     title: topic,
-    intro: 'A default plan, since the planning pass did not return one.',
+    intro: 'A default plan, because the planning reply could not be read.',
     steps: [
-      { id: 'p1', kind: 'search', label: 'Research Websites', items: [
+      { id: 'p1', kind: 'search', label: 'Find sources', items: [
         `(1) Search for authoritative, recent sources on ${topic}.`,
         '(2) Prefer primary sources, official documentation, and expert commentary over aggregators.',
         '(3) Read the most relevant pages and extract the concrete facts each one supports.',
       ] },
-      { id: 'p2', kind: 'analyze', label: 'Analyze Results', items: [
+      { id: 'p2', kind: 'analyze', label: 'Compare findings', items: [
         '(4) Cross-check each load-bearing claim against a second independent source and note any disagreements.',
       ] },
-      { id: 'p3', kind: 'report', label: 'Create Report', items: [
+      { id: 'p3', kind: 'report', label: 'Write report', items: [
         '(5) Write a cited report with a summary, key findings, evidence, limitations, and a sources note.',
       ] },
     ],
@@ -288,19 +318,39 @@ export type ResearchStep = { id: string; kind: 'search' | 'read'; label: string;
  * brief, spending, and report; follow-ups reuse the same agent (its evidence is
  * kept in memory for the run and condensed into the follow-up prompt). */
 export type ResearchAgentSource = { citeId: string; title: string; url: string }
+export type ResearchDepth = 'scan' | 'standard' | 'deep'
+export const RESEARCH_DEPTHS: ResearchDepth[] = ['scan', 'standard', 'deep']
+/** Depth is a decision about evidence, not another name for the budget. */
+export const normResearchDepth = (v: unknown): ResearchDepth => {
+  const d = String(v ?? '').trim().toLowerCase()
+  return d === 'scan' || d === 'deep' ? d : 'standard'
+}
+export const researchDepthNote = (depth: ResearchDepth, tier: ResearchTier): string => {
+  if (depth === 'scan') return `Reconnaissance: 2–4 searches and 1–2 page reads. Map the landscape, define the key terms and players, and name the open questions. Do not try to prove every claim; say what needs a deeper pass.`
+  if (depth === 'deep') return `Deep verification: up to ${tier.agentSearches} searches and ${tier.agentReads} page reads. Target primary sources, exact figures, dates, and contradictions. Confirm each load-bearing claim independently and say what remains contested.`
+  return `Standard cited brief: 6–10 searches and 3–5 page reads. Establish the main facts and mechanisms, support each key claim with a source, and flag anything that needs a deeper pass.`
+}
 export type ResearchAgent = {
   id: string
   /** 1-based delegation wave this agent belongs to. */
   round: number
   label: string
   brief: string
+  /** The depth the lead explicitly assigned, with a safe default for old runs. */
+  depth?: ResearchDepth
   status: 'running' | 'done' | 'error' | 'stopped'
   searches: number
   reads: number
+  /** Actual subagent spend, when the provider reports it or a price is set. */
+  costUsd?: number
   /** The clean, cited report returned to the orchestrator. */
   answer?: string
   error?: string
   followUps?: { q: string; a: string }[]
+  /** Follow-up calls that failed. Kept separately: the original report can
+   * still be valid, but the card must not show a clean check for a failed
+   * follow-up. */
+  followUpErrors?: string[]
   sources?: ResearchAgentSource[]
 }
 
@@ -345,6 +395,10 @@ export type ResearchState = {
   status: ResearchStatus
   steps: ResearchStep[]
   startedAt: number
+  /** Readable fragments extracted from the planning stream before the strict
+   *  JSON is complete. The plan card shows these as a live outline, then
+   *  replaces them with the parsed plan. */
+  planDraft?: { title?: string; steps: string[] }
   finishedAt?: number
   error?: string
   /** The approved research plan (see `ResearchPlan`). Generated before the run
@@ -358,8 +412,8 @@ export type ResearchState = {
   /** How many context searches the planning pass has run so far, shown while
    * the plan is scoping the topic (capped at `PLAN_SCOPE_MAX`). */
   scope?: number
-  /** Rough, clearly-labelled ceiling for the run's usage/cost, shown before
-   * the user starts it so a Thorough run is never a surprise. */
+  /** Moderate-use estimate for the run's usage/cost, shown before the user
+   * starts it so a Thorough run is never a surprise. */
   estimate?: ResearchUsageEstimate
   /** Absolute wall-clock deadline for the run (epoch ms), fixed when the run
    * first starts and reused by retries and resumes, so the tier's time budget
@@ -405,32 +459,54 @@ export const SEARCH_EVIDENCE_CHARS = 12000
 /** Server-side page-read cap (`EXTRACT_MAX_TEXT`). */
 export const READ_EXCERPT_CHARS = 12000
 
-export type ResearchUsageEstimate = { searches: number; reads: number; rounds: number; inputTokens: number; outputTokens: number; costUsd: number | null }
+export type ResearchUsageEstimate = {
+  searches: number
+  reads: number
+  rounds: number
+  inputTokens: number
+  outputTokens: number
+  costUsd: number | null
+  /** Expected cost of one subagent at its assigned depth. */
+  agentCostUsd: number | null
+  /** Expected cost of one full round (all agents in that round). */
+  roundCostUsd: number | null
+}
 
-/** A rough ceiling for a run at the given tier, so the cost is visible before
- * the user starts. It includes the planning pass's context searches and plan
- * call (which happen before the run and are billed outside the tier's search
- * budget), and it accounts for evidence accumulating across rounds; it is
- * deliberately pessimistic (the caps are ceilings, runs stop earlier). */
+/** A moderate-use estimate for a run at the given tier, so the cost is visible
+ * before the user starts. Most runs stop well below their caps, so this uses
+ * roughly half of the available search/read budget rather than the full ceiling,
+ * then adds a small token buffer. It includes the planning pass's context
+ * searches and plan call, and it accounts for evidence accumulating across
+ * rounds. The result is usually a little above the final cost, not a worst case. */
 export function estimateResearchUsage(tier: ResearchTier, price?: { input: number; output: number } | null): ResearchUsageEstimate {
   const perSearch = Math.ceil(SEARCH_EVIDENCE_CHARS / CHARS_PER_TOKEN)
   const perRead = Math.ceil(READ_EXCERPT_CHARS / CHARS_PER_TOKEN)
   const agentCount = Math.max(0, tier.agentRounds) * Math.max(0, tier.agentsPerRound)
-  const searches = tier.maxSearches + PLAN_SCOPE_MAX + agentCount * tier.agentSearches
-  const reads = tier.maxReads + agentCount * tier.agentReads
+  // Lead searches are often front-loaded while subagents tend to stop once
+  // their brief is covered. A 55%/45% share is intentionally conservative.
+  const searches = Math.round(tier.maxSearches * 0.55 + PLAN_SCOPE_MAX + agentCount * tier.agentSearches * 0.45)
+  const reads = Math.round(tier.maxReads * 0.55 + agentCount * tier.agentReads * 0.45)
   const evidence = searches * perSearch + reads * perRead
   // A subagent's own transcript is compacted each round; its ceiling is the
   // evidence it may gather plus a few reasoning rounds. Multi-agent runs really
   // do cost multiples of a single agent's tokens, so the visible estimate says so.
   const agentRoundsEach = Math.ceil(tier.agentSearches / 3) + tier.agentReads + 4
-  const rounds = tier.maxRounds + PLAN_SCOPE_MAX + 1 + agentCount * agentRoundsEach
+  const rounds = Math.round(tier.maxRounds * 0.55 + PLAN_SCOPE_MAX + 1 + agentCount * agentRoundsEach * 0.55)
   const base = 2500
-  const agentInput = agentCount * agentRoundsEach * (2000 + (tier.agentSearches * perSearch + tier.agentReads * perRead) / 2)
-  const agentOutput = agentCount * (agentRoundsEach * 220 + 1400)
-  const inputTokens = Math.round(rounds * (base + evidence / 2) + agentInput)
-  const outputTokens = Math.round(rounds * 250 + 5000 + agentOutput)
-  const costUsd = price && (price.input > 0 || price.output > 0) ? (inputTokens * price.input + outputTokens * price.output) / 1e6 : null
-  return { searches, reads, rounds, inputTokens, outputTokens, costUsd }
+  const agentInput = agentCount * agentRoundsEach * (2000 + (tier.agentSearches * perSearch + tier.agentReads * perRead) / 2) * 0.5
+  const agentOutput = agentCount * (agentRoundsEach * 220 + 1400) * 0.5
+  const headroom = 1.08
+  const inputTokens = Math.round((rounds * (base + evidence / 2) + agentInput) * headroom)
+  const outputTokens = Math.round((rounds * 250 + 5000 + agentOutput) * headroom)
+  const priced = price && (price.input > 0 || price.output > 0) ? price : null
+  const costUsd = priced ? (inputTokens * priced.input + outputTokens * priced.output) / 1e6 : null
+  // Per-agent and per-round figures make the team estimate inspectable: the
+  // plan card can show what one subagent costs and what a whole wave adds.
+  const perAgentInput = agentCount > 0 ? agentInput / agentCount : 0
+  const perAgentOutput = agentCount > 0 ? agentOutput / agentCount : 0
+  const agentCostUsd = priced && agentCount > 0 ? ((perAgentInput * priced.input + perAgentOutput * priced.output) / 1e6) * headroom : null
+  const roundCostUsd = agentCostUsd != null ? agentCostUsd * tier.agentsPerRound : null
+  return { searches, reads, rounds, inputTokens, outputTokens, costUsd, agentCostUsd, roundCostUsd }
 }
 
 /* ---- Prompts ---- */
@@ -468,8 +544,11 @@ export function researchTeamNote(tier: ResearchTier): string {
     `# Research team (${tier.label})`,
     `You are the lead researcher. You may delegate up to ${tier.agentRounds} round${tier.agentRounds === 1 ? '' : 's'} of subagents: each delegate_research call starts one round with up to ${tier.agentsPerRound} independent agents, each with its own context and a budget of ${tier.agentSearches} searches and ${tier.agentReads} page reads.`,
     `- Split broad, genuinely separable angles between agents (entity, time period, source class, sub-question). Before you delegate, decide the split so parallel agents never cover the same ground: give each a distinct scope and say what it must not cover. Write briefs as a short, self-contained assignment with the facts to find (names, dates, numbers, comparisons) and the boundary; a vague brief causes duplicated work and gaps.`,
+    `- Define the depth you expect on every task, using its depth field: "scan" for a 2–4 search reconnaissance, "standard" for a 6–10 search cited brief, or "deep" for primary-source verification with 12+ searches. The brief must state the evidence bar, not just the topic. Match depth to what the report needs, not to the number of rounds available.`,
     `- Delegate the exploration, keep the judgment. Do not delegate something you could settle in one search, and do not use agents to double-check your own writing.`,
-    `- After a round returns, read the reports before acting. Ask follow-up questions with ask_research_agent when an answer is thin, ambiguous, or contradicted by another agent: the agent keeps its earlier evidence, answers from it, and searches further only when needed. Open a new round only for territory the first round did not cover, up to ${tier.agentRounds} rounds in total. Rounds are a ceiling, not a target.`,
+    `- Round 1 is broad reconnaissance: distinct areas, key terms, players, and the landscape. Round 2 is only for named gaps, contradictions, or verification, with narrower scopes and a clearer evidence bar. Any later round is only for unresolved load-bearing claims, aimed at primary sources or a specific disagreement. Before every round after the first, state what is still missing and why a new agent is needed; never repeat an earlier round's scope or add an agent just to fill the roster.`,
+    `- One round can be the whole run. After each round, if the reports cover the question and the load-bearing claims are supported, close with your abstract immediately. Rounds are a ceiling, not a checklist; never open another round just because one remains, and never burn the budget to reach the configured number.`,
+    `- After a round returns, read the reports before acting. Ask follow-up questions with ask_research_agent when an answer is thin, ambiguous, or contradicted by another agent: the agent keeps its earlier evidence, answers from it, and searches further only when needed.`,
     `- Use your own search and fetch_page for gaps no agent could settle, for a quick check of a load-bearing contradiction, and for anything that appears after a round.`,
     `- Agent reports are distilled evidence and carry real, run-wide [S<n>] ids. Trust their citations, cite those ids yourself, and never renumber them. If two agents disagree, prefer the one whose claims are better sourced and say so in the report.`,
     `- You write the final report. Never ask an agent to write it, and never let a subagent's summary replace your own reading of the evidence.`,
@@ -480,7 +559,7 @@ export function researchTeamNote(tier: ResearchTier): string {
 /** The nudge that opens a round when a Thorough run tries to do everything
  * itself first. */
 export const researchDelegationAsk = (tier: ResearchTier) =>
-  `No subagents have been delegated yet. This is ${tier.label} research: open a delegation round now with delegate_research, splitting the largest unanswered angles into 2-3 distinct briefs (state what each must not cover). Then use their reports to decide the next round, a follow-up question, or the abstract. Do not keep searching everything yourself.`
+  `No subagents have been delegated yet. This is ${tier.label} research: open a delegation round now with delegate_research, splitting the largest unanswered angles into 2-3 distinct briefs (state each brief's depth and what it must not cover). Make this first round a broad reconnaissance. Then use the reports to decide: if they already settle the question, close with your abstract immediately; otherwise ask a follow-up or open one narrower round for the named gap. Do not keep searching everything yourself, and do not open extra rounds just because they are available.`
 
 export function researchSystemNote(query: string, tier: ResearchTier, now: Date = new Date(), plan?: ResearchPlan | null, answers?: ResearchAnswer[]): string {
   const y = now.getUTCFullYear()
@@ -493,7 +572,7 @@ export function researchSystemNote(query: string, tier: ResearchTier, now: Date 
   ] : []
   const teamBlock = tier.agentRounds > 0 ? [researchTeamNote(tier)] : []
   const capLine = tier.agentRounds > 0
-    ? `Treat ${tier.agentRounds} delegation round${tier.agentRounds === 1 ? '' : 's'} as a hard cap, not a quota: stop delegating once the picture is settled. When the round cap is reached, ask follow-ups or close out with your abstract.`
+    ? `Treat ${tier.agentRounds} delegation round${tier.agentRounds === 1 ? '' : 's'} as a hard cap, not a quota: stop delegating once the picture is settled. A single well-covered round is a complete run; close with your abstract as soon as the evidence supports the answer. When the round cap is reached, ask follow-ups or close out with your abstract.`
     : `Treat ${tier.maxSearches} searches as a hard cap, not a quota: search until you have a sound understanding of the question, a bit more if it stays murky, and stop early once it is fully settled. Never pad with extra searches to reach the cap.`
   return [
     `# Task`,
@@ -545,7 +624,7 @@ export function researchSystemNote(query: string, tier: ResearchTier, now: Date 
 
 /** One delegated assignment. `avoid` is the boundary that keeps parallel
  * agents from covering the same ground. */
-export type ResearchTask = { label: string; brief: string; avoid?: string }
+export type ResearchTask = { label: string; brief: string; avoid?: string; depth?: ResearchDepth | string }
 
 /** The subagent's system prompt: role, a self-contained assignment, source
  * discipline, and a dense output contract. Deliberately verbose in the
@@ -560,6 +639,7 @@ export function agentSystemNote(query: string, tier: ResearchTier, task: Researc
     `Label: ${task.label}`,
     task.brief,
     ...(task.avoid ? ['', `Do not cover (another agent owns this): ${task.avoid}`] : []),
+    `Depth expected: ${normResearchDepth(task.depth)}. ${researchDepthNote(normResearchDepth(task.depth), tier)}`,
     ``,
     `# How to investigate`,
     `- Start wide, then narrow. Run 2-3 short queries per round, read the results, and note in one line what they established and what is still missing before choosing the next round. Refine queries from what you learn instead of repeating them.`,
@@ -616,7 +696,7 @@ export function agentEvidenceDigest(rounds: { calls: { name: string; result?: st
 /** How a delegation round is reported back to the orchestrator: a compact
  * header per agent plus its full report. */
 export function agentResultNote(a: ResearchAgent): string {
-  const head = `[Subagent ${a.label} · round ${a.round} · ${a.searches} searches, ${a.reads} page reads${a.followUps?.length ? `, ${a.followUps.length} follow-up${a.followUps.length === 1 ? '' : 's'}` : ''}]`
+  const head = `[Subagent ${a.label} · round ${a.round} · ${a.depth ?? 'standard'} depth · ${a.searches} searches, ${a.reads} page reads${a.followUps?.length ? `, ${a.followUps.length} follow-up${a.followUps.length === 1 ? '' : 's'}` : ''}${a.costUsd != null ? ` · ≈$${a.costUsd.toFixed(a.costUsd < 0.01 ? 3 : 2)}` : ''}]`
   if (a.status === 'error' || a.status === 'stopped') return `${head}\nThis agent did not complete: ${a.error || 'stopped'}. Cover its assignment yourself or delegate it again in a later round.`
   return `${head}\n${a.answer || 'The agent returned no report.'}`
 }
@@ -638,7 +718,9 @@ export const RESEARCH_REPORT_ASK = [
   'Citations: every factual claim must carry an inline [S1], [S2], etc. citation from the evidence blocks (group as [S1, S2] when several support one claim). A report with unsupported claims is a failure; never invent a source or an id, and never cite an id that is not in the evidence above.',
   'Comparisons: when comparing 2+ options or tradeoffs across criteria, add a Markdown table (options as rows, criteria as columns, citations in cells, legend for scores/symbols) plus a 1–2 sentence takeaway per table.',
   '',
-  'Output the report only — no preamble, no meta commentary, no restating this instruction.',
+  ARTIFACT_REPORT_NOTE,
+  '',
+  'Output the report only — no preamble, no meta commentary, no restating this instruction. The optional artifact fence is the only exception.',
 ].join('\n')
 
 /** Repair ask used when the report cites ids that were never in the evidence. */

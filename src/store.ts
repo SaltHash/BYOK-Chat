@@ -12,7 +12,7 @@ import type { EndpointAuth } from './endpointAuth'
 import { blobPut } from './storage/durable'
 import { normVoice, BLANK_VOICE, type VoicePrefs } from './voice'
 import { DEFAULT_SKILL_STATE, normSkills, enabledSkills, getSkillInstructions, composeSystemPrompt, SKILL_TOOL_NAME, type SkillState, type ResolvedSkill } from './skills'
-import { AGENT_FOLLOW_UP_READS, AGENT_FOLLOW_UP_SEARCHES, AGENT_FOLLOW_UPS_MAX, PLAN_SCOPE_MAX, PLAN_SCOPE_SYSTEM, RESEARCH_ABSTRACT_ASK, RESEARCH_AGENT_ROUNDS_DEFAULT, RESEARCH_AGENT_ROUNDS_MIN, RESEARCH_AGENT_ROUNDS_MAX, RESEARCH_MIN_SEARCHES, RESEARCH_REASONING_CHARS, RESEARCH_REPORT_ASK, RESEARCH_TIERS, agentAsk, agentEvidenceDigest, agentEvidenceSearches, agentFollowUpNote, agentResultNote, agentRoundsUsed, agentSources, agentSystemNote, citationRepairAsk, citationUncitedAsk, compactResearchRounds, countedSteps, estimateResearchUsage, fallbackPlan, looksLikeReport, normResearchAgentRounds, parseResearchPlan, parseResearchRequest, planNote, planUserAsk, reportSample, researchAbstract, researchDelegationAsk, researchMinAsk, researchSteerNote, researchSystemNote, sanitizeCitations, setStep, tierOf, withStepLead, type ResearchAgent, type ResearchAnswer, type ResearchPlan, type ResearchState, type ResearchTask, type ResearchTierId } from './research'
+import { AGENT_FOLLOW_UP_READS, AGENT_FOLLOW_UP_SEARCHES, AGENT_FOLLOW_UPS_MAX, PLAN_SCOPE_MAX, PLAN_SCOPE_SYSTEM, RESEARCH_ABSTRACT_ASK, RESEARCH_AGENT_ROUNDS_DEFAULT, RESEARCH_AGENT_ROUNDS_MIN, RESEARCH_AGENT_ROUNDS_MAX, RESEARCH_MIN_SEARCHES, RESEARCH_REASONING_CHARS, RESEARCH_REPORT_ASK, RESEARCH_TIERS, agentAsk, agentEvidenceDigest, agentEvidenceSearches, agentFollowUpNote, agentResultNote, agentRoundsUsed, agentSources, agentSystemNote, citationRepairAsk, citationUncitedAsk, compactResearchRounds, countedSteps, estimateResearchUsage, fallbackPlan, looksLikeReport, normResearchAgentRounds, parseResearchPlan, planPreview, parseResearchRequest, normResearchDepth, planNote, planRepairAsk, planUserAsk, reportSample, researchAbstract, researchDelegationAsk, researchMinAsk, researchSteerNote, researchSystemNote, sanitizeCitations, setStep, tierOf, withStepLead, type ResearchAgent, type ResearchAnswer, type ResearchPlan, type ResearchState, type ResearchTask, type ResearchTierId } from './research'
 export { tierOf, RESEARCH_TIERS, RESEARCH_AGENT_ROUNDS_DEFAULT, RESEARCH_AGENT_ROUNDS_MIN, RESEARCH_AGENT_ROUNDS_MAX, normResearchAgentRounds }
 export type { ResearchState, ResearchTierId, ResearchPlan, ResearchPlanStep, ResearchAgent, ResearchQuestion, ResearchAnswer } from './research'
 import { collectMessageSources, citationCoverage, citationRule, createCiteIds, mergeSources } from './citations'
@@ -358,15 +358,43 @@ export const exportChat = () => {
   dl(c.title.replace(/[^\w-]+/g, '_') + '.md', chatMd(c), 'text/markdown')
 }
 
-export type SearchProvider = 'tinyfish' | 'you' | 'exa' | 'firecrawl' | 'brightdata' | 'jina'
-export type ReaderProvider = 'builtin' | 'jina' | 'firecrawl' | 'exa' | 'custom'
+export type SearchProvider =
+  | 'tinyfish' | 'you' | 'exa' | 'firecrawl' | 'brightdata' | 'jina'
+  | 'tavily' | 'parallel' | 'valyu' | 'perplexity' | 'serper' | 'brave'
+  | 'serpapi' | 'linkup' | 'octen' | 'google' | 'openai' | 'anthropic' | 'azure'
+export type ReaderProvider = 'direct' | 'jina' | 'firecrawl' | 'exa' | 'tavily' | 'parallel' | 'valyu' | 'linkup' | 'octen' | 'custom'
 export type CiteStyle = 'pills' | 'links' | 'off'
-export const SEARCH_PROVIDERS: [SearchProvider, string][] = [['tinyfish', 'TinyFish'], ['you', 'You.com'], ['exa', 'Exa'], ['firecrawl', 'Firecrawl'], ['brightdata', 'Bright Data'], ['jina', 'Jina AI']]
+export const SEARCH_PROVIDERS: [SearchProvider, string][] = [
+  ['tinyfish', 'TinyFish'],
+  ['you', 'You.com'],
+  ['exa', 'Exa'],
+  ['tavily', 'Tavily'],
+  ['parallel', 'Parallel'],
+  ['valyu', 'Valyu'],
+  ['firecrawl', 'Firecrawl'],
+  ['jina', 'Jina AI'],
+  ['brightdata', 'Bright Data'],
+  ['perplexity', 'Perplexity'],
+  ['serper', 'Serper'],
+  ['brave', 'Brave Search API'],
+  ['serpapi', 'SerpAPI'],
+  ['linkup', 'Linkup'],
+  ['octen', 'Octen'],
+  ['google', 'Google Gemini grounding'],
+  ['openai', 'OpenAI web search'],
+  ['anthropic', 'Anthropic web search'],
+  ['azure', 'Azure Bing grounding'],
+]
 export const READER_PROVIDERS: [ReaderProvider, string][] = [
-  ['builtin', 'Built-in reader (direct page fetch)'],
-  ['jina', 'Jina Reader (r.jina.ai)'],
-  ['firecrawl', 'Firecrawl scrape'],
-  ['exa', 'Exa contents'],
+  ['direct', 'Direct page fetch'],
+  ['jina', 'Jina Reader'],
+  ['firecrawl', 'Firecrawl'],
+  ['exa', 'Exa Contents'],
+  ['tavily', 'Tavily Extract'],
+  ['parallel', 'Parallel Extract'],
+  ['valyu', 'Valyu Contents'],
+  ['linkup', 'Linkup Fetch'],
+  ['octen', 'Octen Extract'],
   ['custom', 'Custom reader API'],
 ]
 export type SearchPrefs = {
@@ -379,11 +407,14 @@ export type SearchPrefs = {
   readerSummary: boolean; readerSummaryEp: string; readerSummaryModel?: string; readerSummaryFlow?: boolean; readerSummaryPl?: string; readerSummaryChars: number
 }
 export const BLANK_SEARCH: SearchPrefs = {
-  provider: 'tinyfish', keys: { tinyfish: '', you: '', exa: '', firecrawl: '', brightdata: '', jina: '' }, zone: '',
+  provider: 'tinyfish', keys: {
+    tinyfish: '', you: '', exa: '', firecrawl: '', brightdata: '', jina: '', tavily: '', parallel: '', valyu: '',
+    perplexity: '', serper: '', brave: '', serpapi: '', linkup: '', octen: '', google: '', openai: '', anthropic: '', azure: '',
+  }, zone: '',
   maxResults: 8, timeoutMs: 8000, maxSnippetChars: 1800, evidenceBudget: 12000,
   maxRetries: 2, retryBaseMs: 300, fetchTimeoutMs: 8000, fetchMaxChars: 12000, fetchMaxRetries: 2, fetchRetryBaseMs: 300,
   citeStyle: 'pills', sourcesOpen: false, reader: true, strictCitations: false,
-  readerProvider: 'builtin', readerKey: '', readerUrl: '', readerFallback: true,
+  readerProvider: 'direct', readerKey: '', readerUrl: '', readerFallback: true,
   readerSummary: false, readerSummaryEp: '', readerSummaryModel: '', readerSummaryFlow: false, readerSummaryPl: '', readerSummaryChars: 2400,
 }
 
@@ -414,8 +445,8 @@ export const normLogDetail = (v: unknown): LogDetail => v === 'compact' || v ===
 export const DEFAULT_PREFS: S['prefs'] = { showBy: true, showLog: true, showTps: false, enterSends: true, sendWhileBusy: 'queue', autoTitle: true, temporaryByDefault: false, seasonal: true, cues: false, showModelPricing: false, showContextMeter: true, customSearch: true, stylePreset: 'modern', density: 'comfortable', uiSpacing: {}, showTimestamps: false, alwaysShowActions: false, titleEp: '', titleModel: '', effortEp: '', effortModel: '', recallEp: '', recallModel: '', tempHours: 3, startup: 'recent', tempShow: 2, tempShowStreaming: true, tempShowDone: true, tempGlow: 1, tempGlowSent: 0.5, draftSurvive: 'both', fontBody: 'system', fontMono: 'system', fontHeader: 'system', modelPrimary: 'name', modelSecondary: 'none', paletteMax: 320, chatWidth: 'standard', settingsWidth: 1024, settingsHeight: 780, modelPickerHeight: 480, favoritesSection: true, hideFavoritesInProviders: true, collapsedProviders: [], sidebarWidth: 288, widgetWidth: 320, workspaceWidth: 0.4, workspaceSplit: 0.2,  modalBlur: 12, settingsOpacity: 55, streamFade: 0.3, streamMd: true, remoteImages: false, glassComposer: true, glassBlur: 14, glassOpacity: 80, showDisabledFeatures: false, proxyMode: 'auto', textScale: 100, codeWrap: false, reduceTransparency: false, promptRecall: 'empty', highContrast: false, hideFavoriteProvider: false, logDetail: 'standard', logTiming: true, logModels: true, codeLines: false, codeMaxHeight: 0, pinContext: true, pinContextPercent: 50, keepUsageHistory: true, compactAuto: true, compactAt: 80 }
 export const DEFAULT_PARAMS: S['params'] = { def: true, temp: 0.7, topp: 1, max: 4096, maxToolRounds: 8, highToolsUnlocked: false }
 export const DEFAULT_WIDGET_PREFS: S['widgetPrefs'] = { usageGroup: 'endpoint', usageMode: 'success', usageFormat: '{in}/{out}', usageTotal: false, usagePeriod: 'all', lastSpeed: true, timeUnit: 'auto', widgetOrder: WIDGETS.map(([k]) => k), shortcuts: KEYS.map(([k]) => k), contextLimit: 128000, showDisabledEndpoints: true, scratchRows: 6, snippetLimit: 20, costDecimals: 4, activePromptsOnly: false, charsPerToken: 4, hideDoneTodos: false }
-const SEARCH_VALID_PROVIDERS: SearchProvider[] = ['tinyfish', 'you', 'exa', 'firecrawl', 'brightdata', 'jina']
-const READER_VALID_PROVIDERS: ReaderProvider[] = ['builtin', 'jina', 'firecrawl', 'exa', 'custom']
+const SEARCH_VALID_PROVIDERS: SearchProvider[] = SEARCH_PROVIDERS.map(([id]) => id)
+const READER_VALID_PROVIDERS: ReaderProvider[] = READER_PROVIDERS.map(([id]) => id)
 const clampInt = (v: unknown, fallback: number, min: number, max: number): number =>
   Number.isInteger(v) ? Math.max(min, Math.min(max, v as number)) : fallback
 export const normSearch = (v: any): SearchPrefs => {
@@ -439,7 +470,11 @@ export const normSearch = (v: any): SearchPrefs => {
     sourcesOpen: v?.sourcesOpen === true,
     reader: v?.reader !== false,
     strictCitations: v?.strictCitations === true,
-    readerProvider: READER_VALID_PROVIDERS.includes(v?.readerProvider) ? v.readerProvider : BLANK_SEARCH.readerProvider,
+    // `builtin` was the old name for the direct-fetch reader. Keep reading
+    // existing saved settings, but expose every reader as a provider now.
+    readerProvider: v?.readerProvider === 'builtin'
+      ? 'direct'
+      : READER_VALID_PROVIDERS.includes(v?.readerProvider) ? v.readerProvider : BLANK_SEARCH.readerProvider,
     readerKey: typeof v?.readerKey === 'string' ? v.readerKey : '',
     readerUrl: typeof v?.readerUrl === 'string' ? v.readerUrl.trim().slice(0, 500) : '',
     readerFallback: v?.readerFallback !== false,
@@ -479,10 +514,10 @@ export const readerKeyOf = (prefs: SearchPrefs): string => {
   const direct = String(prefs.readerKey ?? '').trim()
   if (direct) return direct
   const provider = prefs.readerProvider
-  return provider === 'firecrawl' || provider === 'exa' ? String(prefs.keys?.[provider] ?? '').trim() : ''
+  return provider === 'direct' || provider === 'custom' ? '' : String(prefs.keys?.[provider] ?? '').trim()
 }
 export const fetchOptsOf = (prefs: SearchPrefs) => ({
-  provider: prefs.readerProvider ?? 'builtin',
+  provider: prefs.readerProvider ?? 'direct',
   apiKey: readerKeyOf(prefs),
   baseUrl: prefs.readerUrl || '',
   fallback: prefs.readerFallback !== false,
@@ -1232,16 +1267,21 @@ export const useS = create<S>()(
         return `Skill: ${def.name}\n${def.instructions}`
       }
 
-      /** Conservative price ceiling for a research run: the most expensive of the
-       * endpoint candidates it might fail over to, so the shown estimate is a
-       * true worst case rather than only the first candidate's price. */
-      const researchPriceCeiling = (cand: ReturnType<typeof plan>['cand']) => {
+      /** Expected price for a research run: the average of the priced endpoint
+       * candidates, with a small buffer. The old worst-case maximum made the
+       * displayed number look like a bill for a failover that usually never
+       * happens; a blended price keeps the estimate useful without hiding risk. */
+      const researchPriceEstimate = (cand: ReturnType<typeof plan>['cand']) => {
         const prices = cand
           .map((c) => c.prices?.[c.model])
           .filter((pr): pr is { input: number; output: number } => !!pr && (pr.input > 0 || pr.output > 0))
-        return prices.length
-          ? { input: Math.max(...prices.map((pr) => pr.input)), output: Math.max(...prices.map((pr) => pr.output)) }
-          : null
+        if (!prices.length) return null
+        const avg = (xs: number[]) => xs.reduce((n, x) => n + x, 0) / xs.length
+        const headroom = 1.08
+        return {
+          input: avg(prices.map((pr) => pr.input)) * headroom,
+          output: avg(prices.map((pr) => pr.output)) * headroom,
+        }
       }
 
       /* The plan phase: draft a research plan, store it on the card, and wait
@@ -1263,10 +1303,24 @@ export const useS = create<S>()(
         const log: Try[] = []
         const prefs = normSearch(get().search)
         const searchOpts = searchOptsOf(prefs)
-        const price = researchPriceCeiling(p.cand)
+        const price = researchPriceEstimate(p.cand)
         patchRs(chatId, mid, (rs) => ({ ...rs, status: 'planning', scope: 0, tier: tier.id, error: undefined, finishedAt: undefined, estimate: estimateResearchUsage(tier, price) }))
         let text = ''
         let used: Ep | null = null
+        let planSys = ''
+        let planOpts: Parameters<typeof runToolLoop>[6] = {}
+        // The plan is strict JSON, but the card can still show its title and
+        // step labels as they arrive instead of a blank spinner.
+        let draftText = ''
+        let draftAt = 0
+        const onDraft = (chunk: string) => {
+          draftText += chunk
+          const now = Date.now()
+          if (now - draftAt < 120) return
+          draftAt = now
+          const preview = planPreview(draftText)
+          if (preview.title || preview.steps.length) patchRs(chatId, mid, (rs) => ({ ...rs, planDraft: preview }))
+        }
         // Scope the topic with a few context searches before drafting the plan,
         // so the plan reflects what is actually out there. Budgeted separately
         // from the run's own search budget and capped at PLAN_SCOPE_MAX.
@@ -1285,6 +1339,8 @@ export const useS = create<S>()(
             const pinCpt = Math.min(10, Math.max(1, Number(get().widgetPrefs?.charsPerToken) || 4))
             const pinned = pinnedContextFor(get().chats.find((c) => c.id === chatId), get().prefs, pinLimit, pinCpt)
             const sys = `${p.sys}${p.sys ? '\n\n' : ''}${PLAN_SCOPE_SYSTEM}${pinned ? `\n\n${pinned.note}` : ''}`
+            planSys = sys
+            planOpts = o
             const ask = planUserAsk(query, tier, new Date(), followUp, researchMsg(chatId, mid)?.research?.answers)
             const existingPlan = researchMsg(chatId, mid)?.research?.plan
             const wirePlan = (rounds: { text: string; calls: ToolResult[] }[]) => wire(e, [
@@ -1295,7 +1351,7 @@ export const useS = create<S>()(
             const t0 = Date.now()
             let x: Awaited<ReturnType<typeof runToolLoop>>
             try {
-              x = await runToolLoop(e, sys, wirePlan, scopeEnabled, () => {}, r.ctl, o, () => {}, (rounds) => { scopeRounds = rounds }, PLAN_SCOPE_MAX + 3, {
+              x = await runToolLoop(e, sys, wirePlan, scopeEnabled, onDraft, r.ctl, o, () => {}, (rounds) => { scopeRounds = rounds }, PLAN_SCOPE_MAX + 3, {
                 search: async ({ query: q }: { query: string }) => {
                   if (r.stopped) throw Error('Research stopped.')
                   if (scopeUsed >= PLAN_SCOPE_MAX) {
@@ -1320,7 +1376,7 @@ export const useS = create<S>()(
               // The round cap with the tool still enabled: one final tool-free
               // round so the plan JSON is always produced.
               if (r.stopped || (getErrorCode(err) ?? errCodeOf(err)) !== 'tool_limit') throw err
-              x = await runToolLoop(e, sys, () => wirePlan(scopeRounds), {}, () => {}, r.ctl, o, () => {}, () => {}, 1)
+              x = await runToolLoop(e, sys, () => wirePlan(scopeRounds), {}, onDraft, r.ctl, o, () => {}, () => {}, 1)
             }
             bump(x.tin, x.tout); addCost(e, e.model, x.tin, x.tout, (x as any).cost ?? 0, x)
             log.push({ n: e.name, m: e.model, detail: `Research plan for “${query.slice(0, 80)}” (${scopeUsed} context ${scopeUsed === 1 ? 'search' : 'searches'})`, ms: Date.now() - t0, tin: x.tin, tout: x.tout, cacheRead: (x as any).cacheRead ?? 0, cacheWrite: (x as any).cacheWrite ?? 0, cost: (x as any).cost ?? 0, at: Date.now() })
@@ -1334,16 +1390,41 @@ export const useS = create<S>()(
           }
         }
         if (r.stopped) { endRun(chatId, r); return }
-        const parsed = text ? parseResearchPlan(text) : null
+        let parsed = text ? parseResearchPlan(text) : null
+        // A planning reply can be prose, cut off, or wrapped in an unexpected
+        // shape. Retry once with tools withheld and an explicit JSON-only ask
+        // before showing the deterministic fallback. This is one extra call,
+        // only on failure, and it uses the same endpoint that just answered.
+        const repairEp = used
+        if (!parsed && !r.stopped && repairEp) {
+          try {
+            const repairAsk = planRepairAsk(query, tier, text, new Date(), followUp, researchMsg(chatId, mid)?.research?.answers)
+            const repairWire = () => wire(repairEp, [
+              { id: mid, r: 'user' as const, t: repairAsk },
+              ...(scopeRounds.length ? [{ id: mid, r: 'assistant' as const, t: '', toolRounds: scopeRounds }] : []),
+            ])
+            const t0 = Date.now()
+            const repairCtl = r.ctl ?? (r.ctl = new AbortController())
+            draftText = ''
+            const x = await runToolLoop(repairEp, planSys, repairWire, {}, onDraft, repairCtl, { ...planOpts, cap: 2000 }, () => {}, () => {}, 1)
+            bump(x.tin, x.tout); addCost(repairEp, repairEp.model, x.tin, x.tout, (x as any).cost ?? 0, x)
+            log.push({ n: repairEp.name, m: repairEp.model, detail: 'The planning reply had no usable JSON, so asked for one strict planning turn.', ms: Date.now() - t0, tin: x.tin, tout: x.tout, cacheRead: (x as any).cacheRead ?? 0, cacheWrite: (x as any).cacheWrite ?? 0, cost: (x as any).cost ?? 0, at: Date.now() })
+            text = x.finalText || x.text
+            parsed = text ? parseResearchPlan(text) : null
+          } catch (error: any) {
+            log.push({ n: repairEp.name, m: repairEp.model, err: errText(repairEp, (error as Error)?.message), errCode: getErrorCode(error) ?? errCodeOf(error), at: Date.now() })
+          }
+        }
+        if (r.stopped) { endRun(chatId, r); return }
         const finalPlan = parsed ?? fallbackPlan(query)
-        const planWarn = parsed ? undefined : 'The model did not return a usable plan, so this default one is shown. Edit it or start the research.'
+        const planWarn = parsed ? undefined : 'The planning reply could not be read, so this default plan is shown. Edit it or start the research.'
         const shouldStart = parsed && parsed.startNow === true
         // Ask the plan's clarifying questions before the plan is confirmed,
         // unless the user already told the model to begin immediately. The
         // questions were drafted after the planning pass's context searches, so
         // they target the real ambiguity in this topic.
         const askQuestions = !!finalPlan.questions?.length && !shouldStart && !researchMsg(chatId, mid)?.research?.answers?.length
-        patchRs(chatId, mid, (rs) => ({ ...rs, status: askQuestions ? 'questions' : 'plan', plan: finalPlan, error: planWarn }))
+        patchRs(chatId, mid, (rs) => ({ ...rs, status: askQuestions ? 'questions' : 'plan', plan: finalPlan, planDraft: undefined, error: planWarn }))
         // A chat whose first message is a deep-research request is named after
         // the report's plan title (a short topic title) instead of the raw user
         // message. Never clobber a title the user renamed.
@@ -1408,10 +1489,9 @@ export const useS = create<S>()(
         const system = `${p.sys}${p.sys ? '\n\n' : ''}${researchSystemNote(query, tier, new Date(), planApproved, answers)}${pinned ? `\n\n${pinned.note}` : ''}`
         const histFor = () => (get().chats.find((c) => c.id === chatId)?.msgs ?? []).filter((m) => m.id !== mid)
         if (!resume || !getResearch()?.estimate) {
-          // A run can fail over to any candidate, so the ceiling uses the most
-          // expensive one rather than only the first (the estimate is a "worst
-          // case" the user sees before starting).
-          const price = researchPriceCeiling(p.cand)
+          // Blend the priced candidates instead of assuming the priciest
+          // failover will handle the whole run.
+          const price = researchPriceEstimate(p.cand)
           patchRs(chatId, mid, (rs) => ({ ...rs, estimate: rs.estimate ?? estimateResearchUsage(tier, price) }))
         }
         // Absolute, run-wide citation ids: every search result and page read
@@ -1570,9 +1650,13 @@ export const useS = create<S>()(
                 const report = String(x.finalText || x.text || '').trim()
                 bump(x.tin, x.tout); addCost(e, e.model, x.tin, x.tout, (x as any).cost ?? 0, x)
                 tin += x.tin; tout += x.tout; cacheRead += (x as any).cacheRead ?? 0; cacheWrite += (x as any).cacheWrite ?? 0; usageCost += (x as any).cost ?? 0
+                const agentPrice = e.prices?.[e.model]
+                const agentCost = Number((x as any).cost) > 0
+                  ? Number((x as any).cost)
+                  : agentPrice ? (x.tin * agentPrice.input + ((x as any).cacheRead ?? 0) * (agentPrice.cacheRead ?? agentPrice.input) + ((x as any).cacheWrite ?? 0) * (agentPrice.cacheWrite ?? agentPrice.input) + x.tout * agentPrice.output) / 1e6 : 0
                 log.push({ n: `${agent.label} (subagent)`, m: e.model, detail: `Research agent ${agent.id} on “${task.label}”: ${counters.searches} searches, ${counters.reads} reads`, ms: Date.now() - t0a, tin: x.tin, tout: x.tout, cacheRead: (x as any).cacheRead ?? 0, cacheWrite: (x as any).cacheWrite ?? 0, cost: (x as any).cost ?? 0, at: Date.now() })
                 if (!report) throw Error('The subagent returned no report.')
-                patchAgent(agent.id, { status: 'done', answer: report.slice(0, 14000), searches: counters.searches, reads: counters.reads, error: undefined })
+                patchAgent(agent.id, { status: 'done', answer: report.slice(0, 14000), searches: counters.searches, reads: counters.reads, costUsd: agentCost, error: undefined })
               } catch (err) {
                 patchAgent(agent.id, { status: r.stopped ? 'stopped' : 'error', error: String((err as Error)?.message ?? err).slice(0, 300), searches: counters.searches, reads: counters.reads })
               }
@@ -1661,6 +1745,7 @@ export const useS = create<S>()(
                   label: String(task?.label ?? '').trim().slice(0, 60),
                   brief: String(task?.brief ?? '').trim().slice(0, 1600),
                   avoid: String(task?.avoid ?? '').trim().slice(0, 400) || undefined,
+                  depth: normResearchDepth(task?.depth),
                 })).filter((task) => task.brief).slice(0, tier.agentsPerRound)
                 if (!list.length) throw Error('Provide at least one task with a brief.')
                 if (Date.now() > deadline) {
@@ -1678,6 +1763,7 @@ export const useS = create<S>()(
                   round,
                   label: task.label || `Agent ${i + 1}`,
                   brief: task.brief,
+                  depth: task.depth,
                   status: 'running',
                   searches: 0,
                   reads: 0,
@@ -1689,7 +1775,7 @@ export const useS = create<S>()(
                 return [
                   `Research round ${round}${tier.agentRounds > 1 ? ` of ${tier.agentRounds}` : ''} complete: ${done.length} subagent${done.length === 1 ? '' : 's'}.`,
                   ...done.map(agentResultNote),
-                  `Next: judge these reports. Ask a specific agent a follow-up with ask_research_agent when an answer is thin, ambiguous, or contradicted. ${left > 0 ? `If important territory is still uncovered, start another round (${left} left); otherwise` : 'Otherwise'} close the research with your short abstract. Search yourself only for a gap no agent could settle.`,
+                  `Next: judge these reports before acting. If they settle the question, close now with your short abstract — one round can be the whole run. If a specific gap, contradiction, or verification need remains, ask a follow-up or open one narrower round aimed at it (not a repeat of this scope). ${left > 0 ? `${left} round${left === 1 ? '' : 's'} remain, but do not spend them just because they are available.` : 'The round cap is reached.'} Search yourself only for a gap no agent could settle.`,
                 ].join('\n\n')
               }
               toolHandlers.ask_research_agent = async ({ agent: pick, question }: { agent?: string; question?: string }) => {
@@ -1719,7 +1805,7 @@ export const useS = create<S>()(
                 if (found.answer) history.push({ id: `${mid}-${found.id}-a`, r: 'assistant', t: found.answer })
                 for (const f of found.followUps ?? []) history.push({ id: uid(), r: 'user', t: f.q }, { id: uid(), r: 'assistant', t: f.a })
                 history.push({ id: uid(), r: 'user', t: q })
-                const sys = `${agentSystemNote(query, tier, { label: found.label, brief: found.brief })}\n\n${agentFollowUpNote(budget, session ? agentEvidenceDigest(session.rounds) : '')}`
+                const sys = `${agentSystemNote(query, tier, { label: found.label, brief: found.brief, depth: found.depth })}\n\n${agentFollowUpNote(budget, session ? agentEvidenceDigest(session.rounds) : '')}`
                 try {
                   const x = await runToolLoop(
                     e, sys, (rounds) => wire(e, [...history, { id: `${mid}-${found.id}-round`, r: 'assistant' as const, t: '', toolRounds: rounds }]), enabled, () => {}, r.ctl ?? new AbortController(), agentOpts, () => {},
@@ -1731,12 +1817,24 @@ export const useS = create<S>()(
                   if (!text) throw Error('The subagent returned no answer.')
                   bump(x.tin, x.tout); addCost(e, e.model, x.tin, x.tout, (x as any).cost ?? 0, x)
                   tin += x.tin; tout += x.tout; cacheRead += (x as any).cacheRead ?? 0; cacheWrite += (x as any).cacheWrite ?? 0; usageCost += (x as any).cost ?? 0
-                  patchAgent(found.id, { followUps: [...(found.followUps ?? []), { q, a: text.slice(0, 8000) }] })
+                  const followPrice = e.prices?.[e.model]
+                  const followCost = Number((x as any).cost) > 0
+                    ? Number((x as any).cost)
+                    : followPrice ? (x.tin * followPrice.input + ((x as any).cacheRead ?? 0) * (followPrice.cacheRead ?? followPrice.input) + ((x as any).cacheWrite ?? 0) * (followPrice.cacheWrite ?? followPrice.input) + x.tout * followPrice.output) / 1e6 : 0
+                  // A later successful retry clears the failed-state marker; the
+                  // checkmark should reflect the current answer, not old errors.
+                  patchAgent(found.id, { followUps: [...(found.followUps ?? []), { q, a: text.slice(0, 8000) }], followUpErrors: [], costUsd: (found.costUsd ?? 0) + followCost })
                   log.push({ n: `${found.label} (follow-up)`, m: e.model, detail: `Follow-up answered from the agent's evidence (${counters.searches} new searches, ${counters.reads} reads).`, ms: 0, tin: x.tin, tout: x.tout, cacheRead: (x as any).cacheRead ?? 0, cacheWrite: (x as any).cacheWrite ?? 0, cost: (x as any).cost ?? 0, at: Date.now() })
                   return `[Follow-up with subagent ${found.label} · ${counters.searches} searches, ${counters.reads} reads]\n${text}`
                 } catch (err) {
                   if (r.stopped) throw err
-                  return `The follow-up with ${found.label} failed (${String((err as Error)?.message ?? err).slice(0, 200)}). If the gap matters, delegate a new agent for it or search for it yourself.`
+                  const msg = String((err as Error)?.message ?? err).slice(0, 300)
+                  patchAgent(found.id, { followUpErrors: [...(found.followUpErrors ?? []), msg] })
+                  log.push({ n: `${found.label} (follow-up)`, m: e.model, err: msg, at: Date.now() })
+                  // Make the failure a real tool error so the process log shows
+                  // an X and the lead sees that this answer is missing, instead
+                  // of a clean-looking string it might treat as evidence.
+                  throw Error(`The follow-up with ${found.label} failed (${msg}). If the gap matters, delegate a new agent for it or search for it yourself.`)
                 }
               }
             }
@@ -1812,7 +1910,10 @@ export const useS = create<S>()(
             const streamReport = async (cand: Ep, assistantText: string, ask: string) => {
               const effRaw = get().effort[cand.model] ?? ''
               const oo = { ...(get().params.def ? {} : { max: get().params.max, temp: get().params.temp, topp: get().params.topp }), effort: effRaw === 'auto' ? '' : effRaw }
-              return runToolLoop(cand, system, () => wireRounds(cand, liveRounds, assistantText, [{ id: `${mid}-report`, r: 'user' as const, t: ask }]), {}, (t) => { report += t; edit(chatId, mid, (m) => ({ ...m, t: report, toolFinal: report })) }, r.ctl ?? new AbortController(), oo, () => {}, () => {}, 1)
+              // The report is plain text. Call stream() directly with no tools:
+              // runToolLoop would send the tool schemas and could file the
+              // report under a tool call, where it cannot stream into the panel.
+              return stream(cand, system, wireRounds(cand, liveRounds, assistantText, [{ id: `${mid}-report`, r: 'user' as const, t: ask }]), (t) => { report += t; edit(chatId, mid, (m) => ({ ...m, t: report, toolFinal: report })) }, r.ctl ?? new AbortController(), oo)
             }
             const writeReport = async (ask: string, assistantText: string) => {
               let lastErr: unknown = null
@@ -1823,7 +1924,7 @@ export const useS = create<S>()(
                 try {
                   const y = await streamReport(cand, assistantText, ask)
                   bump(y.tin, y.tout); addCost(cand, cand.model, y.tin, y.tout, (y as any).cost ?? 0, y)
-                  tin += y.tin; tout += y.tout; contextTin = y.contextTin; contextTout = y.contextTout; cacheRead += (y as any).cacheRead ?? 0; cacheWrite += (y as any).cacheWrite ?? 0; usageCost += (y as any).cost ?? 0
+                  tin += y.tin; tout += y.tout; contextTin = y.tin; contextTout = y.tout; cacheRead += (y as any).cacheRead ?? 0; cacheWrite += (y as any).cacheWrite ?? 0; usageCost += (y as any).cost ?? 0
                   if (report.trim()) return
                   lastErr = Error('The model returned no report text.')
                 } catch (err) {

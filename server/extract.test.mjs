@@ -150,7 +150,7 @@ test('a custom reader API receives the page address and returns its text', async
   assert.equal(page.text, 'custom text')
 })
 
-test('a failing reader API falls back to the built-in reader', async () => {
+test('a failing reader API falls back to the direct reader', async () => {
   const fetchFn = async (url) => {
     if (String(url).includes('r.jina.ai')) return new Response('nope', { status: 401 })
     return new Response('<html><head><title>Fallback</title></head><body><p>Fallback body</p></body></html>', { headers: { 'content-type': 'text/html' } })
@@ -166,6 +166,36 @@ test('a failing reader API falls back to the built-in reader', async () => {
 
 test('the reader never targets private addresses', async () => {
   await assert.rejects(() => fetchPageViaProvider('http://127.0.0.1/', { provider: 'jina', fetchFn: async () => new Response('x') }), /public http/)
+})
+
+test('every extraction reader sends its documented request and returns text', async () => {
+  const cases = [
+    ['tavily', 'https://api.tavily.com/extract', 'authorization', 'Bearer key', (body) => body.urls[0] === 'https://example.com/page', { results: [{ url: 'https://example.com/page', raw_content: 'tavily text' }] }, 'tavily text'],
+    ['parallel', 'https://api.parallel.ai/v1/extract', 'x-api-key', 'key', (body) => body.urls[0] === 'https://example.com/page', { results: [{ title: 'Parallel Page', full_content: 'parallel text' }] }, 'parallel text'],
+    ['valyu', 'https://api.valyu.ai/v1/contents', 'x-api-key', 'key', (body) => body.urls[0] === 'https://example.com/page', { results: [{ title: 'Valyu Page', content: 'valyu text' }] }, 'valyu text'],
+    ['linkup', 'https://api.linkup.so/v1/fetch', 'authorization', 'Bearer key', (body) => body.url === 'https://example.com/page', { markdown: 'linkup text' }, 'linkup text'],
+    ['octen', 'https://api.octen.ai/extract', 'authorization', 'Bearer key', (body) => body.urls[0] === 'https://example.com/page', { data: { results: [{ title: 'Octen Page', full_content: 'octen text' }] } }, 'octen text'],
+  ]
+  for (const [provider, endpoint, header, expectedHeader, bodyCheck, payload, expectedText] of cases) {
+    let seenBody
+    const fetchFn = async (url, init) => {
+      assert.equal(String(url), endpoint)
+      assert.equal(init.headers[header], expectedHeader)
+      seenBody = JSON.parse(init.body)
+      return new Response(JSON.stringify(payload), { headers: { 'content-type': 'application/json' } })
+    }
+    const page = await fetchPageViaProvider('https://example.com/page', { provider, apiKey: 'key', fallback: false, fetchFn })
+    assert.equal(page.text, expectedText)
+    assert.equal(bodyCheck(seenBody), true)
+  }
+})
+
+test('the direct reader is a provider and old builtin settings still work', async () => {
+  const fetchFn = async () => new Response('<html><head><title>Direct</title></head><body><p>direct text</p></body></html>', { headers: { 'content-type': 'text/html' } })
+  const direct = await fetchPageViaProvider('https://example.com/direct', { provider: 'direct', fetchFn })
+  assert.equal(direct.title, 'Direct')
+  assert.match(direct.text, /direct text/)
+  assert.equal((await import('./extract.mjs')).normalizeReaderProvider('builtin'), 'direct')
 })
 
 test('a reader API that stalls is cut off by the request timeout', async () => {
