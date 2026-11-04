@@ -1,6 +1,6 @@
 # Private AI chat with your own models
 
-A local-first chat app for the model endpoints you already use. Bring an OpenAI-compatible or Anthropic Messages endpoint, keep your keys in your browser, and use one model or route across several. A small optional Node or Cloudflare backend adds web search, page reading, sharing, device sync, and a relay for providers that block browser requests.
+A local-first chat app for the model endpoints you already use. Bring an OpenAI-compatible or Anthropic Messages endpoint, keep your keys in your browser, and use one model or route across several. Visiting [chat.icodebugs.com](https://chat.icodebugs.com/#chat) or using a small optional Node or Cloudflare backend adds web search, page reading, sharing, device sync, and a relay for providers that block browser requests.
 
 ## Why this app
 
