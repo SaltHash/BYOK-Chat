@@ -146,7 +146,39 @@ const E = (T: string, c: string) => ({ node, className, ...p }: any) => createEl
 const txt = (n: any): string => (n.type === 'text' ? n.value : (n.children ?? []).map(txt).join(''))
 const link = 'text-ac underline decoration-ac/40 underline-offset-2 hover:decoration-ac'
 
-function Code({ lang, code, children, bare }: { lang: string; code: string; children: ReactNode; bare?: boolean }) {
+/* Split highlighted code into logical source lines so the gutter can give each
+ * one a row of its own: a line that soft-wraps grows its own row, so its number
+ * stays level with the first row of the wrap instead of drifting. Inline
+ * elements that straddle a newline (a multi-line string or comment) are cloned
+ * once per line, so the highlighting survives the split. */
+const splitLines = (nodes: any[]): any[][] => {
+  const lines: any[][] = [[]]
+  for (const n of nodes) {
+    if (n.type === 'text') {
+      n.value.split('\n').forEach((part: string, i: number) => {
+        if (i) lines.push([])
+        if (part) lines[lines.length - 1].push({ type: 'text', value: part })
+      })
+    } else if (n.children?.length) {
+      const parts = splitLines(n.children)
+      if (parts.length === 1) lines[lines.length - 1].push({ ...n, children: parts[0] })
+      else parts.forEach((children, i) => {
+        if (i) lines.push([])
+        if (children.length) lines[lines.length - 1].push({ ...n, children })
+      })
+    } else lines[lines.length - 1].push(n)
+  }
+  return lines
+}
+
+/* Code blocks only contain text and class-bearing spans, so rendering the split
+ * lines here matches what react-markdown would have emitted for the block. */
+const hastJsx = (n: any, key: number): ReactNode =>
+  n.type === 'text'
+    ? n.value
+    : createElement(n.tagName ?? 'span', { key, className: (n.properties?.className ?? []).join(' ') || undefined }, (n.children ?? []).map(hastJsx))
+
+function Code({ lang, code, node, children, bare }: { lang: string; code: string; node?: any; children: ReactNode; bare?: boolean }) {
   const [ok, setOk] = useState(false)
   const lineNumbers = useS((s) => s.prefs.codeLines === true)
   const maxHeight = useS((s) => s.prefs.codeMaxHeight ?? 0)
@@ -155,10 +187,17 @@ function Code({ lang, code, children, bare }: { lang: string; code: string; chil
       <pre className="overflow-x-auto px-6 py-5 font-mono text-sm leading-6">{children}</pre>
     )
   }
-  // The line-number gutter and the code share one scroll container, so they
-  // never drift apart; the height cap applies to that container. A very long
-  // block keeps its own scrollbar instead of stretching the whole transcript.
-  const lines = lineNumbers ? code.split('\n') : null
+  /* The gutter and the code share one scroll container (and one height cap), so
+   * they can never scroll apart: one bar for both axes. A very long block keeps
+   * its own scrollbar instead of stretching the whole transcript. */
+  const total = code ? code.split('\n').length : 0
+  const rows = lineNumbers && node ? splitLines(node.children ?? []) : null
+  // The highlighted tree can carry a trailing newline the copied text drops;
+  // keep the gutter to exactly the logical line count of `code`.
+  if (rows) {
+    rows.length = Math.min(rows.length, total)
+    while (rows.length < total) rows.push([])
+  }
   return (
     <div className="my-4 overflow-hidden rounded-xl bg-code">
       <div className="code-head flex items-center justify-between bg-codeh px-4 py-2 text-xs">
@@ -167,13 +206,22 @@ function Code({ lang, code, children, bare }: { lang: string; code: string; chil
           {ok ? <Check size={13} /> : <Copy size={13} />}{ok ? 'Copied' : 'Copy'}
         </button>
       </div>
-      <div className="flex overflow-y-auto" style={maxHeight > 0 ? { maxHeight } : undefined}>
-        {lines && (
-          <pre aria-hidden="true" className="shrink-0 select-none border-r border-bor/60 px-2 py-3 text-right font-mono text-sm leading-6 text-mu/60">
-            {lines.map((_, i) => i + 1).join('\n')}
-          </pre>
+      <div className="code-scroll" style={maxHeight > 0 ? { maxHeight } : undefined}>
+        {rows ? (
+          <div
+            className="code-lines font-mono text-sm leading-6"
+            style={{ '--code-gutter': `calc(${String(Math.max(total, 1)).length}ch + 1.35rem)` } as any}
+          >
+            {rows.map((line, i) => (
+              <div key={i} className="code-line">
+                <span aria-hidden="true" className="code-num select-none text-mu/60">{i + 1}</span>
+                <code className="code-src">{line.map(hastJsx)}</code>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <pre className="font-mono text-sm leading-6">{children}</pre>
         )}
-        <pre className="min-w-0 flex-1 overflow-x-auto px-4 py-3 font-mono text-sm leading-6">{children}</pre>
       </div>
     </div>
   )
@@ -268,7 +316,7 @@ const makeC = (bare: boolean, cites?: CiteMap): any => ({
   pre: ({ node, children }: any) => {
     const c = node?.children?.[0]
     const lang = /language-([\w+-]+)/.exec((c?.properties?.className ?? []).join(' '))?.[1] ?? ''
-    return <Code lang={lang} code={c ? txt(c).replace(/\n$/, '') : ''} bare={bare}>{children}</Code>
+    return <Code lang={lang} code={c ? txt(c).replace(/\n$/, '') : ''} node={c} bare={bare}>{children}</Code>
   },
 })
 

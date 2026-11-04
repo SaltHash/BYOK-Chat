@@ -129,10 +129,42 @@ html[data-flat] .settings-root { --settings-dropdown-shadow: none; }
  * for every theme, custom themes included, without per-theme values. */
 html[data-contrast] { --mu: color-mix(in srgb, var(--mu) 55%, var(--tx)); --bor: color-mix(in srgb, var(--bor) 55%, var(--tx)); }
 
+
 /* Code blocks follow the spacing tokens; the utilities inside Rich.tsx stay as
  * fallbacks and are overridden at higher specificity here. */
-.md pre { padding: var(--ui-code-pad-y) var(--ui-code-pad-x) !important; overflow-x: auto; }
+.md pre { padding: var(--ui-code-pad-y) var(--ui-code-pad-x) !important; }
 .code-head { padding: var(--ui-code-head-pad-y) var(--ui-code-head-pad-x) !important; }
+
+/* A code block scrolls as one piece: the gutter and the code live in the same
+ * container, so neither can scroll independently of the other. */
+.code-scroll { overflow: auto; }
+
+/* The line-number gutter, one flex row per logical source line. A soft-wrapped
+ * line grows its own row, so its number stays level with the line it labels.
+ * The number cell is sticky so it stays in view while an unwrapped block is
+ * scrolled sideways. */
+.code-lines { padding: var(--ui-code-pad-y) 0; }
+.code-line { display: flex; }
+.code-num {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  flex: none;
+  width: var(--code-gutter, calc(2ch + 1.35rem));
+  padding-right: 0.5rem;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  background: var(--code);
+  box-shadow: inset -1px 0 0 color-mix(in srgb, var(--bor) 60%, transparent);
+}
+.code-lines .code-line > code {
+  flex: 1 0 auto;
+  background: none;
+  border-radius: 0;
+  padding: 0 var(--ui-code-pad-x);
+  font-size: inherit;
+  white-space: pre;
+}
 
 /* Sidebar rows follow the density: vertical padding inside each item and the
  * gap between rows. Comfortable reproduces the original 8px / 0px. */
@@ -157,6 +189,9 @@ html[data-contrast] { --mu: color-mix(in srgb, var(--mu) 55%, var(--tx)); --bor:
 /* Code wrap (`data-codewrap`): long lines in fenced code blocks soft-wrap
  * instead of scrolling sideways. Inline code always flows. */
 html[data-codewrap] .md pre code { white-space: pre-wrap; overflow-wrap: anywhere; }
+/* The numbered layout wraps in one row instead of sideways, so the gutter and
+ * the code keep the same height. */
+html[data-codewrap] .code-lines .code-line > code { flex: 1 1 auto; min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 
 /* c2..c5 are the syntax colors for strings, numbers, titles and types in each theme */
 [data-t=plum] { color-scheme: dark; --bg:#17101c; --side:#120c16; --surf:#211828; --hov:#2c2036; --tx:#f3eaf7; --mu:#a893b4; --ac:#dc8ad8; --acx:#1b1020; --er:#f95353; --code:#100b15; --codeh:#2f2040; --c2:#9fe3c5; --c3:#f2b98b; --c4:#8fb9ff; --c5:#c7a6ff }
