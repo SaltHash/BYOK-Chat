@@ -225,3 +225,20 @@ test('a newer cloud chat keeps local attempt logs for unchanged messages', () =>
   const changed = mergeSyncData(local, empty({ chats: [remoteChat('edited')] }))
   assert.equal('log' in changed.chats[0].msgs[1], false)
 })
+
+test('a model delete stamp beats a newer cloud list, and a re-add beats the stamp', () => {
+  const ep = (models, modelsAt, drops) => ({ id: 'e1', name: 'Mine', models, model: models[0] ?? '', modelsAt, ...(drops ? { modelDrops: drops } : {}) })
+  // "b" was deleted after the cloud copy was written, and the cloud copy was
+  // edited later for something else: its list is newer but must not revive b.
+  const local = empty({ settings: { eps: [ep(['a'], 200, { b: 250 })] } })
+  const remote = empty({ settings: { eps: [{ id: 'e1', name: 'Cloud', models: ['a', 'b'], model: 'a', modelsAt: 300 }] } })
+
+  const merged = mergeSyncData(local, remote)
+  assert.deepEqual(merged.settings.eps[0].models, ['a'])
+  assert.deepEqual(merged.settings.eps[0].modelDrops, { b: 250 })
+  assert.deepEqual(mergeSyncData(local, remote, 'remote').settings.eps[0].models, ['a'])
+
+  // A real re-add is stamped, so the row deliberately returns.
+  const readd = empty({ settings: { eps: [{ ...ep(['a', 'b'], 400), modelAdds: { b: 260 } }] } })
+  assert.deepEqual(mergeSyncData(readd, remote).settings.eps[0].models, ['a', 'b'])
+})

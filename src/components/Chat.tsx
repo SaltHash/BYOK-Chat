@@ -19,7 +19,7 @@ import { Md, UserText } from './Md'
 import { activityLine, flairLine, thinkingLine, TEMPORARY_NOTE } from '../flair'
 import { splitStream } from '../streamMd'
 import { WorkspaceTile, WorkspacePanel } from './Workspace'
-import { ResearchTierPicker, ResearchPlanCard, ResearchProgressCard, ResearchTile, ResearchPanel } from './Research'
+import { ResearchTierPicker, ResearchQuestionsCard, ResearchPlanCard, ResearchProgressCard, ResearchTile, ResearchPanel } from './Research'
 import { SourcesPanel, scrollToSource } from './Sources'
 import { claimForCitation, collectMessageSources, linkifyCitations, messageForCopy, parseSearchEvidence, stripCitations } from '../citations'
 import { findWritingPath, extractWorkspaceIds, type WorkspaceCallLike } from '../workspace'
@@ -748,6 +748,7 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
       )}
       {/* Workspace tiles for this message — shown above message controls but below content */}
       {m.research && <ResearchTierPicker msg={m} />}
+      {m.research && <ResearchQuestionsCard msg={m} />}
       {m.research && <ResearchPlanCard msg={m} />}
       {m.research && <ResearchProgressCard msg={m} />}
       {m.research && <ResearchTile msg={m} onOpen={() => onOpenResearch(m.id)} />}

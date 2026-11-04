@@ -92,7 +92,7 @@ export function UserText({ m, searchQuery, searchOpen }: { m: Msg; searchQuery?:
     <div className="group/u flex flex-col items-end gap-1">
       <div className={cx('max-w-full overflow-hidden rounded-2xl', cmdMsg ? 'min-w-40 border border-ac/40 bg-ac/5 shadow-sm' : 'bg-surf')}>
         {sentBanner && <SentMentionBanner kind={sentBanner.kind} />}
-        <div ref={contentRef} className="whitespace-pre-wrap px-4 py-2.5">
+        <div ref={contentRef} className="whitespace-pre-wrap" style={{ padding: 'calc(var(--ui-composer-pad) - 2px) calc(var(--ui-composer-pad) + 4px)' }}>
           {sentBanner
             ? bodyText
             : hasMention

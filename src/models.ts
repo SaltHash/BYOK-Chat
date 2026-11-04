@@ -5,6 +5,28 @@ export const usable = (e: Ep) => e.on && !!e.model.trim() && /^https?:\/\//i.tes
 
 export const modelsOf = (e: Ep) => [...new Set((e.models?.length ? e.models : [e.model]).map((x) => x?.trim()).filter(Boolean))]
 
+/** Apply an edit to an endpoint's model list and stamp it.
+ *
+ * The list itself cannot express a deletion to a merge: a model missing from
+ * one copy looks the same as a model that copy never had. `modelsAt` alone
+ * also loses to any later unrelated edit. Each added or removed model id gets
+ * its own add/delete time instead, so a stale copy cannot bring a deleted row
+ * back and a real re-add beats the old delete. Pure. */
+export function modelListEdit(
+  prev: Pick<Ep, 'models' | 'modelAdds' | 'modelDrops'>,
+  next: string[],
+  now = Date.now(),
+  model = next.find((m) => m.trim())?.trim() ?? '',
+) {
+  const before = (prev.models ?? []).map((m) => m?.trim()).filter(Boolean)
+  const after = next.map((m) => m?.trim()).filter(Boolean)
+  const modelAdds = { ...(prev.modelAdds ?? {}) }
+  const modelDrops = { ...(prev.modelDrops ?? {}) }
+  for (const m of after) if (!before.includes(m)) { modelAdds[m] = now; delete modelDrops[m] }
+  for (const m of before) if (!after.includes(m)) { modelDrops[m] = now; delete modelAdds[m] }
+  return { models: next, model, modelsAt: now, modelAdds, modelDrops }
+}
+
 const normVendor = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '')
 /** True when a `Vendor:` display-name prefix names one of the owners
  * (endpoint, provider, or id slug). Fuzzy on purpose: the OpenRouter label

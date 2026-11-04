@@ -66,7 +66,8 @@ const baseFetch = async (url, init) => {
 }
 
 const { useS } = await import('../src/store.ts')
-const { collectMessageSources, citationCoverage } = await import('../src/citations.ts')
+const { collectMessageSources, citationCoverage, mergeSources } = await import('../src/citations.ts')
+const { agentSources } = await import('../src/research.ts')
 
 const msgsOf = () => {
   const s = useS.getState()
@@ -85,7 +86,7 @@ const resetStore = () => {
   useS.setState({
     eps: [{ id: 'e1', name: 'Test', type: 'openai', url: 'https://api.test/v1', key: 'k', model: 'm1', models: ['m1'], modelsMode: 'separate', on: true }],
     sel: { k: 'ep', id: 'e1', model: 'm1' },
-    chats: [], chat: '', busy: false, notice: null,
+    chats: [], chat: '', busy: false, queued: {}, notice: null, researchRounds: 3,
     search: { ...s.search, provider: 'tinyfish', keys: { tinyfish: 'k', you: '', exa: '', firecrawl: '', brightdata: '' }, reader: true },
     tools: { ...s.tools, search: true, fetch_page: true },
     features: { ...s.features, tools: true, playlists: false },
@@ -217,13 +218,139 @@ test('planning scopes the topic with a few context searches before the plan', as
   assert.equal(msgById(pick.id).research.plan.title, 'Fusion Power')
 })
 
+test('a thorough run delegates a team, asks a follow-up, and merges agent sources', async () => {
+  const seen = { agentSearches: 0, followups: 0, steerSet: false, steerInjected: false }
+  globalThis.fetch = async (url, init) => {
+    const u = String(url)
+    if (u.includes('/chat/completions')) {
+      const body = JSON.parse(init.body)
+      const sys = body.messages[0]?.content ?? ''
+      const msgs = body.messages
+      const toolMsgs = msgs.filter((m) => m.role === 'tool')
+      const lastUser = [...msgs].reverse().find((m) => m.role === 'user' && typeof m.content === 'string')
+      if (sys.includes('You draft a deep-research plan')) return openai({ content: PLAN })
+      // A delegated subagent: search once, then return a dense cited report. The
+      // follow-up answers from that same evidence without searching again.
+      if (sys.includes('You are a research subagent')) {
+        if (sys.includes('Follow-up from the lead researcher')) {
+          seen.followups++
+          return openai({ content: '## Findings\n- The 2025 milestone is the best-evidenced one [S1].\n\n## Sources\n[S1] Source 1 — https://s1.test/p' })
+        }
+        if (!toolMsgs.length) {
+          seen.agentSearches++
+          return openai({ content: 'Starting the assignment.', tool_calls: [{ id: 'as1', type: 'function', function: { name: 'search', arguments: JSON.stringify({ query: 'fusion agent research' }) } }] })
+        }
+        return openai({ content: '## Findings\n- Milestone reached in 2025 [S1].\n- Second fact [S2].\n\n## Conflicts and caveats\n- None.\n\n## Sources\n[S1] Source 1 — https://s1.test/p\n[S2] Source 2 — https://s2.test/p' })
+      }
+      if (typeof lastUser?.content === 'string' && lastUser.content.includes('Now write the final report')) {
+        return openai({ content: '## Summary\nFusion is progressing [S1].\n\n## Key findings\n- Milestone [S1].\n- Follow-up [S1].\n\n## Evidence\nSupported [S1].\n\n## Limitations\nSmall sample.\n\n## Sources note\nPrimary sources agree.' })
+      }
+      // The lead's search phase: delegate one round, ask one follow-up, close.
+      const hasSubagent = toolMsgs.some((m) => String(m.content).includes('[Subagent'))
+      const hasFollowUp = toolMsgs.some((m) => String(m.content).includes('[Follow-up with subagent'))
+      if (msgs.some((m) => m.role === 'user' && String(m.content).includes('Prioritize the 2022 ignition result'))) seen.steerInjected = true
+      if (!hasSubagent) {
+        return openai({ content: 'Delegating two independent angles.', tool_calls: [{ id: 'd1', type: 'function', function: {
+          name: 'delegate_research',
+          arguments: JSON.stringify({ tasks: [
+            { label: 'Milestones', brief: 'List fusion milestones since 2020.', avoid: 'Costs and funding' },
+            { label: 'Projects', brief: 'Identify the leading fusion projects.', avoid: 'History before 2020' },
+          ] }),
+        } }] })
+      }
+      if (!hasFollowUp) {
+        // The user adds a focus while the run is in flight. It must arrive on
+        // a later lead round, without restarting or entering the chat history.
+        if (!seen.steerSet) {
+          const running = msgsOf().find((m) => m.research?.status === 'running')
+          if (running) { useS.getState().steerResearch(running.id, 'Prioritize the 2022 ignition result'); seen.steerSet = true }
+        }
+        return openai({ content: 'Checking one thin point with the agent that owns it.', tool_calls: [{ id: 'f1', type: 'function', function: { name: 'ask_research_agent', arguments: JSON.stringify({ agent: 'Milestones', question: 'Which milestone is best evidenced?' }) } }] })
+      }
+      return openai({ content: 'The team established a clear timeline and a confirmed milestone.' })
+    }
+    return baseFetch(url, init)
+  }
+  searchN = 0
+  resetStore()
+  await useS.getState().send('@research[thorough](fusion team)', [])
+  const pick = lastResearch()
+  useS.getState().chooseResearchTier(pick.id, 'thorough')
+  assert.equal(await wait(() => msgById(pick.id).research.status === 'plan', 10000), true, 'plan should be ready')
+  useS.getState().startResearch(pick.id)
+  assert.equal(await wait(() => msgById(pick.id).research.status === 'done', 20000), true, 'run should finish')
+  const done = msgById(pick.id)
+  const agents = done.research.agents ?? []
+  assert.equal(agents.length, 2, 'both delegated agents are kept on the run')
+  assert.ok(agents.every((a) => a.status === 'done'))
+  assert.equal(agents[0].followUps.length, 1, 'the follow-up is stored on the agent')
+  assert.equal(seen.agentSearches, 2, 'each subagent searched once')
+  assert.equal(seen.followups, 1, 'the follow-up answered from existing evidence')
+  assert.equal(seen.steerInjected, true, 'a mid-run focus reaches the lead on its next round')
+  assert.equal(done.research.steer, 'Prioritize the 2022 ignition result')
+  assert.ok(msgsOf().every((m) => !(m.r === 'user' && String(m.t ?? '').includes('Mid-run update'))), 'the focus stays out of the visible chat')
+  // Only one of the two parallel searches hit the provider because the second
+  // agent's identical query was served from the search cache; both were billed
+  // to their own agent budgets either way.
+  const delegateCall = done.toolRounds.flatMap((r) => r.calls).find((c) => c.name === 'delegate_research')
+  assert.ok(delegateCall && !delegateCall.error)
+  assert.match(delegateCall.result, /\[Subagent Milestones/)
+  const followCall = done.toolRounds.flatMap((r) => r.calls).find((c) => c.name === 'ask_research_agent')
+  assert.ok(followCall && String(followCall.result).includes('[Follow-up with subagent Milestones'))
+  const merged = mergeSources(collectMessageSources(done.toolRounds), agentSources(agents))
+  assert.ok(merged.length >= 2, 'subagent sources reach the report source list')
+  assert.deepEqual(citationCoverage(done.toolFinal ?? done.t, merged).unknown, [])
+})
+
+test('messages sent while a reply is running queue and dispatch after it', async () => {
+  let release = () => {}
+  const gate = new Promise((resolve) => { release = resolve })
+  let gated = false
+  globalThis.fetch = async (url, init) => {
+    if (String(url).includes('/chat/completions')) {
+      if (!gated) { gated = true; await gate }
+      return openai({ content: 'Answer from the model.' })
+    }
+    return baseFetch(url, init)
+  }
+  resetStore()
+  assert.equal(await useS.getState().send('first message', []), true)
+  const chatId = useS.getState().chat
+  assert.equal(await wait(() => useS.getState().busyChats?.[chatId] === true), true, 'the first reply is running')
+  assert.equal(await useS.getState().send('queued message', []), true, 'a send while busy is accepted')
+  assert.equal(useS.getState().queued[chatId]?.length, 1, 'the second message waits in the queue')
+  release()
+  assert.equal(await wait(() => (useS.getState().chats.find((c) => c.id === chatId)?.msgs ?? []).filter((m) => m.r === 'user').length === 2), true, 'the queued message is dispatched')
+  assert.equal(await wait(() => useS.getState().busyChats?.[chatId] !== true && (useS.getState().queued[chatId]?.length ?? 0) === 0), true, 'the queue drains and the chat settles')
+  const chat = useS.getState().chats.find((c) => c.id === chatId)
+  assert.ok(chat.msgs.filter((m) => m.r === 'assistant' && String(m.t).includes('Answer from the model.')).length >= 2)
+})
+
+test('a finished report can be re-run as a fresh card', async () => {
+  globalThis.fetch = baseFetch
+  searchN = 0
+  resetStore()
+  await useS.getState().send('@research[quick](rerun test)', [])
+  const pick = lastResearch()
+  useS.getState().chooseResearchTier(pick.id, 'quick')
+  assert.equal(await wait(() => msgById(pick.id).research.status === 'plan'), true, 'plan should be ready')
+  useS.getState().startResearch(pick.id)
+  assert.equal(await wait(() => msgById(pick.id).research.status === 'done'), true, 'the original run finishes')
+  const oldIds = new Set(msgsOf().filter((m) => m.research).map((m) => m.id))
+  useS.getState().rerunResearch(pick.id)
+  assert.equal(await wait(() => msgsOf().some((m) => m.research && !oldIds.has(m.id) && m.research.status === 'done'), 15000), true, 'the re-run finishes as a new card')
+  assert.equal(msgById(pick.id).research.status, 'done', 'the original report is kept')
+  const fresh = msgsOf().find((m) => m.research && !oldIds.has(m.id))
+  assert.equal(fresh.research.plan.title, 'Fusion Power')
+  assert.equal(fresh.research.query, 'rerun test')
+})
+
 test.after(() => { globalThis.fetch = realFetch })
 
 test('evidence gathered before an endpoint failure survives the failover', async () => {
   // Endpoint A runs one search, then dies. Endpoint B must continue from that
   // evidence (so the report still cites the source A gathered) instead of
   // starting the search phase from zero.
-  const a = { calls: 0 }
   globalThis.fetch = async (url, init) => {
     const u = String(url)
     if (u.includes('/api/search')) return json({ query: 'fusion', results: [{ id: 'S1', title: 'Src', url: 'https://s1.test/p', snippet: 'snippet' }], searchedAt: 'now', provider: 'tinyfish' })
@@ -238,8 +365,14 @@ test('evidence gathered before an endpoint failure survives the failover', async
       const body = JSON.parse(init.body)
       const sys = body.messages[0]?.content ?? ''
       if (sys.includes('You draft a deep-research plan')) return openai({ content: PLAN })
-      a.calls++
-      if (a.calls === 1) return openai({ content: 'Searching.', tool_calls: [{ id: 'c1', type: 'function', function: { name: 'search', arguments: JSON.stringify({ query: 'fusion progress' }) } }] })
+      // Only research-phase calls take part in the scripted failure; title or
+      // helper calls must not consume the first "search" step. The phase is
+      // keyed on this request's own history, so a stray in-flight request from
+      // an earlier test can never shift it.
+      if (!sys.includes('You are doing deep research on')) return openai({ content: 'ok' })
+      if (!body.messages.some((m) => m.role === 'tool')) {
+        return openai({ content: 'Searching.', tool_calls: [{ id: 'c1', type: 'function', function: { name: 'search', arguments: JSON.stringify({ query: 'fusion progress' }) } }] })
+      }
       return new Response('upstream exploded', { status: 500 })
     }
     throw new Error('unexpected fetch ' + u)
@@ -261,7 +394,7 @@ test('evidence gathered before an endpoint failure survives the failover', async
   assert.equal(await wait(() => msgById(pick.id).research.status === 'done'), true, 'run should finish on the second endpoint')
   const done = msgById(pick.id)
   const sources = collectMessageSources(done.toolRounds)
-  assert.ok(sources.length >= 1, 'the failed endpoint\u2019s evidence is preserved')
+  assert.ok(sources.length >= 1, `the failed endpoint's evidence is preserved (attempts: ${JSON.stringify((done.log ?? []).map((l) => `${l.n}/${l.m}${l.err ? ` ERR ${l.err}` : ''}`))})`)
   assert.match(done.t, /\[S1\]/, 'the report cites the source gathered before the failure')
   assert.deepEqual(citationCoverage(done.toolFinal ?? done.t, sources).unknown, [])
 })

@@ -57,17 +57,48 @@ export const chatFingerprint = (c: AnyChat): string | null => {
   return `${String(c.title ?? '')}|${ids.join(',')}`
 }
 
-/* Sync shaping strips process logs from messages because they contain local
- * tool output and request details. A replaced message therefore looks like a
- * message that never had a log. Keep this device's log when the visible
- * message is unchanged; the ledger has the same spend, but the process panel
- * and context meter still need the richer local copy. */
+/* Sync shaping drops local-only message fields (process logs, full tool
+ * results, research narration). A replaced message therefore looks like a
+ * message that never had them. Keep this device's copies when the visible
+ * message is unchanged, so a newer chat from another device does not cost the
+ * process panel, the sources behind citations or the reasoning trace. */
+const restoreCallResults = (incoming: unknown[], local: unknown[]): unknown[] | null => {
+  let changed = false
+  const out = incoming.map((round, i) => {
+    const mine = local[i]
+    if (!isObj(round) || !isObj(mine) || !Array.isArray(round.calls) || !Array.isArray(mine.calls) || round.calls.length !== mine.calls.length) return round
+    let callsChanged = false
+    const calls = round.calls.map((call, j) => {
+      const theirs = (mine.calls as unknown[])[j]
+      if (!isObj(call) || !isObj(theirs)) return call
+      if (call.result == null && typeof theirs.result === 'string') { callsChanged = true; return { ...call, result: theirs.result } }
+      return call
+    })
+    if (!callsChanged) return round
+    changed = true
+    return { ...round, calls }
+  })
+  return changed ? out : null
+}
+
 export function keepLocalAttemptLog(incoming: unknown, local: unknown): unknown {
   if (!isObj(incoming) || !isObj(local)) return incoming
-  if (incoming.log !== undefined) return incoming
-  if (!Array.isArray(local.log) || !local.log.length) return incoming
   if (incoming.t !== local.t || incoming.at !== local.at) return incoming
-  return { ...incoming, log: local.log }
+  const keep: Obj = {}
+  if (incoming.log === undefined && Array.isArray(local.log) && local.log.length) keep.log = local.log
+  if (incoming.reasoning === undefined && typeof local.reasoning === 'string' && local.reasoning) keep.reasoning = local.reasoning
+  if (incoming.research === undefined && isObj(local.research)) keep.research = local.research
+  else if (isObj(incoming.research) && isObj(local.research)) {
+    const research: Obj = { ...incoming.research }
+    if (research.reasoning === undefined && typeof local.research.reasoning === 'string') research.reasoning = local.research.reasoning
+    if (research.note === undefined && typeof local.research.note === 'string') research.note = local.research.note
+    if (research.reasoning !== undefined || research.note !== undefined) keep.research = research
+  }
+  if (Array.isArray(incoming.toolRounds) && Array.isArray(local.toolRounds)) {
+    const restored = restoreCallResults(incoming.toolRounds, local.toolRounds)
+    if (restored) keep.toolRounds = restored
+  } else if (incoming.toolRounds === undefined && Array.isArray(local.toolRounds)) keep.toolRounds = local.toolRounds
+  return Object.keys(keep).length ? { ...incoming, ...keep } : incoming
 }
 
 /** Keep local attempt logs while adopting an incoming chat, matching messages
@@ -273,28 +304,64 @@ const modelsAtOf = (endpoint: Obj): number => {
   return Number.isFinite(at) && at > 0 ? at : 0
 }
 
-const useModelList = (out: Obj, source: Obj): Obj => {
-  if (Array.isArray(source.models)) out.models = source.models
-  if (typeof source.model === 'string') out.model = source.model
-  out.modelsAt = modelsAtOf(source)
+const stampMap = (v: unknown): Record<string, number> => {
+  const out: Record<string, number> = {}
+  for (const [key, at] of Object.entries(asObj(v))) if (typeof at === 'number' && Number.isFinite(at)) out[key] = at
+  return out
+}
+
+/** Latest stamp wins per model id, so both devices' deletes and re-adds survive. */
+const latestStamps = (a: Record<string, number>, b: Record<string, number>): Record<string, number> => {
+  const out = { ...a }
+  for (const [key, at] of Object.entries(b)) out[key] = Math.max(out[key] ?? 0, at)
+  return out
+}
+
+/** Resolve two copies of an endpoint's model list.
+ *
+ * The list is still an ordered array with no ids, so a union cannot express a
+ * deletion: pick the newest edit. On top of that, a model whose delete stamp
+ * is at least as new as its add stamp is removed even when the winning copy
+ * still contains it, so a stale snapshot (or a later unrelated endpoint edit)
+ * cannot restore a row the user deleted. A real re-add clears its stamp
+ * (see `modelListEdit`), which is what lets the row come back deliberately. */
+export function mergeModelList(local: Obj, remote: Obj): Obj {
+  const source = modelsAtOf(remote) > modelsAtOf(local) ? remote : local
+  const other = source === local ? remote : local
+  // A model list is optional (legacy endpoints carry only `model`): never turn
+  // a single-model endpoint into an empty list just because this merge ran.
+  const list = Array.isArray(source.models) ? source.models : Array.isArray(other.models) ? other.models : null
+  if (!list) return {}
+  const adds = latestStamps(stampMap(local.modelAdds), stampMap(remote.modelAdds))
+  const drops = latestStamps(stampMap(local.modelDrops), stampMap(remote.modelDrops))
+  const models = asStrArr(list).filter((m) => {
+    const drop = drops[m]
+    return !(drop != null && drop >= (adds[m] ?? 0))
+  })
+  const at = Math.max(modelsAtOf(local), modelsAtOf(remote))
+  const out: Obj = {
+    models,
+    model: typeof source.model === 'string' && models.includes(source.model) ? source.model : (models[0] ?? ''),
+    ...(at ? { modelsAt: at } : {}),
+  }
+  const keptAdds = Object.fromEntries(Object.entries(adds).filter(([m]) => models.includes(m)))
+  const keptDrops = Object.fromEntries(Object.entries(drops).filter(([m]) => !models.includes(m)))
+  if (Object.keys(keptAdds).length) out.modelAdds = keptAdds
+  if (Object.keys(keptDrops).length) out.modelDrops = keptDrops
   return out
 }
 
 /** Merge two copies of one endpoint. Model rows are an ordered list with no
- *  ids, so a union cannot represent a deletion: keep the list from the newest
- *  edit instead. Everything else stays local-wins, as before. */
+ *  ids, so a union cannot represent a deletion: the newest edit wins, with the
+ *  per-model delete stamps applied (see `mergeModelList`). Everything else
+ *  stays local-wins, as before. */
 export function mergeEndpoint(local: Obj, remote: Obj): Obj {
-  const out: Obj = { ...remote, ...local }
-  const localAt = modelsAtOf(local)
-  const remoteAt = modelsAtOf(remote)
-  if (remoteAt > localAt) useModelList(out, remote)
-  else if (localAt) out.modelsAt = localAt
-  return out
+  return { ...remote, ...local, ...mergeModelList(local, remote) }
 }
 
-/** When adopting another device's settings, keep newer local model-list edits
- *  without replacing the adopted endpoint list itself. This is what stops a
- *  just-deleted model from being restored by a stale cloud copy. */
+/** When adopting another device's settings, adopt its endpoint fields but
+ *  resolve the model list with this device's delete stamps, so a just-deleted
+ *  model is not restored by a stale cloud copy. */
 export function keepLocalModelEdits(localEps: unknown, incoming: Obj): Obj {
   const out: Obj = { ...incoming }
   if (!Array.isArray(incoming.eps)) return out
@@ -306,8 +373,7 @@ export function keepLocalModelEdits(localEps: unknown, incoming: Obj): Obj {
   out.eps = incoming.eps.map((item) => {
     const endpoint = asObj(item)
     const local = typeof endpoint.id === 'string' ? mine.get(endpoint.id) : undefined
-    if (!local || modelsAtOf(local) <= modelsAtOf(endpoint)) return item
-    return useModelList({ ...endpoint }, local)
+    return local ? { ...endpoint, ...mergeModelList(local, endpoint) } : item
   })
   return out
 }

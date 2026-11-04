@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
-import { Search, Plus, MessageSquare, Settings, Palette as Pi, Cpu, ScrollText, Download, PanelRight, Server, Trash2, Type, Maximize2, Sparkles, Wrench, Keyboard, FolderOpen, SlidersHorizontal, Brain, ListMusic, Terminal, TrendingUp, Database, FlaskConical, Library, Eraser } from 'lucide-react'
+import { Search, Plus, MessageSquare, Settings, Palette as Pi, Cpu, ScrollText, Download, PanelRight, Server, Trash2, Type, Maximize2, Sparkles, Wrench, Keyboard, FolderOpen, SlidersHorizontal, Brain, ListMusic, Terminal, TrendingUp, Database, FlaskConical, Library, Eraser, Activity, Square } from 'lucide-react'
 import { useS, THEMES, themePatch, modelsOf, modelNameOf, exportChat, featOn, FEATURES, LIBRARY_ITEMS, type FeatureId } from '../store'
 import { nextThemePatch, stepModelSelection, stepPromptSelection } from '../selection'
 import { SETTINGS_TABS, SETTING_LINKS, TAB_KEYWORDS } from '../settingsCatalog'
@@ -28,7 +28,7 @@ export function Palette({ close, cfg, toggleSide }: { close: () => void; cfg: (t
      keystrokes, streaming text updates and widget state no longer re-render it. */
   const s = useS(useShallow((st) => ({
     chats: st.chats, skills: st.skills, eps: st.eps, pls: st.pls, prompts: st.prompts, cmds: st.cmds, pr: st.pr,
-    features: st.features, prefs: st.prefs, sel: st.sel, rail: st.rail, tools: st.tools,
+    features: st.features, prefs: st.prefs, sel: st.sel, rail: st.rail, tools: st.tools, busyChats: st.busyChats,
     themeMode: st.themeMode, themeLight: st.themeLight, themeDark: st.themeDark,
     newChat: st.newChat, patch: st.patch, add: st.add,
   })))
@@ -44,6 +44,10 @@ export function Palette({ close, cfg, toggleSide }: { close: () => void; cfg: (t
 
   const all: Action[] = [
     action(Plus, 'New chat', 'Action', 'create start conversation blank', () => { s.newChat(); focusComposer() }),
+    // Running chats come before the full chat list so the active work is one
+    // keystroke away even when the sidebar is long or scrolled away.
+    ...s.chats.filter((c) => s.busyChats?.[c.id] === true).map((c) => action(Activity, c.title, 'Running', `running streaming reply chat ${c.title}`, () => { s.patch({ chat: c.id }); focusComposer() })),
+    ...(Object.keys(s.busyChats ?? {}).length ? [action(Square, 'Stop every running reply', 'Action', 'stop all abort running streaming replies chats', () => useS.getState().stopAll())] : []),
     ...s.chats.map((c) => action(MessageSquare, c.title, 'Chat', `chat conversation ${c.title}`, () => s.patch({ chat: c.id }))),
     ...s.eps.flatMap((e) => modelsOf(e).map((model) => action(Cpu, modelNameOf(e, model), e.name, `model ${modelNameOf(e, model)} ${model} ${e.name} provider endpoint switch select`, () => s.patch({ sel: { k: 'ep', id: e.id, model } })))),
     ...(featOn(s, 'playlists') ? s.pls.map((p) => action(Cpu, p.name, 'Playlist', `playlist model route ${p.name}`, () => s.patch({ sel: { k: 'pl', id: p.id } }))) : []),

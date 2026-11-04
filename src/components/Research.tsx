@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { BookOpen, Check, Copy, Download, FileText, Globe, ListFilter, ListOrdered, Pencil, Play, RotateCcw, Sparkles, Square, X } from 'lucide-react'
 import { useS, useLive, type Msg } from '../store'
-import { PLAN_INTRO, RESEARCH_TIERS, countedSteps, dedupTrace, reasoningBlocks, tierOf, type ResearchPlan, type ResearchPlanStep, type ResearchTierId } from '../research'
-import { claimForCitation, collectMessageSources, linkifyCitations, stripCitations } from '../citations'
+import { PLAN_INTRO, RESEARCH_TIERS, agentRoundsUsed, agentSources, countedSteps, dedupTrace, reasoningBlocks, tierOf, type ResearchAgent, type ResearchPlan, type ResearchPlanStep, type ResearchTierId } from '../research'
+import { claimForCitation, collectMessageSources, linkifyCitations, mergeSources, stripCitations } from '../citations'
 import { Md } from './Md'
 
 /** A research card follows its own chat, not whichever chat happens to be
@@ -36,13 +36,155 @@ function PlanStepRow({ step, last }: { step: ResearchPlanStep; last: boolean }) 
 
 /** The estimate/tier summary shown on the plan card before the run starts. */
 function PlanEstimate({ msg }: { msg: Msg }) {
+  const configuredRounds = useS((s) => s.researchRounds)
   const rs = msg.research
   const est = rs?.estimate
   if (!est) return null
+  const tier = tierOf(rs?.tier ?? 'standard', configuredRounds)
+  const team = tier.agentRounds > 0 ? `${tier.agentRounds} rounds × ${tier.agentsPerRound} agents · ` : ''
   const cost = est.costUsd != null
     ? `≈$${est.costUsd < 0.01 ? est.costUsd.toFixed(3) : est.costUsd.toFixed(2)}`
     : `≈${Math.round(est.inputTokens / 1000)}k in / ${Math.round(est.outputTokens / 1000)}k out tokens`
-  return <p className="text-xs text-mu">Up to {est.searches} searches · {est.reads} reads · {cost} (ceiling estimate)</p>
+  return <p className="text-xs text-mu">{team}{est.searches} searches · {est.reads} reads · {cost} (ceiling estimate)</p>
+}
+
+function AgentStatus({ status }: { status: ResearchAgent['status'] }) {
+  if (status === 'running') return <span className="size-2 shrink-0 animate-pulse rounded-full bg-ac" />
+  if (status === 'done') return <Check size={12} className="shrink-0 text-ac" />
+  return <X size={12} className="shrink-0 text-er" />
+}
+
+/** One delegated researcher: spending, brief, report, and follow-ups. */
+function AgentRow({ agent }: { agent: ResearchAgent }) {
+  return (
+    <details>
+      <summary className="flex cursor-pointer items-center gap-2 rounded px-1 py-0.5 text-xs hover:bg-hov">
+        <AgentStatus status={agent.status} />
+        <span className="min-w-0 flex-1 truncate">{agent.label}</span>
+        <span className="shrink-0 text-mu">{agent.searches} searches · {agent.reads} reads{agent.followUps?.length ? ` · ${agent.followUps.length} follow-ups` : ''}</span>
+      </summary>
+      <div className="space-y-1 px-3 pb-1 pt-1.5">
+        <p className="text-xs leading-relaxed text-mu">{agent.brief}</p>
+        {agent.error && <p className="text-xs text-er">{agent.error}</p>}
+        {agent.answer && <p className="max-h-64 overflow-y-auto whitespace-pre-wrap text-xs leading-relaxed">{agent.answer}</p>}
+        {(agent.followUps ?? []).map((f, i) => (
+          <div key={i} className="space-y-0.5 border-l-2 border-bor pl-2">
+            <p className="text-xs font-medium">{f.q}</p>
+            <p className="max-h-48 overflow-y-auto whitespace-pre-wrap text-xs leading-relaxed text-mu">{f.a}</p>
+          </div>
+        ))}
+        {(agent.sources?.length ?? 0) > 0 && <p className="text-[11px] text-mu">{agent.sources!.length} sources kept for the report</p>}
+      </div>
+    </details>
+  )
+}
+
+/** The investigator roster grouped into its delegation rounds. */
+function ResearchTeam({ agents, rounds }: { agents: ResearchAgent[]; rounds: number }) {
+  const waves = useMemo(() => {
+    const byRound = new Map<number, ResearchAgent[]>()
+    for (const a of agents) {
+      const list = byRound.get(a.round)
+      if (list) list.push(a)
+      else byRound.set(a.round, [a])
+    }
+    return [...byRound.entries()].sort(([a], [b]) => a - b)
+  }, [agents])
+  return (
+    <div className="space-y-2">
+      {waves.map(([round, list]) => (
+        <div key={round} className="space-y-1">
+          {(rounds > 1 || waves.length > 1) && (
+            <div className="flex items-center gap-2 px-1 text-[11px] font-medium uppercase tracking-wide text-mu">
+              <span>Round {round}</span>
+              <span aria-hidden="true" className="h-px flex-1 bg-hov" />
+              <span>{list.filter((a) => a.status === 'done').length}/{list.length} done</span>
+            </div>
+          )}
+          {list.map((a) => <AgentRow key={a.id} agent={a} />)}
+        </div>
+      ))}
+    </div>
+  )
+}
+
+/** Clarifying questions drafted after the plan's context searches. Answering
+ * them tailors the run; skipping keeps the model's judgment. */
+export function ResearchQuestionsCard({ msg }: { msg: Msg }) {
+  const save = useS((s) => s.answerResearchQuestions)
+  const skip = useS((s) => s.skipResearchQuestions)
+  const stop = useS((s) => s.stopResearch)
+  const rs = msg.research
+  const questions = rs?.plan?.questions ?? []
+  const [answers, setAnswers] = useState<Record<string, string>>({})
+  const [extra, setExtra] = useState('')
+  useEffect(() => { setAnswers({}); setExtra('') }, [msg.id, rs?.plan])
+  if (!rs || rs.status !== 'questions' || !questions.length) return null
+  const set = (id: string, v: string) => setAnswers((a) => ({ ...a, [id]: v }))
+  const answered = questions.filter((q) => (answers[q.id] ?? '').trim()).length
+  const canSubmit = answered > 0 || extra.trim().length > 0
+  const submit = () => {
+    const list = questions.map((q) => ({ question: q.question, answer: (answers[q.id] ?? '').trim() })).filter((a) => a.answer)
+    if (extra.trim()) list.push({ question: 'Additional context for the research', answer: extra.trim() })
+    if (list.length) save(msg.id, list)
+  }
+  return (
+    <section aria-label="Research questions" className="max-w-xl space-y-3 rounded-2xl border border-bor bg-surf p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h3 className="text-sm font-medium">{rs.plan?.title || `Deep research on “${rs.query.slice(0, 90)}”`}</h3>
+          <p className="mt-1 text-sm text-mu">A few questions so the research targets what you actually need. Answer any that matter, or skip and I’ll use my judgment.</p>
+        </div>
+        <span className="shrink-0 rounded-full bg-hov px-2 py-0.5 text-[11px] text-mu">{answered}/{questions.length} answered</span>
+      </div>
+      <div className="space-y-3">
+        {questions.map((q) => (
+          <div key={q.id} className="space-y-1.5">
+            <label htmlFor={`rq-${msg.id}-${q.id}`} className="block text-sm">{q.question}</label>
+            {q.options.length > 0 && (
+              <div className="flex flex-wrap gap-1.5">
+                {q.options.map((o) => (
+                  <button
+                    key={o}
+                    type="button"
+                    onClick={() => set(q.id, o)}
+                    aria-pressed={(answers[q.id] ?? '') === o}
+                    className={cx('rounded-full border px-2.5 py-1 text-xs transition-colors', (answers[q.id] ?? '') === o ? 'border-ac bg-ac/10 text-tx' : 'border-bor text-mu hover:bg-hov hover:text-tx')}
+                  >{o}</button>
+                ))}
+              </div>
+            )}
+            <input
+              id={`rq-${msg.id}-${q.id}`}
+              value={answers[q.id] ?? ''}
+              onChange={(e) => set(q.id, e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); if (canSubmit) submit() } }}
+              maxLength={1500}
+              placeholder="Type your answer, or pick one above"
+              className="w-full rounded-lg bg-bg px-2.5 py-1.5 text-sm outline-none focus:ring-2 focus:ring-ac/40"
+            />
+          </div>
+        ))}
+        <div className="space-y-1.5">
+          <label htmlFor={`rqx-${msg.id}`} className="block text-xs font-medium text-mu">Anything else I should know? <span className="font-normal">(optional)</span></label>
+          <textarea
+            id={`rqx-${msg.id}`}
+            value={extra}
+            onChange={(e) => setExtra(e.target.value)}
+            rows={2}
+            maxLength={1500}
+            placeholder="Constraints, must-cover sources, audience, or the format you want…"
+            className="w-full resize-y rounded-lg bg-bg px-2.5 py-1.5 text-sm outline-none focus:ring-2 focus:ring-ac/40"
+          />
+        </div>
+      </div>
+      <div className="flex items-center justify-end gap-2">
+        <button type="button" onClick={() => skip(msg.id)} className="rounded-lg px-3 py-1.5 text-sm text-mu hover:bg-hov hover:text-tx">Skip questions</button>
+        <button type="button" disabled={!canSubmit} onClick={submit} title={canSubmit ? 'Use these answers to tailor the research' : 'Answer at least one question, or skip'} className="rounded-lg bg-ac px-4 py-2 text-sm font-medium text-acx transition-opacity hover:opacity-90 disabled:opacity-40">Use answers</button>
+        <Btn icon={X} title="Cancel research" onClick={() => stop(msg.id)} />
+      </div>
+    </section>
+  )
 }
 
 /** The plan card: shows "Generating research plan" while the plan drafts, then
@@ -116,6 +258,7 @@ export function ResearchPlanCard({ msg }: { msg: Msg }) {
       <p className="text-sm">{PLAN_INTRO}</p>
       <section aria-label="Research plan" aria-live="polite" className="space-y-4 rounded-2xl border border-bor bg-surf p-4">
         <h3 className="text-sm font-medium">{plan?.title || rs.query.slice(0, 90)}</h3>
+        {plan?.intro && <p className="text-xs leading-relaxed text-mu">{plan.intro}</p>}
         {planning ? (
           <p role="status" aria-label="Generating research plan" className="flex items-center text-sm text-mu">
             <span className="reply-dots" aria-hidden="true"><i /><i /><i /></span>
@@ -152,6 +295,14 @@ export function ResearchPlanCard({ msg }: { msg: Msg }) {
             </ol>
           )
         ) : null}
+        {rs.answers?.length ? (
+          <div className="space-y-1 rounded-lg bg-bg/60 px-2.5 py-2">
+            <p className="text-xs font-medium text-mu">Brief from your answers</p>
+            {rs.answers.map((a, i) => (
+              <p key={i} className="text-xs leading-relaxed text-mu"><span className="text-tx">{a.question}</span> {a.answer}</p>
+            ))}
+          </div>
+        ) : null}
         {rs.error && <p className="text-xs text-mu">{rs.error}</p>}
         {!planning && plan && <PlanEstimate msg={msg} />}
         <div className="flex items-center justify-end gap-2">
@@ -180,6 +331,7 @@ export function ResearchPlanCard({ msg }: { msg: Msg }) {
 export function ResearchTierPicker({ msg }: { msg: Msg }) {
   const choose = useS((s) => s.chooseResearchTier)
   const stop = useS((s) => s.stopResearch)
+  const rounds = useS((s) => s.researchRounds)
   const busy = useMsgBusy(msg.id)
   const rs = msg.research
   if (!rs || rs.status !== 'tier-pick') return null
@@ -187,15 +339,15 @@ export function ResearchTierPicker({ msg }: { msg: Msg }) {
     <section aria-label="Choose research depth" className="max-w-xl space-y-3 rounded-xl border border-bor bg-surf p-4">
       <div>
         <h3 className="text-sm font-medium">Deep research on “{rs.query.slice(0, 120)}”</h3>
-        <p className="mt-1 text-xs text-mu">Pick a depth. The model then drafts a research plan for you to review, and only searches the web and reads pages once you start it.</p>
+        <p className="mt-1 text-xs text-mu">Pick a depth. The model then scopes the topic, may ask you a few questions, and drafts a plan for you to review. Nothing is searched or read until you start it. Thorough mode sends out rounds of research subagents and can query them again when an answer is thin.</p>
       </div>
       <div className="grid gap-2 sm:grid-cols-3">
-        {RESEARCH_TIERS.map((t) => (
+        {RESEARCH_TIERS.map((base) => tierOf(base.id, rounds)).map((t) => (
           <button
             key={t.id}
             disabled={busy}
             onClick={() => choose(msg.id, t.id as ResearchTierId)}
-            title={`${t.label}: up to ${t.maxSearches} searches and ${t.maxReads} page reads`}
+            title={`${t.label}: ${t.agentRounds > 0 ? `${t.agentRounds} subagent rounds of ${t.agentsPerRound} agents, ${t.agentSearches} searches each` : `up to ${t.maxSearches} searches and ${t.maxReads} page reads`}`}
             className={cx('rounded-lg border px-3 py-2.5 text-left transition-colors hover:bg-hov disabled:opacity-50', rs.tier === t.id ? 'border-ac bg-ac/10' : 'border-bor')}
             aria-pressed={rs.tier === t.id}
           >
@@ -214,10 +366,13 @@ export function ResearchTierPicker({ msg }: { msg: Msg }) {
 export function ResearchProgressCard({ msg }: { msg: Msg }) {
   const stop = useS((s) => s.stopResearch)
   const resume = useS((s) => s.resumeResearch)
+  const steer = useS((s) => s.steerResearch)
+  const configuredRounds = useS((s) => s.researchRounds)
   const busy = useMsgBusy(msg.id)
+  const [focus, setFocus] = useState('')
   const rs = msg.research
   const live = useLive((l) => l.tools[msg.id]) as { name?: string }[] | undefined
-  const toolBusy = !!live?.some((c) => c.name === 'search' || c.name === 'fetch_page')
+  const toolBusy = !!live?.some((c) => c.name === 'search' || c.name === 'fetch_page' || c.name === 'delegate_research' || c.name === 'ask_research_agent')
   const note = (rs?.note ?? '').trim()
   const reasoning = (rs?.reasoning ?? '').trim()
   // Intermittent reasoning behind the run: the model's own text between tool
@@ -241,7 +396,12 @@ export function ResearchProgressCard({ msg }: { msg: Msg }) {
   if (!rs || (rs.status !== 'running' && rs.status !== 'stopped' && rs.status !== 'error')) return null
   if (rs.status !== 'running' && !rs.steps.length && !rs.error && rs.status !== 'stopped') return null
   const done = rs.steps.filter((s) => s.state === 'done').length
-  const tier = tierOf(rs.tier ?? 'standard')
+  const tier = tierOf(rs.tier ?? 'standard', configuredRounds)
+  const agents = rs.agents ?? []
+  const roundsUsed = agentRoundsUsed(agents)
+  const teamSearches = agents.reduce((n, a) => n + a.searches, 0)
+  const teamReads = agents.reduce((n, a) => n + a.reads, 0)
+  const activeFocus = (rs.steer ?? '').trim()
   const usedSearches = countedSteps(rs.steps, 'search')
   const canResume = rs.status === 'stopped' && usedSearches < tier.maxSearches && !!msg.toolRounds?.length
   return (
@@ -249,7 +409,7 @@ export function ResearchProgressCard({ msg }: { msg: Msg }) {
       <div className="flex items-center gap-2 text-sm">
         <ListOrdered size={15} className="shrink-0 text-ac" />
         <span className="min-w-0 flex-1 truncate font-medium">
-          {rs.status === 'running' ? `Researching · ${tier.label} · ${done}/${rs.steps.length} steps` : rs.status === 'stopped' ? 'Research stopped' : 'Research needs attention'}
+          {rs.status === 'running' ? `Researching · ${tier.label} · ${tier.agentRounds > 0 ? `${roundsUsed}/${tier.agentRounds} rounds · ` : ''}${rs.steps.length ? `${done}/${rs.steps.length} steps` : `${agents.length} agent${agents.length === 1 ? '' : 's'}`}` : rs.status === 'stopped' ? 'Research stopped' : 'Research needs attention'}
         </span>
         {rs.status === 'running' && busy && (
           <button onClick={() => stop(msg.id)} className="inline-flex items-center gap-1.5 rounded-lg bg-hov px-2.5 py-1.5 text-xs font-medium hover:opacity-80">
@@ -269,6 +429,40 @@ export function ResearchProgressCard({ msg }: { msg: Msg }) {
             {rs.plan.steps.map((s, i) => <PlanStepRow key={s.id} step={s} last={i === rs.plan!.steps.length - 1} />)}
           </ol>
         </details>
+      )}
+      {rs.status === 'running' && (
+        <div className="space-y-1.5 rounded-lg bg-bg/60 p-2.5">
+          {activeFocus && (
+            <div className="flex items-start gap-2">
+              <span className="shrink-0 text-xs font-medium text-mu">Focus</span>
+              <span className="min-w-0 flex-1 text-xs leading-relaxed">{activeFocus}</span>
+              <button type="button" onClick={() => steer(msg.id, '')} title="Clear the focus" aria-label="Clear research focus" className="rounded p-0.5 text-mu hover:bg-hov hover:text-tx"><X size={12} /></button>
+            </div>
+          )}
+          <form onSubmit={(e) => { e.preventDefault(); const v = focus.trim(); if (v) { steer(msg.id, v); setFocus('') } }} className="flex items-center gap-1.5">
+            <input
+              value={focus}
+              onChange={(e) => setFocus(e.target.value)}
+              maxLength={800}
+              aria-label="Research focus"
+              placeholder={activeFocus ? 'Update the focus for this run…' : 'Add a focus or constraint for this run…'}
+              className="min-w-0 flex-1 rounded-md bg-surf px-2 py-1.5 text-xs outline-none focus:ring-2 focus:ring-ac/40"
+            />
+            <button type="submit" disabled={!focus.trim()} title="The lead researcher applies this on its next round; the run is not restarted" className="rounded-md bg-hov px-2 py-1.5 text-xs font-medium hover:opacity-80 disabled:opacity-40">Set</button>
+          </form>
+        </div>
+      )}
+      {agents.length > 0 && (
+        <div className="space-y-2 rounded-lg bg-bg/60 p-2.5">
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-xs font-medium text-mu">Research team · {roundsUsed}/{tier.agentRounds} rounds</p>
+            <p className="shrink-0 text-[11px] text-mu">{teamSearches} searches · {teamReads} reads</p>
+          </div>
+          <div role="progressbar" aria-label="Subagent rounds used" aria-valuemin={0} aria-valuemax={tier.agentRounds} aria-valuenow={roundsUsed} className="h-1 overflow-hidden rounded-full bg-hov">
+            <div className="h-full rounded-full bg-ac transition-all" style={{ width: `${Math.min(100, (roundsUsed / Math.max(1, tier.agentRounds)) * 100)}%` }} />
+          </div>
+          <ResearchTeam agents={agents} rounds={tier.agentRounds} />
+        </div>
       )}
       <ol className="space-y-2">
         {rs.steps.map((s) => (
@@ -315,11 +509,14 @@ export function ResearchProgressCard({ msg }: { msg: Msg }) {
  * and failed runs keep the card when a partial report exists, so the work
  * (and its sources) stays reachable instead of stranded. */
 export function ResearchTile({ msg, onOpen }: { msg: Msg; onOpen: () => void }) {
+  const rerun = useS((s) => s.rerunResearch)
   const rs = msg.research
-  const sources = useMemo(() => collectMessageSources(msg.toolRounds), [msg.toolRounds])
+  const sources = useMemo(() => mergeSources(collectMessageSources(msg.toolRounds), agentSources(msg.research?.agents)), [msg.toolRounds, msg.research?.agents])
   const partial = (msg.toolFinal ?? msg.t ?? '').trim()
   if (!rs || (rs.status !== 'writing' && rs.status !== 'done' && !(partial && (rs.status === 'stopped' || rs.status === 'error')))) return null
   const writing = rs.status === 'writing'
+  const agents = rs.agents ?? []
+  const roundsUsed = agentRoundsUsed(agents)
   const label = tierOf(rs.tier ?? 'standard').label
   const head = writing ? `Writing research report · ${label}` : rs.status === 'done' ? `Research report · ${label}` : `Partial research report · ${label}`
   return (
@@ -337,8 +534,14 @@ export function ResearchTile({ msg, onOpen }: { msg: Msg; onOpen: () => void }) 
         <span className="shrink-0 text-xs text-mu">{sources.length} sources</span>
       </div>
       {rs.summary && <p className="whitespace-pre-wrap text-sm text-mu">{rs.summary}</p>}
-      <div>
+      {agents.length > 0 && (
+        <p className="text-xs text-mu">{roundsUsed} round{roundsUsed === 1 ? '' : 's'} · {agents.length} agent{agents.length === 1 ? '' : 's'} · {agents.reduce((n, a) => n + a.searches, 0)} agent searches</p>
+      )}
+      <div className="flex flex-wrap items-center gap-2">
         <Btn v="soft" icon={FileText} onClick={onOpen} className="w-auto">Open report</Btn>
+        {!writing && rs.plan && (
+          <Btn v="soft" icon={RotateCcw} onClick={(e) => { e.stopPropagation(); rerun(msg.id) }} onKeyDown={(e) => e.stopPropagation()} className="w-auto">Re-run plan</Btn>
+        )}
       </div>
     </section>
   )
@@ -354,7 +557,9 @@ export function ResearchPanel({ msg, onClose }: { msg: Msg; onClose: () => void 
   const [srcFlash, setSrcFlash] = useState<string | null>(null)
   const [srcClaim, setSrcClaim] = useState<string | null>(null)
   const citeStyle = useS((s) => s.search?.citeStyle)
-  const sources = useMemo(() => collectMessageSources(msg.toolRounds), [msg.toolRounds])
+  const configuredRounds = useS((s) => s.researchRounds)
+  const rerun = useS((s) => s.rerunResearch)
+  const sources = useMemo(() => mergeSources(collectMessageSources(msg.toolRounds), agentSources(msg.research?.agents)), [msg.toolRounds, msg.research?.agents])
   const cited = useMemo(() => citeStyle === 'off' ? stripCitations(msg.toolFinal ?? msg.t) : linkifyCitations(msg.toolFinal ?? msg.t, sources), [msg.toolFinal, msg.t, sources, citeStyle])
   const cites = useMemo(() => citeStyle === 'pills' && sources.length ? {
     sources,
@@ -378,6 +583,8 @@ export function ResearchPanel({ msg, onClose }: { msg: Msg; onClose: () => void 
   const reasoning = (msg.research?.reasoning ?? '').trim()
   const blocks = useMemo(() => reasoningBlocks(msg.research?.steps ?? []), [msg.research?.steps])
   const rs = msg.research
+  const agentList = rs?.agents ?? []
+  const runTier = tierOf(rs?.tier ?? 'standard', configuredRounds)
   // The report streams into the panel: keep the newest text in view, but stop
   // the moment the user scrolls away from the bottom. Scrolling back to the
   // bottom resumes auto-scrolling.
@@ -415,6 +622,9 @@ export function ResearchPanel({ msg, onClose }: { msg: Msg; onClose: () => void 
             </button>
           ))}
         </div>
+        {rs?.plan && (rs.status === 'done' || rs.status === 'stopped' || rs.status === 'error') && (
+          <Btn sm icon={RotateCcw} title="Re-run this plan against fresh sources" onClick={() => rerun(msg.id)} />
+        )}
         <Btn sm icon={Download} title="Download report as Markdown" onClick={download} />
         <Btn sm icon={copied ? Check : Copy} title="Copy report" onClick={() => { void navigator.clipboard?.writeText(msg.toolFinal ?? msg.t).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1200) }).catch(() => {}) }} />
         <Btn sm icon={X} title="Close research panel" onClick={onClose} />
@@ -426,9 +636,18 @@ export function ResearchPanel({ msg, onClose }: { msg: Msg; onClose: () => void 
           <SourcesPanel msgId={msg.id} text={msg.toolFinal ?? msg.t} sources={sources} defaultOpen strict={false} flash={srcFlash} claim={srcClaim} />
         ) : (
           <div className="space-y-3">
+            {agentList.length > 0 && (
+              <details className="rounded-lg bg-bg/60 px-2.5 py-1.5">
+                <summary className="cursor-pointer text-xs font-medium text-mu hover:text-tx">Research team · {agentList.length} agents</summary>
+                <div className="mt-1.5">
+                  <ResearchTeam agents={agentList} rounds={runTier.agentRounds} />
+                </div>
+              </details>
+            )}
             {msg.research?.plan && (
               <details className="rounded-lg bg-bg/60 px-2.5 py-1.5" open>
                 <summary className="cursor-pointer text-xs font-medium text-mu hover:text-tx">Research plan · {msg.research.plan.steps.length} steps</summary>
+                {msg.research.plan.intro && <p className="mt-1.5 text-xs leading-relaxed text-mu">{msg.research.plan.intro}</p>}
                 <ol className="mt-1.5 space-y-2">
                   {msg.research.plan.steps.map((s, i) => <PlanStepRow key={s.id} step={s} last={i === msg.research!.plan!.steps.length - 1} />)}
                 </ol>

@@ -185,6 +185,21 @@ export function collectMessageSources(rounds?: { calls: { name: string; argument
   return [...byUrl.values()].sort((a, b) => Number(a.citeId.slice(1)) - Number(b.citeId.slice(1)))
 }
 
+/** Merge source lists (main-round sources plus subagent sources) into one
+ * deduped, id-sorted list. Subagent ids are already absolute and run-wide, so
+ * they are preserved; only a missing id gets the next free number. */
+export function mergeSources(...lists: ({ citeId: string; title: string; url: string; snippet?: string; query?: string }[] | undefined | null)[]): CiteSource[] {
+  const byId = new Map<string, CiteSource>()
+  for (const list of lists) {
+    for (const s of list ?? []) {
+      const id = String(s.citeId ?? '').toUpperCase()
+      if (!/^S\d+$/.test(id) || !s.url || byId.has(id)) continue
+      byId.set(id, { citeId: id, title: s.title || s.url, url: s.url, host: hostOf(s.url), snippet: s.snippet ?? '', query: s.query ?? '' })
+    }
+  }
+  return [...byId.values()].sort((a, b) => Number(a.citeId.slice(1)) - Number(b.citeId.slice(1)))
+}
+
 /* Citation ids referenced by rendered text: [S1], [Source S1], [S1](url),
  * plus grouped forms like [S2, S8], [S1; S2], [Sources S1, S2]. */
 export function extractCitedIds(text: string): string[] {

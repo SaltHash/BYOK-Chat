@@ -81,11 +81,27 @@ export const prunePersisted = (raw: string): string | null => {
             })) : pl.steps
             return { ...pl, title: cap(pl.title, 120), intro: cap(pl.intro, 300), steps: pSteps }
           })() : rs.plan
+          // Delegated agents keep their brief, report, and sources so the run
+          // stays readable after a reload; the full evidence transcript is
+          // in-memory only and is rebuilt by asking the agent again.
+          const agents = Array.isArray(rs.agents) ? (rs.agents as Record<string, unknown>[]).slice(-24).map((a) => ({
+            ...a,
+            brief: cap(a.brief, 1200),
+            answer: cap(a.answer, 4000),
+            error: cap(a.error, 600),
+            sources: Array.isArray(a.sources) ? (a.sources as unknown[]).slice(0, 40) : a.sources,
+            followUps: Array.isArray(a.followUps) ? (a.followUps as Record<string, unknown>[]).slice(-3).map((f) => ({ ...f, q: cap(f.q, 600), a: cap(f.a, 4000) })) : a.followUps,
+          })) : rs.agents
+          // Up to three plan questions plus the optional "anything else" note.
+          const answers = Array.isArray(rs.answers) ? (rs.answers as unknown[]).slice(0, 4).map((a) => (a && typeof a === 'object' ? { ...(a as object), question: cap((a as Record<string, unknown>).question, 400), answer: cap((a as Record<string, unknown>).answer, 1500) } : a)) : rs.answers
           return {
             ...rs,
             plan,
+            answers,
+            agents,
             steps,
             note: typeof rs.note === 'string' && rs.note.length > 5000 ? rs.note.slice(0, 5000) + '\n[compacted]' : rs.note,
+            steer: cap(rs.steer, 800),
             reasoning: typeof rs.reasoning === 'string' && rs.reasoning.length > 5000 ? (rs.reasoning as string).slice(0, 5000) + '\n[compacted]' : rs.reasoning,
             summary: typeof rs.summary === 'string' && (rs.summary as string).length > 2000 ? (rs.summary as string).slice(0, 2000) + '…[compacted]' : rs.summary,
           }

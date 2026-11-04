@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { X, Plus, Trash2, ArrowUp, ArrowDown, CornerDownRight, ChevronDown, ChevronRight, Eye, EyeOff, Play, ShieldCheck, Shield, Download, Upload, Check, CircleCheck, CircleX, Cpu, Route, GripVertical, Server, ListMusic, ScrollText, Terminal, Wrench, Palette, FolderOpen, FileText, PanelRight, TrendingUp, Keyboard, Search, Brain, Pencil, Sparkles, RotateCcw, SlidersHorizontal, FlaskConical, Library, Database, Lock, LockOpen, LayoutTemplate, Share2, Plug, Image as ImageIcon, Volume2, AudioLines, Code2, Star } from 'lucide-react'
-import { useS, useSConfig, PRE, BLANK, THEMES, DARK_THEMES, LIGHT_THEMES, BASE_THEMES, THEME_COLOR_KEYS, THEME_COLOR_LABELS, THEME_COLORS, defaultCustomTheme, customThemeColors, normCustomTheme, accentHue, SEARCH_PROVIDERS, READER_PROVIDERS, FEATURES, LIBRARY_ITEMS, FEATURE_TABS, FEATURE_WIDGETS, DEFAULT_LIBRARY_SHOW, DEFAULT_ADVANCED, featOn, normSearch, normAdvanced, normLogDetail, normDocs, usable, modelsOf, modelNameOf, helperRef, splitHelperRef, favRef, toggleFavRef, effortClassifierOf, TOOL_ROUNDS_DEFAULT, TOOL_ROUNDS_MIN, TOOL_ROUNDS_BASE_MAX, TOOL_ROUNDS_MAX, toolRoundLimitOf, isToolRoundsUnlimited, GENERAL_PROMPT_TEXT, STARTUP_MODES, normStartup, PROMPT_RECALL_MODES, normPromptRecall, type PromptRecallMode, type Kind, type FeatureId, type DocPrefs, type ModelPrice } from '../store'
+import { modelListEdit } from '../models'
+import { useS, useSConfig, PRE, BLANK, THEMES, DARK_THEMES, LIGHT_THEMES, BASE_THEMES, THEME_COLOR_KEYS, THEME_COLOR_LABELS, THEME_COLORS, defaultCustomTheme, customThemeColors, normCustomTheme, accentHue, SEARCH_PROVIDERS, READER_PROVIDERS, FEATURES, LIBRARY_ITEMS, FEATURE_TABS, FEATURE_WIDGETS, DEFAULT_LIBRARY_SHOW, DEFAULT_ADVANCED, featOn, normSearch, normAdvanced, normLogDetail, RESEARCH_AGENT_ROUNDS_DEFAULT, RESEARCH_AGENT_ROUNDS_MIN, RESEARCH_AGENT_ROUNDS_MAX, normDocs, usable, modelsOf, modelNameOf, helperRef, splitHelperRef, favRef, toggleFavRef, effortClassifierOf, TOOL_ROUNDS_DEFAULT, TOOL_ROUNDS_MIN, TOOL_ROUNDS_BASE_MAX, TOOL_ROUNDS_MAX, toolRoundLimitOf, isToolRoundsUnlimited, GENERAL_PROMPT_TEXT, STARTUP_MODES, normStartup, PROMPT_RECALL_MODES, normPromptRecall, type PromptRecallMode, type Kind, type FeatureId, type DocPrefs, type ModelPrice } from '../store'
 import { normSkills, resolveSkill, validateCustomSkill, enabledSkills, BUILTIN_SKILLS, SKILL_TOOL_NAME, type SkillState } from '../skills'
 import { findDuplicatePairs, mergeMemory } from '../recall'
 import { TOOL_REGISTRY, can, stream } from '../engine'
@@ -356,7 +357,10 @@ function ModelsEditor({ e, update }: { e: any; update: (p: object) => void }) {
     document.addEventListener('keydown', dismiss, true)
     return () => document.removeEventListener('keydown', dismiss, true)
   }, [picker])
-  const setModels = (next: string[]) => update({ models: next, model: next.find((m) => m.trim())?.trim() ?? '', modelsAt: Date.now() })
+  // Every model-list edit stamps each added or removed id, so a deletion is
+  // something the sync merge can represent instead of a shorter array that a
+  // stale copy can overwrite.
+  const setModels = (next: string[]) => update(modelListEdit({ ...e, models }, next))
   // Stable row identities (value + occurrence) so rows keep their content across reorders.
   const rowIds = useMemo(() => {
     const seen = new Map<string, number>()
@@ -413,7 +417,7 @@ function ModelsEditor({ e, update }: { e: any; update: (p: object) => void }) {
     const modelNames = Object.fromEntries(adding.flatMap(id => { const name = itemFor(id)?.name; return name ? [[id, name] as const] : [] }))
     const modelCtx = Object.fromEntries(adding.flatMap(id => { const ctx = itemFor(id)?.context; return ctx && Number(ctx) > 0 ? [[id, Number(ctx)] as const] : [] }))
     const modelPrices = Object.fromEntries(adding.flatMap(id => { const price = priceFrom(itemFor(id)); return price && !e.prices?.[id] ? [[id, price] as const] : [] }))
-    update({ models: next, model: next[0] ?? '', modelsAt: Date.now(), modelNames: { ...e.modelNames, ...modelNames }, modelContext: { ...e.modelContext, ...modelCtx }, ...(Object.keys(modelPrices).length ? { prices: { ...e.prices, ...modelPrices } } : {}), modelEfforts: { ...e.modelEfforts, ...Object.fromEntries(effortEntries) }, modelEffortSource: { ...e.modelEffortSource, ...Object.fromEntries(effortEntries.map(([id, levels]) => [id, levels.length ? 'auto' : itemFor(id)?.source ?? 'manual'])) } })
+    update({ ...modelListEdit({ ...e, models }, next), modelNames: { ...e.modelNames, ...modelNames }, modelContext: { ...e.modelContext, ...modelCtx }, ...(Object.keys(modelPrices).length ? { prices: { ...e.prices, ...modelPrices } } : {}), modelEfforts: { ...e.modelEfforts, ...Object.fromEntries(effortEntries) }, modelEffortSource: { ...e.modelEffortSource, ...Object.fromEntries(effortEntries.map(([id, levels]) => [id, levels.length ? 'auto' : itemFor(id)?.source ?? 'manual'])) } })
     setPicker(false); setSelectedModels([]); setSearchIdea(null)
   }
   return <div className="space-y-2">
@@ -763,9 +767,7 @@ function Eps() {
     const names = Object.fromEntries(found.entries.filter((x) => x.name).map((x) => [x.id, x.name]))
     const contexts = Object.fromEntries(found.entries.filter((x) => x.context && x.context > 0).map((x) => [x.id, x.context!]))
     s.upd('eps', endpoint.id, {
-      models,
-      model: provider.model || models[0] || '',
-      modelsAt: Date.now(),
+      ...modelListEdit({ ...live, models: live.models ?? endpoint.models }, models, Date.now(), provider.model || models[0] || ''),
       ...(Object.keys(names).length ? { modelNames: { ...live.modelNames, ...names } } : {}),
       ...(Object.keys(contexts).length ? { modelContext: { ...live.modelContext, ...contexts } } : {}),
     })
@@ -1342,9 +1344,14 @@ function Tools() {
       <ImageGenCard />
       <Anchor id="deep-research">
       <Card icon={Brain} title="Deep research" sub="@research(query)">
-        <p className="text-sm">Multi-step investigation: the model drafts a research plan for you to review, then searches and reads on its own within the depth budget, narrating progress as it goes, ending in a long cited report opened from a card in a document-styled side panel.</p>
+        <p className="text-sm">Multi-step investigation: the model scopes the topic, drafts a research plan for you to review (and may ask you a few questions first), then searches and reads within the depth budget, narrating progress as it goes, ending in a long cited report opened from a card in a document-styled side panel.</p>
         <p className="text-sm text-mu">Start with @research(topic), the + menu → Deep research…, or a model-suggested “Deep research …” chip. Every run asks for Quick, Standard, or Thorough, then shows a plan you can edit or start; a stopped run can be resumed where it left off.</p>
-        <p className="text-sm text-mu">Failed searches and unreadable pages are shown in the progress card but do not use up the run's search or page budget.</p>
+        <p className="text-sm text-mu">Thorough runs lead a team: each delegation round starts up to 3 independent research subagents with their own generous search and page-read budgets. The lead reads their cited reports, can ask any agent a follow-up that it answers from its existing evidence or by searching further, and can open more rounds until the territory is covered. Failed searches and unreadable pages are shown in the progress card but do not use up any budget.</p>
+        <Anchor id="research-rounds">
+        <Field label={`Thorough subagent rounds · ${s.researchRounds ?? RESEARCH_AGENT_ROUNDS_DEFAULT}`} hint="How many rounds of parallel research subagents a Thorough run may open. Each round delegates up to 3 agents; the lead can question them between rounds. Higher values mean deeper coverage and more spend.">
+          <RangeSlider label="Thorough subagent rounds" min={RESEARCH_AGENT_ROUNDS_MIN} max={RESEARCH_AGENT_ROUNDS_MAX} step={1} value={s.researchRounds ?? RESEARCH_AGENT_ROUNDS_DEFAULT} valueText={`${s.researchRounds ?? RESEARCH_AGENT_ROUNDS_DEFAULT} round${(s.researchRounds ?? RESEARCH_AGENT_ROUNDS_DEFAULT) === 1 ? '' : 's'}`} set={(v) => s.patch({ researchRounds: Math.round(v) })} className="w-full" />
+        </Field>
+        </Anchor>
       </Card>
       </Anchor>
       </Section>
@@ -2482,11 +2489,24 @@ function Chats() {
         <Toggle on={s.prefs.tempShowStreaming !== false} set={(tempShowStreaming) => s.patch({ prefs: { ...s.prefs, tempShowStreaming } })} label="Keep replying temporary chats listed" />
       </div>
       </Anchor>
+      <Anchor id="temp-finished">
+      <div className="flex items-center justify-between gap-3 rounded-xl bg-surf p-3">
+        <div className="min-w-0"><div className="text-sm font-medium">Keep finished temporary chats listed</div><div className="text-xs text-mu">A temporary chat whose reply finished while you were in another chat stays in the sidebar until you open it, even when the list above shows only the chat you have open. Turn this off to hide it as soon as the reply is done.</div></div>
+        <Toggle on={s.prefs.tempShowDone !== false} set={(tempShowDone) => s.patch({ prefs: { ...s.prefs, tempShowDone } })} label="Keep finished temporary chats listed" />
+      </div>
+      </Anchor>
       <div className="pt-1"><Btn v="soft" icon={Sparkles} onClick={() => goSetting('look#temp-glow')}>Open glow settings</Btn></div>
       </Section>
       </Anchor>
       <Section title="Behavior" desc="How the app handles sending messages and opening chats.">
       {row('enter-sends', 'enterSends', 'Enter sends the message', 'Turn off to send with the button and use Enter for new lines.')}
+      <Anchor id="send-while-busy">
+      <div className="rounded-xl bg-surf p-3 space-y-2">
+        <div className="text-sm font-medium">Sending while a reply is running</div>
+        <div className="text-xs text-mu">Queue holds the message and sends it as soon as the current reply finishes. Stop first keeps the send button as Stop, so the running reply has to end before a new message can go.</div>
+        <Seg v={(s.prefs.sendWhileBusy ?? 'queue') as 'queue' | 'stop'} set={(sendWhileBusy) => s.patch({ prefs: { ...s.prefs, sendWhileBusy } })} opts={[['queue', 'Queue'], ['stop', 'Stop first']]} />
+      </div>
+      </Anchor>
       <Anchor id="prompt-recall">
       <div className="rounded-xl bg-surf p-3 space-y-2">
         <div className="text-sm font-medium">Prompt recall (↑ / ↓)</div>

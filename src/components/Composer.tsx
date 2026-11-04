@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { useShallow } from 'zustand/react/shallow'
-import { Plus, FileUp, FileText, ArrowUp, Square, CornerDownRight, ChevronRight, ListMusic, Cpu, ScrollText, Settings, Search, BookOpen, X, TriangleAlert, Wrench, Link as LinkIcon, ScanText, Loader2, Mic, Star, GripVertical, Check, Globe } from 'lucide-react'
+import { Plus, FileUp, FileText, ArrowUp, Square, CornerDownRight, ChevronRight, ListMusic, ListPlus, Cpu, ScrollText, Settings, Search, BookOpen, X, TriangleAlert, Wrench, Link as LinkIcon, ScanText, Loader2, Mic, Star, GripVertical, Check, Globe } from 'lucide-react'
 import { useS, usable, modelsOf, modelNameOf, featOn, normDocs, normSearch, fetchOptsOf, effortClassifierOf, helperRef, splitHelperRef, toggleFavRef, type Att, type Ep } from '../store'
 import { CI, orderTools } from '../meta'
 import { composerWidth } from '../layout'
@@ -279,6 +279,8 @@ export function Composer({ cfg }: { cfg: (t: string) => void }) {
   // Streaming is per chat: a reply running in another chat leaves this
   // composer free to send, and Stop here cancels only this chat's reply.
   const streaming = !!s.busyChats?.[s.chat]
+  const queueMode = streaming && (s.prefs.sendWhileBusy ?? 'queue') === 'queue'
+  const queued = s.queued?.[s.chat]?.length ?? 0
   const [hi, setHi] = useState(0)
   // Focus the composer on load so typing starts here straight away. Skip when
   // a dialog (welcome, settings, palette) owns focus, and never scroll the chat.
@@ -463,7 +465,7 @@ export function Composer({ cfg }: { cfg: (t: string) => void }) {
   }
   const ready = !!v.trim() || att.length > 0
   const submit = async () => {
-    if (streaming) return
+    if (streaming && !queueMode) return
     if (!s.eps.length) {
       s.add('eps')
       s.patch({ notice: { t: 'No endpoint is ready yet. Choose a provider preset, add a model and key, test the connection, then send again.', tab: 'eps', label: 'Add endpoint' } })
@@ -731,7 +733,7 @@ export function Composer({ cfg }: { cfg: (t: string) => void }) {
                 }
               }
               if (e.key === 'Enter') {
-                if (!e.shiftKey && s.prefs.enterSends && !streaming) { e.preventDefault(); void submit(); return }
+                if (!e.shiftKey && s.prefs.enterSends && (!streaming || queueMode)) { e.preventDefault(); if (ready) void submit(); return }
                 // Shift+Enter (or Enter when send-on-enter is off) inserts a
                 // real line break instead of letting the browser invent divs.
                 e.preventDefault()
@@ -838,6 +840,11 @@ export function Composer({ cfg }: { cfg: (t: string) => void }) {
             }}
           </Pop>}
           <span className="flex-1" />
+          {queued > 0 && (
+            <span title={`${queued} message${queued === 1 ? '' : 's'} waiting for this reply to finish`} className="inline-flex items-center gap-1 text-xs text-mu">
+              <ListPlus size={13} />{queued} queued
+            </span>
+          )}
           {featOn(s, 'voice') && dictationAvailable() && (
             <button
               type="button"
@@ -850,7 +857,15 @@ export function Composer({ cfg }: { cfg: (t: string) => void }) {
               <Mic size={18} />
             </button>
           )}
-          <Btn icon={streaming ? StopIcon : ArrowUp} v={streaming || ready ? 'solid' : 'soft'} onClick={streaming ? s.stop : submit} title={streaming ? 'Stop' : 'Send'} className="rounded-full" />
+          {queueMode && <Btn icon={StopIcon} v="soft" onClick={s.stop} title="Stop this reply" className="rounded-full" />}
+          <Btn
+            icon={streaming && !queueMode ? StopIcon : queueMode ? ListPlus : ArrowUp}
+            v={streaming || ready ? 'solid' : 'soft'}
+            onClick={streaming && !queueMode ? s.stop : submit}
+            title={streaming && !queueMode ? 'Stop' : queueMode ? 'Queue this message' : 'Send'}
+            disabled={queueMode && !ready}
+            className="rounded-full"
+          />
         </div>
       </div>
       </div>

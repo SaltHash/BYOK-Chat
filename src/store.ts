@@ -12,10 +12,10 @@ import type { EndpointAuth } from './endpointAuth'
 import { blobPut } from './storage/durable'
 import { normVoice, BLANK_VOICE, type VoicePrefs } from './voice'
 import { DEFAULT_SKILL_STATE, normSkills, enabledSkills, getSkillInstructions, composeSystemPrompt, SKILL_TOOL_NAME, type SkillState, type ResolvedSkill } from './skills'
-import { PLAN_SCOPE_MAX, PLAN_SCOPE_SYSTEM, RESEARCH_ABSTRACT_ASK, RESEARCH_MIN_SEARCHES, RESEARCH_REASONING_CHARS, RESEARCH_REPORT_ASK, RESEARCH_TIERS, citationRepairAsk, citationUncitedAsk, compactResearchRounds, countedSteps, estimateResearchUsage, fallbackPlan, looksLikeReport, parseResearchPlan, parseResearchRequest, planNote, planUserAsk, reportSample, researchAbstract, researchMinAsk, researchSystemNote, sanitizeCitations, setStep, tierOf, withStepLead, type ResearchPlan, type ResearchState, type ResearchTierId } from './research'
-export { tierOf, RESEARCH_TIERS }
-export type { ResearchState, ResearchTierId, ResearchPlan, ResearchPlanStep } from './research'
-import { collectMessageSources, citationCoverage, citationRule, createCiteIds } from './citations'
+import { AGENT_FOLLOW_UP_READS, AGENT_FOLLOW_UP_SEARCHES, AGENT_FOLLOW_UPS_MAX, PLAN_SCOPE_MAX, PLAN_SCOPE_SYSTEM, RESEARCH_ABSTRACT_ASK, RESEARCH_AGENT_ROUNDS_DEFAULT, RESEARCH_AGENT_ROUNDS_MIN, RESEARCH_AGENT_ROUNDS_MAX, RESEARCH_MIN_SEARCHES, RESEARCH_REASONING_CHARS, RESEARCH_REPORT_ASK, RESEARCH_TIERS, agentAsk, agentEvidenceDigest, agentEvidenceSearches, agentFollowUpNote, agentResultNote, agentRoundsUsed, agentSources, agentSystemNote, citationRepairAsk, citationUncitedAsk, compactResearchRounds, countedSteps, estimateResearchUsage, fallbackPlan, looksLikeReport, normResearchAgentRounds, parseResearchPlan, parseResearchRequest, planNote, planUserAsk, reportSample, researchAbstract, researchDelegationAsk, researchMinAsk, researchSteerNote, researchSystemNote, sanitizeCitations, setStep, tierOf, withStepLead, type ResearchAgent, type ResearchAnswer, type ResearchPlan, type ResearchState, type ResearchTask, type ResearchTierId } from './research'
+export { tierOf, RESEARCH_TIERS, RESEARCH_AGENT_ROUNDS_DEFAULT, RESEARCH_AGENT_ROUNDS_MIN, RESEARCH_AGENT_ROUNDS_MAX, normResearchAgentRounds }
+export type { ResearchState, ResearchTierId, ResearchPlan, ResearchPlanStep, ResearchAgent, ResearchQuestion, ResearchAnswer } from './research'
+import { collectMessageSources, citationCoverage, citationRule, createCiteIds, mergeSources } from './citations'
 import { hintForLog, getErrorCode, classifyModelError, type ErrorCode } from './errors'
 import { celebrate, normGlobalPrompt, type GlobalPrompt } from './flair'
 // Set by workspace writes; read once when a reply ends to decide on the completion cue.
@@ -54,7 +54,7 @@ export type ModelProvider = { tag: string; name: string }
 /* Explicit names (preferred for new code); short aliases kept as deprecated. */
 export type Endpoint = { id: string; name: string; type: 'openai' | 'anthropic'; url: string; key: string; auth?: EndpointAuth; headers?: string; model: string; preset?: string; endpointId?: string; endpointFilter?: 'author' | 'provider'; models?: string[]; /** When the model list was last edited. Sync uses it to resolve deletions,
    *  which otherwise look identical to an endpoint that never had the model. */
-  modelsAt?: number; modelNames?: Record<string, string>; modelContext?: Record<string, number>; modelProviders?: Record<string, ModelProvider>; modelEfforts?: Record<string, string[]>; modelEffortSource?: Record<string, 'auto' | 'manual'>; modelsMode?: 'separate' | 'playlist'; prices?: Record<string, ModelPrice>; accountId?: string; gatewayId?: string; on: boolean }
+  modelsAt?: number; modelAdds?: Record<string, number>; modelDrops?: Record<string, number>; modelNames?: Record<string, string>; modelContext?: Record<string, number>; modelProviders?: Record<string, ModelProvider>; modelEfforts?: Record<string, string[]>; modelEffortSource?: Record<string, 'auto' | 'manual'>; modelsMode?: 'separate' | 'playlist'; prices?: Record<string, ModelPrice>; accountId?: string; gatewayId?: string; on: boolean }
 export type Ep = Endpoint
 export type Playlist = { id: string; name: string; sys: string; e: string[]; cls: string; clsModel?: string; rule: string }
 export type Pl = Playlist
@@ -411,7 +411,7 @@ export const normPromptRecall = (v: unknown): PromptRecallMode =>
 export type LogDetail = 'compact' | 'standard' | 'verbose'
 export const normLogDetail = (v: unknown): LogDetail => v === 'compact' || v === 'verbose' ? v : 'standard'
 
-export const DEFAULT_PREFS: S['prefs'] = { showBy: true, showLog: true, showTps: false, enterSends: true, autoTitle: true, temporaryByDefault: false, seasonal: true, cues: false, showModelPricing: false, showContextMeter: true, customSearch: true, stylePreset: 'modern', density: 'comfortable', uiSpacing: {}, showTimestamps: false, alwaysShowActions: false, titleEp: '', titleModel: '', effortEp: '', effortModel: '', recallEp: '', recallModel: '', tempHours: 3, startup: 'recent', tempShow: 2, tempShowStreaming: true, tempGlow: 1, tempGlowSent: 0.5, draftSurvive: 'both', fontBody: 'system', fontMono: 'system', fontHeader: 'system', modelPrimary: 'name', modelSecondary: 'none', paletteMax: 320, chatWidth: 'standard', settingsWidth: 1024, settingsHeight: 780, modelPickerHeight: 480, favoritesSection: true, hideFavoritesInProviders: true, collapsedProviders: [], sidebarWidth: 288, widgetWidth: 320, workspaceWidth: 0.4, workspaceSplit: 0.2,  modalBlur: 12, settingsOpacity: 55, streamFade: 0.3, streamMd: true, remoteImages: false, glassComposer: true, glassBlur: 14, glassOpacity: 80, showDisabledFeatures: false, proxyMode: 'auto', textScale: 100, codeWrap: false, reduceTransparency: false, promptRecall: 'empty', highContrast: false, hideFavoriteProvider: false, logDetail: 'standard', logTiming: true, logModels: true, codeLines: false, codeMaxHeight: 0, pinContext: true, pinContextPercent: 50, keepUsageHistory: true, compactAuto: true, compactAt: 80 }
+export const DEFAULT_PREFS: S['prefs'] = { showBy: true, showLog: true, showTps: false, enterSends: true, sendWhileBusy: 'queue', autoTitle: true, temporaryByDefault: false, seasonal: true, cues: false, showModelPricing: false, showContextMeter: true, customSearch: true, stylePreset: 'modern', density: 'comfortable', uiSpacing: {}, showTimestamps: false, alwaysShowActions: false, titleEp: '', titleModel: '', effortEp: '', effortModel: '', recallEp: '', recallModel: '', tempHours: 3, startup: 'recent', tempShow: 2, tempShowStreaming: true, tempShowDone: true, tempGlow: 1, tempGlowSent: 0.5, draftSurvive: 'both', fontBody: 'system', fontMono: 'system', fontHeader: 'system', modelPrimary: 'name', modelSecondary: 'none', paletteMax: 320, chatWidth: 'standard', settingsWidth: 1024, settingsHeight: 780, modelPickerHeight: 480, favoritesSection: true, hideFavoritesInProviders: true, collapsedProviders: [], sidebarWidth: 288, widgetWidth: 320, workspaceWidth: 0.4, workspaceSplit: 0.2,  modalBlur: 12, settingsOpacity: 55, streamFade: 0.3, streamMd: true, remoteImages: false, glassComposer: true, glassBlur: 14, glassOpacity: 80, showDisabledFeatures: false, proxyMode: 'auto', textScale: 100, codeWrap: false, reduceTransparency: false, promptRecall: 'empty', highContrast: false, hideFavoriteProvider: false, logDetail: 'standard', logTiming: true, logModels: true, codeLines: false, codeMaxHeight: 0, pinContext: true, pinContextPercent: 50, keepUsageHistory: true, compactAuto: true, compactAt: 80 }
 export const DEFAULT_PARAMS: S['params'] = { def: true, temp: 0.7, topp: 1, max: 4096, maxToolRounds: 8, highToolsUnlocked: false }
 export const DEFAULT_WIDGET_PREFS: S['widgetPrefs'] = { usageGroup: 'endpoint', usageMode: 'success', usageFormat: '{in}/{out}', usageTotal: false, usagePeriod: 'all', lastSpeed: true, timeUnit: 'auto', widgetOrder: WIDGETS.map(([k]) => k), shortcuts: KEYS.map(([k]) => k), contextLimit: 128000, showDisabledEndpoints: true, scratchRows: 6, snippetLimit: 20, costDecimals: 4, activePromptsOnly: false, charsPerToken: 4, hideDoneTodos: false }
 const SEARCH_VALID_PROVIDERS: SearchProvider[] = ['tinyfish', 'you', 'exa', 'firecrawl', 'brightdata', 'jina']
@@ -531,6 +531,8 @@ type S = {
   codeRun: CodeRunPrefs
   voicePrefs: VoicePrefs
   search: SearchPrefs
+  /** Delegation rounds a Thorough deep-research run may open (1-6, default 3). */
+  researchRounds: number
   skills: SkillState[]
   sel: { k: 'ep' | 'pl'; id: string; model?: string } | null; pr: string
   /** Starred models as `<endpointId>::<model>` refs, newest last. */
@@ -547,7 +549,7 @@ type S = {
   customDarkTheme: CustomTheme
   customLightTheme: CustomTheme
   setupDone: boolean
-  prefs: { showBy: boolean; showLog: boolean; showTps: boolean; enterSends: boolean; autoTitle: boolean; temporaryByDefault: boolean; seasonal?: boolean; cues?: boolean; showModelPricing: boolean; showContextMeter: boolean; customSearch?: boolean; /** Hide the provider name beside starred models in the picker's Favorites section. */ hideFavoriteProvider?: boolean; /** How much detail the Process-to-answer panel shows per step. */ logDetail?: LogDetail; /** Show each step's duration in the process log. */ logTiming?: boolean; /** Show the model beside each step in the process log. */ logModels?: boolean; /** Show line numbers in code blocks. */ codeLines?: boolean; /** Max code-block height in pixels before scrolling (0 = no cap). */ codeMaxHeight?: number; /** Include the pinned reply in the model context. */ pinContext?: boolean; /** Maximum slice of the context window the pinned reply may use (5–50%). */ pinContextPercent?: number; /** Replace older turns with a model-written handoff when the context nears the limit. */ compactAuto?: boolean; /** Context share at which auto-compaction starts (5–100, in 5% steps). */ compactAt?: number; titleEp: string; titleModel?: string; effortEp: string; effortModel?: string; recallEp: string; recallModel?: string; tempHours: number; startup?: StartupMode; tempShow?: number; /** Keep temporary chats that are still replying listed past the temporary-chats-shown limit. */ tempShowStreaming?: boolean; tempGlow?: number; tempGlowSent?: number; draftSurvive?: 'off' | 'new' | 'chats' | 'both'; fontBody: string; fontMono: string; fontHeader: string; modelPrimary: 'id' | 'name'; modelSecondary: 'none' | 'provider' | 'id' | 'name'; modelDisplay?: 'none' | 'name' | 'provider' | 'both'; paletteMax: number; chatWidth: 'narrow' | 'standard' | 'wide'; settingsWidth: number; settingsHeight: number; modelPickerHeight: number; /** Show a Favorites section at the top of the model picker. */ favoritesSection?: boolean; /** Hide starred models from their normal provider groups. */ hideFavoritesInProviders?: boolean; /** Endpoint ids whose provider groups are collapsed in the picker. */ collapsedProviders?: string[]; sidebarWidth?: number; widgetWidth?: number; workspaceWidth?: number; workspaceSplit?: number; modalBlur: number; settingsOpacity: number; routingMode?: RoutingMode; streamFade: number; streamMd: boolean; remoteImages?: boolean; glassComposer?: boolean; /** Composer glass backdrop blur in pixels (0–40). */ glassBlur?: number; /** Composer glass surface opacity percent (0–100). */ glassOpacity?: number; /** Keep settings for disabled features visible, marked off, instead of hiding them. */ showDisabledFeatures?: boolean; proxyMode?: 'auto' | 'always' | 'off';  stylePreset: StylePreset; density: Density; uiSpacing?: SpacingOverrides; showTimestamps?: boolean; alwaysShowActions?: boolean; /** Root font-size percent (50–200, 100 = unchanged). */ textScale?: number; /** Soft-wrap long lines inside code blocks instead of scrolling sideways. */ codeWrap?: boolean; /** Disable glass, blur and dropped shadows (flat, opaque surfaces). */ reduceTransparency?: boolean; /** When ↑/↓ recall sent prompts; 'off' also stops recording them. */ promptRecall?: PromptRecallMode; /** Raise muted-text and border contrast beyond the theme's values. */ highContrast?: boolean; /** Keep every attempt in a permanent ledger so usage survives deleting, archiving or expiring its chat. Off keeps only the attempts still on saved chats. */ keepUsageHistory?: boolean }
+  prefs: { showBy: boolean; showLog: boolean; showTps: boolean; enterSends: boolean; autoTitle: boolean; temporaryByDefault: boolean; seasonal?: boolean; cues?: boolean; showModelPricing: boolean; showContextMeter: boolean; customSearch?: boolean; /** Hide the provider name beside starred models in the picker's Favorites section. */ hideFavoriteProvider?: boolean; /** How much detail the Process-to-answer panel shows per step. */ logDetail?: LogDetail; /** Show each step's duration in the process log. */ logTiming?: boolean; /** Show the model beside each step in the process log. */ logModels?: boolean; /** Show line numbers in code blocks. */ codeLines?: boolean; /** Max code-block height in pixels before scrolling (0 = no cap). */ codeMaxHeight?: number; /** Include the pinned reply in the model context. */ pinContext?: boolean; /** Maximum slice of the context window the pinned reply may use (5–50%). */ pinContextPercent?: number; /** Replace older turns with a model-written handoff when the context nears the limit. */ compactAuto?: boolean; /** Context share at which auto-compaction starts (5–100, in 5% steps). */ compactAt?: number; /** Queue a message sent while the same chat is replying, or require a stop first. */ sendWhileBusy?: 'queue' | 'stop'; titleEp: string; titleModel?: string; effortEp: string; effortModel?: string; recallEp: string; recallModel?: string; tempHours: number; startup?: StartupMode; tempShow?: number; /** Keep temporary chats that are still replying listed past the temporary-chats-shown limit. */ tempShowStreaming?: boolean; /** Keep temporary chats whose reply finished in the background listed until they are opened. */ tempShowDone?: boolean; tempGlow?: number; tempGlowSent?: number; draftSurvive?: 'off' | 'new' | 'chats' | 'both'; fontBody: string; fontMono: string; fontHeader: string; modelPrimary: 'id' | 'name'; modelSecondary: 'none' | 'provider' | 'id' | 'name'; modelDisplay?: 'none' | 'name' | 'provider' | 'both'; paletteMax: number; chatWidth: 'narrow' | 'standard' | 'wide'; settingsWidth: number; settingsHeight: number; modelPickerHeight: number; /** Show a Favorites section at the top of the model picker. */ favoritesSection?: boolean; /** Hide starred models from their normal provider groups. */ hideFavoritesInProviders?: boolean; /** Endpoint ids whose provider groups are collapsed in the picker. */ collapsedProviders?: string[]; sidebarWidth?: number; widgetWidth?: number; workspaceWidth?: number; workspaceSplit?: number; modalBlur: number; settingsOpacity: number; routingMode?: RoutingMode; streamFade: number; streamMd: boolean; remoteImages?: boolean; glassComposer?: boolean; /** Composer glass backdrop blur in pixels (0–40). */ glassBlur?: number; /** Composer glass surface opacity percent (0–100). */ glassOpacity?: number; /** Keep settings for disabled features visible, marked off, instead of hiding them. */ showDisabledFeatures?: boolean; proxyMode?: 'auto' | 'always' | 'off';  stylePreset: StylePreset; density: Density; uiSpacing?: SpacingOverrides; showTimestamps?: boolean; alwaysShowActions?: boolean; /** Root font-size percent (50–200, 100 = unchanged). */ textScale?: number; /** Soft-wrap long lines inside code blocks instead of scrolling sideways. */ codeWrap?: boolean; /** Disable glass, blur and dropped shadows (flat, opaque surfaces). */ reduceTransparency?: boolean; /** When ↑/↓ recall sent prompts; 'off' also stops recording them. */ promptRecall?: PromptRecallMode; /** Raise muted-text and border contrast beyond the theme's values. */ highContrast?: boolean; /** Keep every attempt in a permanent ledger so usage survives deleting, archiving or expiring its chat. Off keeps only the attempts still on saved chats. */ keepUsageHistory?: boolean }
   widgets: Record<string, boolean>; widgetPrefs: { usageGroup: 'endpoint' | 'model'; usageMode: 'success' | 'tokens'; usageFormat: string; usageTotal: boolean; usagePeriod: 'session' | 'day' | 'week' | 'month' | 'custom' | 'all'; usageFrom?: string; usageTo?: string; lastSpeed: boolean; timeUnit: 'ms' | 's' | 'auto'; widgetOrder: string[]; shortcuts: string[]; contextLimit: number; showDisabledEndpoints: boolean; scratchRows: number; snippetLimit: number; costDecimals: number; activePromptsOnly: boolean; charsPerToken: number; hideDoneTodos: boolean }; rail: boolean; pad: string; snips: string[]
   params: { def: boolean; temp: number; topp: number; max: number; maxToolRounds: number; highToolsUnlocked: boolean }; effort: Record<string, string>
   workspacePrefs: WorkspacePrefs
@@ -578,6 +580,12 @@ type S = {
   /** Chat ids streaming a reply right now. `busy` is true while any of them
    *  runs, so per-chat controls read this map instead of the global flag. */
   busyChats: Record<string, true>
+  /** Chat ids whose reply finished while another chat was open. Cleared when
+   *  that chat is opened; keeps a finished temporary chat listed in the sidebar. */
+  doneChats: Record<string, true>
+  /** Messages typed while a chat is replying, waiting for the current run to
+   *  end. Held per chat in memory only: they are dispatched, not persisted. */
+  queued: Record<string, { v: string; att: Att[] }[]>
   /** Pending new-chat descriptor. A fresh chat stays out of the sidebar and the
    *  persisted store until its first message is sent; `send` materializes it. */
   newChatPending?: 'temporary' | 'plain' | null
@@ -596,6 +604,10 @@ type S = {
   pinMsg: (id: string) => void
   send: (v: string, att: Att[]) => Promise<boolean>
   stop: () => void
+  /** Abort every chat currently streaming a reply. */
+  stopAll: () => void
+  /** Re-run a finished report's plan from the start against fresh sources. */
+  rerunResearch: (mid: string) => void
   regen: () => void
   /** Re-run the request behind a failed final reply, replacing it. */
   retryMsg: (id: string) => void
@@ -605,6 +617,12 @@ type S = {
   startResearch: (mid: string) => void
   resumeResearch: (mid: string) => void
   updateResearchPlan: (mid: string, plan: ResearchPlan) => void
+  /** Save the user's answers to the plan's clarifying questions. */
+  answerResearchQuestions: (mid: string, answers: ResearchAnswer[]) => void
+  /** Skip the clarifying questions and show the plan as drafted. */
+  skipResearchQuestions: (mid: string) => void
+  /** Add, replace, or clear the focus the lead sees on its next round. */
+  steerResearch: (mid: string, text: string) => void
   stopResearch: (mid: string) => void
   resetStats: () => void
   /** Seed the ledger from chats saved before it existed (first run only). */
@@ -900,6 +918,16 @@ export const useS = create<S>()(
         return { busyChats, busy: Object.keys(busyChats).length > 0 }
       })
       const beginRun = (chatId: string, run: Run) => { runs.set(chatId, run); setChatBusy(chatId, true) }
+      /* Dispatch one queued message after the current run has fully unwound.
+         The timeout keeps the new run from replacing the finishing run's busy
+         bookkeeping in the same tick. */
+      const flushQueued = (chatId: string) => {
+        const q = get().queued?.[chatId] ?? []
+        if (!q.length) return
+        const [next, ...rest] = q
+        set((s) => ({ queued: { ...(s.queued ?? {}), [chatId]: rest } }))
+        setTimeout(() => { void get().send(next.v, next.att) }, 0)
+      }
       /* Only the run that still owns the chat may end it: a stopped run that is
          still unwinding must not clear the busy state of the run that replaced
          it. */
@@ -907,6 +935,10 @@ export const useS = create<S>()(
         if (runs.get(chatId) !== run) return
         runs.delete(chatId)
         setChatBusy(chatId, false)
+        // A reply that ends in a background chat stays marked until that chat
+        // is opened; the temporary-chats list reads this to keep it visible.
+        if (get().chat !== chatId) set((s) => ({ doneChats: { ...(s.doneChats ?? {}), [chatId]: true } }))
+        flushQueued(chatId)
       }
       /* Permanent usage history: once a reply finishes, copy its attempts into
        * the ledger so its tokens and cost keep counting after the chat is
@@ -1225,7 +1257,7 @@ export const useS = create<S>()(
           set({ notice: p.err })
           return
         }
-        const tier = tierOf(tierId)
+        const tier = tierOf(tierId, normResearchAgentRounds(get().researchRounds))
         const r: Run = { stopped: false, ctl: null }
         beginRun(chatId, r)
         const log: Try[] = []
@@ -1253,7 +1285,7 @@ export const useS = create<S>()(
             const pinCpt = Math.min(10, Math.max(1, Number(get().widgetPrefs?.charsPerToken) || 4))
             const pinned = pinnedContextFor(get().chats.find((c) => c.id === chatId), get().prefs, pinLimit, pinCpt)
             const sys = `${p.sys}${p.sys ? '\n\n' : ''}${PLAN_SCOPE_SYSTEM}${pinned ? `\n\n${pinned.note}` : ''}`
-            const ask = planUserAsk(query, tier, new Date(), followUp)
+            const ask = planUserAsk(query, tier, new Date(), followUp, researchMsg(chatId, mid)?.research?.answers)
             const existingPlan = researchMsg(chatId, mid)?.research?.plan
             const wirePlan = (rounds: { text: string; calls: ToolResult[] }[]) => wire(e, [
               { id: mid, r: 'user' as const, t: ask },
@@ -1306,7 +1338,12 @@ export const useS = create<S>()(
         const finalPlan = parsed ?? fallbackPlan(query)
         const planWarn = parsed ? undefined : 'The model did not return a usable plan, so this default one is shown. Edit it or start the research.'
         const shouldStart = parsed && parsed.startNow === true
-        patchRs(chatId, mid, (rs) => ({ ...rs, status: 'plan', plan: finalPlan, error: planWarn }))
+        // Ask the plan's clarifying questions before the plan is confirmed,
+        // unless the user already told the model to begin immediately. The
+        // questions were drafted after the planning pass's context searches, so
+        // they target the real ambiguity in this topic.
+        const askQuestions = !!finalPlan.questions?.length && !shouldStart && !researchMsg(chatId, mid)?.research?.answers?.length
+        patchRs(chatId, mid, (rs) => ({ ...rs, status: askQuestions ? 'questions' : 'plan', plan: finalPlan, error: planWarn }))
         // A chat whose first message is a deep-research request is named after
         // the report's plan title (a short topic title) instead of the raw user
         // message. Never clobber a title the user renamed.
@@ -1338,7 +1375,7 @@ export const useS = create<S>()(
           set({ notice: p.err })
           return
         }
-        const tier = tierOf(tierId)
+        const tier = tierOf(tierId, normResearchAgentRounds(get().researchRounds))
         const r: Run = { stopped: false, ctl: null }
         beginRun(chatId, r)
         const log: Try[] = []
@@ -1359,8 +1396,16 @@ export const useS = create<S>()(
         const baseSearches = countedSteps(baseSteps, 'search')
         const baseReads = countedSteps(baseSteps, 'read')
         const planApproved = getResearch()?.plan ?? null
+        const answers = getResearch()?.answers
+        // Subagents carried over from a resumed run keep their rounds; a fresh
+        // run starts with no team and no leftover evidence sessions.
+        const baseAgents = resume ? (getResearch()?.agents ?? []) : []
+        let agentRoundsRun = agentRoundsUsed(baseAgents)
+        // Continue numbering from the highest existing id, so a resumed run
+        // never reuses an agent id (follow-ups resolve agents by id).
+        let agentN = baseAgents.reduce((n, a) => Math.max(n, Number(String(a.id).replace(/\D/g, '')) || 0), 0)
         const pinned = pinnedContextFor(get().chats.find((c) => c.id === chatId), get().prefs, ctxLimit, cpt)
-        const system = `${p.sys}${p.sys ? '\n\n' : ''}${researchSystemNote(query, tier, new Date(), planApproved)}${pinned ? `\n\n${pinned.note}` : ''}`
+        const system = `${p.sys}${p.sys ? '\n\n' : ''}${researchSystemNote(query, tier, new Date(), planApproved, answers)}${pinned ? `\n\n${pinned.note}` : ''}`
         const histFor = () => (get().chats.find((c) => c.id === chatId)?.msgs ?? []).filter((m) => m.id !== mid)
         if (!resume || !getResearch()?.estimate) {
           // A run can fail over to any candidate, so the ceiling uses the most
@@ -1403,6 +1448,10 @@ export const useS = create<S>()(
           let report = ''
           let tin = 0, tout = 0, contextTin = 0, contextTout = 0, cacheRead = 0, cacheWrite = 0, usageCost = 0
           const enabledTools = researchEnabled(p)
+          // Thorough runs get the research team: one delegation round per call,
+          // plus follow-ups to agents that already hold evidence.
+          const delegation = tier.agentRounds > 0
+          if (delegation) { enabledTools.delegate_research = true; enabledTools.ask_research_agent = true }
           patchRs(chatId, mid, (rs) => ({ ...rs, status: 'running', note: '' }))
           // Older tool rounds are compacted before they are re-sent, keeping
           // the transcript inside the context window on long runs; citation
@@ -1416,7 +1465,12 @@ export const useS = create<S>()(
             const hc = get().chats.find((c) => c.id === chatId)?.compact
             const base = withCompaction(histFor(), hc)
             const hist = trimHistory(base, { limit: ctxLimit, sys: system, charsPerToken: cpt, keepStart: base[0] && isHandoff(base[0]) ? 1 : 0 }).msgs
-            return wire(cand, [...hist, built, ...tail])
+            // A mid-run focus is a user turn placed just before the live tool
+            // round. It must not follow that round: `wire` only resends tool
+            // calls/results for the trailing assistant message, so a user turn
+            // after it would hide the gathered evidence from the model.
+            const focus = String(getResearch()?.steer ?? '').trim()
+            return wire(cand, [...hist, ...(focus ? [{ id: `${mid}-steer`, r: 'user' as const, t: researchSteerNote(focus) }] : []), built, ...tail])
           }
           try {
             r.ctl = new AbortController()
@@ -1431,6 +1485,98 @@ export const useS = create<S>()(
             // make — exactly where its first step will land.
             const note = (t: string) => patchRs(chatId, mid, (rs) => ({ ...rs, note: (rs.note ?? '') + t }))
             const onReasoning = (t: string) => patchRs(chatId, mid, (rs) => ({ ...rs, reasoning: ((rs.reasoning ?? '') + t).slice(-RESEARCH_REASONING_CHARS) }))
+            /* --- Research team (Thorough only) ------------------------------
+             * A round starts 1-3 independent subagents. Each has its own system
+             * prompt, context, and search/read loop, and returns a clean cited
+             * report. Follow-ups reuse the same agent: its evidence transcript
+             * stays in memory for the run, is condensed into the follow-up
+             * prompt, and it searches again only for what is missing. */
+            const agentSessions = new Map<string, { ask: string; rounds: { text: string; calls: ToolResult[] }[] }>()
+            const setAgents = (f: (list: ResearchAgent[]) => ResearchAgent[]) =>
+              patchRs(chatId, mid, (rs) => ({ ...rs, agents: f(rs.agents ?? []) }))
+            const patchAgent = (id: string, patch: Partial<ResearchAgent>) =>
+              setAgents((list) => list.map((a) => (a.id === id ? { ...a, ...patch } : a)))
+            const mergeAgentSources = (id: string, items: { citeId: string; title: string; url: string }[]) =>
+              setAgents((list) => list.map((a) => {
+                if (a.id !== id) return a
+                const byId = new Map((a.sources ?? []).map((s) => [s.citeId, s]))
+                for (const s of items) if (s.citeId && s.url && !byId.has(s.citeId)) byId.set(s.citeId, s)
+                return { ...a, sources: [...byId.values()].slice(0, 40) }
+              }))
+            const agentEffort = get().effort[e.model] ?? ''
+            const agentOpts = { ...(get().params.def ? {} : { max: get().params.max, temp: get().params.temp, topp: get().params.topp }), effort: agentEffort === 'auto' ? '' : agentEffort }
+            /* Shared tool handlers for a subagent (initial round and follow-up):
+             * its own counters, its own budget, and its own disabled-tool flags
+             * so a spent agent can only wrap up. */
+            const agentHandlers = (agentId: string, counters: { searches: number; reads: number }, budget: { searches: number; reads: number }, focus: string, enabled: Record<string, boolean>) => ({
+              search: async ({ query: q, count }: { query: string; count?: number }) => {
+                if (r.stopped) throw Error('Research stopped.')
+                if (Date.now() > deadline) { enabled.search = false; return 'Research time limit reached. Wrap up now with the findings you have.' }
+                if (counters.searches >= budget.searches) { enabled.search = false; return `Search budget reached (${budget.searches}). Wrap up now with the findings you have.` }
+                counters.searches++
+                patchAgent(agentId, { searches: counters.searches })
+                try {
+                  const data = await searchWeb(String(q ?? ''), { ...searchOpts, count: searchCountOf(prefs, count), cache: true })
+                  const results = (data as { results?: { id: string; title: string; url: string }[] }).results ?? []
+                  for (const item of results) item.id = citeIdFor(item.url)
+                  mergeAgentSources(agentId, results.map((x) => ({ citeId: x.id, title: x.title, url: x.url })))
+                  const out = formatSearch(data as never, { inlineCites: prefs.citeStyle !== 'off' })
+                  return results.length ? out : `${out}\nNo results matched this query. Rewrite it with different wording or a more specific source, then try once more.`
+                } catch (err) {
+                  // A failed search never spends a subagent's budget.
+                  counters.searches = Math.max(0, counters.searches - 1)
+                  patchAgent(agentId, { searches: counters.searches })
+                  throw Error(`Search failed (${String((err as Error)?.message ?? err).slice(0, 200)}). This attempt did not use the agent's search budget; rewrite the query or try another angle.`)
+                }
+              },
+              fetch_page: async ({ url, info }: { url: string; info?: string }) => {
+                if (prefs.reader === false) throw Error('The page reader is off.')
+                if (r.stopped) throw Error('Research stopped.')
+                if (Date.now() > deadline) { enabled.fetch_page = false; return 'Research time limit reached. Wrap up now with the findings you have.' }
+                if (counters.reads >= budget.reads) { enabled.fetch_page = false; return `Read budget reached (${budget.reads}). Wrap up now with the findings you have.` }
+                counters.reads++
+                patchAgent(agentId, { reads: counters.reads })
+                try {
+                  const page = await fetchPage(String(url ?? ''), { cache: true, ...fetchOptsOf(prefs) })
+                  const citeId = citeIdFor(page.url || String(url ?? ''))
+                  mergeAgentSources(agentId, [{ citeId, title: page.title || page.url, url: page.url || String(url ?? '') }])
+                  const summary = await summarizePage(page, (typeof info === 'string' && info.trim() ? `The answering subagent requests, from this page: ${info.trim().slice(0, 2000)}` : focus.slice(0, 1200)), prefs, log, failedSummaryModels)
+                  return formatPage(summary ? { ...page, text: summary } : page, { citeId, ...(summary ? { summarized: true } : {}) })
+                } catch (err) {
+                  // An unreadable page never spends a subagent's read budget.
+                  counters.reads = Math.max(0, counters.reads - 1)
+                  patchAgent(agentId, { reads: counters.reads })
+                  throw Error(`Could not read that page (${String((err as Error)?.message ?? err).slice(0, 200)}). This read did not use the agent's page budget; try another URL.`)
+                }
+              },
+            })
+            const runAgent = async (agent: ResearchAgent, task: ResearchTask): Promise<void> => {
+              const t0a = Date.now()
+              const counters = { searches: agent.searches, reads: agent.reads }
+              const enabled: Record<string, boolean> = { search: true, fetch_page: prefs.reader !== false }
+              const session = { ask: agentAsk(task), rounds: [] as { text: string; calls: ToolResult[] }[] }
+              agentSessions.set(agent.id, session)
+              try {
+                const x = await runToolLoop(
+                  e, agentSystemNote(query, tier, task), (rounds) => wire(e, [
+                    { id: `${mid}-${agent.id}-ask`, r: 'user' as const, t: session.ask },
+                    { id: `${mid}-${agent.id}-round`, r: 'assistant' as const, t: '', toolRounds: rounds },
+                  ]),
+                  enabled, () => {}, r.ctl ?? new AbortController(), agentOpts, () => {}, (rounds) => { session.rounds = rounds },
+                  Math.max(8, Math.ceil(tier.agentSearches / 3) + tier.agentReads + 4),
+                  agentHandlers(agent.id, counters, { searches: tier.agentSearches, reads: tier.agentReads }, task.brief, enabled),
+                  () => {}, { serialize: ['fetch_page'], maxParallel: 3 },
+                )
+                const report = String(x.finalText || x.text || '').trim()
+                bump(x.tin, x.tout); addCost(e, e.model, x.tin, x.tout, (x as any).cost ?? 0, x)
+                tin += x.tin; tout += x.tout; cacheRead += (x as any).cacheRead ?? 0; cacheWrite += (x as any).cacheWrite ?? 0; usageCost += (x as any).cost ?? 0
+                log.push({ n: `${agent.label} (subagent)`, m: e.model, detail: `Research agent ${agent.id} on “${task.label}”: ${counters.searches} searches, ${counters.reads} reads`, ms: Date.now() - t0a, tin: x.tin, tout: x.tout, cacheRead: (x as any).cacheRead ?? 0, cacheWrite: (x as any).cacheWrite ?? 0, cost: (x as any).cost ?? 0, at: Date.now() })
+                if (!report) throw Error('The subagent returned no report.')
+                patchAgent(agent.id, { status: 'done', answer: report.slice(0, 14000), searches: counters.searches, reads: counters.reads, error: undefined })
+              } catch (err) {
+                patchAgent(agent.id, { status: r.stopped ? 'stopped' : 'error', error: String((err as Error)?.message ?? err).slice(0, 300), searches: counters.searches, reads: counters.reads })
+              }
+            }
             // The search/read budget and time checks live in the handlers; tool
             // errors steer the model instead of failing the whole run.
             const toolHandlers: Record<string, (args: any) => unknown | Promise<unknown>> = {
@@ -1504,6 +1650,96 @@ export const useS = create<S>()(
                 }
               },
             }
+            /* Delegation tools. A delegate_research call is exactly one round,
+             * which keeps the round budget deterministic (no counting assistant
+             * turns). Follow-ups do not spend a round: they reuse an agent and
+             * its evidence, with a small extra search/read allowance. */
+            if (delegation) {
+              toolHandlers.delegate_research = async ({ tasks }: { tasks?: ResearchTask[] }) => {
+                if (r.stopped) throw Error('Research stopped.')
+                const list = (Array.isArray(tasks) ? tasks : []).map((task) => ({
+                  label: String(task?.label ?? '').trim().slice(0, 60),
+                  brief: String(task?.brief ?? '').trim().slice(0, 1600),
+                  avoid: String(task?.avoid ?? '').trim().slice(0, 400) || undefined,
+                })).filter((task) => task.brief).slice(0, tier.agentsPerRound)
+                if (!list.length) throw Error('Provide at least one task with a brief.')
+                if (Date.now() > deadline) {
+                  enabledTools.delegate_research = false
+                  return 'Research time limit reached. No further delegation is available — close the research with your short abstract.'
+                }
+                if (agentRoundsRun >= tier.agentRounds) {
+                  enabledTools.delegate_research = false
+                  return `Delegation budget reached (${tier.agentRounds} subagent rounds). No further rounds are available — ask an existing agent a follow-up, or close the research with your short abstract.`
+                }
+                agentRoundsRun++
+                const round = agentRoundsRun
+                const agents: ResearchAgent[] = list.map((task, i) => ({
+                  id: `a${++agentN}`,
+                  round,
+                  label: task.label || `Agent ${i + 1}`,
+                  brief: task.brief,
+                  status: 'running',
+                  searches: 0,
+                  reads: 0,
+                }))
+                setAgents((all) => [...all, ...agents])
+                await Promise.all(agents.map((agent, i) => runAgent(agent, { ...list[i], label: agent.label })))
+                const done = (getResearch()?.agents ?? []).filter((a) => a.round === round && agents.some((x) => x.id === a.id))
+                const left = tier.agentRounds - round
+                return [
+                  `Research round ${round}${tier.agentRounds > 1 ? ` of ${tier.agentRounds}` : ''} complete: ${done.length} subagent${done.length === 1 ? '' : 's'}.`,
+                  ...done.map(agentResultNote),
+                  `Next: judge these reports. Ask a specific agent a follow-up with ask_research_agent when an answer is thin, ambiguous, or contradicted. ${left > 0 ? `If important territory is still uncovered, start another round (${left} left); otherwise` : 'Otherwise'} close the research with your short abstract. Search yourself only for a gap no agent could settle.`,
+                ].join('\n\n')
+              }
+              toolHandlers.ask_research_agent = async ({ agent: pick, question }: { agent?: string; question?: string }) => {
+                if (r.stopped) throw Error('Research stopped.')
+                const q = String(question ?? '').trim().slice(0, 1500)
+                if (!q) throw Error('Ask a focused follow-up question.')
+                if (Date.now() > deadline) {
+                  enabledTools.ask_research_agent = false
+                  return 'Research time limit reached. No further follow-ups are available — close with your short abstract.'
+                }
+                const all = getResearch()?.agents ?? []
+                const want = String(pick ?? '').trim()
+                const n = Number((want.match(/\d+/) ?? [])[0])
+                const found = all.find((a) => a.id.toLowerCase() === want.toLowerCase())
+                  ?? all.find((a) => a.label.toLowerCase() === want.toLowerCase())
+                  ?? (n ? all.find((a) => a.id === `a${n}`) ?? all.find((a) => a.label.toLowerCase() === `agent ${n}`) ?? all[n - 1] : undefined)
+                  ?? all.find((a) => want.length > 2 && a.label.toLowerCase().includes(want.toLowerCase()))
+                if (!found) throw Error(`Unknown subagent "${pick}". Agents in this run: ${all.map((a) => `${a.label} (${a.id})`).join(', ') || 'none delegated yet'}.`)
+                if ((found.followUps?.length ?? 0) >= AGENT_FOLLOW_UPS_MAX) {
+                  return `Subagent ${found.label} has already answered ${AGENT_FOLLOW_UPS_MAX} follow-ups. Use what it reported, delegate a new round for this gap, or search for it yourself.`
+                }
+                const session = agentSessions.get(found.id)
+                const counters = { searches: 0, reads: 0 }
+                const budget = { searches: AGENT_FOLLOW_UP_SEARCHES, reads: AGENT_FOLLOW_UP_READS }
+                const enabled: Record<string, boolean> = { search: true, fetch_page: prefs.reader !== false }
+                const history: Msg[] = [{ id: `${mid}-${found.id}`, r: 'user', t: session?.ask ?? agentAsk({ label: found.label, brief: found.brief }) }]
+                if (found.answer) history.push({ id: `${mid}-${found.id}-a`, r: 'assistant', t: found.answer })
+                for (const f of found.followUps ?? []) history.push({ id: uid(), r: 'user', t: f.q }, { id: uid(), r: 'assistant', t: f.a })
+                history.push({ id: uid(), r: 'user', t: q })
+                const sys = `${agentSystemNote(query, tier, { label: found.label, brief: found.brief })}\n\n${agentFollowUpNote(budget, session ? agentEvidenceDigest(session.rounds) : '')}`
+                try {
+                  const x = await runToolLoop(
+                    e, sys, (rounds) => wire(e, [...history, { id: `${mid}-${found.id}-round`, r: 'assistant' as const, t: '', toolRounds: rounds }]), enabled, () => {}, r.ctl ?? new AbortController(), agentOpts, () => {},
+                    (rounds) => { if (session) session.rounds = [...session.rounds, ...rounds] },
+                    Math.max(6, AGENT_FOLLOW_UP_SEARCHES + AGENT_FOLLOW_UP_READS),
+                    agentHandlers(found.id, counters, budget, found.brief, enabled), () => {}, { serialize: ['fetch_page'], maxParallel: 3 },
+                  )
+                  const text = String(x.finalText || x.text || '').trim()
+                  if (!text) throw Error('The subagent returned no answer.')
+                  bump(x.tin, x.tout); addCost(e, e.model, x.tin, x.tout, (x as any).cost ?? 0, x)
+                  tin += x.tin; tout += x.tout; cacheRead += (x as any).cacheRead ?? 0; cacheWrite += (x as any).cacheWrite ?? 0; usageCost += (x as any).cost ?? 0
+                  patchAgent(found.id, { followUps: [...(found.followUps ?? []), { q, a: text.slice(0, 8000) }] })
+                  log.push({ n: `${found.label} (follow-up)`, m: e.model, detail: `Follow-up answered from the agent's evidence (${counters.searches} new searches, ${counters.reads} reads).`, ms: 0, tin: x.tin, tout: x.tout, cacheRead: (x as any).cacheRead ?? 0, cacheWrite: (x as any).cacheWrite ?? 0, cost: (x as any).cost ?? 0, at: Date.now() })
+                  return `[Follow-up with subagent ${found.label} · ${counters.searches} searches, ${counters.reads} reads]\n${text}`
+                } catch (err) {
+                  if (r.stopped) throw err
+                  return `The follow-up with ${found.label} failed (${String((err as Error)?.message ?? err).slice(0, 200)}). If the gap matters, delegate a new agent for it or search for it yourself.`
+                }
+              }
+            }
             if (featOn(get(), 'skills') && (p.skills ?? []).length) toolHandlers[SKILL_TOOL_NAME] = skillHandler
             const onToolDeltaCb = (calls: ToolCall[]) => { useLive.getState().set(mid, calls.map((c) => ({ ...c }))) }
             // One page read at a time; searches in small parallel batches.
@@ -1541,12 +1777,22 @@ export const useS = create<S>()(
               x = await runToolLoop(e, `${system}\n\n${RESEARCH_ABSTRACT_ASK}`, () => wireRounds(e, liveRounds), {}, note, ctl, o, () => {}, () => {}, 1)
               addLoop(x)
             }
+            const agentsNow = () => getResearch()?.agents ?? []
+            // A Thorough run must actually use its team: if the orchestrator
+            // tried to do everything itself, ask it once to open a round.
+            if (!r.stopped && delegation && agentRoundsUsed(agentsNow()) === 0 && Date.now() <= deadline && !looksLikeReport(researchAbstract(x))) {
+              try {
+                x = await runLoop(x.text, [{ id: `${mid}-delegate`, r: 'user' as const, t: researchDelegationAsk(tier) }], Math.min(4, Math.max(1, tier.maxRounds - liveRounds.length)))
+                addLoop(x)
+              } catch { /* best-effort: a run can still finish without agents */ }
+            }
             // Evidence floor: never let a single search become a "deep research"
             // report. Nudge the model once to keep researching, unless the budget
-            // or the run's time is already spent.
-            if (!r.stopped && usedSearches < RESEARCH_MIN_SEARCHES && usedSearches < tier.maxSearches && Date.now() <= deadline) {
+            // or the run's time is already spent. Subagent searches count too.
+            const evidenceSearches = usedSearches + agentEvidenceSearches(agentsNow())
+            if (!r.stopped && evidenceSearches < RESEARCH_MIN_SEARCHES && usedSearches < tier.maxSearches && Date.now() <= deadline) {
               try {
-                x = await runLoop(x.text, [{ id: `${mid}-min`, r: 'user' as const, t: researchMinAsk(usedSearches, RESEARCH_MIN_SEARCHES) }], Math.min(6, Math.max(1, tier.maxRounds - liveRounds.length)))
+                x = await runLoop(x.text, [{ id: `${mid}-min`, r: 'user' as const, t: researchMinAsk(evidenceSearches, RESEARCH_MIN_SEARCHES) }], Math.min(6, Math.max(1, tier.maxRounds - liveRounds.length)))
                 addLoop(x)
               } catch { /* the nudge is best-effort; keep the abstract we already have */ }
             }
@@ -1601,7 +1847,7 @@ export const useS = create<S>()(
             // Citation integrity: repair ids the model invented, then drop any
             // that still do not match a real source so the report never links
             // to nothing. Both passes are best-effort and never fail the run.
-            const srcList = collectMessageSources(liveRounds)
+            const srcList = mergeSources(collectMessageSources(liveRounds), agentSources(agentsNow()))
             const validIds = srcList.map((s) => s.citeId)
             try {
               let cov = citationCoverage(txtCandidate, srcList)
@@ -1624,7 +1870,7 @@ export const useS = create<S>()(
             }
             txt = txtCandidate.trim()
             if (!txt) throw Error('The model returned no report text.')
-            log.push({ n: e.name, m: e.model, detail: `Deep research (${tier.label}) on “${query.slice(0, 80)}”: ${usedSearches} searches, ${usedReads} reads`, ms: Date.now() - t0, tin, tout, contextTin: contextTin || tin, contextTout: contextTout || tout, cacheRead, cacheWrite, cost: usageCost, at: Date.now() })
+            log.push({ n: e.name, m: e.model, detail: `Deep research (${tier.label}) on “${query.slice(0, 80)}”: ${usedSearches} searches, ${usedReads} reads${delegation ? `, ${agentRoundsUsed(agentsNow())} subagent round(s)` : ''}`, ms: Date.now() - t0, tin, tout, contextTin: contextTin || tin, contextTout: contextTout || tout, cacheRead, cacheWrite, cost: usageCost, at: Date.now() })
             edit(chatId, mid, (m) => ({ ...m, t: txt, toolRounds: liveRounds.length ? liveRounds : x.rounds, toolFinal: txt, sys: system, log, research: m.research ? { ...m.research, status: 'done', finishedAt: Date.now() } : m.research }))
             celebrate(get().prefs.cues === true)
             ok = true
@@ -2181,7 +2427,7 @@ export const useS = create<S>()(
           { id: 'k6', name: 'translate', desc: 'Translate text', in: 'text', sys: 'Translate the provided text into the language requested. If no target language is specified, ask which language.', tpl: '{{input}}', pl: '', on: true, args: '<text> to <language>' },
           { id: 'k7', name: 'brainstorm', desc: 'Generate useful ideas', in: 'text', sys: 'Generate varied, practical ideas. Keep each idea distinct and briefly explain why it may work.', tpl: '{{input}}', pl: '', on: true, args: '<topic>' },
         ],
-        chats: [], chat: '', drafts: {}, memories: [], imageGen: { ...BLANK_IMAGE_GEN }, codeRun: { ...BLANK_CODE_RUN }, voicePrefs: { ...BLANK_VOICE }, memoryPrefs: { ...DEFAULT_MEMORY_PREFS }, docPrefs: { ...BLANK_DOCS }, tools: { ...DEFAULT_TOOLS }, toolConsent: false, search: { ...BLANK_SEARCH, keys: { ...BLANK_SEARCH.keys } }, skills: DEFAULT_SKILL_STATE.map((s) => ({ ...s })), widgets: {}, widgetPrefs: { ...DEFAULT_WIDGET_PREFS, widgetOrder: [...DEFAULT_WIDGET_PREFS.widgetOrder], shortcuts: [...DEFAULT_WIDGET_PREFS.shortcuts] }, rail: false, pad: '', snips: [],
+        chats: [], chat: '', drafts: {}, memories: [], imageGen: { ...BLANK_IMAGE_GEN }, codeRun: { ...BLANK_CODE_RUN }, voicePrefs: { ...BLANK_VOICE }, memoryPrefs: { ...DEFAULT_MEMORY_PREFS }, docPrefs: { ...BLANK_DOCS }, tools: { ...DEFAULT_TOOLS }, toolConsent: false, search: { ...BLANK_SEARCH, keys: { ...BLANK_SEARCH.keys } }, researchRounds: RESEARCH_AGENT_ROUNDS_DEFAULT, skills: DEFAULT_SKILL_STATE.map((s) => ({ ...s })), widgets: {}, widgetPrefs: { ...DEFAULT_WIDGET_PREFS, widgetOrder: [...DEFAULT_WIDGET_PREFS.widgetOrder], shortcuts: [...DEFAULT_WIDGET_PREFS.shortcuts] }, rail: false, pad: '', snips: [],
         params: { ...DEFAULT_PARAMS }, effort: {},
         workspacePrefs: { defaultView: 'latest', autoOpen: true, autoFollow: true },
         advanced: { ...DEFAULT_ADVANCED },
@@ -2190,7 +2436,7 @@ export const useS = create<S>()(
         usage: initialLedger.rows, usageTitles: initialLedger.titles,
         projects: [], activeProject: '', price: { in: 0, out: 0 }, todos: [],
         routeStats: {}, shares: [], flashMsg: null,
-        draft: '', busy: false, busyChats: {}, notice: null,
+        draft: '', busy: false, busyChats: {}, doneChats: {}, queued: {}, notice: null,
         /* Workspace (first-class entity) */
         workspaces: {}, selectedRevision: {},            researchPanel: null,
 
@@ -2266,8 +2512,10 @@ export const useS = create<S>()(
             const drafts = { ...s.drafts }
             if (op === 'del') delete drafts[id]
             const busyChats = { ...s.busyChats }
-            if (op === 'del') delete busyChats[id]
-            return { chats, chat: s.chat === id && op === 'del' ? chats[0]?.id ?? '' : s.chat, drafts, ...(op === 'del' ? { busyChats, busy: Object.keys(busyChats).length > 0 } : {}) }
+            const doneChats = { ...(s.doneChats ?? {}) }
+            const queued = { ...(s.queued ?? {}) }
+            if (op === 'del') { delete busyChats[id]; delete doneChats[id]; delete queued[id] }
+            return { chats, chat: s.chat === id && op === 'del' ? chats[0]?.id ?? '' : s.chat, drafts, ...(op === 'del' ? { busyChats, busy: Object.keys(busyChats).length > 0, doneChats, queued } : {}) }
           })
         },
         pinMsg: (id) => set((s) => {
@@ -2282,7 +2530,15 @@ export const useS = create<S>()(
           const s = get()
           // Busy is per chat: another chat streaming never blocks this one.
           if (sendPause.has(s.chat)) return false
-          if (chatBusy(s, s.chat)) return false
+          if (chatBusy(s, s.chat)) {
+            if ((s.prefs.sendWhileBusy ?? 'queue') !== 'queue') return false
+            if (!v.trim() && !att.length) return false
+            set((st) => ({
+              queued: { ...(st.queued ?? {}), [s.chat]: [...(st.queued?.[s.chat] ?? []), { v, att }] },
+              notice: { t: 'Queued — this message will send when the current reply finishes.' },
+            }))
+            return true
+          }
           const raw = v.trim()
           if (!raw && !att.length) return false
           // Every uploaded file gets a distinct name before anything else sees
@@ -2417,6 +2673,26 @@ export const useS = create<S>()(
           const r = runs.get(chatId)
           if (r) { r.stopped = true; r.ctl?.abort(); runs.delete(chatId) }
           setChatBusy(chatId, false)
+          flushQueued(chatId)
+        },
+        stopAll: () => {
+          const ids = [...runs.keys()]
+          for (const id of ids) {
+            const r = runs.get(id)
+            if (r) { r.stopped = true; r.ctl?.abort() }
+          }
+          runs.clear()
+          const stopped = new Set(ids)
+          set((s) => ({
+            busy: false,
+            busyChats: {},
+            queued: {},
+            chats: s.chats.map((c) => stopped.has(c.id)
+              ? { ...c, msgs: c.msgs.map((m) => m.research && (m.research.status === 'running' || m.research.status === 'writing' || m.research.status === 'planning')
+                ? { ...m, research: { ...m.research, status: 'stopped', finishedAt: Date.now() } }
+                : m) }
+              : c),
+          }))
         },
         regen: () => {
           const s = get(), c = s.chats.find((x) => x.id === s.chat)
@@ -2508,13 +2784,53 @@ export const useS = create<S>()(
           const um = [...c.msgs.slice(0, i)].reverse().find((m) => m.r === 'user')
           if (!um) return
           const used = countedSteps(msg.research.steps, 'search')
-          const tier = tierOf(msg.research.tier)
+          const tier = tierOf(msg.research.tier, normResearchAgentRounds(get().researchRounds))
           if (used >= tier.maxSearches) return
           void runResearch(mid, um, msg.research.query, tier.id, true)
+        },
+        rerunResearch: (mid) => {
+          const s = get()
+          const c = s.chats.find((x) => x.msgs.some((m) => m.id === mid))
+          if (!c || chatBusy(s, c.id)) return
+          const i = c.msgs.findIndex((m) => m.id === mid)
+          const old = c.msgs[i]
+          const rs = old?.research
+          if (!old || !rs?.plan || (rs.status !== 'done' && rs.status !== 'stopped' && rs.status !== 'error')) return
+          const um = [...c.msgs.slice(0, i)].reverse().find((m) => m.r === 'user')
+          if (!um) return
+          // A re-run is a new card after the old report, so the original stays
+          // readable and the new run gets its own steps, agents and sources.
+          const nid = uid()
+          const next: ResearchState = {
+            id: uid(), query: rs.query, tier: rs.tier, status: 'plan', plan: rs.plan,
+            answers: rs.answers, steps: [], startedAt: Date.now(), estimate: rs.estimate,
+          }
+          set((st) => ({
+            chats: st.chats.map((x) => (x.id === c.id ? { ...x, msgs: [...x.msgs.slice(0, i + 1), { id: nid, r: 'assistant' as const, t: '', at: Date.now(), by: '', log: [], research: next }, ...x.msgs.slice(i + 1)] } : x)),
+            notice: null,
+          }))
+          void runResearch(nid, um, rs.query, rs.tier ?? 'standard')
         },
         updateResearchPlan: (mid, plan) => set((s) => ({
           chats: s.chats.map((c) => ({ ...c, msgs: c.msgs.map((m) => (m.id === mid && m.research ? { ...m, research: { ...m.research, plan } } : m)) })),
         })),
+        answerResearchQuestions: (mid, answers) => {
+          const clean = (answers ?? [])
+            .map((a) => ({ question: String(a?.question ?? '').slice(0, 400), answer: String(a?.answer ?? '').trim().slice(0, 1500) }))
+            .filter((a) => a.answer)
+          set((s) => ({
+            chats: s.chats.map((c) => ({ ...c, msgs: c.msgs.map((m) => (m.id === mid && m.research ? { ...m, research: { ...m.research, answers: clean.length ? clean : undefined, status: 'plan' } } : m)) })),
+          }))
+        },
+        skipResearchQuestions: (mid) => set((s) => ({
+          chats: s.chats.map((c) => ({ ...c, msgs: c.msgs.map((m) => (m.id === mid && m.research && m.research.status === 'questions' ? { ...m, research: { ...m.research, status: 'plan' } } : m)) })),
+        })),
+        steerResearch: (mid, text) => {
+          const focus = String(text ?? '').trim().slice(0, 800)
+          set((s) => ({
+            chats: s.chats.map((c) => ({ ...c, msgs: c.msgs.map((m) => (m.id === mid && m.research && m.research.status === 'running' ? { ...m, research: { ...m.research, steer: focus || undefined } } : m)) })),
+          }))
+        },
         stopResearch: (mid) => {
           const s = get()
           const c = s.chats.find((x) => x.msgs.some((m) => m.id === mid))
@@ -2524,7 +2840,7 @@ export const useS = create<S>()(
           if (r) { r.stopped = true; r.ctl?.abort(); runs.delete(c.id) }
           setChatBusy(c.id, false)
           set((st) => ({
-            chats: st.chats.map((x) => (x.id === c.id ? { ...x, msgs: x.msgs.map((m) => (m.id === mid && m.research && (m.research.status === 'running' || m.research.status === 'writing' || m.research.status === 'tier-pick' || m.research.status === 'planning' || m.research.status === 'plan') ? { ...m, research: { ...m.research, status: 'stopped', finishedAt: Date.now() } } : m)) } : x)),
+            chats: st.chats.map((x) => (x.id === c.id ? { ...x, msgs: x.msgs.map((m) => (m.id === mid && m.research && (m.research.status === 'running' || m.research.status === 'writing' || m.research.status === 'tier-pick' || m.research.status === 'planning' || m.research.status === 'questions' || m.research.status === 'plan') ? { ...m, research: { ...m.research, status: 'stopped', finishedAt: Date.now() } } : m)) } : x)),
           }))
         },
         editMsg: (id, t) => {
@@ -2689,6 +3005,7 @@ export const useS = create<S>()(
         p.customLightColors = { ...DEFAULT_CUSTOM_LIGHT_COLORS, ...(p.customLightColors ?? {}) }
         p.customDarkTheme = normCustomTheme(p.customDarkTheme, DEFAULT_CUSTOM_DARK_THEME)
         p.customLightTheme = normCustomTheme(p.customLightTheme, DEFAULT_CUSTOM_LIGHT_THEME)
+        p.researchRounds = normResearchAgentRounds(p.researchRounds)
         p.eps = (p.eps ?? []).map((e: Ep) => {
           const oldGoogle = e.preset === 'Gemini' || (/generativelanguage\.googleapis\.com/i.test(e.url) && e.name === 'Gemini')
           const preset = oldGoogle ? 'Google' : e.preset
@@ -2713,7 +3030,7 @@ export const useS = create<S>()(
           p.prefs.titleEp = ''
         }
         if (p.prefs && p.prefs.showTps === undefined) p.prefs.showTps = false
-        p.prefs = { ...p.prefs, hideFavoriteProvider: p.prefs?.hideFavoriteProvider === true, logDetail: normLogDetail(p.prefs?.logDetail), logTiming: p.prefs?.logTiming !== false, logModels: p.prefs?.logModels !== false, codeLines: p.prefs?.codeLines === true, codeMaxHeight: typeof p.prefs?.codeMaxHeight === 'number' && Number.isFinite(p.prefs.codeMaxHeight) ? Math.max(0, Math.min(1200, Math.round(p.prefs.codeMaxHeight))) : 0, pinContext: p.prefs?.pinContext !== false, pinContextPercent: typeof p.prefs?.pinContextPercent === 'number' && Number.isFinite(p.prefs.pinContextPercent) ? Math.max(5, Math.min(50, Math.round(p.prefs.pinContextPercent))) : 50, tempHours: p.prefs?.tempHours ?? 3, startup: normStartup(p.prefs?.startup), tempShow: Number.isInteger(p.prefs?.tempShow) ? Math.max(0, Math.min(6, p.prefs.tempShow)) : 2, tempShowStreaming: p.prefs?.tempShowStreaming !== false, tempGlow: typeof p.prefs?.tempGlow === 'number' && p.prefs.tempGlow >= 0 && p.prefs.tempGlow <= 2 ? Math.round(p.prefs.tempGlow * 100) / 100 : 1, tempGlowSent: typeof p.prefs?.tempGlowSent === 'number' && p.prefs.tempGlowSent >= 0 && p.prefs.tempGlowSent <= 2 ? Math.round(p.prefs.tempGlowSent * 100) / 100 : 0.5, draftSurvive: ['off', 'new', 'chats', 'both'].includes(p.prefs?.draftSurvive) ? p.prefs.draftSurvive : 'both', fontBody: p.prefs?.fontBody ?? 'system', fontMono: p.prefs?.fontMono ?? 'system', fontHeader: p.prefs?.fontHeader ?? 'system', modelPrimary: p.prefs?.modelPrimary ?? ({ none: 'id', name: 'name', provider: 'id', both: 'name' } as const)[(p.prefs?.modelDisplay as string) ?? 'both'] ?? 'name', modelSecondary: p.prefs?.modelSecondary ?? ({ none: 'none', name: 'none', provider: 'provider', both: 'provider' } as const)[(p.prefs?.modelDisplay as string) ?? 'both'] ?? 'none', paletteMax: p.prefs?.paletteMax ?? 320, chatWidth: p.prefs?.chatWidth ?? 'standard', settingsWidth: p.prefs?.settingsWidth ?? 1024, settingsHeight: p.prefs?.settingsHeight ?? 780, modelPickerHeight: p.prefs?.modelPickerHeight ?? 480, showModelPricing: p.prefs?.showModelPricing ?? false, showContextMeter: p.prefs?.showContextMeter ?? true, titleEp: p.prefs?.titleEp ?? '', titleModel: p.prefs?.titleModel ?? '', effortEp: p.prefs?.effortEp ?? '', effortModel: p.prefs?.effortModel ?? '', recallEp: p.prefs?.recallEp ?? '', recallModel: p.prefs?.recallModel ?? '', routingMode: ['ordered', 'fastest', 'cheapest'].includes(p.prefs?.routingMode) ? p.prefs.routingMode : 'ordered', sidebarWidth: p.prefs?.sidebarWidth ?? 288, widgetWidth: p.prefs?.widgetWidth ?? 320, workspaceWidth: typeof p.prefs?.workspaceWidth === 'number' && p.prefs.workspaceWidth <= 1 ? p.prefs.workspaceWidth : 0.4, workspaceSplit: typeof p.prefs?.workspaceSplit === 'number' ? p.prefs.workspaceSplit : 0.2, modalBlur: p.prefs?.modalBlur ?? 12, settingsOpacity: p.prefs?.settingsOpacity ?? 55, temporaryByDefault: p.prefs?.temporaryByDefault ?? false, streamFade: typeof p.prefs?.streamFade === 'number' && p.prefs.streamFade >= 0 && p.prefs.streamFade <= 1 ? p.prefs.streamFade : 0.3, streamMd: p.prefs?.streamMd ?? true, proxyMode: p.prefs?.proxyMode === 'always' || p.prefs?.proxyMode === 'off' ? p.prefs.proxyMode : 'auto', glassComposer: p.prefs?.glassComposer ?? true, glassBlur: typeof p.prefs?.glassBlur === 'number' && Number.isFinite(p.prefs.glassBlur) ? Math.max(0, Math.min(40, Math.round(p.prefs.glassBlur))) : 14, glassOpacity: typeof p.prefs?.glassOpacity === 'number' && Number.isFinite(p.prefs.glassOpacity) ? Math.max(0, Math.min(100, Math.round(p.prefs.glassOpacity))) : 80, showDisabledFeatures: p.prefs?.showDisabledFeatures === true, stylePreset: normStylePreset(p.prefs?.stylePreset), density: normDensity(p.prefs?.density), uiSpacing: normSpacing(p.prefs?.uiSpacing), showTimestamps: p.prefs?.showTimestamps === true, alwaysShowActions: p.prefs?.alwaysShowActions === true, textScale: typeof p.prefs?.textScale === 'number' && Number.isFinite(p.prefs.textScale) ? Math.round(Math.min(200, Math.max(50, p.prefs.textScale))) : 100, codeWrap: p.prefs?.codeWrap === true, reduceTransparency: p.prefs?.reduceTransparency === true, promptRecall: normPromptRecall(p.prefs?.promptRecall), highContrast: p.prefs?.highContrast === true }
+        p.prefs = { ...p.prefs, hideFavoriteProvider: p.prefs?.hideFavoriteProvider === true, logDetail: normLogDetail(p.prefs?.logDetail), logTiming: p.prefs?.logTiming !== false, logModels: p.prefs?.logModels !== false, codeLines: p.prefs?.codeLines === true, codeMaxHeight: typeof p.prefs?.codeMaxHeight === 'number' && Number.isFinite(p.prefs.codeMaxHeight) ? Math.max(0, Math.min(1200, Math.round(p.prefs.codeMaxHeight))) : 0, pinContext: p.prefs?.pinContext !== false, pinContextPercent: typeof p.prefs?.pinContextPercent === 'number' && Number.isFinite(p.prefs.pinContextPercent) ? Math.max(5, Math.min(50, Math.round(p.prefs.pinContextPercent))) : 50, tempHours: p.prefs?.tempHours ?? 3, startup: normStartup(p.prefs?.startup), tempShow: Number.isInteger(p.prefs?.tempShow) ? Math.max(0, Math.min(6, p.prefs.tempShow)) : 2, tempShowStreaming: p.prefs?.tempShowStreaming !== false, tempShowDone: p.prefs?.tempShowDone !== false, tempGlow: typeof p.prefs?.tempGlow === 'number' && p.prefs.tempGlow >= 0 && p.prefs.tempGlow <= 2 ? Math.round(p.prefs.tempGlow * 100) / 100 : 1, tempGlowSent: typeof p.prefs?.tempGlowSent === 'number' && p.prefs.tempGlowSent >= 0 && p.prefs.tempGlowSent <= 2 ? Math.round(p.prefs.tempGlowSent * 100) / 100 : 0.5, draftSurvive: ['off', 'new', 'chats', 'both'].includes(p.prefs?.draftSurvive) ? p.prefs.draftSurvive : 'both', fontBody: p.prefs?.fontBody ?? 'system', fontMono: p.prefs?.fontMono ?? 'system', fontHeader: p.prefs?.fontHeader ?? 'system', modelPrimary: p.prefs?.modelPrimary ?? ({ none: 'id', name: 'name', provider: 'id', both: 'name' } as const)[(p.prefs?.modelDisplay as string) ?? 'both'] ?? 'name', modelSecondary: p.prefs?.modelSecondary ?? ({ none: 'none', name: 'none', provider: 'provider', both: 'provider' } as const)[(p.prefs?.modelDisplay as string) ?? 'both'] ?? 'none', paletteMax: p.prefs?.paletteMax ?? 320, chatWidth: p.prefs?.chatWidth ?? 'standard', settingsWidth: p.prefs?.settingsWidth ?? 1024, settingsHeight: p.prefs?.settingsHeight ?? 780, modelPickerHeight: p.prefs?.modelPickerHeight ?? 480, showModelPricing: p.prefs?.showModelPricing ?? false, showContextMeter: p.prefs?.showContextMeter ?? true, titleEp: p.prefs?.titleEp ?? '', titleModel: p.prefs?.titleModel ?? '', effortEp: p.prefs?.effortEp ?? '', effortModel: p.prefs?.effortModel ?? '', recallEp: p.prefs?.recallEp ?? '', recallModel: p.prefs?.recallModel ?? '', routingMode: ['ordered', 'fastest', 'cheapest'].includes(p.prefs?.routingMode) ? p.prefs.routingMode : 'ordered', sidebarWidth: p.prefs?.sidebarWidth ?? 288, widgetWidth: p.prefs?.widgetWidth ?? 320, workspaceWidth: typeof p.prefs?.workspaceWidth === 'number' && p.prefs.workspaceWidth <= 1 ? p.prefs.workspaceWidth : 0.4, workspaceSplit: typeof p.prefs?.workspaceSplit === 'number' ? p.prefs.workspaceSplit : 0.2, modalBlur: p.prefs?.modalBlur ?? 12, settingsOpacity: p.prefs?.settingsOpacity ?? 55, temporaryByDefault: p.prefs?.temporaryByDefault ?? false, streamFade: typeof p.prefs?.streamFade === 'number' && p.prefs.streamFade >= 0 && p.prefs.streamFade <= 1 ? p.prefs.streamFade : 0.3, streamMd: p.prefs?.streamMd ?? true, proxyMode: p.prefs?.proxyMode === 'always' || p.prefs?.proxyMode === 'off' ? p.prefs.proxyMode : 'auto', glassComposer: p.prefs?.glassComposer ?? true, glassBlur: typeof p.prefs?.glassBlur === 'number' && Number.isFinite(p.prefs.glassBlur) ? Math.max(0, Math.min(40, Math.round(p.prefs.glassBlur))) : 14, glassOpacity: typeof p.prefs?.glassOpacity === 'number' && Number.isFinite(p.prefs.glassOpacity) ? Math.max(0, Math.min(100, Math.round(p.prefs.glassOpacity))) : 80, showDisabledFeatures: p.prefs?.showDisabledFeatures === true, stylePreset: normStylePreset(p.prefs?.stylePreset), density: normDensity(p.prefs?.density), uiSpacing: normSpacing(p.prefs?.uiSpacing), showTimestamps: p.prefs?.showTimestamps === true, alwaysShowActions: p.prefs?.alwaysShowActions === true, textScale: typeof p.prefs?.textScale === 'number' && Number.isFinite(p.prefs.textScale) ? Math.round(Math.min(200, Math.max(50, p.prefs.textScale))) : 100, codeWrap: p.prefs?.codeWrap === true, reduceTransparency: p.prefs?.reduceTransparency === true, promptRecall: normPromptRecall(p.prefs?.promptRecall), highContrast: p.prefs?.highContrast === true }
         p.favs = Array.isArray(p.favs) ? [...new Set(p.favs.filter((x: unknown) => typeof x === 'string' && x.includes('::')))] : []
         p.prefs = { ...p.prefs, favoritesSection: p.prefs?.favoritesSection !== false, hideFavoritesInProviders: p.prefs?.hideFavoritesInProviders !== false, collapsedProviders: Array.isArray(p.prefs?.collapsedProviders) ? p.prefs.collapsedProviders.filter((x: unknown) => typeof x === 'string') : [] }
         p.tools = { ...DEFAULT_TOOLS, ...(p.tools ?? {}) }
@@ -2726,6 +3043,7 @@ export const useS = create<S>()(
         p.codeRun = normCodeRun(p.codeRun)
         p.voicePrefs = normVoice(p.voicePrefs)
         p.search = normSearch(p.search)
+        p.researchRounds = normResearchAgentRounds(p.researchRounds)
         // The research depth is chosen per run, so no default is persisted.
         delete p.research
         p.researchPanel = null
@@ -2832,6 +3150,7 @@ export const useS = create<S>()(
         if (lk) p.themeLight = lk as any
         p.customDarkTheme = normCustomTheme(p.customDarkTheme, DEFAULT_CUSTOM_DARK_THEME)
         p.customLightTheme = normCustomTheme(p.customLightTheme, DEFAULT_CUSTOM_LIGHT_THEME)
+        p.researchRounds = normResearchAgentRounds(p.researchRounds)
         // The word fade-in feature was removed: drop its stale persisted
         // settings and per-message events so they never carry forward.
         if (p.prefs && typeof p.prefs === 'object' && 'fade' in p.prefs) delete p.prefs.fade
@@ -2883,7 +3202,7 @@ export const useS = create<S>()(
         const { usage, usageTitles, ...rest } = s
         void usage; void usageTitles
         return {
-          ...rest, busy: false, busyChats: {}, draft: kept[s.chat ?? ''] ?? '', drafts: kept, notice: null, flashMsg: null, activeProject: '',
+          ...rest, busy: false, busyChats: {}, doneChats: {}, queued: {}, draft: kept[s.chat ?? ''] ?? '', drafts: kept, notice: null, flashMsg: null, activeProject: '',
           // Per-chat memoized: only the chat that changed is re-mapped.
           chats: mapPersistChats(withoutExpiredTemps(s.chats)),
         }
@@ -2892,13 +3211,24 @@ export const useS = create<S>()(
   ),
 )
 
+/* A background reply's mark lasts until its chat is opened. A subscription
+ * rather than a write inside `patch`, so every way of opening a chat (sidebar,
+ * palette, a new message, a sync repair) clears it. */
+useS.subscribe((s, prev) => {
+  const id = s.chat
+  if (!id || id === prev.chat || !s.doneChats?.[id]) return
+  const doneChats = { ...s.doneChats }
+  delete doneChats[id]
+  useS.setState({ doneChats })
+})
+
 /* Live fields that change while a reply streams (or while the user types).
  * Panels that do not render live chat text subscribe through `useSConfig`
  * instead of `useS()`: the slice stays reference-equal for every streamed
  * chunk, so they are off the streaming render path entirely. Components that
  * need any of these fields must use their own selector. */
 export const useSConfig = () => useS(useShallow((s) => {
-  const { chats, drafts, busy, busyChats, draft, notice, flashMsg, usage, usageTitles, ...config } = s
-  void chats; void drafts; void busy; void busyChats; void draft; void notice; void flashMsg; void usage; void usageTitles
+  const { chats, drafts, busy, busyChats, doneChats, queued, draft, notice, flashMsg, usage, usageTitles, ...config } = s
+  void chats; void drafts; void busy; void busyChats; void doneChats; void queued; void draft; void notice; void flashMsg; void usage; void usageTitles
   return config
 }))

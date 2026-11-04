@@ -14,20 +14,9 @@ partly addresses an idea, the remaining gap is described explicitly.
 Several chats can stream at once now; these are the gaps that remain around
 watching, steering and switching between them.
 
-- **Background finish markers** — a chat that finished while another was open
-  keeps a quiet marker until it is read, so the streaming dot is not the only
-  cue and nothing has to be counted.
-- **Queued sends** — sending into a chat that is already replying currently
-  asks for a stop first; queue the message instead and dispatch it when the run
-  ends.
 - **Per-chat model and parameters** — endpoint, model and sampling settings are
   global, so switching chats changes what the next send uses. Let a chat keep
   the model it started with.
-- **Jump to running chats** — a command-palette section listing the chats that
-  are streaming right now, so a background chat can be reached without
-  scanning the sidebar.
-- **Stop every running reply** — one command that aborts all streaming chats,
-  alongside the existing per-chat stop.
 - **Step hint on the row dot** — the row indicator could name the current step
   (searching, writing) on hover, so progress is readable without opening the
   chat.
@@ -84,10 +73,6 @@ watching, steering and switching between them.
 
 - **Saved searches** — re-run a previous web search with the same query and
   provider.
-- **Re-run a research plan** — rerun an existing report's plan against fresh
-  sources without rebuilding the plan by hand.
-- **Report source highlighting** — source panels already highlight a matching
-  excerpt for reply citations; link research report claims to those excerpts too.
 
 ## Performance & polish (internal)
 
@@ -115,9 +100,6 @@ round limit. What is still missing, roughly by value:
 - **MCP result paging** — results are capped now, but the model cannot ask an
   MCP tool for a range or cursor; add a limit/cursor argument where the server
   schema allows and label a cut result as partial, not complete.
-- **Portable tool errors** — OpenAI has no `is_error` flag. Prefix error
-  results with `ERROR:` plus a retry hint so non-Anthropic models treat them as
-  failures rather than reference data.
 - **Citation support check** — the repair passes fix invented and missing ids;
   add a claim-level pass that checks the cited snippet actually supports the
   sentence (the citation-agent pattern) and rewrites only the failures.

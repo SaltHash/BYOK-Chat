@@ -370,6 +370,44 @@ export const TOOL_REGISTRY: Record<string, ToolSpec> = {
   fetch_page: { description: 'Read one web page (usually a search-result URL) to get its text for quoting; cite it with its source ID.\nThe user may have a second model summarize the page first, in which case the result is that summary shaped by you: describe in `info` what you want from the page, and the summary centers on that while still carrying other important information.',
     parameters: { type: 'object', properties: { url: textArg('Page URL, preferably a search-result URL.'), info: { type: 'string', description: 'What you need from this page: a question or the specific information you want (names, numbers, dates, claims, caveats). Optional; when page summaries are on, the summary model uses this to focus the summary.' } }, required: ['url'], additionalProperties: false },
     run: async ({ url }) => { if (typeof url !== 'string') throw Error('url must be a string'); return formatPage(await fetchPage(url)) } },
+  delegate_research: {
+    description: 'Delegate one round of research subagents (Thorough deep research only). Each task starts an independent agent with its own context and a generous search/page-read budget; it works the web on its own and returns a clean, cited report. Put 1-3 genuinely separable angles in one call (distinct entities, time periods, source classes, or sub-questions) and state what each must not cover so agents never duplicate work. Results come back as reports with run-wide [S<n>] citations; you can delegate another round after reading them, or ask an agent a follow-up with ask_research_agent. You write the final report yourself.',
+    parameters: {
+      type: 'object',
+      properties: {
+        tasks: {
+          type: 'array', minItems: 1, maxItems: 3,
+          description: 'One task per subagent. Assign distinct scopes, not rephrasings of the same question.',
+          items: {
+            type: 'object',
+            properties: {
+              label: textArg('Short name for the agent, e.g. "Regulatory timeline". Used to ask it follow-ups.'),
+              brief: textArg('Self-contained assignment: the objective and the concrete facts to find (names, dates, figures, comparisons), plus the scope boundary. A vague brief causes duplicated work.'),
+              avoid: textArg('What this agent must not cover, because another agent owns it. Optional but strongly recommended.'),
+            },
+            required: ['brief'],
+            additionalProperties: false,
+          },
+        },
+      },
+      required: ['tasks'],
+      additionalProperties: false,
+    },
+    run: () => { throw Error('Subagent delegation is only available during Thorough deep research.') },
+  },
+  ask_research_agent: {
+    description: 'Ask a research subagent you delegated to earlier a follow-up question (Thorough deep research only). The agent keeps the evidence it gathered: it answers from that context when it can, and searches or reads further only when the evidence is insufficient. Use it to resolve a thin answer, a contradiction between agents, or a detail the report needs. Name the agent by its label or id from the delegation result.',
+    parameters: {
+      type: 'object',
+      properties: {
+        agent: textArg('The subagent label or id from a delegation result, e.g. "Regulatory timeline", "Agent 2", or "a2".'),
+        question: textArg('A focused follow-up question. Ask for the specific missing fact or comparison, not the whole report again.'),
+      },
+      required: ['agent', 'question'],
+      additionalProperties: false,
+    },
+    run: () => { throw Error('Subagent follow-ups are only available during Thorough deep research.') },
+  },
   uuid: { description: 'Generate a random UUID.', parameters: { type: 'object', properties: {}, additionalProperties: false }, run: () => crypto.randomUUID() },
   random: { description: 'Generate a random integer in the inclusive range.', parameters: { type: 'object', properties: { min: { type: 'number' }, max: { type: 'number' } }, additionalProperties: false }, run: ({ min = 1, max = 100 }) => { if (!Number.isInteger(min) || !Number.isInteger(max) || max < min) throw Error('min and max must be ordered integers'); return min + Math.floor(Math.random() * (max - min + 1)) } },
   hash: { description: 'Calculate a SHA-256 hash of text.', parameters: { type: 'object', properties: { text: textArg('Text to hash.') }, required: ['text'], additionalProperties: false }, run: async ({ text }) => { if (typeof text !== 'string') throw Error('text must be a string'); const d = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text)); return [...new Uint8Array(d)].map((b) => b.toString(16).padStart(2, '0')).join('') } },
@@ -798,6 +836,14 @@ export async function ocrImage(ep: Ep, model: string, att: Att): Promise<string>
 
 /* wire format */
 export type Wire = { role: 'user' | 'assistant'; content: any }
+/** Anthropic has a native is_error flag; OpenAI-compatible providers only see
+ * the content, so a failed tool must announce itself or a model can read the
+ * error text as if it were a successful observation. */
+const toolContent = (e: Ep, c: ToolResult): string =>
+  c.error && e.type !== 'anthropic' && !/^ERROR:/i.test(String(c.result ?? ''))
+    ? `ERROR: ${String(c.result ?? '')}\n\nThe tool call failed. Treat this as an error, not as evidence; retry with corrected arguments or choose another approach.`
+    : c.result
+
 export function wire(e: Ep, msgs: Msg[]): Wire[] {
   // Tool calls/results only need to be resent for the tool loop that is still
   // running (the trailing assistant message); rounds from completed replies are
@@ -826,7 +872,7 @@ export function wire(e: Ep, msgs: Msg[]): Wire[] {
               out.push({ role: 'user', content: round.calls.map((c) => ({ type: 'tool_result', tool_use_id: c.id, content: c.result, ...(c.error ? { is_error: true } : {}) })) })
             } else {
               out.push({ role: 'assistant', content: round.text || null, tool_calls: round.calls.map((c) => ({ id: c.id, type: 'function', function: { name: c.name, arguments: c.arguments }, ...(c.extra_content ? { extra_content: c.extra_content } : {}) })) })
-              out.push(...round.calls.map((c) => ({ role: 'tool', tool_call_id: c.id, content: c.result })))
+              out.push(...round.calls.map((c) => ({ role: 'tool', tool_call_id: c.id, content: toolContent(e, c) })))
             }
           } else if (round.text) {
             out.push({ role: 'assistant', content: round.text })

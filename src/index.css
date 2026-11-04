@@ -378,14 +378,16 @@ html[data-codewrap] .md pre code { white-space: pre-wrap; overflow-wrap: anywher
 .process-node:first-child::before { top:.68rem; }
 .process-node:last-child::before { bottom:auto; height:.68rem; }
 .process-dot, .process-ring { position:absolute; left:0; top:.68rem; box-sizing:border-box; width:9px; height:9px; border-radius:50%; }
-/* Model rounds are finished dots. */
-.process-dot { background:color-mix(in srgb, var(--ac) 80%, transparent); box-shadow:0 0 0 2.5px color-mix(in srgb, var(--ac) 14%, transparent); }
-.process-dot[data-err] { background:color-mix(in srgb, var(--er) 85%, transparent); box-shadow:0 0 0 2.5px color-mix(in srgb, var(--er) 14%, transparent); }
-/* A tool call closes its circle once it lands, so a finished step never wears
-   the hollow ring that means "still running"; it sits on the rail in the muted
-   tone, which still keeps it apart from the accent model rounds. */
-.process-dot[data-tool] { background:color-mix(in srgb, var(--mu) 65%, transparent); box-shadow:0 0 0 2.5px color-mix(in srgb, var(--mu) 12%, transparent); }
-.process-dot[data-tool][data-err] { background:color-mix(in srgb, var(--er) 85%, transparent); box-shadow:0 0 0 2.5px color-mix(in srgb, var(--er) 14%, transparent); }
+/* Completed nodes are opaque dots. The inner shadow is the panel's own
+   surface colour and masks the rail behind the dot, so the hairline never
+   shows through a finished step; the outer halo keeps it readable. */
+.process-dot { background:var(--ac); box-shadow:0 0 0 2px var(--surf), 0 0 0 3.5px color-mix(in srgb, var(--ac) 16%, transparent); }
+.process-dot[data-err] { background:var(--er); box-shadow:0 0 0 2px var(--surf), 0 0 0 3.5px color-mix(in srgb, var(--er) 16%, transparent); }
+/* A completed tool call uses the same solid accent as a finished model round;
+   its row text already says which kind of step it is. Keeping it opaque avoids
+   a second, lower-contrast dot style that reads as an unfinished step. */
+.process-dot[data-tool] { background:var(--ac); box-shadow:0 0 0 2px var(--surf), 0 0 0 3.5px color-mix(in srgb, var(--ac) 16%, transparent); }
+.process-dot[data-tool][data-err] { background:var(--er); box-shadow:0 0 0 2px var(--surf), 0 0 0 3.5px color-mix(in srgb, var(--er) 16%, transparent); }
 /* The open circle is a hole in the rail: it carries the panel's own colour, so
    the hairline is never seen through the middle of a running step. */
 .process-ring { border:1.5px solid color-mix(in srgb, var(--mu) 60%, transparent); background:var(--surf); }

@@ -27,10 +27,33 @@ test('remote shaping keeps the user-facing reply and drops uploads and tool outp
   assert.equal(a.t, 'Here is the answer')
   assert.equal(a.toolFinal, 'Here is the answer')
   assert.equal('sys' in a, false)
-  assert.equal('reasoning' in a, false)
   assert.equal('log' in a, false)
-  assert.equal('result' in a.toolRounds[0].calls[0], false)
+  // Reasoning summaries and the evidence behind citations are part of the
+  // saved conversation: a synced copy must still render the thinking panel,
+  // the sources list and working [S<n>] links.
+  assert.equal(a.reasoning, 'THINKING')
+  assert.ok(a.toolRounds[0].calls[0].result.includes('HUGE EVIDENCE'))
   assert.equal(a.toolRounds[0].calls[0].arguments, '{"query":"x"}')
+})
+
+test('research narration and its reasoning survive shaping', () => {
+  const chat = {
+    id: 'c1', title: 'Research',
+    msgs: [{
+      id: 'a1', r: 'assistant', t: 'Report [S1]', at: 2, reasoning: 'THINKING',
+      toolRounds: [{ text: '', calls: [{ id: 't1', name: 'search', arguments: '{}', result: '[Source S1] Title: X\nURL: https://x.test\nbody evidence' }] }],
+      research: {
+        id: 'r1', query: 'q', tier: 'standard', status: 'done', startedAt: 1,
+        steps: [{ id: 's1', kind: 'search', label: 'Search', state: 'done' }],
+        note: 'NARRATION', reasoning: 'PLAN THINKING',
+      },
+    }],
+  }
+  const [a] = shapeChatForSync(chat).msgs
+  assert.equal(a.reasoning, 'THINKING')
+  assert.equal(a.research.reasoning, 'PLAN THINKING')
+  assert.equal(a.research.note, 'NARRATION')
+  assert.ok(a.toolRounds[0].calls[0].result.includes('https://x.test'))
 })
 
 test('remote shaping removes endpoint keys, search keys and MCP headers', () => {
