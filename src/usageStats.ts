@@ -14,9 +14,10 @@
  *    cache reads/writes (OpenAI-shaped usage), so total = the four parts once.
  */
 
-import type { Attempt, Chat, Ep } from './store'
+import type { Attempt, Chat, Ep, Message } from './store'
 import { modelNameOf } from './models'
 import { allAttemptAts, allAttemptLogs, attemptCost, endpointNameOf, usageRange, type UsageGroup } from './usage'
+import { toolLabel } from './toolLabels'
 
 export type UsagePeriod = 'session' | 'day' | 'week' | 'month' | 'all' | 'custom'
 
@@ -570,6 +571,133 @@ export function summarize(records: UsageRecord[]): UsageSummary {
 
 export const findModel = (rows: ModelUsage[], key: string): ModelUsage | undefined => rows.find((m) => m.key === key)
 
+/* ---- tool calls ----
+ *
+ * The attempt ledger stores one row per model attempt, not the tool calls made
+ * during it, so tool stats come from the tool rounds still stored on live chat
+ * messages. Like `allAttemptLogs` the inner arrays are returned by reference:
+ * subscribing to them does not rebuild on a streamed text chunk. */
+
+export function allToolRounds(chats: Chat[]): NonNullable<Message['toolRounds']>[] {
+  const out: NonNullable<Message['toolRounds']>[] = []
+  for (const chat of chats) for (const m of chat.msgs) if (m.toolRounds?.length) out.push(m.toolRounds)
+  return out
+}
+
+export type ToolUsageRecord = {
+  at: number
+  chatId: string
+  messageId: string
+  name: string
+  label: string
+  failed: boolean
+  /** Reported duration; null when the tool did not record one. */
+  ms: number | null
+}
+
+/** Message times with gaps filled from the nearest known message, so a tool
+ *  round stored on an intermediate message still lands in the right bucket. */
+function messageAts(msgs: Message[]): number[] {
+  const out: (number | null)[] = msgs.map((m) => Number.isFinite(m.at) ? (m.at as number) : null)
+  let last: number | null = null
+  for (let i = 0; i < out.length; i++) {
+    if (out[i] == null) out[i] = last
+    else last = out[i]
+  }
+  let next: number | null = null
+  for (let i = out.length - 1; i >= 0; i--) {
+    if (out[i] == null) out[i] = next
+    else next = out[i]
+  }
+  return out.map((v) => v ?? 0)
+}
+
+/** One entry per saved tool call. Calls with no timestamp anywhere in their
+ *  chat are skipped rather than charted at the epoch, which would stretch an
+ *  all-time span back to 1970. */
+export function buildToolUsageRecords(chats: Chat[]): ToolUsageRecord[] {
+  const out: ToolUsageRecord[] = []
+  for (const chat of chats) {
+    const ats = messageAts(chat.msgs)
+    for (let i = 0; i < chat.msgs.length; i++) {
+      const m = chat.msgs[i]
+      if (!m.toolRounds?.length) continue
+      const at = ats[i]
+      if (!(at > 0)) continue
+      for (const round of m.toolRounds) for (const call of round.calls ?? []) {
+        if (!call || typeof call.name !== 'string' || !call.name) continue
+        const ms = Number(call.ms)
+        out.push({
+          at,
+          chatId: chat.id,
+          messageId: m.id,
+          name: call.name,
+          label: toolLabel(call.name),
+          failed: !!call.error,
+          ms: Number.isFinite(ms) && ms >= 0 ? Math.round(ms) : null,
+        })
+      }
+    }
+  }
+  return out
+}
+
+export type ToolUsage = {
+  name: string
+  label: string
+  calls: number
+  failed: number
+  /** Share of all calls in the period; null when there were none. */
+  share: number | null
+  timedCalls: number
+  totalMs: number
+  /** Mean duration of the calls that reported one; null when none did. */
+  averageMs: number | null
+  firstUsed: number
+  lastUsed: number
+}
+
+export function aggregateTools(records: ToolUsageRecord[]): ToolUsage[] {
+  const map = new Map<string, ToolUsage>()
+  for (const r of records) {
+    const row = map.get(r.name) ?? {
+      name: r.name, label: r.label, calls: 0, failed: 0, share: null,
+      timedCalls: 0, totalMs: 0, averageMs: null, firstUsed: r.at, lastUsed: r.at,
+    }
+    row.calls++
+    if (r.failed) row.failed++
+    if (r.ms != null) { row.timedCalls++; row.totalMs += r.ms }
+    row.firstUsed = Math.min(row.firstUsed, r.at)
+    row.lastUsed = Math.max(row.lastUsed, r.at)
+    map.set(r.name, row)
+  }
+  const rows = [...map.values()]
+  for (const row of rows) {
+    row.share = records.length > 0 ? row.calls / records.length : null
+    row.averageMs = row.timedCalls > 0 ? row.totalMs / row.timedCalls : null
+  }
+  return rows
+}
+
+export type ToolSortKey = 'tool' | 'calls' | 'share' | 'failed' | 'average' | 'lastUsed'
+
+/** Same stable ordering as sortModels: chosen column first, then calls, then
+ *  label so equal counts never reorder between renders. */
+export function sortTools(rows: ToolUsage[], key: ToolSortKey = 'calls', dir: 'asc' | 'desc' = 'desc'): ToolUsage[] {
+  const primary = (a: ToolUsage, b: ToolUsage): number => {
+    switch (key) {
+      case 'tool': return a.label.localeCompare(b.label)
+      case 'calls': return a.calls - b.calls
+      case 'share': return (a.share ?? -1) - (b.share ?? -1)
+      case 'failed': return a.failed - b.failed
+      case 'average': return (a.averageMs ?? -1) - (b.averageMs ?? -1)
+      case 'lastUsed': return a.lastUsed - b.lastUsed
+    }
+  }
+  const sign = dir === 'asc' ? 1 : -1
+  return [...rows].sort((a, b) => sign * primary(a, b) || b.calls - a.calls || a.label.localeCompare(b.label))
+}
+
 /* ---- chart bucketing ---- */
 
 export type BucketUnit = 'hour' | 'day' | 'week' | 'month'
@@ -626,6 +754,19 @@ export function bucketLabel(start: number, unit: BucketUnit): string {
   return fmtDay.format(start)
 }
 
+/** Axis ceiling for a set of bucket totals. It comes from the data itself
+ *  (1.25×, 1.5×, 2× … headroom depending on magnitude) instead of an absolute
+ *  floor, so bucket values of $0.003 or 12 tokens use the full plot height. */
+export function chartMax(values: number[]): number {
+  let max = 0
+  for (const v of values) if (Number.isFinite(v) && v > max) max = v
+  if (!(max > 0)) return 1
+  const base = 10 ** Math.floor(Math.log10(max))
+  const target = (max / base) * 1.001
+  const step = [1, 1.25, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10].find((s) => s > target) ?? 10
+  return step * base
+}
+
 export type Bucket = {
   start: number
   end: number
@@ -637,13 +778,18 @@ export type Bucket = {
   estimated: boolean
   byCategory: { uncached: number; cacheRead: number; cacheWrite: number; output: number }
   byModel: Record<string, { tokens: number; cost: number }>
+  /** Attempted tool calls in this bucket, failures included. */
+  toolCalls: number
+  toolFailed: number
+  byTool: Record<string, number>
 }
 
 /** Normalised span used by charts. Infinite periods shrink to the data they
  *  contain; an empty infinite period still gets a one-day window. */
-export function chartSpan(records: UsageRecord[], range: StatsRange, now = Date.now()): { start: number; end: number; empty: boolean } {
+export function chartSpan(records: UsageRecord[], range: StatsRange, now = Date.now(), extraTimes: number[] = []): { start: number; end: number; empty: boolean } {
   if (range.invalid) return { start: 0, end: 0, empty: true }
-  const times = records.map((r) => r.at)
+  const extra = extraTimes.filter((t) => Number.isFinite(t) && t > 0)
+  const times = extra.length ? [...records.map((r) => r.at), ...extra] : records.map((r) => r.at)
   const min = times.length ? Math.min(...times) : null
   const max = times.length ? Math.max(...times) : null
   // `all` (and a custom range with no From) spans the recorded data, not 1970.
@@ -670,8 +816,8 @@ function generateBuckets(start: number, end: number, unit: BucketUnit): { start:
 
 /** Buckets cover the chart span and contain every billable record exactly once,
  *  so summed series always equal the period summary. */
-export function chartBuckets(records: UsageRecord[], range: StatsRange, unit: BucketUnit = bucketUnitFor(range), now = Date.now()): Bucket[] {
-  const span = chartSpan(records, range, now)
+export function chartBuckets(records: UsageRecord[], range: StatsRange, unit: BucketUnit = bucketUnitFor(range), now = Date.now(), tools: ToolUsageRecord[] = []): Bucket[] {
+  const span = chartSpan(records, range, now, tools.map((t) => t.at))
   if (range.invalid) return []
   const billable = records.filter(isBillable)
   let u = unit
@@ -689,6 +835,9 @@ export function chartBuckets(records: UsageRecord[], range: StatsRange, unit: Bu
     estimated: false,
     byCategory: { uncached: 0, cacheRead: 0, cacheWrite: 0, output: 0 },
     byModel: {},
+    toolCalls: 0,
+    toolFailed: 0,
+    byTool: {},
   }))
   const first = buckets[0].start
   for (const r of billable) {
@@ -712,6 +861,15 @@ export function chartBuckets(records: UsageRecord[], range: StatsRange, unit: Bu
       if (r.estimated) b.estimated = true
     }
     b.byModel[key] = m
+  }
+  for (const t of tools) {
+    if (t.at < first) continue
+    const idx = buckets.findIndex((b) => t.at >= b.start && t.at < b.end)
+    if (idx < 0) continue
+    const b = buckets[idx]
+    b.toolCalls++
+    if (t.failed) b.toolFailed++
+    b.byTool[t.name] = (b.byTool[t.name] ?? 0) + 1
   }
   return buckets
 }

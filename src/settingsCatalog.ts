@@ -256,8 +256,8 @@ export const SETTING_LINKS: SettingLink[] = [
 
   // Stats — dashboard views, detail sections and the lifetime counters.
   { tab: 'stats', anchor: 'view-overview', title: 'Usage: Overview', keywords: 'usage dashboard overview cost tokens average most used model token mix trend top models summary' },
-  { tab: 'stats', anchor: 'view-models', title: 'Usage: Models', keywords: 'usage models ranking per model tokens share cost average last used search sort breakdown' },
-  { tab: 'stats', anchor: 'view-trends', title: 'Usage: Over time', keywords: 'usage over time charts trend cost tokens buckets hourly daily weekly monthly category model legend data table' },
+  { tab: 'stats', anchor: 'view-models', title: 'Usage: Breakdown (models and tools)', keywords: 'usage models tools ranking per model tokens share cost average last used search sort breakdown tool calls failures average duration pin chart over time' },
+  { tab: 'stats', anchor: 'view-trends', title: 'Usage: Over time', keywords: 'usage over time charts trend cost tokens buckets hourly daily weekly monthly category model legend data table hover exact bucket pin' },
   { tab: 'stats', anchor: 'view-activity', title: 'Usage: Activity', keywords: 'usage activity recent attempts log day filters success failure chat jump' },
   { tab: 'stats', anchor: 'detail-cost', title: 'Usage: Cost detail', keywords: 'usage cost detail recorded estimated unpriced spend by model pricing' },
   { tab: 'stats', anchor: 'detail-tokens', title: 'Usage: Token detail', keywords: 'usage token detail uncached cache read write output share prompt' },

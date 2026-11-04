@@ -7,18 +7,21 @@ import {
 } from 'lucide-react'
 import { useS, featOn, type Stats } from '../store'
 import { allAttemptAts, allAttemptLogs } from '../usage'
+import { fmtDuration } from '../meta'
 import { settingDomId } from '../settingsCatalog'
 import {
   attemptContexts, buildUsageRecordsFromHistory, chartBuckets, bucketUnitFor, BUCKET_LABEL,
   findModel, formatDate, formatDateTime, formatDay, money, moneyExact, modelKey,
   percentOf, periodLabel, rangeLabel, recordsInRange, sharePct, sortModels, statsRange,
-  summarize, seriesTotals, compactTokens, fmtInt, MAX_USAGE_ROWS, USAGE_PERIODS,
+  summarize, seriesTotals, compactTokens, fmtInt, MAX_USAGE_ROWS, USAGE_PERIODS, chartMax,
+  allToolRounds, buildToolUsageRecords, aggregateTools, sortTools, inRange,
   type Bucket, type ModelSortKey, type ModelUsage, type StatsRange, type TokenBreakdown,
-  type UsagePeriod, type UsageRecord, type UsageSummary, type BucketUnit,
+  type ToolSortKey, type ToolUsage, type ToolUsageRecord, type UsagePeriod, type UsageRecord,
+  type UsageSummary, type BucketUnit,
 } from '../usageStats'
 import { Btn, Checkbox, Confirm, HelpTip, Sel, Seg, Surface, cx, useEscapeClose } from './ui'
 
-export const STATS_INFO = 'Cost, tokens and per-model usage from every saved reply, including replies from temporary, archived and deleted chats. The lifetime counters at the bottom are separate all-time totals.'
+export const STATS_INFO = 'Cost, tokens and per-model usage from every saved reply, including replies from temporary, archived and deleted chats. Tool-call counts come from the replies still stored on your chats. The lifetime counters at the bottom are separate all-time totals.'
 
 /** A kept attempt from a deleted chat has no live title; say so instead of
  *  showing it as an untitled chat that still exists. */
@@ -26,7 +29,7 @@ const chatLabelOf = (r: UsageRecord): string => r.chatTitle || (r.available === 
 
 const VIEWS: [UsageView, string][] = [
   ['overview', 'Overview'],
-  ['models', 'Models'],
+  ['models', 'Breakdown'],
   ['trends', 'Over time'],
   ['activity', 'Activity'],
 ]
@@ -49,6 +52,10 @@ type Ui = {
   activityLimit: number
   metric: 'cost' | 'tokens'
   tokenGroup: 'category' | 'model'
+  /** Breakdown dimension: models or tool calls. */
+  mode: 'models' | 'tools'
+  toolSort: ToolSortKey
+  toolDir: 'asc' | 'desc'
   showTable: boolean
 }
 
@@ -58,7 +65,7 @@ const initialUi: Ui = {
   view: 'overview', detail: null, modelKey: '', modelLabel: '',
   sort: 'tokens', dir: 'desc', search: '',
   activityModel: '', activityStatus: 'all', activityLimit: 50,
-  metric: 'cost', tokenGroup: 'category', showTable: false,
+  metric: 'cost', tokenGroup: 'category', mode: 'models', toolSort: 'calls', toolDir: 'desc', showTable: false,
 }
 const store: Ui = { ...initialUi }
 
@@ -127,64 +134,166 @@ function TokenMix({ tokens, compact = false }: { tokens: TokenBreakdown; compact
 
 type SeriesDef = { key: string; label: string; color: string }
 
-/** Dependency-free stacked bar chart. Rects and grid only; labels stay in HTML
- *  so they scale with the text and never distort with the SVG viewBox. */
-function StackedBars({ buckets, series, valueOf, format, height = 176, title }: {
+/** Dependency-free stacked bar chart. Rects and grid only; labels and the
+ *  integrated hover panel stay in HTML so they scale with the text and never
+ *  distort with the SVG viewBox. `chartMax` derives the ceiling from the data,
+ *  so sub-dollar buckets or a handful of tokens fill the plot instead of being
+ *  pinned under an absolute 1. */
+function StackedBars({ buckets, series, valueOf, exact, height = 176, title, pinned = '', onTogglePin, unitLabel }: {
   buckets: Bucket[]
   series: SeriesDef[]
   valueOf: (b: Bucket, key: string) => number
-  format: (n: number) => string
+  exact: (n: number) => string
   height?: number
   title: string
+  /** Single pinned series key; clicking a segment or its legend entry toggles. */
+  pinned?: string
+  onTogglePin?: (key: string) => void
+  unitLabel?: string
 }) {
-  const max = Math.max(1, ...buckets.map((b) => series.reduce((n, s) => n + valueOf(b, s.key), 0)))
+  const [hover, setHover] = useState<number | null>(null)
+  const [hoverKey, setHoverKey] = useState('')
+  const totals = buckets.map((b) => series.reduce((n, s) => n + valueOf(b, s.key), 0))
+  const max = chartMax(totals)
   const W = 640, plotH = height - 22, pad = 4
   const slot = (W - pad * 2) / Math.max(1, buckets.length)
   const barW = buckets.length === 1 ? Math.min(96, slot * 0.5) : Math.max(2, Math.min(28, slot * 0.68))
   const labelEvery = Math.max(1, Math.ceil(buckets.length / 8))
+  const hovered = hover == null ? null : buckets[hover]
+  const hoveredTotal = hover == null ? 0 : totals[hover]
+  // The SVG is stretched to the card width, so a client x maps linearly onto
+  // the fixed viewBox and the same slot maths works at every size.
+  const pickBucket = (e: React.PointerEvent<HTMLDivElement>) => {
+    const r = e.currentTarget.getBoundingClientRect()
+    if (!r.width || !buckets.length) return
+    const i = Math.floor((((e.clientX - r.left) / r.width) * W - pad) / slot)
+    setHover(i >= 0 && i < buckets.length ? i : null)
+  }
   return (
-    <>
-      <div role="img" aria-label={title} className="w-full">
-        <svg viewBox={`0 0 ${W} ${height}`} preserveAspectRatio="none" className="w-full" style={{ height }} aria-hidden="true">
+    <div role="img" aria-label={title} className="w-full">
+      <div className="relative" onPointerMove={pickBucket} onPointerLeave={() => { setHover(null); setHoverKey('') }}>
+        <svg viewBox={`0 0 ${W} ${height}`} preserveAspectRatio="none" className="block w-full" style={{ height }} aria-hidden="true">
           {[0, 0.25, 0.5, 0.75, 1].map((f) => (
             <line key={f} x1={0} x2={W} y1={pad + plotH * f} y2={pad + plotH * f} stroke="var(--bor)" strokeWidth={1} strokeDasharray={f === 1 ? undefined : '2 4'} vectorEffect="non-scaling-stroke" />
           ))}
+          {hover != null && <rect x={pad + hover * slot} y={pad} width={slot} height={plotH} rx={2} fill="var(--hov)" opacity={0.9} />}
           {buckets.map((b, i) => {
             let acc = 0
             const x = pad + i * slot + (slot - barW) / 2
             return (
-              <g key={b.start}>
-                <title>{`${b.label}: ${series.map((s) => `${s.label} ${format(valueOf(b, s.key))}`).join(', ')}`}</title>
+              <g key={b.start} opacity={hover == null || hover === i ? 1 : 0.45}>
                 {series.map((s) => {
                   const v = valueOf(b, s.key)
                   if (v <= 0) return null
                   const h = v / max * plotH
                   const y = pad + plotH - acc - h
                   acc += h
-                  return <rect key={s.key} x={x} y={y} width={barW} height={h} fill={s.color} opacity={0.92} />
+                  const isPinned = pinned === s.key
+                  const dim = (pinned && !isPinned) || (hoverKey && !pinned && hoverKey !== s.key)
+                  return (
+                    <rect key={s.key} x={x} y={y} width={barW} height={h} fill={s.color}
+                      opacity={dim ? 0.22 : isPinned ? 1 : 0.92}
+                      stroke={isPinned || hoverKey === s.key ? 'var(--tx)' : undefined}
+                      strokeWidth={isPinned ? 1.25 : 0.75}
+                      vectorEffect="non-scaling-stroke"
+                      className={onTogglePin ? 'cursor-pointer' : undefined}
+                      onPointerEnter={() => setHoverKey(s.key)}
+                      onPointerLeave={() => setHoverKey('')}
+                      onClick={onTogglePin ? (e) => { e.stopPropagation(); onTogglePin(s.key) } : undefined} />
+                  )
                 })}
               </g>
             )
           })}
         </svg>
+        {hover != null && hovered && (
+          <div className={cx('pointer-events-none absolute top-1 z-10 w-56 rounded-lg border border-bor bg-surf/95 p-2 text-[11px] shadow-lg backdrop-blur', hover < buckets.length / 2 ? 'right-1' : 'left-1')}>
+            <div className="flex items-baseline justify-between gap-2">
+              <span className="font-medium">{formatDateTime(hovered.start)}</span>
+              {unitLabel && <span className="shrink-0 text-mu">{unitLabel}</span>}
+            </div>
+            <div className="mt-0.5 text-mu">{fmtInt(hovered.requests)} request{hovered.requests === 1 ? '' : 's'} · {fmtInt(hovered.tokens.total)} tokens</div>
+            <div className="mt-1.5 space-y-0.5">
+              {series.map((s) => (
+                <div key={s.key} className="flex items-center gap-1.5">
+                  <span aria-hidden="true" className="size-1.5 shrink-0 rounded-sm" style={{ background: s.color }} />
+                  <span className={cx('min-w-0 flex-1 truncate', pinned === s.key && 'font-medium')} title={s.label}>{s.label}</span>
+                  <span className="shrink-0 tabular-nums">{exact(valueOf(hovered, s.key))}</span>
+                </div>
+              ))}
+            </div>
+            <div className="mt-1.5 flex items-baseline justify-between gap-2 border-t border-bor/60 pt-1">
+              <span className="text-mu">Total</span>
+              <span className="font-medium tabular-nums">{exact(hoveredTotal)}</span>
+            </div>
+            <div className="mt-0.5 flex flex-wrap justify-between gap-x-2 text-mu">
+              <span>{hovered.costKnown ? moneyExact(hovered.cost) : 'cost unavailable'}</span>
+              <span>{fmtInt(hovered.toolCalls)} tool call{hovered.toolCalls === 1 ? '' : 's'}{hovered.toolFailed > 0 ? ` · ${fmtInt(hovered.toolFailed)} failed` : ''}</span>
+            </div>
+          </div>
+        )}
         <div className="mt-1 grid gap-0.5 text-[10px] leading-4 text-mu" style={{ gridTemplateColumns: `repeat(${Math.max(1, buckets.length)}, minmax(0, 1fr))` }} aria-hidden="true">
           {buckets.map((b, i) => <span key={b.start} className="truncate text-center">{i % labelEvery === 0 ? b.label : ''}</span>)}
         </div>
       </div>
-    </>
+    </div>
   )
 }
 
-function ChartLegend({ series, totals, format }: { series: SeriesDef[]; totals: Record<string, number>; format: (n: number) => string }) {
+function ChartLegend({ series, totals, format, pinned = '', onToggle, noun = 'series' }: {
+  series: SeriesDef[]
+  totals: Record<string, number>
+  format: (n: number) => string
+  pinned?: string
+  onToggle?: (key: string) => void
+  noun?: string
+}) {
   return (
-    <div className="flex flex-wrap gap-x-4 gap-y-1.5 text-xs">
-      {series.map((s) => (
-        <span key={s.key} className="inline-flex min-w-0 items-center gap-1.5">
-          <span aria-hidden="true" className="size-2 shrink-0 rounded-sm" style={{ background: s.color }} />
-          <span className="truncate" title={s.label}>{s.label}</span>
-          <span className="shrink-0 tabular-nums text-mu">{format(totals[s.key] ?? 0)}</span>
-        </span>
-      ))}
+    <div className="flex flex-wrap gap-x-3 gap-y-1.5 text-xs">
+      {series.map((s) => {
+        const active = pinned === s.key
+        const body = (
+          <>
+            <span aria-hidden="true" className="size-2 shrink-0 rounded-sm" style={{ background: s.color }} />
+            <span className="min-w-0 truncate" title={s.label}>{s.label}</span>
+            <span className="shrink-0 tabular-nums text-mu">{format(totals[s.key] ?? 0)}</span>
+          </>
+        )
+        return onToggle ? (
+          <button key={s.key} type="button" onClick={() => onToggle(s.key)} aria-pressed={active}
+            title={`${active ? 'Unpin' : 'Pin'} ${noun} ${s.label}`}
+            className={cx('inline-flex min-w-0 items-center gap-1.5 rounded-md px-1 py-0.5 text-left transition-colors hover:bg-hov focus-visible:outline-2 focus-visible:outline-ac', active && 'bg-hov text-tx ring-1 ring-ac/40')}>
+            {body}{active && <span className="shrink-0 text-[10px] font-medium text-ac">pinned</span>}
+          </button>
+        ) : <span key={s.key} className="inline-flex min-w-0 items-center gap-1.5">{body}</span>
+      })}
+    </div>
+  )
+}
+
+/** Chart plus its interactive legend. Pin state is local to each chart, so
+ *  charts pin independently and a view switch resets it. */
+function ChartBody({ buckets, series, valueOf, format, exact, height, title, noun, unitLabel, pinnable = true }: {
+  buckets: Bucket[]
+  series: SeriesDef[]
+  valueOf: (b: Bucket, key: string) => number
+  format: (n: number) => string
+  exact?: (n: number) => string
+  height?: number
+  title: string
+  noun?: string
+  unitLabel?: string
+  pinnable?: boolean
+}) {
+  const [pinned, setPinned] = useState('')
+  const totals: Record<string, number> = {}
+  for (const s of series) totals[s.key] = buckets.reduce((n, b) => n + valueOf(b, s.key), 0)
+  const toggle = series.length > 1 && pinnable ? (key: string) => setPinned((p) => p === key ? '' : key) : undefined
+  return (
+    <div className="space-y-2">
+      <StackedBars buckets={buckets} series={series} valueOf={valueOf} exact={exact ?? format} height={height}
+        title={title} pinned={pinned} onTogglePin={toggle} unitLabel={unitLabel} />
+      <ChartLegend series={series} totals={totals} format={format} pinned={pinned} onToggle={toggle} noun={noun} />
     </div>
   )
 }
@@ -212,18 +321,21 @@ function ChartTable({ buckets, series, valueOf, format }: { buckets: Bucket[]; s
   )
 }
 
-function ChartCard({ title, subtitle, series, buckets, valueOf, format, showTable, onToggleTable, height, empty, unitLabel }: {
+function ChartCard({ title, subtitle, series, buckets, valueOf, format, exact, showTable, onToggleTable, height, empty, unitLabel, noun, pinnable }: {
   title: string
   subtitle: string
   series: SeriesDef[]
   buckets: Bucket[]
   valueOf: (b: Bucket, key: string) => number
   format: (n: number) => string
+  exact?: (n: number) => string
   showTable: boolean
   onToggleTable: () => void
   height?: number
   empty?: string
   unitLabel: string
+  noun?: string
+  pinnable?: boolean
 }) {
   const totals: Record<string, number> = {}
   for (const s of series) totals[s.key] = buckets.reduce((n, b) => n + valueOf(b, s.key), 0)
@@ -239,8 +351,8 @@ function ChartCard({ title, subtitle, series, buckets, valueOf, format, showTabl
         </div>
         <Btn v="soft" sm icon={Table2} title={showTable ? 'Hide data table' : 'Show data table'} aria-expanded={showTable} onClick={onToggleTable} />
       </div>
-      <StackedBars buckets={buckets} series={series} valueOf={valueOf} format={format} height={height} title={summary} />
-      <ChartLegend series={series} totals={totals} format={format} />
+      <ChartBody buckets={buckets} series={series} valueOf={valueOf} format={format} exact={exact} height={height}
+        title={summary} noun={noun} unitLabel={unitLabel} pinnable={pinnable} />
       {showTable && <ChartTable buckets={buckets} series={series} valueOf={valueOf} format={format} />}
       <span className="sr-only">{unitLabel} buckets</span>
     </Surface>
@@ -447,7 +559,7 @@ function Overview({ summary, records, range, now, decimals, modelKey, modelLabel
         <div className="rounded-xl bg-surf p-3">
           {summary.totalTokens === 0 && !canCost
             ? <p className="text-sm text-mu">No usage in this period.</p>
-            : <StackedBars buckets={buckets} series={activeSeries} valueOf={activeValue} format={fmt} height={120} title={`${canCost ? 'Cost' : 'Token'} trend for the selected period`} />}
+            : <ChartBody buckets={buckets} series={activeSeries} valueOf={activeValue} format={fmt} exact={canCost ? moneyExact : fmtInt} height={120} title={`${canCost ? 'Cost' : 'Token'} trend for the selected period`} noun={canCost ? 'model' : 'category'} unitLabel={BUCKET_LABEL[unit]} />}
           {summary.totalTokens > 0 && !canCost && <p className="mt-1 text-xs text-mu">No provider cost is known for this period, so the trend shows tokens.</p>}
         </div>
       </div>
@@ -477,7 +589,7 @@ function Overview({ summary, records, range, now, decimals, modelKey, modelLabel
 
 /* ---- models ---- */
 
-function SortHeader({ label, k, sort, dir, onSort, className }: { label: string; k: ModelSortKey; sort: ModelSortKey; dir: 'asc' | 'desc'; onSort: (k: ModelSortKey) => void; className?: string }) {
+function SortHeader<K extends string>({ label, k, sort, dir, onSort, className }: { label: string; k: K; sort: K; dir: 'asc' | 'desc'; onSort: (k: K) => void; className?: string }) {
   return (
     <th scope="col" aria-sort={sort === k ? (dir === 'asc' ? 'ascending' : 'descending') : 'none'} className={cx('px-2 py-2 text-left font-medium', className)}>
       <button type="button" onClick={() => onSort(k)} className="inline-flex items-center gap-1 whitespace-nowrap rounded text-xs hover:text-tx">
@@ -487,13 +599,16 @@ function SortHeader({ label, k, sort, dir, onSort, className }: { label: string;
   )
 }
 
-function ModelsView({ summary, decimals, ui, setUi, openDetail }: {
+function ModelsView({ summary, buckets, unit, decimals, ui, setUi, openDetail }: {
   summary: UsageSummary
+  buckets: Bucket[]
+  unit: BucketUnit
   decimals: number
   ui: Ui
   setUi: (p: Partial<Ui>) => void
   openDetail: (kind: DetailKind, opts?: { modelKey?: string; modelLabel?: string }, trigger?: HTMLElement | null) => void
 }) {
+  const modelChart = topModelSeries(summary.models, ui.metric === 'cost' ? 'cost' : 'tokens')
   const needle = ui.search.trim().toLowerCase()
   const rows = sortModels(summary.models, ui.sort, ui.dir).filter((m) =>
     !needle || m.label.toLowerCase().includes(needle) || m.modelId.toLowerCase().includes(needle) || m.endpointName.toLowerCase().includes(needle))
@@ -504,6 +619,15 @@ function ModelsView({ summary, decimals, ui, setUi, openDetail }: {
   }
   return (
     <div className="space-y-3">
+      <ChartCard
+        title={`Model ${ui.metric === 'cost' ? 'cost' : 'tokens'} over time`}
+        subtitle={`${BUCKET_LABEL[unit]} buckets · click a bar or a legend entry to pin a model`}
+        series={modelChart.series} buckets={buckets} valueOf={modelChart.valueOf}
+        format={ui.metric === 'cost' ? (n) => money(n, decimals) : fmtInt}
+        exact={ui.metric === 'cost' ? moneyExact : fmtInt}
+        showTable={ui.showTable} onToggleTable={() => setUi({ showTable: !ui.showTable })} unitLabel={BUCKET_LABEL[unit]}
+        noun="model"
+        empty={ui.metric === 'cost' && summary.pricedRequests === 0 ? 'No provider cost is known for this period. Switch to Tokens, or add prices in Settings → Endpoints.' : undefined} />
       <div className="flex flex-wrap items-center gap-2">
         <label className="relative min-w-48 flex-1">
           <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-mu" />
@@ -585,6 +709,129 @@ function ModelsView({ summary, decimals, ui, setUi, openDetail }: {
   )
 }
 
+function ToolsView({ rows, buckets, unit, ui, setUi }: {
+  rows: ToolUsage[]
+  buckets: Bucket[]
+  unit: BucketUnit
+  ui: Ui
+  setUi: (p: Partial<Ui>) => void
+}) {
+  const sorted = sortTools(rows, ui.toolSort, ui.toolDir)
+  const sort = (k: ToolSortKey) => setUi({ toolSort: k, toolDir: ui.toolSort === k ? (ui.toolDir === 'desc' ? 'asc' : 'desc') : 'desc' })
+  const calls = rows.reduce((n, r) => n + r.calls, 0)
+  const failed = rows.reduce((n, r) => n + r.failed, 0)
+  const top = [...rows].sort((a, b) => b.calls - a.calls).slice(0, 6)
+  const keys = new Set(top.map((r) => r.name))
+  const series: SeriesDef[] = top.map((r, i) => ({ key: r.name, label: r.label, color: CHART_COLORS[i % CHART_COLORS.length] }))
+  if (rows.length > top.length) series.push({ key: '__other', label: 'Other tools', color: 'var(--mu)' })
+  const valueOf = (b: Bucket, key: string) => key === '__other'
+    ? Object.entries(b.byTool).filter(([k]) => !keys.has(k)).reduce((n, [, v]) => n + v, 0)
+    : b.byTool[key] ?? 0
+  return (
+    <div className="space-y-3">
+      <ChartCard title="Tool calls over time"
+        subtitle={`${BUCKET_LABEL[unit]} buckets · click a bar or a legend entry to pin a tool`}
+        series={series} buckets={buckets} valueOf={valueOf} format={fmtInt} exact={fmtInt}
+        showTable={ui.showTable} onToggleTable={() => setUi({ showTable: !ui.showTable })} unitLabel={BUCKET_LABEL[unit]}
+        noun="tool"
+        empty={rows.length ? undefined : 'No tool calls in this period. Tool stats come from the tool rounds still stored on your chats.'} />
+      {rows.length > 0 && (
+        <>
+          <p className="text-xs text-mu">{fmtInt(calls)} tool call{calls === 1 ? '' : 's'} across {rows.length} tool{rows.length === 1 ? '' : 's'} · {fmtInt(failed)} failed{failed > 0 ? ` (${percentOf(failed, calls)})` : ''}. Average duration uses only calls that reported one.</p>
+          <div className="hidden overflow-x-auto rounded-xl bg-surf md:block">
+            <table className="w-full min-w-[680px] text-left text-sm">
+              <caption className="sr-only">Tool usage for the selected period</caption>
+              <thead className="border-b border-bor text-mu">
+                <tr>
+                  <th scope="col" className="w-10 px-2 py-2 text-left text-xs font-medium">#</th>
+                  <SortHeader label="Tool" k="tool" sort={ui.toolSort} dir={ui.toolDir} onSort={sort} />
+                  <SortHeader label="Calls" k="calls" sort={ui.toolSort} dir={ui.toolDir} onSort={sort} />
+                  <SortHeader label="Share" k="share" sort={ui.toolSort} dir={ui.toolDir} onSort={sort} />
+                  <SortHeader label="Failed" k="failed" sort={ui.toolSort} dir={ui.toolDir} onSort={sort} />
+                  <SortHeader label="Avg time" k="average" sort={ui.toolSort} dir={ui.toolDir} onSort={sort} />
+                  <SortHeader label="Last used" k="lastUsed" sort={ui.toolSort} dir={ui.toolDir} onSort={sort} />
+                </tr>
+              </thead>
+              <tbody>
+                {sorted.map((t, i) => (
+                  <tr key={t.name} className="border-b border-bor/50 align-top last:border-0">
+                    <td className="px-2 py-2 text-xs text-mu">{i + 1}</td>
+                    <td className="max-w-64 px-2 py-2">
+                      <div className="truncate font-medium" title={t.label}>{t.label}</div>
+                      <div className="truncate font-mono text-[11px] text-mu" title={t.name}>{t.name}</div>
+                    </td>
+                    <td className="px-2 py-2 tabular-nums">{fmtInt(t.calls)}</td>
+                    <td className="px-2 py-2">
+                      <div className="flex items-center gap-2">
+                        <span className="h-1.5 w-14 overflow-hidden rounded-full bg-bg"><span className="block h-full rounded-full bg-ac" style={{ width: `${(t.share ?? 0) * 100}%` }} /></span>
+                        <span className="text-xs tabular-nums">{sharePct(t.share)}</span>
+                      </div>
+                    </td>
+                    <td className="px-2 py-2 tabular-nums">{t.failed > 0 ? <span className="text-er">{fmtInt(t.failed)} · {percentOf(t.failed, t.calls)}</span> : '0'}</td>
+                    <td className="px-2 py-2 tabular-nums" title={t.averageMs == null ? 'No duration reported' : `${fmtInt(t.timedCalls)} timed call${t.timedCalls === 1 ? '' : 's'}`}>{t.averageMs == null ? '—' : fmtDuration(t.averageMs)}</td>
+                    <td className="px-2 py-2 text-xs text-mu" title={formatDateTime(t.lastUsed)}>{formatDay(t.lastUsed)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="space-y-2 md:hidden">
+            {sorted.map((t, i) => (
+              <div key={t.name} className="space-y-2 rounded-xl bg-surf p-3">
+                <div className="flex items-start gap-2">
+                  <span className="mt-0.5 text-xs text-mu">{i + 1}</span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate font-medium" title={t.label}>{t.label}</span>
+                    <span className="block truncate font-mono text-[11px] text-mu" title={t.name}>{t.name}</span>
+                  </span>
+                  <span className="shrink-0 text-sm font-medium tabular-nums">{fmtInt(t.calls)}</span>
+                </div>
+                <div className="flex items-center gap-2 text-xs text-mu">
+                  <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-bg"><span className="block h-full rounded-full bg-ac" style={{ width: `${(t.share ?? 0) * 100}%` }} /></span>
+                  {sharePct(t.share)} · {t.failed > 0 ? `${fmtInt(t.failed)} failed` : 'no failures'} · {t.averageMs == null ? 'no timing' : fmtDuration(t.averageMs)}
+                </div>
+                <div className="text-xs text-mu">Last used {formatDay(t.lastUsed)}</div>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
+/** Models and tools are the two things worth comparing across buckets, so one
+ *  view owns both: switch dimension, keep the same period and bucket unit. */
+function BreakdownView({ summary, records, tools, range, now, unit, decimals, ui, setUi, openDetail }: {
+  summary: UsageSummary
+  records: UsageRecord[]
+  tools: ToolUsageRecord[]
+  range: StatsRange
+  now: number
+  unit: BucketUnit
+  decimals: number
+  ui: Ui
+  setUi: (p: Partial<Ui>) => void
+  openDetail: (kind: DetailKind, opts?: { modelKey?: string; modelLabel?: string }, trigger?: HTMLElement | null) => void
+}) {
+  const scoped = useMemo(() => range.invalid ? [] : tools.filter((t) => inRange(t.at, range)), [tools, range])
+  const buckets = useMemo(() => chartBuckets(records, range, unit, now, scoped), [records, range, unit, now, scoped])
+  const toolRows = useMemo(() => aggregateTools(scoped), [scoped])
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <Seg v={ui.mode} set={(v) => setUi({ mode: v })} opts={[['models', 'Models'], ['tools', 'Tools']]} />
+        {ui.mode === 'models'
+          ? <Seg v={ui.metric} set={(v) => setUi({ metric: v })} opts={[['cost', 'Cost'], ['tokens', 'Tokens']]} />
+          : <span className="text-xs text-mu">{fmtInt(scoped.length)} call{scoped.length === 1 ? '' : 's'} across {toolRows.length} tool{toolRows.length === 1 ? '' : 's'}</span>}
+      </div>
+      {ui.mode === 'models'
+        ? <ModelsView summary={summary} buckets={buckets} unit={unit} decimals={decimals} ui={ui} setUi={setUi} openDetail={openDetail} />
+        : <ToolsView rows={toolRows} buckets={buckets} unit={unit} ui={ui} setUi={setUi} />}
+    </div>
+  )
+}
+
 /* ---- over time ---- */
 
 function topModelSeries(models: ModelUsage[], metric: 'cost' | 'tokens') {
@@ -642,7 +889,8 @@ function TrendsView({ summary, records, range, now, decimals, ui, setUi }: {
       {metric === 'cost' && !canCost
         ? <Surface><p className="text-sm text-mu">No provider cost is known for this period, so there is no cost chart. Recorded costs and endpoint price tables both contribute when available.</p></Surface>
         : <ChartCard title={`${metric === 'cost' ? 'Cost' : 'Token'} breakdown`} subtitle={`${BUCKET_LABEL[unit]} buckets · ${series.length} series`}
-          series={series} buckets={buckets} valueOf={valueOf} format={fmt}
+          series={series} buckets={buckets} valueOf={valueOf} format={fmt} exact={metric === 'cost' ? moneyExact : fmtInt}
+          noun={metric === 'cost' || ui.tokenGroup === 'model' ? 'model' : 'category'}
           showTable={ui.showTable} onToggleTable={() => setUi({ showTable: !ui.showTable })} unitLabel={BUCKET_LABEL[unit]} />}
       {metric === 'tokens' && ui.tokenGroup === 'model' && !summary.models.length && <p className="text-xs text-mu">No model usage in this period.</p>}
     </div>
@@ -776,7 +1024,7 @@ function CostDetail({ summary, records, range, now, decimals, from, onBack, head
       </div>
       <p className="text-xs text-mu">{summary.unpricedTokens > 0 ? `Cost is known for ${fmtInt(summary.pricedTokens)} of ${fmtInt(summary.totalTokens)} tokens; ${fmtInt(summary.unpricedTokens)} have no price and are excluded from the average.` : 'Every token in this period has a known cost.'}</p>
       {summary.pricedRequests > 0
-        ? <ChartCard title="Cost over time" subtitle={`${BUCKET_LABEL[unit]} buckets · by model`} series={series.series} buckets={buckets} valueOf={series.valueOf} format={fmt} showTable={showTable} onToggleTable={toggleTable} unitLabel={BUCKET_LABEL[unit]} />
+        ? <ChartCard title="Cost over time" subtitle={`${BUCKET_LABEL[unit]} buckets · by model`} series={series.series} buckets={buckets} valueOf={series.valueOf} format={fmt} exact={moneyExact} noun="model" showTable={showTable} onToggleTable={toggleTable} unitLabel={BUCKET_LABEL[unit]} />
         : <Surface><p className="text-sm text-mu">No known cost in this period. Add prices in Settings → Endpoints, or use a provider that reports spend.</p></Surface>}
       <Surface className="space-y-2">
         <h4 className="text-sm font-medium">Cost by model</h4>
@@ -815,7 +1063,7 @@ function TokenDetail({ summary, records, range, now, decimals, from, onBack, hea
       </div>
       <Surface className="space-y-3"><h4 className="text-sm font-medium">Token mix</h4><TokenMix tokens={summary.tokens} /><p className="text-xs text-mu">Recorded cost already reflects cached-token discounts.</p></Surface>
       <ChartCard title="Tokens over time" subtitle={`${BUCKET_LABEL[unit]} buckets · by category`} series={COST_CATS.map((c) => ({ key: c.key, label: c.label, color: c.color }))} buckets={buckets}
-        valueOf={(b, key) => b.byCategory[key as keyof Bucket['byCategory']] ?? 0} format={(n) => fmtInt(n)} showTable={showTable} onToggleTable={toggleTable} unitLabel={BUCKET_LABEL[unit]} />
+        valueOf={(b, key) => b.byCategory[key as keyof Bucket['byCategory']] ?? 0} format={fmtInt} exact={fmtInt} noun="category" showTable={showTable} onToggleTable={toggleTable} unitLabel={BUCKET_LABEL[unit]} />
       <Surface className="space-y-2">
         <h4 className="text-sm font-medium">Tokens by model</h4>
         {summary.models.map((m) => (
@@ -928,9 +1176,9 @@ function ModelDetail({ summary, records, range, now, decimals, eps, detail, from
             <TokenMix tokens={row.tokens} compact />
             <p className="text-xs text-mu">{row.pricedRequests > 0 ? `${fmtInt(row.pricedTokens)} priced tokens${row.unpricedTokens > 0 ? ` · ${fmtInt(row.unpricedTokens)} unpriced` : ''}` : 'No priced usage for this model in this period.'}{removed && ' Price-table data is unavailable because the endpoint was removed; provider-reported costs are still shown.'}</p>
           </Surface>
-          <ChartCard title="Tokens over time" subtitle={`${BUCKET_LABEL[unit]} buckets · this model`} series={tokenSeries} buckets={buckets} valueOf={tokenValue} format={(n) => fmtInt(n)} showTable={showTable} onToggleTable={toggleTable} height={130} unitLabel={BUCKET_LABEL[unit]} />
+          <ChartCard title="Tokens over time" subtitle={`${BUCKET_LABEL[unit]} buckets · this model`} series={tokenSeries} buckets={buckets} valueOf={tokenValue} format={fmtInt} exact={fmtInt} noun="model" showTable={showTable} onToggleTable={toggleTable} height={130} unitLabel={BUCKET_LABEL[unit]} />
           {row.pricedRequests > 0
-            ? <ChartCard title="Cost over time" subtitle={`${BUCKET_LABEL[unit]} buckets · this model`} series={[{ key, label, color: 'var(--c2)' }]} buckets={buckets} valueOf={costValue} format={fmt} showTable={showTable} onToggleTable={toggleTable} height={130} unitLabel={BUCKET_LABEL[unit]} />
+            ? <ChartCard title="Cost over time" subtitle={`${BUCKET_LABEL[unit]} buckets · this model`} series={[{ key, label, color: 'var(--c2)' }]} buckets={buckets} valueOf={costValue} format={fmt} exact={moneyExact} noun="model" showTable={showTable} onToggleTable={toggleTable} height={130} unitLabel={BUCKET_LABEL[unit]} />
             : <Surface><p className="text-sm text-mu">No known cost for this model in this period.</p></Surface>}
         </>
       ) : (
@@ -980,6 +1228,9 @@ export function UsageStats({ onOpenChat }: { onOpenChat: (chatId: string, messag
   // any gap without being counted twice (see buildUsageRecordsFromHistory).
   const ledger = useS((s) => s.usage)
   const ledgerTitles = useS((s) => s.usageTitles)
+  // Tool rounds keep their identity while reply text streams, so the tool
+  // breakdown only recomputes when a call is actually added or replaced.
+  const rounds = useS(useShallow((s) => allToolRounds(s.chats)))
   const [ui, setUi] = useUi()
   const [now, setNow] = useState(() => Date.now())
   const [resetOpen, setResetOpen] = useState(false)
@@ -1011,6 +1262,7 @@ export function UsageStats({ onOpenChat }: { onOpenChat: (chatId: string, messag
     return buildUsageRecordsFromHistory({ ledger, titles: ledgerTitles, logs, ats, contexts: attemptContexts(chats), eps, chats })
   }, [ledger, ledgerTitles, logs, ats, eps, chatMeta])
   const records = useMemo(() => recordsInRange(all, range), [all, range])
+  const tools = useMemo(() => buildToolUsageRecords(useS.getState().chats), [rounds, chatMeta])
   const summary = useMemo(() => summarize(records), [records])
   const decimals = Math.min(8, Math.max(0, Number(wp.costDecimals ?? 4)))
   const unit = bucketUnitFor(range, now)
@@ -1110,7 +1362,7 @@ export function UsageStats({ onOpenChat }: { onOpenChat: (chatId: string, messag
               ? <Overview summary={summary} records={records} range={range} now={now} decimals={decimals} modelKey={ui.modelKey} modelLabel={ui.modelLabel} setView={setView} chooseModel={chooseModel} openDetail={openDetail}
                 buckets={chartBuckets(records, range, unit, now)} unit={unit} />
               : ui.view === 'models'
-                ? <ModelsView summary={summary} decimals={decimals} ui={ui} setUi={setUi} openDetail={openDetail} />
+                ? <BreakdownView summary={summary} records={records} tools={tools} range={range} now={now} unit={unit} decimals={decimals} ui={ui} setUi={setUi} openDetail={openDetail} />
                 : ui.view === 'trends'
                   ? <TrendsView summary={summary} records={records} range={range} now={now} decimals={decimals} ui={ui} setUi={setUi} />
                     : <ActivityView records={records} summary={summary} decimals={decimals} ui={ui} setUi={setUi} onOpenChat={onOpenChat} />

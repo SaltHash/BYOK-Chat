@@ -222,9 +222,19 @@ export function extractCitedIds(text: string): string[] {
   return [...ids].sort((a, b) => Number(a.slice(1)) - Number(b.slice(1)))
 }
 
+/* A model occasionally truncates a markdown citation link before its closing
+ * quote and parenthesis: `[S21](https://… "Title`. Markdown then renders the
+ * whole fragment as literal text, so no pill appears. Repair a line when its
+ * id maps to a source, replacing the fragment with the canonical source link. */
+function repairBrokenCitationLinks(text: string, linkOf: (id: string) => string | null): string {
+  return text.replace(/\[(?:Sources? )?(S\d+)\]\([ \t]*https?:\/\/[^\s)\n]+(?:[ \t]+"[^"\n]*"?)?[ \t]*$/gim,
+    (full, id: string) => linkOf(id) ?? full)
+}
+
 /* Rewrite bare [S1] / [Source S1] / [S2, S8] tokens into markdown links
  * against sources. Already-linked [S1](…) is left alone; unknown ids are
- * left as plain text ([S2, S9] links S2, leaves [S9]). */
+ * left as plain text ([S2, S9] links S2, leaves [S9]). Tab-indented and
+ * truncated citation links are repaired first. */
 export function linkifyCitations(text: string, sources: CiteSource[]): string {
   if (!sources.length) return text
   const byId = new Map(sources.map((s) => [s.citeId.toUpperCase(), s]))
@@ -232,7 +242,7 @@ export function linkifyCitations(text: string, sources: CiteSource[]): string {
     const s = byId.get(id.toUpperCase())
     return s ? `[${s.citeId}](${s.url} "${s.title.replace(/"/g, "'")}")` : null
   }
-  return String(text ?? '').replace(/( |&nbsp;|\u00a0)?\[(?:Sources? )?([^\]\n]{1,80})\](?!\()/gi, (full, sp: string, inner: string) => {
+  return repairBrokenCitationLinks(String(text ?? ''), linkOf).replace(/([ \t]+|&nbsp;|\u00a0)?\[(?:Sources? )?([^\]\n]{1,80})\](?!\()/gi, (full, sp: string, inner: string) => {
     if (!/S\d+/i.test(inner)) return full
     const stripped = String(inner)
       .replace(/sources?/gi, '')
@@ -256,7 +266,7 @@ export function linkifyCitations(text: string, sources: CiteSource[]): string {
 /* Remove bare [S1] / [Source S1] / [S2, S8] tokens for the citations-off
  * setting. Already-linked [S1](…) is left alone. */
 export function stripCitations(text: string): string {
-  return String(text ?? '').replace(/( |&nbsp;|\u00a0)?\[(?:Sources? )?([^\]\n]{1,80})\](?!\()/gi, (full, sp: string, inner: string) => {
+  return String(text ?? '').replace(/([ \t]+|&nbsp;|\u00a0)?\[(?:Sources? )?([^\]\n]{1,80})\](?!\()/gi, (full, sp: string, inner: string) => {
     if (!/S\d+/i.test(inner)) return full
     const stripped = String(inner)
       .replace(/sources?/gi, '')

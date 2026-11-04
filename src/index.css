@@ -384,7 +384,7 @@ html[data-codewrap] .md pre code { white-space: pre-wrap; overflow-wrap: anywher
 .process-node::before { content:''; position:absolute; left:4px; top:0; bottom:0; width:1px; background:color-mix(in srgb, var(--mu) 30%, transparent); }
 .process-node:first-child::before { top:.68rem; }
 .process-node:last-child::before { bottom:auto; height:.68rem; }
-.process-dot, .process-ring { position:absolute; left:0; top:.68rem; box-sizing:border-box; width:9px; height:9px; border-radius:50%; }
+.process-dot, .process-ring, .process-x { position:absolute; left:0; top:.68rem; box-sizing:border-box; width:9px; height:9px; border-radius:50%; }
 /* Completed nodes are opaque dots. The inner shadow is the panel's own
    surface colour and masks the rail behind the dot, so the hairline never
    shows through a finished step; the outer halo keeps it readable. */
@@ -399,6 +399,12 @@ html[data-codewrap] .md pre code { white-space: pre-wrap; overflow-wrap: anywher
    the hairline is never seen through the middle of a running step. */
 .process-ring { border:1.5px solid color-mix(in srgb, var(--mu) 60%, transparent); background:var(--surf); }
 .process-ring[data-err] { border-color:color-mix(in srgb, var(--er) 80%, transparent); }
+/* A failed step is an open circle with an error-colored cross: distinct from
+   both a finished dot and a running ring even without reading the red text. */
+.process-x { border:1.5px solid color-mix(in srgb, var(--er) 80%, transparent); background:var(--surf); }
+.process-x::before, .process-x::after { content:''; position:absolute; left:50%; top:50%; width:4px; height:1px; border-radius:1px; background:var(--er); }
+.process-x::before { transform:translate(-50%,-50%) rotate(45deg); }
+.process-x::after { transform:translate(-50%,-50%) rotate(-45deg); }
 /* Only a call that is still running stays open, and it wears a shine that
    travels around its rim — busy, without a spinner. */
 .process-ring[data-live] { border-color:color-mix(in srgb, var(--ac) 70%, transparent); box-shadow:0 0 0 2.5px color-mix(in srgb, var(--ac) 12%, transparent); }

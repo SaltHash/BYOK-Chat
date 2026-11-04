@@ -45,6 +45,26 @@ test('linkifies bare tokens but leaves links and unknown ids alone', () => {
   assert.equal(c.linkifyCitations('hi', []), 'hi')
 })
 
+test('linkifies tab-indented tokens and repairs truncated citation links', () => {
+  const sources = [
+    { citeId: 'S2', title: 'Second', url: 'https://two.example/b', host: 'two.example', snippet: '', query: '' },
+    { citeId: 'S21', title: 'Exa API Pricing', url: 'https://exa.ai/pricing', host: 'exa.ai', snippet: '', query: '' },
+  ]
+  // A tab before a token used to leave it unmatched; markdown then read the
+  // line as an indented code block, so the pill never rendered.
+  assert.equal(c.linkifyCitations('\t[S2]', sources), '\u00a0[S2](https://two.example/b "Second")')
+  // A link truncated before its closing quote/paren is repaired to the source.
+  assert.equal(
+    c.linkifyCitations(' [S21](https://exa.ai/pricing "Exa API Pricing\nMore text', sources),
+    ' [S21](https://exa.ai/pricing "Exa API Pricing")\nMore text',
+  )
+  // A complete link is left exactly as it is, and an unknown id is untouched.
+  const valid = '[S2](https://two.example/b "Second")'
+  assert.equal(c.linkifyCitations(valid, sources), valid)
+  const unknown = ' [S9](https://exa.ai/pricing "Exa API Pricing'
+  assert.equal(c.linkifyCitations(unknown, sources), unknown)
+})
+
 test('truncates snippets and hosts safely', () => {
   assert.equal(c.truncateSnippet('a  b\nc', 4), 'a b…')
   assert.equal(c.hostOf('https://www.example.com/x'), 'example.com')

@@ -7,6 +7,7 @@ import { focusComposer, startPointerDrag } from '../hooks'
 import { useProcessLogEpoch } from '../uiSignals'
 import { createFrameThrottle } from '../throttle'
 import { CI, fmtDuration } from '../meta'
+import { toolLabel } from '../toolLabels'
 import { formatMsgDateTime, formatMsgTime } from '../time'
 import { Btn, Chip, cx, ZoomableImage, type Ic } from './ui'
 import { Composer } from './Composer'
@@ -166,28 +167,7 @@ function toolStep(name: string, rawArgs: string, result?: string) {
 /* A tool step reads as a process node: a short name on the node itself and the
  * details underneath it. `toolStep` already puts the name first and separates
  * it with a middot, so a label without one falls back to the tool's own name. */
-const TOOL_NAMES: Record<string, string> = {
-  search: 'Web search',
-  fetch_page: 'Page reader',
-  time: 'Time',
-  date: 'Date',
-  calc: 'Calculator',
-  count: 'Text count',
-  json: 'JSON formatter',
-  base64: 'Base64 encoder',
-  location: 'Location',
-  clipboard: 'Clipboard',
-  uuid: 'UUID',
-  random: 'Random integer',
-  hash: 'SHA-256',
-  memory: 'Memory',
-  graph: 'Graph',
-  run_code: 'Code',
-  use_skill: 'Skill',
-  prompt_chip: 'Follow-up',
-  inline_poll: 'Choice',
-}
-const toolName = (id: string) => TOOL_NAMES[id] ?? (id.startsWith('mcp_') ? `MCP · ${id.slice(4).replace(/_/g, ' ')}` : id)
+const toolName = toolLabel
 /* Name on the node, details below it — the same split for saved calls and for
  * a call that is still running. */
 function toolNode(label: string, id: string): [string, string] {
@@ -262,6 +242,14 @@ function Payload({ label, text, open, onToggle }: { label: string; text: string;
   )
 }
 
+/** Process-tree marker: a finished step is a filled dot, a running one an
+ * open ring, and a failure an open ring with an error-colored cross so it is
+ * distinct from both without relying on the row's red text. */
+function ProcessMarker({ error, tool, live }: { error?: boolean; tool?: boolean; live?: boolean }) {
+  if (error) return <span className="process-x" aria-hidden="true" />
+  return <span className={live ? 'process-ring' : 'process-dot'} data-tool={tool ? '' : undefined} data-live={live ? '' : undefined} aria-hidden="true" />
+}
+
 /* One saved attempt in the Process-to-answer panel. Where the old panel
  * printed a whole sentence per step, the detail level now decides how much is
  * shown: Compact keeps a row to its name, Standard clips long explanations
@@ -286,7 +274,7 @@ function ProcessStep({ t, detail, timing, models, tokens, open, toggle }: {
   ].filter(Boolean)
   return (
     <li className="process-node">
-      <span className="process-dot" data-err={t.err ? '' : undefined} aria-hidden="true" />
+      <ProcessMarker error={!!t.err} />
       <div className="min-w-0">
         <span className="flex flex-wrap items-baseline gap-x-2">
           <span className="min-w-0 break-words">{t.n}</span>
@@ -601,8 +589,23 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
               log into helper calls and model calls, which put a later retry or
               memory decision above the request that caused it. */}
           {(() => {
-            const steps = m.log ?? []
-            const calls = (m.toolRounds ?? []).flatMap((round) => round.calls)
+            const seenCalls = new Set<string>()
+            const calls = (m.toolRounds ?? []).flatMap((round) => round.calls).filter((c) => {
+              if (!c.id) return true
+              if (seenCalls.has(c.id)) return false
+              seenCalls.add(c.id)
+              return true
+            })
+            // A summarized page otherwise appears twice: once as the helper
+            // model step and once as the fetch_page row that shows its URL.
+            // Pair each summarized read with one successful summary step and
+            // hide that step; failures stay visible because they explain why
+            // the raw excerpt was used instead.
+            let summaryReads = calls.filter((c) => c.name === 'fetch_page' && /^\s*Page summary/i.test(c.result ?? '')).length
+            const steps = (m.log ?? []).flatMap((t, i) => {
+              if (!t.err && /^Page summary$/i.test(t.n) && summaryReads > 0) { summaryReads--; return [] }
+              return [{ t, i }]
+            })
             // A call that is still running has no saved round yet, so it is
             // drawn from the live list; ids keep a landed call from showing
             // twice while the round is being written back.
@@ -611,7 +614,7 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
               .filter((t) => t.name && (!t.id || !saved.has(t.id)))
             const running = busy && last
             const count = steps.length + calls.length + pending.length
-            const total = [...steps.map((t) => t.ms ?? 0), ...calls.map((c) => c.ms ?? 0)].reduce((a, b) => a + b, 0)
+            const total = [...steps.map(({ t }) => t.ms ?? 0), ...calls.map((c) => c.ms ?? 0)].reduce((a, b) => a + b, 0)
             return (
               <>
                 {count > 0 && !m.err && (
@@ -627,18 +630,18 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
                 <ol className="process-tree">
                   {count === 0 && (
                     <li className="process-node text-mu">
-                      <span className={busy && last ? 'process-ring' : 'process-dot'} data-live={busy && last ? '' : undefined} aria-hidden="true" />
+                      <ProcessMarker live={busy && last} />
                       {thinkingLine(m.id)}
                     </li>
                   )}
-                  {steps.map((t, i) => (
+                  {steps.map(({ t, i }) => (
                     <ProcessStep key={`step-${i}`} t={t} detail={logDetail} timing={logTiming} models={logModels} tokens={!!adv?.showTokenCounts} open={!!expanded[`step-${i}`]} toggle={() => togglePayload(`step-${i}`)} />
                   ))}
                   {calls.map((call, i) => {
                     const [head, desc] = toolNode(toolStep(call.name, call.arguments, call.result), call.name)
                     return (
                       <li key={`tool-${i}`} className="process-node">
-                        <span className="process-dot" data-tool="" data-err={call.error ? '' : undefined} aria-hidden="true" />
+                        <ProcessMarker error={!!call.error} tool />
                         <div className="min-w-0">
                           <span className="flex flex-wrap items-baseline gap-x-2">
                             <span className={cx('min-w-0 break-words text-tx', call.error && 'text-er')}>{head}</span>
@@ -660,7 +663,7 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
                     const [head, desc] = toolNode(toolStep(name, tool.arguments ?? ''), name)
                     return (
                       <li key={`pending-${i}`} className="process-node">
-                        <span className="process-ring" data-live={running ? '' : undefined} aria-hidden="true" />
+                        <ProcessMarker live={running} />
                         <div className="min-w-0">
                           <div className="break-words text-tx">{head}</div>
                           {desc && <div className="mt-0.5 break-words text-xs text-mu">{desc}</div>}
@@ -1283,7 +1286,7 @@ export function Chat({ side, toggle, cfg, pal }: { side: boolean; toggle: () => 
           </div>
           <div ref={composerRef} className={cx('absolute inset-x-0 z-10 flex flex-col', empty ? 'top-1/2 -translate-y-1/2' : 'bottom-0')}>
             {!atEnd && c && c.msgs.length > 0 && (
-              <button type="button" onClick={() => { stick.current = true; setAtEnd(true); followBottom.call() }} className="absolute bottom-full left-1/2 z-10 mb-2 inline-flex min-h-8 -translate-x-1/2 items-center gap-1.5 rounded-full border border-bor bg-surf px-3 py-1 text-xs text-tx shadow-md transition-colors hover:bg-hov focus-visible:ring-2 focus-visible:ring-ac">
+              <button type="button" onClick={() => { stick.current = true; setAtEnd(true); followBottom.call() }} className="absolute bottom-full left-1/2 z-0 mb-2 inline-flex min-h-8 -translate-x-1/2 items-center gap-1.5 rounded-full border border-bor bg-surf px-3 py-1 text-xs text-tx shadow-md transition-colors hover:bg-hov focus-visible:ring-2 focus-visible:ring-ac">
                 <ChevronDown size={13} className="text-ac" />Jump to latest
               </button>
             )}

@@ -5,7 +5,8 @@ const {
   statsRange, inRange, attemptContexts, buildUsageRecords, buildUsageRecordsFrom,
   recordsInRange, tokensOf, summarize, aggregateModels, sortModels, findModel,
   modelKey, chartBuckets, bucketUnitFor, bucketStart, nextBucket, chartSpan,
-  seriesTotals, rangeLabel, money, moneyExact, compactTokens, costPerMillion,
+  seriesTotals, chartMax, buildToolUsageRecords, aggregateTools, sortTools, allToolRounds,
+  rangeLabel, money, moneyExact, compactTokens, costPerMillion,
   percentOf, sharePct, USAGE_PERIODS,
   usageRowsFromChats, usageTitlesFromChats, usageRowOf, appendUsageRows,
   collectUsageRows, buildRecordsFromRows, buildUsageRecordsFromHistory,
@@ -511,4 +512,104 @@ test('widget roll-up groups kept rows by endpoint or model across a window', asy
   assert.equal(byModel.length, 3)
   assert.equal(byModel.find((g) => g.key === 'Alpha · m1').tin, 30)
   assert.deepEqual(groupUsageRows(rows, undefined, { start: at(1), end: Infinity }).map((g) => g.key), ['Alpha', 'Beta'])
+})
+
+/* ---- tool calls ---- */
+
+test('tool calls are read from saved rounds with labels, timing and failures', () => {
+  const chats = [chat([
+    { id: 'u1', r: 'user', t: 'go', at: at(0) },
+    { id: 'a1', r: 'assistant', at: at(0), toolRounds: [
+      { text: '', calls: [
+        { id: 't1', name: 'search', arguments: '{}', result: 'ok', ms: 200 },
+        { id: 't2', name: 'calc', arguments: '{}', result: 'bad', error: true },
+      ] },
+      { text: '', calls: [{ id: 't3', name: 'search', arguments: '{}', result: 'ok', ms: 400 }] },
+    ] },
+    { id: 'a2', r: 'assistant', at: at(2), toolRounds: [
+      { text: '', calls: [{ id: 't4', name: 'mcp_docs_lookup', arguments: '{}', result: 'ok', ms: 0 }] },
+    ] },
+  ])]
+  const calls = buildToolUsageRecords(chats)
+  assert.equal(calls.length, 4)
+  assert.deepEqual(calls.map((c) => c.name), ['search', 'calc', 'search', 'mcp_docs_lookup'])
+  assert.equal(calls[0].label, 'Web search')
+  assert.equal(calls[0].at, at(0))
+  assert.equal(calls[1].failed, true)
+  assert.equal(calls[1].ms, null)
+  assert.equal(calls[3].label, 'MCP · docs lookup')
+  assert.equal(calls[3].at, at(2))
+  assert.equal(allToolRounds(chats).length, 2)
+
+  const rows = aggregateTools(calls)
+  const search = rows.find((r) => r.name === 'search')
+  assert.equal(search.calls, 2)
+  assert.equal(search.failed, 0)
+  assert.equal(search.share, 0.5)
+  assert.equal(search.timedCalls, 2)
+  assert.equal(search.averageMs, 300)
+  assert.equal(search.firstUsed, at(0))
+  assert.equal(search.lastUsed, at(0))
+  const calc = rows.find((r) => r.name === 'calc')
+  assert.equal(calc.averageMs, null)
+  assert.equal(calc.failed, 1)
+
+  assert.deepEqual(sortTools(rows).map((r) => r.name), ['search', 'calc', 'mcp_docs_lookup'])
+  assert.deepEqual(sortTools(rows, 'tool', 'asc').map((r) => r.label), ['Calculator', 'MCP · docs lookup', 'Web search'])
+  assert.deepEqual(sortTools(rows, 'average', 'desc').map((r) => r.name), ['search', 'mcp_docs_lookup', 'calc'])
+  assert.equal(sharePct(search.share), '50.0%')
+  assert.deepEqual(aggregateTools([]), [])
+})
+
+test('tool rounds without a timestamp in their chat are skipped, not charted at the epoch', () => {
+  const chats = [{ id: 'c1', title: 'No times', msgs: [
+    { id: 'a1', r: 'assistant', toolRounds: [{ text: '', calls: [{ id: 't1', name: 'search', arguments: '{}', result: 'ok' }] }] },
+  ] }]
+  assert.deepEqual(buildToolUsageRecords(chats), [])
+})
+
+test('tool calls land in chart buckets without touching model totals', () => {
+  const base = new Date(2026, 0, 5, 10, 0, 0).getTime()
+  const chats = [chat([
+    { id: 'a1', r: 'assistant', at: base, log: [attempt({ at: base, tin: 10, tout: 1, cost: 0.1 })], toolRounds: [
+      { text: '', calls: [
+        { id: 't1', name: 'search', arguments: '{}', result: 'ok' },
+        { id: 't2', name: 'search', arguments: '{}', result: 'ok' },
+      ] },
+    ] },
+    { id: 'a2', r: 'assistant', at: base + 2 * HOUR, toolRounds: [
+      { text: '', calls: [{ id: 't3', name: 'calc', arguments: '{}', result: 'no', error: true }] },
+    ] },
+  ])]
+  const records = buildUsageRecords(chats, eps)
+  const tools = buildToolUsageRecords(chats)
+  const range = { start: base, end: base + 3 * HOUR, period: 'custom', invalid: false }
+  const buckets = chartBuckets(records, range, 'hour', base + 3 * HOUR, tools)
+  assert.equal(buckets.length, 3)
+  assert.equal(buckets[0].toolCalls, 2)
+  assert.deepEqual(buckets[0].byTool, { search: 2 })
+  assert.equal(buckets[0].toolFailed, 0)
+  assert.equal(buckets[1].toolCalls, 0)
+  assert.equal(buckets[2].toolCalls, 1)
+  assert.equal(buckets[2].toolFailed, 1)
+  assert.equal(buckets[0].tokens.total, 11, 'tool calls do not leak into model totals')
+  assert.deepEqual(seriesTotals(buckets), { tokens: 11, cost: 0.1, requests: 1 })
+
+  // An open-ended span includes tool calls past the last model attempt.
+  const span = chartSpan(records, { start: 0, end: Infinity, period: 'all', invalid: false }, base + DAY, tools.map((t) => t.at))
+  assert.equal(span.start, base)
+  assert.equal(span.end, base + 2 * HOUR + 1, 'a tool call past the last model attempt extends the span')
+  const later = chartSpan(records, { start: 0, end: Infinity, period: 'all', invalid: false }, base + DAY, [base + 5 * HOUR])
+  assert.equal(later.end, base + 5 * HOUR + 1)
+})
+
+test('chart maxima scale from small values with headroom instead of an absolute floor', () => {
+  assert.equal(chartMax([]), 1)
+  assert.equal(chartMax([0, 0]), 1)
+  assert.ok(Math.abs(chartMax([0.3]) - 0.4) < 1e-12, 'sub-dollar buckets scale into the plot')
+  assert.ok(chartMax([0.3]) > 0.3 && chartMax([0.3]) < 1)
+  assert.ok(Math.abs(chartMax([0.0004]) - 0.0005) < 1e-12)
+  assert.equal(chartMax([120]), 125)
+  assert.equal(chartMax([1]), 1.25)
+  assert.ok(chartMax([1234]) > 1234 && chartMax([1234]) < 2468)
 })
