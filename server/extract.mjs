@@ -246,6 +246,7 @@ export const READER_PROVIDERS = {
   jina: { label: 'Jina Reader', endpoint: 'https://r.jina.ai/' },
   firecrawl: { label: 'Firecrawl', endpoint: 'https://api.firecrawl.dev/v2/scrape', optionalKey: true },
   exa: { label: 'Exa', endpoint: 'https://api.exa.ai/contents', requiresKey: true },
+  tinyfish: { label: 'TinyFish Fetch', endpoint: 'https://api.fetch.tinyfish.ai', requiresKey: true },
   tavily: { label: 'Tavily Extract', endpoint: 'https://api.tavily.com/extract', requiresKey: true },
   parallel: { label: 'Parallel Extract', endpoint: 'https://api.parallel.ai/v1/extract', requiresKey: true },
   valyu: { label: 'Valyu Contents', endpoint: 'https://api.valyu.ai/v1/contents', requiresKey: true },
@@ -259,6 +260,7 @@ const READER_ALIASES = {
   jina: 'jina', 'jina.ai': 'jina', 'jina-reader': 'jina', reader: 'jina',
   firecrawl: 'firecrawl',
   exa: 'exa', 'exa.ai': 'exa',
+  tinyfish: 'tinyfish', 'tiny-fish': 'tinyfish',
   tavily: 'tavily',
   parallel: 'parallel',
   valyu: 'valyu',
@@ -471,6 +473,27 @@ async function runReaderProvider(provider, targetUrl, { apiKey, baseUrl, timeout
         body: JSON.stringify({ urls: [targetUrl], text: { maxCharacters: limit } }),
       })
       const body = await responseJson(res)
+      return { title: pickReaderTitle(body), text: pickReaderText(body) }
+    }, { timeoutMs, maxRetries, retryBaseMs, label: meta.label })
+  }
+  if (provider === 'tinyfish') {
+    if (!key) throw readerFailure('TinyFish needs a reader API key. Paste one in Settings → Tools → Page reader, or use the TinyFish search key.', { code: 'missing_key' })
+    if (!base) throw readerFailure('Add the TinyFish reader URL.', { code: 'missing_key' })
+    if (!isPublicHttp(base)) throw readerFailure('The reader URL must be a public http(s) address.', { code: 'bad_url' })
+    const perUrlTimeout = Math.max(1000, Math.min(Number(timeoutMs) || 8000, 30000))
+    return withReaderRetry(async (signal) => {
+      const res = await fetchFn(base, {
+        method: 'POST',
+        signal,
+        headers: { accept: 'application/json', 'content-type': 'application/json', 'x-api-key': key, 'user-agent': 'byok-chat-reader/1.0' },
+        body: JSON.stringify({ urls: [targetUrl], format: 'markdown', per_url_timeout_ms: perUrlTimeout }),
+      })
+      const body = await responseJson(res)
+      const row = Array.isArray(body?.results) ? body.results[0] : null
+      if (!row) {
+        const reason = Array.isArray(body?.errors) && body.errors[0]?.error ? ` (${body.errors[0].error})` : ''
+        throw readerFailure(`TinyFish could not read that page${reason}.`, { code: 'bad_response' })
+      }
       return { title: pickReaderTitle(body), text: pickReaderText(body) }
     }, { timeoutMs, maxRetries, retryBaseMs, label: meta.label })
   }

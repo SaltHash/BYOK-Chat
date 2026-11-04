@@ -454,8 +454,8 @@ export const oneYearAgoStamp = (now: Date = new Date()): string =>
 /* ---- Usage / cost estimate ---- */
 
 export const CHARS_PER_TOKEN = 4
-/** Default per-search evidence budget (`BLANK_SEARCH.evidenceBudget`). */
-export const SEARCH_EVIDENCE_CHARS = 12000
+/** Default per-search snippet text (8 results × 1,800 characters). */
+export const SEARCH_EVIDENCE_CHARS = 14400
 /** Server-side page-read cap (`EXTRACT_MAX_TEXT`). */
 export const READ_EXCERPT_CHARS = 12000
 

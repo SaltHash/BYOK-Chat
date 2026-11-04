@@ -13,14 +13,12 @@ test('normalizes, deduplicates and favors distinct high-scoring sources', () => 
   assert.equal(results[1].engine, 'test')
 })
 
-test('enforces result, snippet and total evidence limits', () => {
+test('enforces result and per-result snippet limits without a total cap', () => {
   const results = selectResults(Array.from({ length: 10 }, (_, i) => ({
     title: `Result ${i}`, url: `https://site${i}.example/${i}`, content: 'x'.repeat(1000), score: 10 - i,
-  })), { maxResults: 2, maxSnippetChars: 120, evidenceBudget: 500 })
+  })), { maxResults: 2, maxSnippetChars: 120 })
   assert.equal(results.length, 2)
   assert.ok(results.every((x) => x.snippet.length <= 120))
-  const evidenceChars = results.reduce((n, x) => n + x.title.length + x.url.length + x.snippet.length + 80, 0)
-  assert.ok(evidenceChars <= 500)
 })
 
 test('returns no selected results for malformed search result collections', () => {
@@ -81,8 +79,9 @@ test('builds authenticated API requests per provider', () => {
   const you = buildApiRequest('you', 'hello', { apiKey: 'k2', count: 5 })
   assert.equal(JSON.parse(you.options.body).count, 5)
   assert.equal(you.options.headers['X-API-Key'], 'k2')
-  const exa = buildApiRequest('exa', 'hello', { apiKey: 'k3' })
+  const exa = buildApiRequest('exa', 'hello', { apiKey: 'k3', snippetChars: 900 })
   assert.equal(JSON.parse(exa.options.body).numResults, 8)
+  assert.equal(JSON.parse(exa.options.body).contents.text.maxCharacters, 900)
   const fire = buildApiRequest('firecrawl', 'hello', { apiKey: 'k4' })
   assert.match(String(fire.options.headers.Authorization), /^Bearer k4$/)
   const bright = buildApiRequest('brightdata', 'pizza', { apiKey: 'k5', zone: 'z1' })
@@ -124,7 +123,7 @@ test('classifies upstream failures instead of masking them as generic errors', (
 })
 
 test('retries transient failures with backoff but never permanent errors', async () => {
-  const limits = { maxResults: 8, maxSnippetChars: 100, evidenceBudget: 1000 }
+  const limits = { maxResults: 8, maxSnippetChars: 100 }
   let calls = 0
   const flaky = async () => (++calls <= 2
     ? new Response('busy', { status: 503 })
@@ -153,7 +152,7 @@ test('reports timeouts as retryable instead of generic failures', async () => {
     signal?.addEventListener('abort', () => { const error = new Error('aborted'); error.name = 'AbortError'; reject(error) })
   })
   await assert.rejects(
-    () => runApiSearch('tinyfish', 'q', { apiKey: 'k', timeoutMs: 20, limits: { maxResults: 8, maxSnippetChars: 100, evidenceBudget: 1000 }, retry: { maxRetries: 0 }, fetchFn: hanging }),
+    () => runApiSearch('tinyfish', 'q', { apiKey: 'k', timeoutMs: 20, limits: { maxResults: 8, maxSnippetChars: 100 }, retry: { maxRetries: 0 }, fetchFn: hanging }),
     (error) => error.code === 'timeout' && error.retryable === true,
   )
 })
@@ -178,7 +177,7 @@ test('bounds a response body that stalls after the headers and retries it', asyn
     }
     return new Response(JSON.stringify({ results: [{ title: 'Recovered', url: 'https://recovered.example/', snippet: 's' }] }), { headers: { 'content-type': 'application/json' } })
   }
-  const out = await runApiSearch('tinyfish', 'q', { apiKey: 'k', timeoutMs: 20, limits: { maxResults: 8, maxSnippetChars: 100, evidenceBudget: 1000 }, retry: { maxRetries: 2, baseMs: 1 }, fetchFn: stalling })
+  const out = await runApiSearch('tinyfish', 'q', { apiKey: 'k', timeoutMs: 20, limits: { maxResults: 8, maxSnippetChars: 100 }, retry: { maxRetries: 2, baseMs: 1 }, fetchFn: stalling })
   assert.equal(calls, 2)
   assert.equal(out[0].title, 'Recovered')
   let single = 0
@@ -195,7 +194,7 @@ test('bounds a response body that stalls after the headers and retries it', asyn
     }), { status: 200, headers: { 'content-type': 'application/json' } })
   }
   await assert.rejects(
-    () => runApiSearch('tinyfish', 'q', { apiKey: 'k', timeoutMs: 20, limits: { maxResults: 8, maxSnippetChars: 100, evidenceBudget: 1000 }, retry: { maxRetries: 0 }, fetchFn: alwaysStalls }),
+    () => runApiSearch('tinyfish', 'q', { apiKey: 'k', timeoutMs: 20, limits: { maxResults: 8, maxSnippetChars: 100 }, retry: { maxRetries: 0 }, fetchFn: alwaysStalls }),
     (error) => error.code === 'timeout' && error.retryable === true,
   )
   assert.equal(single, 1)
@@ -232,8 +231,43 @@ test('prefers browser BYOK keys and zones over server env', () => {
 
 test('runs API searches through selectResults', async () => {
   const apiFetch = async () => new Response(JSON.stringify({ results: [{ title: 'T', url: 'https://t.example/', snippet: 'hello' }] }), { headers: { 'content-type': 'application/json' } })
-  const aResults = await runApiSearch('tinyfish', 'q', { apiKey: 'k', timeoutMs: 5000, limits: { maxResults: 8, maxSnippetChars: 100, evidenceBudget: 1000 }, fetchFn: apiFetch })
+  const aResults = await runApiSearch('tinyfish', 'q', { apiKey: 'k', timeoutMs: 5000, limits: { maxResults: 8, maxSnippetChars: 100 }, fetchFn: apiFetch })
   assert.equal(aResults[0].title, 'T')
+})
+
+test('passes the snippet length to providers that accept one', () => {
+  const opts = { apiKey: 'k', snippetChars: 900 }
+  const exa = JSON.parse(buildApiRequest('exa', 'q', opts).options.body)
+  assert.equal(exa.contents.text.maxCharacters, 900)
+  const tavily = JSON.parse(buildApiRequest('tavily', 'q', opts).options.body)
+  assert.equal(tavily.chunks_per_source, 2)
+  const parallel = JSON.parse(buildApiRequest('parallel', 'q', opts).options.body)
+  assert.equal(parallel.advanced_settings.excerpt_settings.max_chars_per_result, 900)
+  const valyu = JSON.parse(buildApiRequest('valyu', 'q', opts).options.body)
+  assert.equal(valyu.response_length, 900)
+  const perplexity = JSON.parse(buildApiRequest('perplexity', 'q', opts).options.body)
+  assert.equal(perplexity.max_tokens_per_page, 225)
+  // The server cap wins over an out-of-range request.
+  const capped = JSON.parse(buildApiRequest('exa', 'q', { apiKey: 'k', snippetChars: 9999 }).options.body)
+  assert.equal(capped.contents.text.maxCharacters, 3000)
+})
+
+test('expands TinyFish search snippets through Fetch highlights', async () => {
+  const calls = []
+  const fetchFn = async (url, init) => {
+    calls.push({ url: String(url), body: init?.body ? JSON.parse(init.body) : null })
+    if (String(url).includes('api.search.tinyfish.ai')) {
+      return new Response(JSON.stringify({ results: [{ title: 'T', url: 'https://t.example/page', snippet: 'short' }] }), { headers: { 'content-type': 'application/json' } })
+    }
+    return new Response(JSON.stringify({ results: [{ url: 'https://t.example/page', highlights: [{ text: 'x'.repeat(1000) }] }] }), { headers: { 'content-type': 'application/json' } })
+  }
+  const out = await runApiSearch('tinyfish', 'q', { apiKey: 'k', timeoutMs: 5000, limits: { maxResults: 8, maxSnippetChars: 1000 }, fetchFn })
+  assert.equal(calls.length, 2)
+  assert.match(calls[0].url, /api\.search\.tinyfish\.ai/)
+  assert.match(calls[1].url, /api\.fetch\.tinyfish\.ai/)
+  assert.equal(calls[1].body.highlights.max_chars, 1000)
+  assert.deepEqual(calls[1].body.urls, ['https://t.example/page'])
+  assert.equal(out[0].snippet, 'x'.repeat(1000))
 })
 
 test('builds authenticated requests for every added grounding provider', () => {

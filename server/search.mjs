@@ -18,8 +18,7 @@ function canonicalUrl(value) {
   } catch { return '' }
 }
 
-export function selectResults(items, { maxResults = 8, maxSnippetChars = 1800, evidenceBudget = 12000 } = {}) {
-  let budget = evidenceBudget
+export function selectResults(items, { maxResults = 8, maxSnippetChars = 1800 } = {}) {
   const normalized = (Array.isArray(items) ? items : []).map((x, i) => {
     const url = canonicalUrl(x?.url)
     const title = String(x?.title || 'Untitled result').trim().slice(0, 300)
@@ -41,12 +40,9 @@ export function selectResults(items, { maxResults = 8, maxSnippetChars = 1800, e
   const ordered = [...normalized.filter((x, i) => normalized.findIndex((y) => y.host === x.host) === i), ...normalized.filter((x, i) => normalized.findIndex((y) => y.host === x.host) !== i)]
   const seen = new Set(), out = []
   for (const x of ordered) {
-    if (seen.has(x.url) || out.length >= maxResults || budget <= 0) continue
+    if (seen.has(x.url) || out.length >= maxResults) continue
     seen.add(x.url)
-    const allowance = Math.min(maxSnippetChars, budget - x.title.length - x.url.length - 80)
-    if (allowance <= 0) continue
-    x.snippet = x.snippet.slice(0, allowance)
-    budget -= x.title.length + x.url.length + x.snippet.length + 80
+    x.snippet = x.snippet.slice(0, maxSnippetChars)
     out.push({ id: `S${out.length + 1}`, title: x.title, url: x.url, snippet: x.snippet, ...(x.engine ? { engine: x.engine } : {}) })
   }
   return out
@@ -290,13 +286,14 @@ function joinSnippet(parts, max = 4000) {
     .slice(0, max)
 }
 
-export function buildApiRequest(provider, query, { apiKey = '', zone = '', count = 8, baseUrl = '' } = {}) {
+export function buildApiRequest(provider, query, { apiKey = '', zone = '', count = 8, baseUrl = '', snippetChars = 1800 } = {}) {
   const id = normalizeProvider(provider)
   const meta = SEARCH_API_PROVIDERS[id]
   if (!meta) throw new Error(`Unknown search API provider: ${provider}`)
   const q = String(query || '').trim()
   if (!q) throw new Error('Enter a search query')
   const key = String(apiKey || '').trim()
+  const textChars = boundedInt(snippetChars, 1800, 200, 3000)
   // Firecrawl documents a keyless free tier for search; only attach the header when a key is set.
   if (!key && providerNeedsKey(id)) {
     const error = new Error(`${meta.label} API key is missing. Paste your key in Settings → Tools → Web search (stored only in this browser).`)
@@ -326,7 +323,7 @@ export function buildApiRequest(provider, query, { apiKey = '', zone = '', count
     return { url: endpoint, options: { method: 'POST', headers: wire, body: JSON.stringify({ query: q, count: Math.max(1, Math.min(10, count || 8)) }) } }
   }
   if (id === 'exa') {
-    return { url: `${endpoint}`, options: { method: 'POST', headers: wire, body: JSON.stringify({ query: q, type: 'auto', numResults: Math.max(1, Math.min(10, count || 8)), contents: { highlights: true } }) } }
+    return { url: `${endpoint}`, options: { method: 'POST', headers: wire, body: JSON.stringify({ query: q, type: 'auto', numResults: Math.max(1, Math.min(10, count || 8)), contents: { text: { maxCharacters: textChars } } }) } }
   }
   if (id === 'firecrawl') {
     return { url: endpoint, options: { method: 'POST', headers: wire, body: JSON.stringify({ query: q, limit: Math.max(1, Math.min(10, count || 8)) }) } }
@@ -350,21 +347,23 @@ export function buildApiRequest(provider, query, { apiKey = '', zone = '', count
   if (id === 'tavily') {
     return { url: endpoint, options: { method: 'POST', headers: wire, body: JSON.stringify({
       query: q, max_results: Math.max(1, Math.min(10, count || 8)), search_depth: 'basic', include_answer: false, include_raw_content: false,
+      chunks_per_source: Math.max(1, Math.min(3, Math.ceil(textChars / 500))),
     }) } }
   }
   if (id === 'parallel') {
     return { url: endpoint, options: { method: 'POST', headers: wire, body: JSON.stringify({
       objective: q, search_queries: [q], mode: 'fast',
+      advanced_settings: { excerpt_settings: { max_chars_per_result: textChars } },
     }) } }
   }
   if (id === 'valyu') {
     return { url: endpoint, options: { method: 'POST', headers: wire, body: JSON.stringify({
-      query: q, max_num_results: Math.max(1, Math.min(10, count || 8)), search_type: 'web', response_length: 'short',
+      query: q, max_num_results: Math.max(1, Math.min(10, count || 8)), search_type: 'web', response_length: textChars,
     }) } }
   }
   if (id === 'perplexity') {
     return { url: endpoint, options: { method: 'POST', headers: wire, body: JSON.stringify({
-      query: q, max_results: Math.max(1, Math.min(10, count || 8)), search_type: 'web', max_tokens_per_page: 1200,
+      query: q, max_results: Math.max(1, Math.min(10, count || 8)), search_type: 'web', max_tokens_per_page: Math.max(1, Math.ceil(textChars / 4)),
     }) } }
   }
   if (id === 'serper') {
@@ -702,9 +701,65 @@ async function fetchJson(url, options, { provider = '', timeoutMs = 8000, retry 
   return fetchWithRetry(url, options, { provider, timeoutMs, ...retry, fetchFn, read: (response) => response.json() })
 }
 
+const TINYFISH_FETCH_ENDPOINT = 'https://api.fetch.tinyfish.ai'
+
+/* TinyFish search returns a fixed, short snippet per result. Its Fetch API can
+ * return longer query-focused highlights for up to ten URLs in one request, so
+ * the snippet-length setting can actually buy more text. Failures are silent:
+ * a search must still work when the enrichment call is unavailable. */
+async function enrichTinyFishResults(rows, query, { apiKey, timeoutMs, maxSnippetChars, fetchFn }) {
+  const wanted = boundedInt(maxSnippetChars, 1800, 200, 3000)
+  if (!apiKey || !Array.isArray(rows) || !rows.length || wanted <= 300) return rows
+  const urls = [...new Set(rows.map((x) => canonicalUrl(x?.url)).filter(Boolean))].slice(0, 10)
+  if (!urls.length) return rows
+  const timeout = boundedInt(timeoutMs, 8000, 1000, 8000)
+  const ac = new AbortController()
+  const timer = setTimeout(() => ac.abort(), timeout)
+  try {
+    const res = await fetchFn(TINYFISH_FETCH_ENDPOINT, {
+      method: 'POST',
+      signal: ac.signal,
+      headers: { accept: 'application/json', 'content-type': 'application/json', 'X-API-Key': apiKey },
+      body: JSON.stringify({
+        urls,
+        format: 'markdown',
+        per_url_timeout_ms: timeout,
+        highlights: { query, max_snippets: 5, max_chars: wanted, include_full_page_text: false },
+      }),
+    })
+    if (!res.ok) return rows
+    const body = await res.json().catch(() => null)
+    if (!body || !Array.isArray(body.results)) return rows
+    const pages = new Map()
+    for (const page of body.results) {
+      for (const raw of [page?.url, page?.final_url]) {
+        const key = canonicalUrl(raw)
+        if (key) pages.set(key, page)
+      }
+    }
+    return rows.map((row) => {
+      const page = pages.get(canonicalUrl(row?.url))
+      if (!page) return row
+      const highlights = Array.isArray(page.highlights)
+        ? page.highlights.map((h) => (typeof h === 'string' ? h : h?.text)).filter((h) => typeof h === 'string' && h.trim())
+        : []
+      const text = joinSnippet([highlights, typeof page.text === 'string' ? page.text : ''], wanted)
+      return text.length > String(row.content || '').length ? { ...row, content: text } : row
+    })
+  } catch {
+    return rows
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 export async function runApiSearch(provider, query, { apiKey, zone, baseUrl, timeoutMs, limits, retry = {}, fetchFn = fetch } = {}) {
   const id = normalizeProvider(provider)
-  const { url, options } = buildApiRequest(id, query, { apiKey, zone, count: limits?.maxResults ?? 8, baseUrl })
+  const { url, options } = buildApiRequest(id, query, { apiKey, zone, count: limits?.maxResults ?? 8, baseUrl, snippetChars: limits?.maxSnippetChars ?? 1800 })
   const body = await fetchJson(url, options, { provider: id, timeoutMs, retry }, fetchFn)
-  return selectResults(parseApiResponse(id, body), limits)
+  const rows = parseApiResponse(id, body)
+  const enriched = id === 'tinyfish'
+    ? await enrichTinyFishResults(rows, query, { apiKey, timeoutMs, maxSnippetChars: limits?.maxSnippetChars, fetchFn })
+    : rows
+  return selectResults(enriched, limits)
 }

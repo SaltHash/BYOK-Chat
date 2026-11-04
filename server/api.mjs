@@ -16,8 +16,6 @@ import { overRateLimit, bumpRateLimit } from './ratelimit.mjs'
 // settings in Settings → Tools → Web search and is bounded below.
 const MAX_RESULTS = 10
 const MAX_SNIPPET_CHARS = 3000
-// Ten results at a readable snippet length need more room than eight did.
-const EVIDENCE_BUDGET = 24000
 const SEARCH_BODY_LIMIT = 16_384
 const READER_BODY_LIMIT = 16_384
 const EXTRACT_TIMEOUT_MS = 8000
@@ -106,14 +104,13 @@ export async function apiSearch(req, env = process.env) {
   // Per-request tuning from the user's search settings, bounded by hard caps.
   const requested = boundedInt(parsed?.count, MAX_RESULTS, 1, MAX_RESULTS)
   const maxSnippetChars = boundedInt(parsed?.maxSnippetChars, 1800, 200, MAX_SNIPPET_CHARS)
-  const evidenceBudget = boundedInt(parsed?.evidenceBudget, 12000, 1000, EVIDENCE_BUDGET)
   const timeoutMs = boundedInt(parsed?.timeoutMs, 8000, 1000, 30000)
   const maxRetries = boundedInt(parsed?.maxRetries, 2, 0, 4)
   const retryBaseMs = boundedInt(parsed?.retryBaseMs, 300, 50, 2000)
   // The zone scopes Bright Data searches (and is part of the query result),
   // so two zones must never share a cache entry.
-  const cacheKey = `${provider}:${clientZone}:${requested}:${maxSnippetChars}:${evidenceBudget}:${query.toLowerCase()}`
-  const limits = { maxResults: requested, maxSnippetChars, evidenceBudget }
+  const cacheKey = `${provider}:${clientZone}:${requested}:${maxSnippetChars}:${query.toLowerCase()}`
+  const limits = { maxResults: requested, maxSnippetChars }
   const retry = { maxRetries, baseMs: retryBaseMs }
   const apiKey = resolveApiKey(provider, clientKey, env)
   const zone = resolveZone(clientZone, env)

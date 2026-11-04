@@ -623,11 +623,11 @@ export async function executeToolCalls(
   await Promise.all(Array.from({ length: maxParallel }, worker))
   return out
 }
-export async function searchWeb(query: string, opts: { provider?: string; apiKey?: string; zone?: string; count?: number; timeoutMs?: number; maxSnippetChars?: number; evidenceBudget?: number; maxRetries?: number; retryBaseMs?: number; cache?: boolean } = {}) {
+export async function searchWeb(query: string, opts: { provider?: string; apiKey?: string; zone?: string; count?: number; timeoutMs?: number; maxSnippetChars?: number; maxRetries?: number; retryBaseMs?: number; cache?: boolean } = {}) {
   const q = query.trim().slice(0, 400)
   if (!q) throw Error('Enter a search query, for example @search(latest climate report)')
   const count = Number.isInteger(opts.count) ? Math.max(1, Math.min(10, opts.count as number)) : undefined
-  const cacheKey = `s:${opts.provider ?? ''}:${opts.zone ?? ''}:${count ?? ''}:${opts.maxSnippetChars ?? ''}:${opts.evidenceBudget ?? ''}:${q.toLowerCase()}`
+  const cacheKey = `s:${opts.provider ?? ''}:${opts.zone ?? ''}:${count ?? ''}:${opts.maxSnippetChars ?? ''}:${q.toLowerCase()}`
   if (opts.cache) {
     const cached = cacheGet<{ query: string; results: { id: string; title: string; url: string; snippet: string; engine?: string }[]; searchedAt: string; provider?: string }>(cacheKey)
     if (cached) return cached
@@ -639,7 +639,6 @@ export async function searchWeb(query: string, opts: { provider?: string; apiKey
   if (count != null) body.count = count
   if (Number.isInteger(opts.timeoutMs)) body.timeoutMs = opts.timeoutMs
   if (Number.isInteger(opts.maxSnippetChars)) body.maxSnippetChars = opts.maxSnippetChars
-  if (Number.isInteger(opts.evidenceBudget)) body.evidenceBudget = opts.evidenceBudget
   if (Number.isInteger(opts.maxRetries)) body.maxRetries = opts.maxRetries
   if (Number.isInteger(opts.retryBaseMs)) body.retryBaseMs = opts.retryBaseMs
   const r = await fetch('/api/search', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })

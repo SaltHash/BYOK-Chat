@@ -173,6 +173,7 @@ test('every extraction reader sends its documented request and returns text', as
     ['tavily', 'https://api.tavily.com/extract', 'authorization', 'Bearer key', (body) => body.urls[0] === 'https://example.com/page', { results: [{ url: 'https://example.com/page', raw_content: 'tavily text' }] }, 'tavily text'],
     ['parallel', 'https://api.parallel.ai/v1/extract', 'x-api-key', 'key', (body) => body.urls[0] === 'https://example.com/page', { results: [{ title: 'Parallel Page', full_content: 'parallel text' }] }, 'parallel text'],
     ['valyu', 'https://api.valyu.ai/v1/contents', 'x-api-key', 'key', (body) => body.urls[0] === 'https://example.com/page', { results: [{ title: 'Valyu Page', content: 'valyu text' }] }, 'valyu text'],
+    ['tinyfish', 'https://api.fetch.tinyfish.ai', 'x-api-key', 'key', (body) => body.urls[0] === 'https://example.com/page' && body.format === 'markdown', { results: [{ title: 'TinyFish Page', text: 'tinyfish text' }] }, 'tinyfish text'],
     ['linkup', 'https://api.linkup.so/v1/fetch', 'authorization', 'Bearer key', (body) => body.url === 'https://example.com/page', { markdown: 'linkup text' }, 'linkup text'],
     ['octen', 'https://api.octen.ai/extract', 'authorization', 'Bearer key', (body) => body.urls[0] === 'https://example.com/page', { data: { results: [{ title: 'Octen Page', full_content: 'octen text' }] } }, 'octen text'],
   ]
@@ -188,6 +189,14 @@ test('every extraction reader sends its documented request and returns text', as
     assert.equal(page.text, expectedText)
     assert.equal(bodyCheck(seenBody), true)
   }
+})
+
+test('TinyFish per-URL errors are surfaced without a false success', async () => {
+  const fetchFn = async () => new Response(JSON.stringify({ results: [], errors: [{ error: 'bot_blocked', status: 403 }] }), { headers: { 'content-type': 'application/json' } })
+  await assert.rejects(
+    () => fetchPageViaProvider('https://example.com/blocked', { provider: 'tinyfish', apiKey: 'key', fallback: false, fetchFn }),
+    (e) => e.code === 'bad_response' && /bot_blocked/.test(e.message),
+  )
 })
 
 test('the direct reader is a provider and old builtin settings still work', async () => {

@@ -1404,13 +1404,8 @@ function Tools() {
             </Field>
             </Anchor>
             <Anchor id="search-snippet">
-            <Field label={`Text per result · ${search.maxSnippetChars} characters`} hint="How much text to keep from each search result. More text means more detail but uses more of the model's context.">
-              <RangeSlider label="Text per result" min={200} max={3000} step={100} value={search.maxSnippetChars} valueText={`${search.maxSnippetChars.toLocaleString()} characters`} set={(maxSnippetChars) => setSearch({ maxSnippetChars: Math.round(maxSnippetChars) })} className="w-full" />
-            </Field>
-            </Anchor>
-            <Anchor id="search-evidence">
-            <Field label={`Total text per search · ${search.evidenceBudget.toLocaleString()} characters`} hint="The overall text budget for one search, shared by all results. Raise it if results get cut short, lower it to save context.">
-              <RangeSlider label="Total text per search" min={1000} max={24000} step={500} value={search.evidenceBudget} valueText={`${search.evidenceBudget.toLocaleString()} characters`} set={(evidenceBudget) => setSearch({ evidenceBudget: Math.round(evidenceBudget) })} className="w-full" />
+            <Field label={`Snippet length · ${search.maxSnippetChars} characters`} hint="How much text to request and keep for each search result. Providers with a length control receive it; TinyFish snippets are expanded through TinyFish Fetch. More text uses more context.">
+              <RangeSlider label="Snippet length" min={200} max={3000} step={100} value={search.maxSnippetChars} valueText={`${search.maxSnippetChars.toLocaleString()} characters`} set={(maxSnippetChars) => setSearch({ maxSnippetChars: Math.round(maxSnippetChars) })} className="w-full" />
             </Field>
             </Anchor>
             <Anchor id="search-retries">
@@ -1447,7 +1442,7 @@ function Tools() {
               <Anchor id="reader-key">
               <Field label="Reader API key" hint={search.readerProvider === 'custom'
                 ? 'Optional. Sent as a bearer token to your reader service.'
-                : 'Required by Exa, Tavily, Parallel, Valyu, Linkup and Octen. Optional for Jina and Firecrawl. Stored in this browser like the search key; your matching search key is reused when this is empty.'}>
+                : 'Required by TinyFish, Exa, Tavily, Parallel, Valyu, Linkup and Octen. Optional for Jina and Firecrawl. Stored in this browser like the search key; your matching search key is reused when this is empty.'}>
                 <div className="relative">
                   <Input type={showReaderKey ? 'text' : 'password'} value={search.readerKey} set={(v) => setSearch({ readerKey: v })} placeholder={search.readerProvider === 'custom' ? 'Optional' : 'Paste your reader API key'} />
                   <button onClick={() => setShowReaderKey(!showReaderKey)} title="Show or hide key" className="absolute right-2 top-1/2 -translate-y-1/2 text-mu hover:text-tx">{showReaderKey ? <EyeOff size={16} /> : <Eye size={16} />}</button>

@@ -554,6 +554,7 @@ test('page-reader preferences keep a separate API, key and summary model', () =>
   assert.equal(blank.readerSummary, false)
   assert.equal(blank.readerSummaryChars, 2400)
   assert.equal(normSearch({ readerProvider: 'jina' }).readerProvider, 'jina')
+  assert.equal(normSearch({ readerProvider: 'tinyfish' }).readerProvider, 'tinyfish')
   assert.equal(normSearch({ readerProvider: 'nope' }).readerProvider, 'direct')
   assert.equal(normSearch({ readerProvider: 'builtin' }).readerProvider, 'direct')
   assert.equal(normSearch({ readerFallback: false }).readerFallback, false)
@@ -563,6 +564,7 @@ test('page-reader preferences keep a separate API, key and summary model', () =>
   // A reader key falls back to the matching search key.
   const prefs = normSearch({ readerProvider: 'exa', keys: { exa: 'exa-key' } })
   assert.equal(readerKeyOf(prefs), 'exa-key')
+  assert.equal(readerKeyOf(normSearch({ readerProvider: 'tinyfish', keys: { tinyfish: 'tiny-key' } })), 'tiny-key')
   assert.equal(readerKeyOf(normSearch({ readerProvider: 'exa', readerKey: 'own' })), 'own')
   assert.equal(readerKeyOf(normSearch({ readerProvider: 'jina' })), '')
   const opts = fetchOptsOf(normSearch({ readerProvider: 'custom', readerUrl: 'https://reader.example/r?url={url}' }))

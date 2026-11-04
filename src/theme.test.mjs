@@ -37,7 +37,7 @@ test('hue rotates everything except syntax and error colours', () => {
 })
 
 test('saturation 0 greys out colours but never touches syntax or error', () => {
-  const colors = { ac: '#dc8ad8', tx: '#f3eaf7', c4: '#8fb9ff', er: '#ff8fa3' }
+  const colors = { ac: '#dc8ad8', tx: '#f3eaf7', c4: '#8fb9ff', er: '#f95353' }
   const out = adjustThemeColors(colors, { baseHue: 303, hue: 303, sat: 0, bright: 1 })
   assert.equal(hexToHsl(out.ac).s, 0)
   assert.equal(out.c4, colors.c4)
@@ -45,7 +45,7 @@ test('saturation 0 greys out colours but never touches syntax or error', () => {
 })
 
 test('brightness scales surfaces and leaves text and error alone', () => {
-  const colors = { bg: '#17101c', tx: '#f3eaf7', mu: '#a893b4', acx: '#1b1020', c5: '#c7a6ff', er: '#ff8fa3' }
+  const colors = { bg: '#17101c', tx: '#f3eaf7', mu: '#a893b4', acx: '#1b1020', c5: '#c7a6ff', er: '#f95353' }
   const out = adjustThemeColors(colors, { baseHue: 303, hue: 303, sat: 1, bright: 2 })
   assert.ok(hexToHsl(out.bg).l > hexToHsl(colors.bg).l * 1.5, 'surfaces brighten')
   for (const key of TEXT_COLOR_KEYS) assert.equal(out[key], colors[key], `${key} untouched`)

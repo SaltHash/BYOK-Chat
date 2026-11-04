@@ -93,7 +93,7 @@ test('search surfaces missing-key as 400 with stable code', async () => {
 })
 
 test('search accepts per-request tuning bounds', async () => {
-  const res = await post('/api/search', { query: 'hello', provider: 'tinyfish', count: 99, maxSnippetChars: 99, evidenceBudget: 99, timeoutMs: 99, maxRetries: 99 })
+  const res = await post('/api/search', { query: 'hello', provider: 'tinyfish', count: 99, maxSnippetChars: 99, timeoutMs: 99, maxRetries: 99 })
   // Still a missing-key 400: tuning must not bypass key checks or crash.
   assert.equal(res.status, 400)
   const data = await res.json()
