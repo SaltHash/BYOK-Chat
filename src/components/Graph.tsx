@@ -486,7 +486,9 @@ export function GraphView({ spec, dark, width = 760, height = 430, expanded = fa
     for (const m of spec.marks) out.push({ x: sx(m.x), y: sy(m.y), kind: 'point', ...(m.label ? { label: m.label } : {}) })
     spec.series.forEach((series, i) => {
       if (hidden.has(`s${i}`)) return
-      for (const p of series.points) out.push({ x: sx(p.x), y: sy(p.y), kind: 'point' })
+      // A bucket or data point carries its own label when the model gave one;
+      // otherwise the series name is the closest honest label for the hover.
+      for (const p of series.points) out.push({ x: sx(p.x), y: sy(p.y), kind: 'point', ...(p.label ? { label: p.label } : series.label ? { label: series.label } : {}) })
     })
     for (const curve of curves) if (curve) out.push(...curve.snapAnchors)
     return out
@@ -601,8 +603,18 @@ export function GraphView({ spec, dark, width = 760, height = 430, expanded = fa
   const singleValued = isSingleValuedGraph(spec, (i) => !hidden.has(`c${i}`))
   const guideX = singleValued && hover ? hover.x : null
   const guideScreenX = guideX != null ? sx(guideX) : 0
-  const readout = hover ? `${hover.snap?.label ? `${hover.snap.label.slice(0, 22)} · ` : ''}${coord(hover.x)}, ${coord(hover.y)}` : ''
-  const readoutW = Math.min(plot.w - 16, Math.max(88, readout.length * 6.1 + 16))
+  // Hovering a point, bucket, or curve shows what it is and its exact
+  // coordinates, on the axis names when the spec supplied them. The card
+  // follows the pointer and is clamped inside the plot.
+  const tipLines = hover ? [
+    ...(hover.snap?.label ? [hover.snap.label.slice(0, 38)] : []),
+    `${spec.xLabel || 'x'} ${coord(hover.x)}`,
+    `${spec.yLabel || 'y'} ${coord(hover.y)}`,
+  ] : []
+  const tipW = Math.min(plot.w - 12, Math.max(64, Math.max(0, ...tipLines.map((l) => l.length)) * 5.9 + 16))
+  const tipH = tipLines.length * 13 + 8
+  const tipX = hover ? clamp(hover.px + 10, plot.x + 3, Math.max(plot.x + 3, plot.x + plot.w - tipW - 3)) : 0
+  const tipY = hover ? (hover.py - tipH - 12 >= plot.y + 3 ? hover.py - tipH - 12 : Math.min(hover.py + 14, plot.y + plot.h - tipH - 3)) : 0
 
   return (
     <div className={compact ? 'space-y-1' : 'space-y-1.5'}>
@@ -705,12 +717,14 @@ export function GraphView({ spec, dark, width = 760, height = 430, expanded = fa
               </g>
             )}
 
-            {hover && (
+            {hover && tipLines.length > 0 && (
               <g data-export-skip pointerEvents="none">
-                <rect x={plot.x + 8} y={plot.y + plot.h - 27} width={readoutW} height={20} rx={6} fill="var(--surf)" fillOpacity={0.94} stroke="var(--bor)" />
-                <text x={plot.x + 16} y={plot.y + plot.h - 13} fontSize={10.5} fill="var(--tx)" style={tickFont}>
-                  {readout}
-                </text>
+                <rect x={tipX} y={tipY} width={tipW} height={tipH} rx={6} fill="var(--surf)" fillOpacity={0.96} stroke="var(--bor)" />
+                {tipLines.map((line, i) => (
+                  <text key={i} x={tipX + 8} y={tipY + 14 + i * 13} fontSize={10.5} fontWeight={i === 0 && hover.snap?.label ? 600 : 400} fill="var(--tx)" style={tickFont}>
+                    {line}
+                  </text>
+                ))}
               </g>
             )}
 

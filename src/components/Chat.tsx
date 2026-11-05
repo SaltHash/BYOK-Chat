@@ -15,7 +15,7 @@ import { ProjectOverview } from './ProjectOverview'
 import { Header } from './Header'
 import { MessageActions } from './ReplyActions'
 import { GraphCards, hasPlacedGraphs } from './Graph'
-import { ArtifactCards } from './Artifact'
+import { ArtifactList, artifactBlocks } from './Artifact'
 import { Tutorial } from './Extra'
 import { Md, UserText } from './Md'
 import { activityLine, flairLine, thinkingLine, TEMPORARY_NOTE } from '../flair'
@@ -719,12 +719,22 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
           // hides the moment prose arrives so the dots never sit beside text
           // the model is actively typing.
           const active = !!writingPath || (live?.length ?? 0) > 0 || (last && busy && !m.t)
+          // A reply that made artifacts is rendered in pieces so each one sits
+          // where the model called it, not in a block after the whole answer.
+          const blocks = liveChunks?.length ? null : artifactBlocks(displayText, m.toolRounds)
           return (
             <>
               {m.t && (
                 <div ref={contentRef} className="inline">
                   {liveChunks && liveChunks.length ? (
                     streamMd ? <StreamedMd chunks={liveChunks} fade={streamFade} /> : <StreamedText chunks={liveChunks} fade={streamFade} />
+                  ) : blocks ? (
+                    blocks.map((b, i) => (
+                      <div key={i} className={b.specs ? 'my-3' : undefined}>
+                        {b.text ? <Md t={searchPrefs?.citeStyle === 'off' ? stripCitations(b.text) : linkifyCitations(b.text, sources)} cites={cites} /> : null}
+                        {b.specs ? <ArtifactList specs={b.specs} /> : null}
+                      </div>
+                    ))
                   ) : (
                     <Md t={citedText} cites={cites} />
                   )}
@@ -740,7 +750,6 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
         {!m.err && <div className="clear-both" aria-hidden="true" />}
       </div>
       {!m.err && <GeneratedImages rounds={m.toolRounds} />}
-      {!m.err && <ArtifactCards rounds={m.toolRounds} />}
       {m.capped && !m.err && (
         <div className="mt-2 flex flex-wrap items-center gap-2 rounded-xl border border-er/30 bg-er/10 px-3 py-2 text-xs text-mu">
           <TriangleAlert size={13} className="shrink-0 text-er" />

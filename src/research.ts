@@ -43,25 +43,21 @@ export const normResearchAgentRounds = (v: unknown): number =>
     ? Math.max(RESEARCH_AGENT_ROUNDS_MIN, Math.min(RESEARCH_AGENT_ROUNDS_MAX, Math.round(v)))
     : RESEARCH_AGENT_ROUNDS_DEFAULT
 
-const thoroughBlurb = (rounds: number) =>
-  `${rounds} subagent round${rounds === 1 ? '' : 's'} × ${RESEARCH_AGENTS_PER_ROUND} agents · ${RESEARCH_AGENT_SEARCHES} searches · ${RESEARCH_AGENT_READS} reads each`
 
 export const RESEARCH_TIERS: ResearchTier[] = [
   { id: 'quick', label: 'Quick', blurb: '8 searches · 4 reads', maxSearches: 8, maxReads: 4, maxRounds: 14, timeoutMs: 180000, agentRounds: 0, agentsPerRound: 0, agentSearches: 0, agentReads: 0 },
   { id: 'standard', label: 'Standard', blurb: '24 searches · 10 reads', maxSearches: 24, maxReads: 10, maxRounds: 36, timeoutMs: 480000, agentRounds: 0, agentsPerRound: 0, agentSearches: 0, agentReads: 0 },
-  { id: 'thorough', label: 'Thorough', blurb: thoroughBlurb(RESEARCH_AGENT_ROUNDS_DEFAULT), maxSearches: 12, maxReads: 5, maxRounds: 24, timeoutMs: 1800000, agentRounds: RESEARCH_AGENT_ROUNDS_DEFAULT, agentsPerRound: RESEARCH_AGENTS_PER_ROUND, agentSearches: RESEARCH_AGENT_SEARCHES, agentReads: RESEARCH_AGENT_READS },
+  /* Thorough is the same single-researcher flow with a much larger budget. The
+     subagent layer it used before cost more than it added. */
+  { id: 'thorough', label: 'Thorough', blurb: '48 searches · 20 reads', maxSearches: 48, maxReads: 20, maxRounds: 60, timeoutMs: 1800000, agentRounds: 0, agentsPerRound: 0, agentSearches: 0, agentReads: 0 },
 ]
 
 export const RESEARCH_TIER_IDS = RESEARCH_TIERS.map((t) => t.id)
 
-/** Resolve a depth id. Thorough's delegation-round budget is user-configurable
- * (Settings → Tools → Deep research); everything else is fixed by the tier. */
-export const tierOf = (id: unknown, agentRounds?: unknown): ResearchTier => {
-  const base = RESEARCH_TIERS.find((t) => t.id === String(id || '').trim().toLowerCase()) ?? RESEARCH_TIERS[1]
-  if (base.id !== 'thorough' || agentRounds == null) return base
-  const rounds = normResearchAgentRounds(agentRounds)
-  return { ...base, agentRounds: rounds, blurb: thoroughBlurb(rounds) }
-}
+/** Resolve a depth id. Budgets are fixed by the tier; the old subagent-rounds
+ * argument is accepted only so saved settings and older callers keep working. */
+export const tierOf = (id: unknown, _agentRounds?: unknown): ResearchTier =>
+  RESEARCH_TIERS.find((t) => t.id === String(id || '').trim().toLowerCase()) ?? RESEARCH_TIERS[1]
 
 /* ---- Plan ---- */
 

@@ -142,7 +142,6 @@ export const SETTING_LINKS: SettingLink[] = [
   { tab: 'chats', anchor: 'ocr', title: 'Image text extraction (OCR)', keywords: 'ocr vision endpoint auto always image transcription attachments' },
   { tab: 'chats', anchor: 'per-file-chars', title: 'Text per document', keywords: 'per file characters budget document attachments' },
   { tab: 'tools', anchor: 'deep-research', title: 'Deep research default depth', keywords: 'research quick standard thorough tier' },
-  { tab: 'tools', anchor: 'research-rounds', title: 'Thorough subagent rounds', keywords: 'research thorough subagents agents delegation rounds budget team follow-up' },
   { tab: 'tools', anchor: 'search-provider', title: 'Search API provider', keywords: 'tinyfish you exa firecrawl brightdata jina provider grounding' },
   { tab: 'tools', anchor: 'search-key', title: 'Search API key', keywords: 'search key bring your own stored browser' },
   { tab: 'tools', anchor: 'search-zone', title: 'Bright Data SERP zone', keywords: 'brightdata serp zone' },

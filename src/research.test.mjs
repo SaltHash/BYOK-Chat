@@ -24,29 +24,26 @@ test('parses explicit @research forms and deep-research follow-ups', () => {
 test('tiers resolve with a safe default and budgets', () => {
   assert.equal(r.tierOf('quick').maxSearches, 8)
   assert.equal(r.tierOf('standard').maxSearches, 24)
-  // Thorough's budget is delegation rounds, not a flat search count.
-  assert.equal(r.tierOf('thorough').agentRounds, 3)
-  assert.equal(r.tierOf('thorough').agentsPerRound, 3)
-  assert.equal(r.tierOf('thorough').agentSearches, 16)
-  assert.equal(r.tierOf('thorough', 5).agentRounds, 5)
-  assert.equal(r.tierOf('thorough', 99).agentRounds, 6)
-  assert.equal(r.tierOf('thorough', 'junk').agentRounds, 3)
-  assert.equal(r.tierOf('quick', 5).agentRounds, 0)
+  // Thorough is a bigger budget for the same single researcher, not a team.
+  assert.equal(r.tierOf('thorough').maxSearches, 48)
+  assert.equal(r.tierOf('thorough').maxReads, 20)
+  assert.equal(r.tierOf('thorough').agentRounds, 0)
+  // A saved subagent-rounds setting can no longer change the tier.
+  assert.equal(r.tierOf('thorough', 5).agentRounds, 0)
+  assert.equal(r.tierOf('thorough', 99).maxSearches, 48)
   assert.equal(r.normResearchAgentRounds(0), 1)
   assert.equal(r.normResearchAgentRounds(2.4), 2)
   // The depth is chosen per run, so no default preference is stored.
   assert.equal(r.normResearch, undefined)
 })
 
-test('thorough budgets describe the team, and only thorough delegates', () => {
-  assert.match(r.researchBudgetNote(r.tierOf('thorough')), /3 subagent rounds/)
-  assert.match(r.researchBudgetNote(r.tierOf('thorough')), /16 searches/)
+test('thorough is a larger solo budget, and no tier delegates', () => {
+  assert.match(r.researchBudgetNote(r.tierOf('thorough')), /hard cap of 48 searches/)
+  assert.match(r.researchBudgetNote(r.tierOf('thorough')), /20 page reads/)
   assert.match(r.researchBudgetNote(r.tierOf('standard')), /hard cap of 24 searches/)
   const thorough = r.researchSystemNote('fusion', r.tierOf('thorough'))
-  assert.match(thorough, /delegate_research/)
-  assert.match(thorough, /ask_research_agent/)
-  assert.match(thorough, /3 delegation rounds/)
-  assert.match(thorough, /Never ask an agent to write it/)
+  assert.doesNotMatch(thorough, /delegate_research/)
+  assert.match(thorough, /48 searches/)
   const standard = r.researchSystemNote('fusion', r.tierOf('standard'))
   assert.doesNotMatch(standard, /delegate_research/)
 })
@@ -68,7 +65,8 @@ test('a plan can carry a few clarifying questions', () => {
 })
 
 test('the subagent prompt enforces a brief, a generous budget, and a dense cited report', () => {
-  const tier = r.tierOf('thorough')
+  // Runs no longer delegate; the subagent prompt is still covered directly.
+  const tier = { ...r.tierOf('thorough'), agentRounds: 2, agentsPerRound: 3, agentSearches: 16, agentReads: 8 }
   const note = r.agentSystemNote('fusion', tier, { label: 'Timeline', brief: 'Map milestones since 2020.', avoid: 'Costs' })
   assert.match(note, /research subagent/)
   assert.match(note, /Map milestones since 2020/)
@@ -289,9 +287,9 @@ test('system note states stopping rules, source quality and evidence absence', (
 })
 
 test('tiers carry search and read budgets with hard-cap wording', () => {
-  assert.deepEqual(r.RESEARCH_TIERS.map((t) => t.maxSearches), [8, 24, 12])
+  assert.deepEqual(r.RESEARCH_TIERS.map((t) => t.maxSearches), [8, 24, 48])
   for (const t of r.RESEARCH_TIERS) assert.match(t.blurb, /reads/)
-  assert.match(r.researchBudgetNote(r.tierOf('thorough')), /never targets/)
+  assert.match(r.researchBudgetNote(r.tierOf('thorough')), /never a target|never targets/)
   assert.match(r.researchSystemNote('fusion', r.tierOf('thorough')), /hard cap, not a quota/)
   const note = r.researchSystemNote('fusion', r.tierOf('thorough'))
   assert.match(note, /holistic/i)
@@ -385,7 +383,7 @@ test('a reply that is JSON but not a plan is worth one repair pass', () => {
 })
 
 test('subagents get an explicit depth and rounds can stop after the first', () => {
-  const tier = r.tierOf('thorough')
+  const tier = { ...r.tierOf('thorough'), agentRounds: 2, agentsPerRound: 3, agentSearches: 16, agentReads: 8 }
   assert.equal(r.normResearchDepth('nonsense'), 'standard')
   assert.equal(r.normResearchDepth('deep'), 'deep')
   const note = r.agentSystemNote('fusion', tier, { label: 'Policy', brief: 'Find the rules.', depth: 'deep' })

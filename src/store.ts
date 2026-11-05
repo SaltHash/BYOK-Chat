@@ -1295,7 +1295,7 @@ export const useS = create<S>()(
           set({ notice: p.err })
           return
         }
-        const tier = tierOf(tierId, normResearchAgentRounds(get().researchRounds))
+        const tier = tierOf(tierId)
         const r: Run = { stopped: false, ctl: null }
         beginRun(chatId, r)
         const log: Try[] = []
@@ -1458,7 +1458,7 @@ export const useS = create<S>()(
           set({ notice: p.err })
           return
         }
-        const tier = tierOf(tierId, normResearchAgentRounds(get().researchRounds))
+        const tier = tierOf(tierId)
         const r: Run = { stopped: false, ctl: null }
         beginRun(chatId, r)
         const log: Try[] = []
@@ -2920,7 +2920,7 @@ export const useS = create<S>()(
           const um = [...c.msgs.slice(0, i)].reverse().find((m) => m.r === 'user')
           if (!um) return
           const used = countedSteps(msg.research.steps, 'search')
-          const tier = tierOf(msg.research.tier, normResearchAgentRounds(get().researchRounds))
+          const tier = tierOf(msg.research.tier)
           if (used >= tier.maxSearches) return
           void runResearch(mid, um, msg.research.query, tier.id, true)
         },

@@ -4,7 +4,7 @@ import { useS, useLive, type Msg } from '../store'
 import { PLAN_INTRO, RESEARCH_TIERS, agentRoundsUsed, agentSources, countedSteps, dedupTrace, reasoningBlocks, tierOf, type ResearchAgent, type ResearchPlan, type ResearchPlanStep, type ResearchTierId } from '../research'
 import { claimForCitation, collectMessageSources, linkifyCitations, mergeSources, stripCitations } from '../citations'
 import { Md } from './Md'
-import { ArtifactCard } from './Artifact'
+import { ArtifactCard, ArtifactList, artifactBlocks } from './Artifact'
 import { extractArtifactBlocks } from '../artifacts'
 
 /** A research card follows its own chat, not whichever chat happens to be
@@ -68,11 +68,10 @@ function PlanStepRow({ step, last }: { step: ResearchPlanStep; last: boolean }) 
  *  facts instead of a sentence of figures. The number is a token budget for
  *  the run — lead plus team — priced only when the model has a price. */
 function PlanEstimate({ msg }: { msg: Msg }) {
-  const configuredRounds = useS((s) => s.researchRounds)
   const rs = msg.research
   const est = rs?.estimate
   if (!est) return null
-  const tier = tierOf(rs?.tier ?? 'standard', configuredRounds)
+  const tier = tierOf(rs?.tier ?? 'standard')
   const agents = Math.max(0, tier.agentRounds) * Math.max(0, tier.agentsPerRound)
   const tokens = `${fmtTokens(est.inputTokens)} in · ${fmtTokens(est.outputTokens)} out tokens`
   return (
@@ -391,7 +390,6 @@ export function ResearchPlanCard({ msg }: { msg: Msg }) {
 export function ResearchTierPicker({ msg }: { msg: Msg }) {
   const choose = useS((s) => s.chooseResearchTier)
   const stop = useS((s) => s.stopResearch)
-  const rounds = useS((s) => s.researchRounds)
   const busy = useMsgBusy(msg.id)
   const rs = msg.research
   if (!rs || rs.status !== 'tier-pick') return null
@@ -399,15 +397,15 @@ export function ResearchTierPicker({ msg }: { msg: Msg }) {
     <section aria-label="Choose research depth" className="max-w-xl space-y-3 rounded-xl border border-bor bg-surf p-4">
       <div>
         <h3 className="text-sm font-medium">Deep research on “{rs.query.slice(0, 120)}”</h3>
-        <p className="mt-1 text-xs text-mu">Pick a depth. The model then scopes the topic, may ask you a few questions, and drafts a plan for you to review. Nothing is searched or read until you start it. Thorough mode sends out rounds of research subagents and can query them again when an answer is thin.</p>
+        <p className="mt-1 text-xs text-mu">Pick a depth. The model then scopes the topic, may ask you a few questions, and drafts a plan for you to review. Nothing is searched or read until you start it. Thorough mode simply raises the search and page-read budget.</p>
       </div>
       <div className="grid gap-2 sm:grid-cols-3">
-        {RESEARCH_TIERS.map((base) => tierOf(base.id, rounds)).map((t) => (
+        {RESEARCH_TIERS.map((base) => tierOf(base.id)).map((t) => (
           <button
             key={t.id}
             disabled={busy}
             onClick={() => choose(msg.id, t.id as ResearchTierId)}
-            title={`${t.label}: ${t.agentRounds > 0 ? `${t.agentRounds} subagent rounds of ${t.agentsPerRound} agents, ${t.agentSearches} searches each` : `up to ${t.maxSearches} searches and ${t.maxReads} page reads`}`}
+            title={`${t.label}: up to ${t.maxSearches} searches and ${t.maxReads} page reads`}
             className={cx('rounded-lg border px-3 py-2.5 text-left transition-colors hover:bg-hov disabled:opacity-50', rs.tier === t.id ? 'border-ac bg-ac/10' : 'border-bor')}
             aria-pressed={rs.tier === t.id}
           >
@@ -427,7 +425,6 @@ export function ResearchProgressCard({ msg }: { msg: Msg }) {
   const stop = useS((s) => s.stopResearch)
   const resume = useS((s) => s.resumeResearch)
   const steer = useS((s) => s.steerResearch)
-  const configuredRounds = useS((s) => s.researchRounds)
   const busy = useMsgBusy(msg.id)
   const [focus, setFocus] = useState('')
   const rs = msg.research
@@ -456,12 +453,7 @@ export function ResearchProgressCard({ msg }: { msg: Msg }) {
   if (!rs || (rs.status !== 'running' && rs.status !== 'stopped' && rs.status !== 'error')) return null
   if (rs.status !== 'running' && !rs.steps.length && !rs.error && rs.status !== 'stopped') return null
   const done = rs.steps.filter((s) => s.state === 'done').length
-  const tier = tierOf(rs.tier ?? 'standard', configuredRounds)
-  const agents = rs.agents ?? []
-  const roundsUsed = agentRoundsUsed(agents)
-  const teamSearches = agents.reduce((n, a) => n + a.searches, 0)
-  const teamReads = agents.reduce((n, a) => n + a.reads, 0)
-  const teamCost = agents.reduce((n, a) => n + (a.costUsd ?? 0), 0)
+  const tier = tierOf(rs.tier ?? 'standard')
   const activeFocus = (rs.steer ?? '').trim()
   const usedSearches = countedSteps(rs.steps, 'search')
   const usedReads = countedSteps(rs.steps, 'read')
@@ -473,12 +465,8 @@ export function ResearchProgressCard({ msg }: { msg: Msg }) {
   const title = rs.status === 'running' ? `Researching · ${tier.label}` : rs.status === 'stopped' ? 'Research stopped' : 'Research needs attention'
   const subtitle = rs.status !== 'running'
     ? 'The report panel keeps what was gathered'
-    : tier.agentRounds > 0
-      ? `Round ${Math.min(Math.max(roundsUsed, 1), tier.agentRounds)} of ${tier.agentRounds} · ${rs.steps.length ? `${done} of ${rs.steps.length} steps` : `${agents.length} agent${agents.length === 1 ? '' : 's'} briefed`}`
-      : rs.steps.length ? `${done} of ${rs.steps.length} steps done` : 'Gathering evidence'
-  const runPct = tier.agentRounds > 0
-    ? (roundsUsed / Math.max(1, tier.agentRounds)) * 100
-    : rs.steps.length ? (done / rs.steps.length) * 100 : 6
+    : rs.steps.length ? `${done} of ${rs.steps.length} steps done` : 'Gathering evidence'
+  const runPct = rs.steps.length ? (done / rs.steps.length) * 100 : 6
   return (
     <section aria-label="Deep research progress" aria-live="polite" className="max-w-xl overflow-hidden rounded-xl border border-bor bg-surf">
       <div aria-hidden="true" className="h-0.5 bg-hov">
@@ -535,20 +523,6 @@ export function ResearchProgressCard({ msg }: { msg: Msg }) {
             />
             <button type="submit" disabled={!focus.trim()} title="The lead researcher applies this on its next round; the run is not restarted" className="rounded-md bg-hov px-2 py-1.5 text-xs font-medium hover:opacity-80 disabled:opacity-40">Set</button>
           </form>
-        </div>
-      )}
-      {agents.length > 0 && (
-        <div className="space-y-2 rounded-lg border border-bor/60 bg-bg/40 p-2.5">
-          <div className="flex flex-wrap items-baseline justify-between gap-x-2 gap-y-1">
-            <p className="text-[11px] font-semibold uppercase tracking-wide text-mu">Research team</p>
-            <p className="flex shrink-0 items-center gap-1 text-[11px] tabular-nums text-mu">
-              <Chip>{`${roundsUsed}/${tier.agentRounds} rounds`}</Chip>
-              <Chip>{`${teamSearches} searches`}</Chip>
-              <Chip>{`${teamReads} reads`}</Chip>
-              {teamCost > 0 && <Chip tone="ac">{fmtEstimate(teamCost)}</Chip>}
-            </p>
-          </div>
-          <ResearchTeam agents={agents} rounds={tier.agentRounds} />
         </div>
       )}
       {rs.plan && (
@@ -656,11 +630,14 @@ export function ResearchPanel({ msg, onClose }: { msg: Msg; onClose: () => void 
   const [srcFlash, setSrcFlash] = useState<string | null>(null)
   const [srcClaim, setSrcClaim] = useState<string | null>(null)
   const citeStyle = useS((s) => s.search?.citeStyle)
-  const configuredRounds = useS((s) => s.researchRounds)
   const rerun = useS((s) => s.rerunResearch)
   const sources = useMemo(() => mergeSources(collectMessageSources(msg.toolRounds), agentSources(msg.research?.agents)), [msg.toolRounds, msg.research?.agents])
   const report = useMemo(() => extractArtifactBlocks(msg.toolFinal ?? msg.t ?? ''), [msg.toolFinal, msg.t])
   const cited = useMemo(() => citeStyle === 'off' ? stripCitations(report.text) : linkifyCitations(report.text, sources), [report.text, sources, citeStyle])
+  // A report that made artifacts keeps each one where the run called it; a
+  // report whose artifact fence was stripped from the text keeps it at the end.
+  const inline = useMemo(() => artifactBlocks(report.text, msg.toolRounds), [report.text, msg.toolRounds])
+  const citeBlock = (t: string) => citeStyle === 'off' ? stripCitations(t) : linkifyCitations(t, sources)
   const cites = useMemo(() => citeStyle === 'pills' && sources.length ? {
     sources,
     onCite: (citeId: string) => {
@@ -684,7 +661,7 @@ export function ResearchPanel({ msg, onClose }: { msg: Msg; onClose: () => void 
   const blocks = useMemo(() => reasoningBlocks(msg.research?.steps ?? []), [msg.research?.steps])
   const rs = msg.research
   const agentList = rs?.agents ?? []
-  const runTier = tierOf(rs?.tier ?? 'standard', configuredRounds)
+  const runTier = tierOf(rs?.tier ?? 'standard')
   // The report streams into the panel: keep the newest text in view, but stop
   // the moment the user scrolls away from the bottom. Scrolling back to the
   // bottom resumes auto-scrolling.
@@ -732,11 +709,20 @@ export function ResearchPanel({ msg, onClose }: { msg: Msg; onClose: () => void 
       <div ref={scrollRef} onScroll={onScroll} className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
         {tab === 'report' ? (
           <>
-            <article className="leading-7"><Md t={cited} cites={cites} /></article>
-            {report.artifacts.length > 0 && (
-              <div className="mt-4 space-y-3">
-                {report.artifacts.map((spec, i) => <ArtifactCard key={`${spec.title}-${i}`} spec={spec} />)}
+            {inline ? inline.map((b, i) => (
+              <div key={i} className={b.specs ? 'my-3' : undefined}>
+                {b.text ? <article className="leading-7"><Md t={citeBlock(b.text)} cites={cites} /></article> : null}
+                {b.specs ? <ArtifactList specs={b.specs} /> : null}
               </div>
+            )) : (
+              <>
+                <article className="leading-7"><Md t={cited} cites={cites} /></article>
+                {report.artifacts.length > 0 && (
+                  <div className="mt-4 space-y-3">
+                    {report.artifacts.map((spec, i) => <ArtifactCard key={`${spec.title}-${i}`} spec={spec} />)}
+                  </div>
+                )}
+              </>
             )}
           </>
         ) : tab === 'sources' ? (

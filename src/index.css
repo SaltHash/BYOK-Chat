@@ -440,9 +440,9 @@ html[data-codewrap] .code-lines .code-line > code { flex: 1 1 auto; min-width: 0
    The cross is two clipped diagonals rather than rotated bars: each arm runs
    the full inner diameter, so the glyph fills the circle and meets the ring
    on all four sides instead of floating short of it. Arms and ring share one
-   colour and one 1.5px weight, so the mark reads as a single glyph rather
-   than a cross sitting inside a differently drawn circle. */
-.process-x { width:11px; height:11px; left:-1px; top:calc(.68rem - 1px); background:var(--surf); --cross:color-mix(in srgb, var(--er) 85%, transparent); }
+   solid, unblended error colour and one 1.5px weight, so the mark reads as a
+   single glyph rather than a cross inside a differently drawn circle. */
+.process-x { width:11px; height:11px; left:-1px; top:calc(.68rem - 1px); background:var(--surf); --cross:var(--er); }
 /* Arms run the full diameter and the ring is painted last, on top, so the
    cross bleeds under the stroke instead of stopping at its inner edge: the
    four tips meet the ring with no gap at any zoom or pixel ratio. Each arm is
