@@ -429,6 +429,7 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
   const live = useLive((s) => s.tools[m.id])
   const liveChunks = useLive((s) => s.chunks[m.id])
   const [showRawErr, setShowRawErr] = useState(false)
+  const [confirmDel, setConfirmDel] = useState(false)
   // Jump-to-message from ranked sidebar search: scroll + temporary highlight.
   const flash = useS((st) => st.flashMsg === m.id)
   useEffect(() => {
@@ -677,7 +678,7 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
           })()}
         </div>
       )}
-      <div className={cx('flow-root leading-7', m.err && 'text-er')}>
+      <div className="flow-root leading-7">
         {/* Inline graphs float beside the prose, so the text wraps around the
             figure it explains instead of the plot being pushed to the end. */}
         {!m.err && !hideBody && hasPlacedGraphs(m.toolRounds, 'left') && <div className="float-left mb-3 w-full sm:mr-5 sm:w-[min(52%,23rem)]"><GraphCards rounds={m.toolRounds} placement="left" compact /></div>}
@@ -696,8 +697,10 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
               </div>
             )}
             <div className="flex flex-wrap items-center gap-2">
-              <Btn v="solid" icon={RefreshCw} title="Send the same request again" onClick={() => useS.getState().retryMsg(m.id)}>Try again</Btn>
-              <button onClick={() => setShowRawErr(!showRawErr)} className="rounded-lg bg-er/20 px-3 py-1.5 text-sm font-medium text-er hover:bg-er/30 transition-colors">
+              <button onClick={() => useS.getState().retryMsg(m.id)} title="Send the same request again" className="inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-er/25 bg-er/15 px-3 text-sm font-medium text-er transition-colors hover:bg-er/25">
+                <RefreshCw size={16} /> Try again
+              </button>
+              <button onClick={() => setShowRawErr(!showRawErr)} title="Show the provider's original error payload" className="inline-flex h-9 items-center justify-center rounded-lg px-3 text-sm font-medium text-er/75 transition-colors hover:bg-er/10 hover:text-er">
                 {showRawErr ? 'Hide raw error' : 'Show raw error'}
               </button>
             </div>
@@ -816,7 +819,15 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
         )}
         {last && <Btn icon={RefreshCw} title="Regenerate" onClick={() => useS.getState().regen()} />}
         <Btn icon={GitBranch} title="Branch from here (copy this thread into a new chat)" onClick={() => useS.getState().branch(m.id)} />
-        <Btn icon={Trash2} title="Delete" onClick={() => useS.getState().delMsg(m.id)} />
+        {confirmDel ? (
+          <>
+            <span className="px-1 text-xs text-er">Delete?</span>
+            <Btn sm icon={Check} title="Confirm delete message" className="text-er" onClick={() => { useS.getState().delMsg(m.id); setConfirmDel(false) }} />
+            <Btn sm icon={X} title="Cancel delete" onClick={() => setConfirmDel(false)} />
+          </>
+        ) : (
+          <Btn icon={Trash2} title="Delete" onClick={() => setConfirmDel(true)} />
+        )}
       </div>
     </div>
   )

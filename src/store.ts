@@ -16,7 +16,7 @@ import { AGENT_FOLLOW_UP_READS, AGENT_FOLLOW_UP_SEARCHES, AGENT_FOLLOW_UPS_MAX, 
 export { tierOf, RESEARCH_TIERS, RESEARCH_AGENT_ROUNDS_DEFAULT, RESEARCH_AGENT_ROUNDS_MIN, RESEARCH_AGENT_ROUNDS_MAX, normResearchAgentRounds }
 export type { ResearchState, ResearchTierId, ResearchPlan, ResearchPlanStep, ResearchAgent, ResearchQuestion, ResearchAnswer } from './research'
 import { collectMessageSources, citationCoverage, citationRule, createCiteIds, mergeSources } from './citations'
-import { hintForLog, getErrorCode, classifyModelError, type ErrorCode } from './errors'
+import { appendHint, getErrorCode, classifyModelError, type ErrorCode } from './errors'
 import { celebrate, normGlobalPrompt, type GlobalPrompt } from './flair'
 // Set by workspace writes; read once when a reply ends to decide on the completion cue.
 let workspaceWritesPending = false
@@ -693,7 +693,6 @@ export const body = applyCommandTemplate
 export const full = composeFullInput
 /* Structured failure hint: prefers coded errors, falls back to classifying
  * legacy string messages so stored logs still get a useful hint. */
-const hint = (l: Try[]) => hintForLog(l)
 const errCodeOf = (x: unknown): ErrorCode => classifyModelError((x as { message?: unknown })?.message ?? x)
 /* One automatic retry is worth it for transient failures (dropped
  * connections, provider hiccups, throttling, a stalled stream); permanent
@@ -1983,7 +1982,8 @@ export const useS = create<S>()(
         }
         if (!ok && !r.stopped) {
           patchRs(chatId, mid, (rs) => ({ ...rs, status: 'error', error: 'No model responded.', finishedAt: Date.now() }))
-          edit(chatId, mid, (m) => ({ ...m, sys: system, log, err: !m.t, by: m.by || 'No model responded', t: m.t || log.filter((x) => x.err).map((x) => `${x.n}${x.m ? ' · ' + x.m : ''}: ${x.err}`).join('\n') }))
+          const failure = log.filter((x) => x.err).map((x) => `${x.n}${x.m ? ' · ' + x.m : ''}: ${x.err}`).join('\n')
+          edit(chatId, mid, (m) => ({ ...m, sys: system, log, err: !m.t, by: m.by || 'No model responded', t: m.t || appendHint(failure, log) }))
         }
         // A stopped run still spent what it spent, so its attempts are kept even
         // though the report never finished.
@@ -2498,8 +2498,9 @@ export const useS = create<S>()(
           if (last) edit(id, mid, (m) => ({ ...m, ...last, alts: prev, ai: prev!.length - 1 }))
           else set((st) => ({ chats: st.chats.map((c) => (c.id === id ? { ...c, msgs: c.msgs.filter((m) => m.id !== mid) } : c)) }))
         } else {
+          const failure = ok ? '' : log.filter((x) => x.err).map((x) => `${x.n}${x.m ? ' · ' + x.m : ''}: ${x.err}`).join('\n')
           edit(id, mid, (m) => ok ? { ...m, sys: system, log }
-            : { ...m, sys: system, log, err: true, by: 'No model responded', t: log.filter((x) => x.err).map((x) => `${x.n}${x.m ? ' · ' + x.m : ''}: ${x.err}`).join('\n') + hint(log) })
+            : { ...m, sys: system, log, err: true, by: 'No model responded', t: appendHint(failure, log) })
           keepUsage(id, mid, log)
           if (prev) edit(id, mid, (m) => ({ ...m, alts: [...prev, snap(m)], ai: prev.length }))
         }

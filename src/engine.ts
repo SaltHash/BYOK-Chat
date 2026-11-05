@@ -5,7 +5,7 @@ import { attachmentManifest, promptNameOf } from './attachments'
 import { WORKSPACE_ACTIONS, compactWorkspaceHistory, isWorkspaceReadAction, sanitizePath, withWorkspaceTags } from './workspace'
 import { withCode, type ErrorCode } from './errors'
 import { buildStreamRequest, splitSseBuffer } from './streamRequest'
-import { mapNetworkError, providerError, resolveProvider } from './providerAdapter'
+import { errorMessageFromBody, mapNetworkError, providerError, resolveProvider } from './providerAdapter'
 import { providerFetch, ProxyUnavailableError } from './net'
 import { normalizeGraphSpec, summarizeGraphSpec } from './graph'
 import { ARTIFACT_INSTRUCTIONS } from './artifacts'
@@ -1014,7 +1014,10 @@ export async function stream(e: Ep, sys: string, ms: Wire[], on: (t: string) => 
     const relayError = relayErrorMessage(res, snippet)
     if (relayError) throw relayError
     if (provider) throw providerError(provider, res.status, snippet, { hasKey: !!e.key, headers: res.headers, key: e.key })
-    const msg = `HTTP ${res.status}: ${snippet.slice(0, 300)}`
+    // Custom endpoints have no provider preset to map the response, but a
+    // nested `{ error: { message } }` envelope is still not useful as raw JSON
+    // in the chat. Surface the provider's sentence and keep the status.
+    const msg = `HTTP ${res.status}: ${errorMessageFromBody(snippet)}`
     if (res.status === 401 || res.status === 403) throw withCode(msg, 'upstream_auth', { status: res.status })
     if (res.status === 402) throw withCode(msg, 'billing', { status: res.status })
     if (res.status === 429) throw withCode(msg, 'rate_limited', { status: res.status, retryable: false })

@@ -1,8 +1,8 @@
 import { useState } from 'react'
-import { PanelLeft, PanelRight, Download, Command, Share2, MoreVertical, Bookmark, Hourglass, Settings2, ListCollapse } from 'lucide-react'
+import { PanelLeft, PanelRight, Download, Command, Share2, MoreVertical, Bookmark, Hourglass, Settings2, ListCollapse, Archive, ArchiveRestore, Trash2 } from 'lucide-react'
 import { useShallow } from 'zustand/react/shallow'
 import { useS, exportChat, featOn, DEFAULT_ADVANCED } from '../store'
-import { Btn, Pop, Toggle, RangeSlider, Item, cx } from './ui'
+import { Btn, Confirm, Pop, Toggle, RangeSlider, Item, cx } from './ui'
 import { ContextMeter } from './ContextMeter'
 import { ShareDialog } from './ShareDialog'
 import { collapseAllProcessLogs } from '../uiSignals'
@@ -65,7 +65,9 @@ export function Header({ side, toggle, cfg, pal, title }: { side: boolean; toggl
   const curTemporary = useS((s) => { const c = s.chats.find((x) => x.id === s.chat); return c?.temporary === true || (s.chat === '' && s.newChatPending === 'temporary') })
   const tempExpiresAt = useS((s) => { const c = s.chats.find((x) => x.id === s.chat); return c?.temporary ? c.expiresAt : undefined })
   const tempHours = useS((s) => s.prefs.tempHours)
+  const archived = useS((s) => s.chats.find((c) => c.id === s.chat)?.archived === true)
   const [shareChat, setShareChat] = useState<string | null>(null)
+  const [delChat, setDelChat] = useState(false)
   const openShare = () => {
     const st = useS.getState()
     if (!st.chats.some((c) => c.id === st.chat)) { st.patch({ notice: { t: 'Open or start a chat first, then share it.' } }); return }
@@ -99,6 +101,8 @@ export function Header({ side, toggle, cfg, pal, title }: { side: boolean; toggl
               <Item icon={Download} onClick={() => { close(); exportChat() }}>Export chat</Item>
               {showLog && <Item icon={ListCollapse} onClick={() => { close(); collapseAllProcessLogs() }}>Collapse process logs</Item>}
               <Item icon={Bookmark} off={!curTemporary} onClick={() => { close(); keepPermanent() }}>Save as permanent chat</Item>
+              <Item icon={archived ? ArchiveRestore : Archive} off={!hasChat} onClick={() => { close(); const st = useS.getState(); if (st.chat) st.chatOp(st.chat, 'archive') }}>{archived ? 'Restore from archive' : 'Archive chat'}</Item>
+              <Item icon={Trash2} off={!hasChat} onClick={() => { close(); setDelChat(true) }}>Delete chat</Item>
               {featOn({ features }, 'widgets') && <Item icon={PanelRight} on={anyW && rail} onClick={() => { close(); anyW ? patch({ rail: !rail }) : cfg('widgets') }}>Widgets panel</Item>}
               {paramsOn && (
                 <div className="mt-1 space-y-4 border-t border-bor px-2 pb-1 pt-3">
@@ -111,6 +115,7 @@ export function Header({ side, toggle, cfg, pal, title }: { side: boolean; toggl
         </Pop>
       </span>
       {shareChat && <ShareDialog chatId={shareChat} close={() => setShareChat(null)} />}
+      {delChat && <Confirm title="Delete this chat?" text="This chat and its messages will be permanently removed." ok="Delete" close={() => setDelChat(false)} run={() => { const st = useS.getState(); if (st.chat) st.chatOp(st.chat, 'del') }} />}
     </header>
   )
 }

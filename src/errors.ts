@@ -94,3 +94,12 @@ export const hintForLog = (log: TryLike[]): string => {
   }
   return ''
 }
+
+/** Append the coded hint unless the provider's own message already carries it.
+ *  Some providers repeat our auth hint in their body; showing it twice makes a
+ *  single failure look like two separate problems. */
+export const appendHint = (text: string, log: TryLike[]): string => {
+  const hint = hintForLog(log)
+  const clean = hint.trim()
+  return clean && !text.includes(clean) ? text + hint : text
+}

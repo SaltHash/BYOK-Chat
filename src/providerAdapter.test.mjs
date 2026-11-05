@@ -4,11 +4,12 @@ import assert from 'node:assert/strict'
 const {
   PROVIDERS, resolveProvider, providerBaseUrl, providerHeaders, providerModelsUrl,
   createSseParser, parseSseData, readChatStream, streamChatCompletion, chatCompletion,
-  buildChatRequest, mapProviderError, mapNetworkError,
+  buildChatRequest, mapProviderError, mapNetworkError, errorMessageFromBody,
   discoverProviderModels, clearProviderDiscoveryCache, filterChatModels, probeProviderCors,
   providerPresetEntries,
 } = await import('./providerAdapter.ts')
 const { buildStreamRequest } = await import('./streamRequest.ts')
+const { appendHint } = await import('./errors.ts')
 
 const json = (value, init = {}) => new Response(JSON.stringify(value), { headers: { 'content-type': 'application/json' }, ...init })
 
@@ -183,6 +184,21 @@ test('mapProviderError names the provider and the auth problem', () => {
   const redirect = mapProviderError(resolveProvider('thegrid'), 307, '')
   assert.equal(redirect.code, 'bad_response')
   assert.match(redirect.message, /redirect/)
+})
+
+test('appendHint does not repeat a hint already present in the provider message', () => {
+  const log = [{ err: 'The key was rejected. Check it in Settings → Endpoints.', errCode: 'upstream_auth' }]
+  const once = 'OpenAI-compatible: the API key was rejected (HTTP 403). The key was rejected. Check it in Settings → Endpoints.'
+  assert.equal(appendHint(once, log), once)
+  assert.match(appendHint('OpenAI-compatible: rejected (HTTP 403).', log), /\n\nThe key was rejected\./)
+})
+
+test('errorMessageFromBody unwraps a nested provider error envelope', () => {
+  assert.equal(
+    errorMessageFromBody(JSON.stringify({ error: { message: 'The API key was rejected.', type: 'auth' } })),
+    'The API key was rejected.',
+  )
+  assert.equal(errorMessageFromBody('  upstream   down  '), 'upstream down')
 })
 
 test('mapNetworkError mentions CORS for browser-blocked providers', () => {

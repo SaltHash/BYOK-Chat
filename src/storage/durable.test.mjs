@@ -1,8 +1,18 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-const { splitPersistedForDurable, joinPersistedForSync, compactChatsForDurable, blobPut, blobGet } = await import('./durable.ts')
+const { splitPersistedForDurable, joinPersistedForSync, compactChatsForDurable, blobPut, blobGet, isDurableAppKey, durableValueBytes } = await import('./durable.ts')
 const sync = await import('./sync.ts')
+
+test('durable storage accounting ignores unrelated origin keys', () => {
+  assert.equal(isDurableAppKey('chats'), true)
+  assert.equal(isDurableAppKey('workspaces'), true)
+  assert.equal(isDurableAppKey('blob:abc'), true)
+  assert.equal(isDurableAppKey('some-vite-cache'), false)
+  assert.equal(durableValueBytes('12345'), 10)
+  assert.equal(durableValueBytes(null), 0)
+  assert.ok(durableValueBytes({ a: 1 }) > 0)
+})
 
 test('split/join round-trips settings vs durable payloads', () => {
   const { settings, chats, workspaces, selectedRevision } = splitPersistedForDurable({ eps: [], chats: [{ id: 'c' }], workspaces: { w: 1 }, selectedRevision: { w: 'r' }, themeMode: 'dark' })

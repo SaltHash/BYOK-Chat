@@ -227,7 +227,7 @@ function StorageBox() {
     return () => { live = false; clearInterval(timer) }
   }, [])
   const kb = (n: number) => n < 1024 * 1024 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1024 / 1024).toFixed(2)} MB`
-  const desc = info ? `Settings ~${kb(info.localBytes)}${durable ? ` · durable chats/workspaces ~${kb(durable.durableBytes)} (${durable.backend}${durable.opfs ? '+OPFS' : ''})` : ''}.` : 'Measure how much app data this browser holds.'
+  const desc = info ? `Local store ~${kb(info.localBytes)}${durable ? ` · durable data ~${kb(durable.durableBytes)} (${durable.backend}${durable.opfs ? '+OPFS' : ''})` : ''}.` : 'Measure how much app data this browser holds.'
   return (
     <Box icon={Gauge} t="Browser storage" d={desc}>
       <Btn v="soft" onClick={refresh}>Refresh</Btn>

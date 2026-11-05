@@ -120,7 +120,7 @@ const usageNumbers = (value: unknown): ChatUsage => {
   }
 }
 
-const errorMessageFromBody = (body: string): string => {
+export const errorMessageFromBody = (body: string): string => {
   const text = String(body ?? '')
   try {
     const j = JSON.parse(text) as Record<string, any>

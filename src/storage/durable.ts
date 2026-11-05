@@ -288,6 +288,53 @@ export function compactChatsForDurable(chats: Array<{ temporary?: boolean; expir
 
 export type StorageBreakdown = { localBytes: number; durableBytes: number; opfs: boolean; backend: 'opfs' | 'idb' | 'memory' }
 
+/** Keys in the durable kv store that belong to this app. Everything else in
+ *  the same origin (Vite caches, other tabs, browser bookkeeping) must not be
+ *  presented as chat storage. */
+export const isDurableAppKey = (key: string): boolean =>
+  key === DURABLE_CHATS_KEY || key === DURABLE_WORKSPACES_KEY || key === DURABLE_META_KEY ||
+  key === DURABLE_BACKUPS_KEY || key === DURABLE_SYNC_BASE_KEY || key.startsWith(DURABLE_BLOBS_PREFIX)
+
+/** UTF-16 byte estimate for a value held in IndexedDB. Strings dominate this
+ *  database; objects are measured by their serialized form. */
+export const durableValueBytes = (value: unknown): number => {
+  if (typeof value === 'string') return value.length * 2
+  if (value == null) return 0
+  try { return JSON.stringify(value).length * 2 } catch { return 0 }
+}
+
+async function durableBytesFromDB(): Promise<number> {
+  const db = await openDB()
+  if (!db) return 0
+  try {
+    const pairs = await new Promise<Array<[IDBValidKey, unknown]>>((resolve, reject) => {
+      try {
+        const tx = db.transaction('kv', 'readonly')
+        const store = tx.objectStore('kv')
+        const keys = store.getAllKeys()
+        const values = store.getAll()
+        tx.oncomplete = () => resolve(keys.result.map((key, i) => [key, values.result[i]]))
+        tx.onabort = () => reject(tx.error ?? Error('IndexedDB read was interrupted.'))
+        tx.onerror = () => { /* abort carries the failure */ }
+      } catch (error) { reject(error) }
+    })
+    return pairs.reduce((sum, [key, value]) => isDurableAppKey(String(key)) ? sum + durableValueBytes(value) : sum, 0)
+  } finally { db.close() }
+}
+
+async function opfsBlobBytes(): Promise<number> {
+  try {
+    if (!opfsSupported()) return 0
+    const root = await (navigator.storage as unknown as { getDirectory: () => Promise<FileSystemDirectoryHandle> }).getDirectory()
+    const dir = await root.getDirectoryHandle('byok-blobs', { create: false })
+    let total = 0
+    for await (const [, handle] of (dir as unknown as { entries: () => AsyncIterable<[string, FileSystemHandle]> }).entries()) {
+      if (handle.kind === 'file') total += (await (handle as FileSystemFileHandle).getFile()).size
+    }
+    return total
+  } catch { return 0 }
+}
+
 export async function durableUsage(): Promise<StorageBreakdown> {
   let localBytes = 0
   try {
@@ -297,11 +344,12 @@ export async function durableUsage(): Promise<StorageBreakdown> {
       localBytes += (k.length + (localStorage.getItem(k) ?? '').length) * 2
     }
   } catch { /* blocked */ }
+  // Count this app's durable values themselves. navigator.storage.estimate()
+  // reports the whole origin (and opaque browser overhead), which made an
+  // empty chat store look like ~96 KB of retained chats.
   let durableBytes = 0
-  try {
-    const e = await (navigator as unknown as { storage?: { estimate?: () => Promise<{ usage?: number }> } })?.storage?.estimate?.()
-    durableBytes = Math.max(0, (e?.usage ?? 0) - localBytes)
-  } catch { /* ignore */ }
+  try { durableBytes = await durableBytesFromDB() } catch { /* blocked or unsupported */ }
+  durableBytes += await opfsBlobBytes()
   let backend: StorageBreakdown['backend'] = 'memory'
   try {
     const db = await openDB()
