@@ -435,9 +435,11 @@ html[data-codewrap] .code-lines .code-line > code { flex: 1 1 auto; min-width: 0
 .process-ring { border:1.5px solid color-mix(in srgb, var(--mu) 60%, transparent); background:var(--surf); }
 .process-ring[data-err] { border-color:color-mix(in srgb, var(--er) 80%, transparent); }
 /* A failed step is an open circle with an error-colored cross: distinct from
-   both a finished dot and a running ring even without reading the red text. */
-.process-x { border:1.5px solid color-mix(in srgb, var(--er) 80%, transparent); background:var(--surf); }
-.process-x::before, .process-x::after { content:''; position:absolute; left:50%; top:50%; width:4px; height:1px; border-radius:1px; background:var(--er); }
+   both a finished dot and a running ring even without reading the red text.
+   The circle sits a notch larger than a dot and stays centered on the rail,
+   and the cross reaches from one inner edge of the ring to the other. */
+.process-x { width:11px; height:11px; left:-1px; top:calc(.68rem - 1px); border:1.5px solid color-mix(in srgb, var(--er) 85%, transparent); background:var(--surf); }
+.process-x::before, .process-x::after { content:''; position:absolute; left:50%; top:50%; width:7.6px; height:1.5px; border-radius:1px; background:var(--er); }
 .process-x::before { transform:translate(-50%,-50%) rotate(45deg); }
 .process-x::after { transform:translate(-50%,-50%) rotate(-45deg); }
 /* Only a call that is still running stays open, and it wears a shine that
