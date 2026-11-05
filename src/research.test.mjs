@@ -92,13 +92,15 @@ test('agent accounting counts only waves that did real work', () => {
   assert.deepEqual(r.agentSources(agents).map((s) => s.citeId), ['S1', 'S2'])
 })
 
-test('the usage estimate covers subagent spending, not just the lead', () => {
+test('the usage estimate covers subagent spending in tokens, not by inflating the lead', () => {
   const tier = r.tierOf('thorough')
   const est = r.estimateResearchUsage(tier)
-  assert.ok(est.searches > tier.maxSearches)
-  assert.ok(est.reads > tier.maxReads)
-  assert.ok(est.rounds > tier.maxRounds)
+  assert.ok(est.searches <= tier.maxSearches, 'lead searches stay inside the lead cap')
+  assert.ok(est.reads <= tier.maxReads)
+  // The team is counted where it actually costs: prompt tokens per agent.
   assert.ok(est.inputTokens > r.estimateResearchUsage(r.tierOf('standard')).inputTokens)
+  assert.ok(est.inputTokens > 1e6, 'a 3x3 team projects a large prompt-token bill')
+  assert.ok(est.outputTokens < est.inputTokens / 10, 'prompts dominate a research run')
 })
 
 test('failed searches and reads are shown but never count against the budget', () => {
@@ -364,8 +366,22 @@ test('a usage estimate scales with the tier and only costs when priced', () => {
   const priced = r.estimateResearchUsage(r.tierOf('quick'), { input: 1, output: 2 })
   assert.ok(priced.costUsd > 0)
   const thorough = r.estimateResearchUsage(r.tierOf('thorough'), { input: 1, output: 2 })
-  assert.ok(thorough.agentCostUsd > 0)
-  assert.ok(thorough.roundCostUsd > thorough.agentCostUsd, 'a full round costs more than one agent')
+  assert.ok(thorough.inputTokens > std.inputTokens, 'a team run projects more prompt tokens')
+  assert.ok(thorough.outputTokens > std.outputTokens)
+  // The cost is the projection's own tokens at the model's price, not a
+  // separate guess at dollars that can disagree with the token figures.
+  assert.ok(Math.abs(thorough.costUsd - (thorough.inputTokens * 1 + thorough.outputTokens * 2) / 1e6) < 1e-9)
+})
+
+test('a reply that is JSON but not a plan is worth one repair pass', () => {
+  const step = (kind, label) => ({ id: label, kind, label, items: ['(1) a'] })
+  assert.equal(r.planNeedsRepair(null), true)
+  const two = { title: 'x', intro: '', steps: [step('search', 'Find'), step('report', 'Write')] }
+  assert.equal(r.planNeedsRepair(two), true, 'a two-step plan is not a plan')
+  const noReport = { title: 'x', intro: '', steps: [step('search', 'Find'), step('analyze', 'Compare'), step('analyze', 'Weigh')] }
+  assert.equal(r.planNeedsRepair(noReport), true, 'the report step is required')
+  const ok = { title: 'x', intro: '', steps: [step('search', 'Find'), step('analyze', 'Compare'), step('report', 'Write')] }
+  assert.equal(r.planNeedsRepair(ok), false)
 })
 
 test('subagents get an explicit depth and rounds can stop after the first', () => {

@@ -238,6 +238,15 @@ export function parseResearchPlan(raw: string): ResearchPlan | null {
   return null
 }
 
+/** True when a parsed plan is structurally unusable: too few steps, or no
+ * search or report step to work from. Those replies are worth one repair pass
+ * (the model produced JSON, but not a plan), while a merely plain plan is kept
+ * so a second call is never spent on taste. */
+export function planNeedsRepair(plan: ResearchPlan | null): boolean {
+  if (!plan || plan.steps.length < 3) return true
+  return !plan.steps.some((s) => s.kind === 'search') || !plan.steps.some((s) => s.kind === 'report')
+}
+
 /** A deterministic plan used when the planning call fails or returns junk, so
  * the research flow can always proceed. */
 export function fallbackPlan(query: string): ResearchPlan {
@@ -415,6 +424,9 @@ export type ResearchState = {
   /** Moderate-use estimate for the run's usage/cost, shown before the user
    * starts it so a Thorough run is never a surprise. */
   estimate?: ResearchUsageEstimate
+  /** Measured prompt/reply tokens and spend for the run so far, accumulated
+   * from the provider's usage after every round. */
+  usage?: ResearchUsage
   /** Absolute wall-clock deadline for the run (epoch ms), fixed when the run
    * first starts and reused by retries and resumes, so the tier's time budget
    * bounds the whole run rather than restarting on every attempt. */
@@ -466,47 +478,44 @@ export type ResearchUsageEstimate = {
   inputTokens: number
   outputTokens: number
   costUsd: number | null
-  /** Expected cost of one subagent at its assigned depth. */
-  agentCostUsd: number | null
-  /** Expected cost of one full round (all agents in that round). */
-  roundCostUsd: number | null
 }
 
-/** A moderate-use estimate for a run at the given tier, so the cost is visible
- * before the user starts. Most runs stop well below their caps, so this uses
- * roughly half of the available search/read budget rather than the full ceiling,
- * then adds a small token buffer. It includes the planning pass's context
- * searches and plan call, and it accounts for evidence accumulating across
- * rounds. The result is usually a little above the final cost, not a worst case. */
+/** Measured spend for a run so far: provider-reported prompt and reply tokens
+ *  after each round, plus their cost. The plan pass is kept separately (see
+ *  `keepUsage`), so this is the research itself. */
+export type ResearchUsage = { input: number; output: number; cost: number }
+
+/** What one actor (the lead or a subagent) is expected to spend: its loop
+ * rounds are its tool calls in pairs plus a few reasoning rounds, and every
+ * round re-sends the evidence gathered so far, so input is rounds × (fixed
+ * prompt + average evidence in context). Prompt tokens dominate a run. */
+function expectedActor(searches: number, reads: number, baseTokens: number, outputPerRound: number) {
+  const evidence = searches * Math.ceil(SEARCH_EVIDENCE_CHARS / CHARS_PER_TOKEN) + reads * Math.ceil(READ_EXCERPT_CHARS / CHARS_PER_TOKEN)
+  const rounds = Math.ceil((searches + reads) / 2) + 3
+  return { rounds, input: rounds * (baseTokens + evidence / 2), output: rounds * outputPerRound }
+}
+
+/** A token budget for a run at the given tier, shown before the user starts it.
+ *  It counts what research actually consumes rather than the ceiling of every
+ *  knob: agents stop once their brief is covered (about six searches each), the
+ *  lead settles near half its cap plus the planning pass's context searches,
+ *  and every round resends the evidence gathered so far. Measured usage
+ *  replaces the projection once the run is underway, and price is only applied
+ *  when the answering model has one. */
 export function estimateResearchUsage(tier: ResearchTier, price?: { input: number; output: number } | null): ResearchUsageEstimate {
-  const perSearch = Math.ceil(SEARCH_EVIDENCE_CHARS / CHARS_PER_TOKEN)
-  const perRead = Math.ceil(READ_EXCERPT_CHARS / CHARS_PER_TOKEN)
-  const agentCount = Math.max(0, tier.agentRounds) * Math.max(0, tier.agentsPerRound)
-  // Lead searches are often front-loaded while subagents tend to stop once
-  // their brief is covered. A 55%/45% share is intentionally conservative.
-  const searches = Math.round(tier.maxSearches * 0.55 + PLAN_SCOPE_MAX + agentCount * tier.agentSearches * 0.45)
-  const reads = Math.round(tier.maxReads * 0.55 + agentCount * tier.agentReads * 0.45)
-  const evidence = searches * perSearch + reads * perRead
-  // A subagent's own transcript is compacted each round; its ceiling is the
-  // evidence it may gather plus a few reasoning rounds. Multi-agent runs really
-  // do cost multiples of a single agent's tokens, so the visible estimate says so.
-  const agentRoundsEach = Math.ceil(tier.agentSearches / 3) + tier.agentReads + 4
-  const rounds = Math.round(tier.maxRounds * 0.55 + PLAN_SCOPE_MAX + 1 + agentCount * agentRoundsEach * 0.55)
-  const base = 2500
-  const agentInput = agentCount * agentRoundsEach * (2000 + (tier.agentSearches * perSearch + tier.agentReads * perRead) / 2) * 0.5
-  const agentOutput = agentCount * (agentRoundsEach * 220 + 1400) * 0.5
-  const headroom = 1.08
-  const inputTokens = Math.round((rounds * (base + evidence / 2) + agentInput) * headroom)
-  const outputTokens = Math.round((rounds * 250 + 5000 + agentOutput) * headroom)
+  const searches = Math.min(tier.maxSearches, Math.round(tier.maxSearches / 2) + PLAN_SCOPE_MAX)
+  const reads = Math.min(tier.maxReads, Math.round(tier.maxReads / 2) + 1)
+  const agents = Math.max(0, tier.agentRounds) * Math.max(0, tier.agentsPerRound)
+  const agentSearches = agents ? Math.min(tier.agentSearches, 6) : 0
+  const agentReads = agents ? Math.min(tier.agentReads, 3) : 0
+  const lead = expectedActor(searches, reads, 2600, 220)
+  const each = expectedActor(agentSearches, agentReads, 2200, 180)
+  const headroom = 1.05
+  const inputTokens = Math.round((lead.input + agents * each.input) * headroom)
+  const outputTokens = Math.round((lead.output + 5000 + agents * (each.output + 900)) * headroom)
   const priced = price && (price.input > 0 || price.output > 0) ? price : null
   const costUsd = priced ? (inputTokens * priced.input + outputTokens * priced.output) / 1e6 : null
-  // Per-agent and per-round figures make the team estimate inspectable: the
-  // plan card can show what one subagent costs and what a whole wave adds.
-  const perAgentInput = agentCount > 0 ? agentInput / agentCount : 0
-  const perAgentOutput = agentCount > 0 ? agentOutput / agentCount : 0
-  const agentCostUsd = priced && agentCount > 0 ? ((perAgentInput * priced.input + perAgentOutput * priced.output) / 1e6) * headroom : null
-  const roundCostUsd = agentCostUsd != null ? agentCostUsd * tier.agentsPerRound : null
-  return { searches, reads, rounds, inputTokens, outputTokens, costUsd, agentCostUsd, roundCostUsd }
+  return { searches, reads, rounds: lead.rounds, inputTokens, outputTokens, costUsd }
 }
 
 /* ---- Prompts ---- */

@@ -285,6 +285,7 @@ test('a thorough run delegates a team, asks a follow-up, and merges agent source
   assert.ok(agents.every((a) => a.status === 'done'))
   assert.equal(agents[0].followUps.length, 1, 'the follow-up is stored on the agent')
   assert.ok(agents.every((a) => a.costUsd > 0), 'each subagent records its own spend for the round estimate')
+  assert.ok(done.research.usage && done.research.usage.input > 0 && done.research.usage.output > 0, 'measured prompt and reply tokens are recorded for the run')
   assert.equal(seen.agentSearches, 2, 'each subagent searched once')
   assert.equal(seen.followups, 1, 'the follow-up answered from existing evidence')
   assert.equal(seen.steerInjected, true, 'a mid-run focus reaches the lead on its next round')

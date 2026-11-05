@@ -12,7 +12,7 @@ import type { EndpointAuth } from './endpointAuth'
 import { blobPut } from './storage/durable'
 import { normVoice, BLANK_VOICE, type VoicePrefs } from './voice'
 import { DEFAULT_SKILL_STATE, normSkills, enabledSkills, getSkillInstructions, composeSystemPrompt, SKILL_TOOL_NAME, type SkillState, type ResolvedSkill } from './skills'
-import { AGENT_FOLLOW_UP_READS, AGENT_FOLLOW_UP_SEARCHES, AGENT_FOLLOW_UPS_MAX, PLAN_SCOPE_MAX, PLAN_SCOPE_SYSTEM, RESEARCH_ABSTRACT_ASK, RESEARCH_AGENT_ROUNDS_DEFAULT, RESEARCH_AGENT_ROUNDS_MIN, RESEARCH_AGENT_ROUNDS_MAX, RESEARCH_MIN_SEARCHES, RESEARCH_REASONING_CHARS, RESEARCH_REPORT_ASK, RESEARCH_TIERS, agentAsk, agentEvidenceDigest, agentEvidenceSearches, agentFollowUpNote, agentResultNote, agentRoundsUsed, agentSources, agentSystemNote, citationRepairAsk, citationUncitedAsk, compactResearchRounds, countedSteps, estimateResearchUsage, fallbackPlan, looksLikeReport, normResearchAgentRounds, parseResearchPlan, planPreview, parseResearchRequest, normResearchDepth, planNote, planRepairAsk, planUserAsk, reportSample, researchAbstract, researchDelegationAsk, researchMinAsk, researchSteerNote, researchSystemNote, sanitizeCitations, setStep, tierOf, withStepLead, type ResearchAgent, type ResearchAnswer, type ResearchPlan, type ResearchState, type ResearchTask, type ResearchTierId } from './research'
+import { AGENT_FOLLOW_UP_READS, AGENT_FOLLOW_UP_SEARCHES, AGENT_FOLLOW_UPS_MAX, PLAN_SCOPE_MAX, PLAN_SCOPE_SYSTEM, RESEARCH_ABSTRACT_ASK, RESEARCH_AGENT_ROUNDS_DEFAULT, RESEARCH_AGENT_ROUNDS_MIN, RESEARCH_AGENT_ROUNDS_MAX, RESEARCH_MIN_SEARCHES, RESEARCH_REASONING_CHARS, RESEARCH_REPORT_ASK, RESEARCH_TIERS, agentAsk, agentEvidenceDigest, agentEvidenceSearches, agentFollowUpNote, agentResultNote, agentRoundsUsed, agentSources, agentSystemNote, citationRepairAsk, citationUncitedAsk, compactResearchRounds, countedSteps, estimateResearchUsage, fallbackPlan, planNeedsRepair, looksLikeReport, normResearchAgentRounds, parseResearchPlan, planPreview, parseResearchRequest, normResearchDepth, planNote, planRepairAsk, planUserAsk, reportSample, researchAbstract, researchDelegationAsk, researchMinAsk, researchSteerNote, researchSystemNote, sanitizeCitations, setStep, tierOf, withStepLead, type ResearchAgent, type ResearchAnswer, type ResearchPlan, type ResearchState, type ResearchTask, type ResearchTierId } from './research'
 export { tierOf, RESEARCH_TIERS, RESEARCH_AGENT_ROUNDS_DEFAULT, RESEARCH_AGENT_ROUNDS_MIN, RESEARCH_AGENT_ROUNDS_MAX, normResearchAgentRounds }
 export type { ResearchState, ResearchTierId, ResearchPlan, ResearchPlanStep, ResearchAgent, ResearchQuestion, ResearchAnswer } from './research'
 import { collectMessageSources, citationCoverage, citationRule, createCiteIds, mergeSources } from './citations'
@@ -1394,7 +1394,7 @@ export const useS = create<S>()(
         // before showing the deterministic fallback. This is one extra call,
         // only on failure, and it uses the same endpoint that just answered.
         const repairEp = used
-        if (!parsed && !r.stopped && repairEp) {
+        if ((!parsed || planNeedsRepair(parsed)) && !r.stopped && repairEp) {
           try {
             const repairAsk = planRepairAsk(query, tier, text, new Date(), followUp, researchMsg(chatId, mid)?.research?.answers)
             const repairWire = () => wire(repairEp, [
@@ -1414,9 +1414,13 @@ export const useS = create<S>()(
           }
         }
         if (r.stopped) { endRun(chatId, r); return }
-        const finalPlan = parsed ?? fallbackPlan(query)
-        const planWarn = parsed ? undefined : 'The planning reply could not be read, so this default plan is shown. Edit it or start the research.'
-        const shouldStart = parsed && parsed.startNow === true
+        // Structured JSON that is not a workable plan (two steps, no report)
+        // is treated like an unreadable one: the repair pass above runs on it
+        // too, and only a plan with a search and a report step is accepted.
+        const usablePlan = parsed && !planNeedsRepair(parsed) ? parsed : null
+        const finalPlan = usablePlan ?? fallbackPlan(query)
+        const planWarn = usablePlan ? undefined : 'The planning reply did not produce a workable plan, so this default one is shown. Edit it or start the research.'
+        const shouldStart = usablePlan?.startNow === true
         // Ask the plan's clarifying questions before the plan is confirmed,
         // unless the user already told the model to begin immediately. The
         // questions were drafted after the planning pass's context searches, so
@@ -1574,6 +1578,16 @@ export const useS = create<S>()(
               patchRs(chatId, mid, (rs) => ({ ...rs, agents: f(rs.agents ?? []) }))
             const patchAgent = (id: string, patch: Partial<ResearchAgent>) =>
               setAgents((list) => list.map((a) => (a.id === id ? { ...a, ...patch } : a)))
+            /* Measured spend so far, straight from the provider's usage after
+             * each round. The card shows these tokens as facts and only
+             * projects the rounds that have not run yet. */
+            const addUsage = (input: number, output: number, cost: number) => {
+              if (!input && !output && !cost) return
+              patchRs(chatId, mid, (rs) => {
+                const u = rs.usage ?? { input: 0, output: 0, cost: 0 }
+                return { ...rs, usage: { input: u.input + input, output: u.output + output, cost: u.cost + cost } }
+              })
+            }
             const mergeAgentSources = (id: string, items: { citeId: string; title: string; url: string }[]) =>
               setAgents((list) => list.map((a) => {
                 if (a.id !== id) return a
@@ -1654,6 +1668,7 @@ export const useS = create<S>()(
                   : agentPrice ? (x.tin * agentPrice.input + ((x as any).cacheRead ?? 0) * (agentPrice.cacheRead ?? agentPrice.input) + ((x as any).cacheWrite ?? 0) * (agentPrice.cacheWrite ?? agentPrice.input) + x.tout * agentPrice.output) / 1e6 : 0
                 log.push({ n: `${agent.label} (subagent)`, m: e.model, detail: `Research agent ${agent.id} on “${task.label}”: ${counters.searches} searches, ${counters.reads} reads`, ms: Date.now() - t0a, tin: x.tin, tout: x.tout, cacheRead: (x as any).cacheRead ?? 0, cacheWrite: (x as any).cacheWrite ?? 0, cost: (x as any).cost ?? 0, at: Date.now() })
                 if (!report) throw Error('The subagent returned no report.')
+                addUsage(x.tin, x.tout, agentCost)
                 patchAgent(agent.id, { status: 'done', answer: report.slice(0, 14000), searches: counters.searches, reads: counters.reads, costUsd: agentCost, error: undefined })
               } catch (err) {
                 patchAgent(agent.id, { status: r.stopped ? 'stopped' : 'error', error: String((err as Error)?.message ?? err).slice(0, 300), searches: counters.searches, reads: counters.reads })
@@ -1768,6 +1783,24 @@ export const useS = create<S>()(
                 }))
                 setAgents((all) => [...all, ...agents])
                 await Promise.all(agents.map((agent, i) => runAgent(agent, { ...list[i], label: agent.label })))
+                /* One retry per agent that came back without a report (a
+                 * dropped stream, a 429, an empty reply). A transient failure
+                 * used to leave a delegated angle empty for the whole run even
+                 * though the same call succeeds a moment later. The retry
+                 * reuses the agent's counters, so budget already spent stays
+                 * spent and agents that errored on the first call still get
+                 * their brief covered. */
+                if (!r.stopped) {
+                  const retry = (getResearch()?.agents ?? []).filter((a) => a.round === round && a.status === 'error')
+                  if (retry.length) {
+                    log.push({ n: 'Research team', m: '', detail: `Retrying ${retry.length} subagent${retry.length === 1 ? '' : 's'} that returned no report.`, ms: 0, at: Date.now() })
+                    await Promise.all(retry.map((a) => {
+                      const i = agents.findIndex((x) => x.id === a.id)
+                      patchAgent(a.id, { status: 'running', error: undefined })
+                      return runAgent(a, { ...list[Math.max(0, i)], label: a.label })
+                    }))
+                  }
+                }
                 const done = (getResearch()?.agents ?? []).filter((a) => a.round === round && agents.some((x) => x.id === a.id))
                 const left = tier.agentRounds - round
                 return [
@@ -1821,6 +1854,7 @@ export const useS = create<S>()(
                     : followPrice ? (x.tin * followPrice.input + ((x as any).cacheRead ?? 0) * (followPrice.cacheRead ?? followPrice.input) + ((x as any).cacheWrite ?? 0) * (followPrice.cacheWrite ?? followPrice.input) + x.tout * followPrice.output) / 1e6 : 0
                   // A later successful retry clears the failed-state marker; the
                   // checkmark should reflect the current answer, not old errors.
+                  addUsage(x.tin, x.tout, followCost)
                   patchAgent(found.id, { followUps: [...(found.followUps ?? []), { q, a: text.slice(0, 8000) }], followUpErrors: [], costUsd: (found.costUsd ?? 0) + followCost })
                   log.push({ n: `${found.label} (follow-up)`, m: e.model, detail: `Follow-up answered from the agent's evidence (${counters.searches} new searches, ${counters.reads} reads).`, ms: 0, tin: x.tin, tout: x.tout, cacheRead: (x as any).cacheRead ?? 0, cacheWrite: (x as any).cacheWrite ?? 0, cost: (x as any).cost ?? 0, at: Date.now() })
                   return `[Follow-up with subagent ${found.label} · ${counters.searches} searches, ${counters.reads} reads]\n${text}`
@@ -1898,6 +1932,7 @@ export const useS = create<S>()(
             const closing = researchAbstract(x)
             bump(loopTok.tin, loopTok.tout); addCost(e, e.model, loopTok.tin, loopTok.tout, loopTok.cost, loopTok)
             tin = loopTok.tin; tout = loopTok.tout; cacheRead = loopTok.cacheRead; cacheWrite = loopTok.cacheWrite; usageCost = loopTok.cost
+            addUsage(loopTok.tin, loopTok.tout, loopTok.cost)
             const ready = looksLikeReport(closing)
             patchRs(chatId, mid, (rs) => ({ ...rs, note: '', status: 'writing', summary: ready ? reportSample(closing) : closing }))
             set({ researchPanel: { mid } })

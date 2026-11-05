@@ -18,6 +18,33 @@ import { Btn, cx } from './ui'
 
 const PLAN_ICONS = { search: Globe, analyze: ListFilter, report: FileText, other: Sparkles } as const
 const fmtEstimate = (n: number) => `≈$${n < 0.01 ? n.toFixed(3) : n.toFixed(2)}`
+const fmtTokens = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(n >= 100000 ? 0 : 1)}k` : String(n))
+
+/** A small quiet label for one fact (depth, searches, spend). Keeps rows
+ *  scannable without a run-on sentence of numbers. */
+function Chip({ children, tone }: { children: string | number; tone?: 'ac' | 'er' }) {
+  return <span className={cx('rounded bg-hov px-1.5 py-0.5 text-[10px] tabular-nums text-mu', tone === 'ac' && 'text-ac', tone === 'er' && 'text-er')}>{children}</span>
+}
+
+/** One figure with a bar against its ceiling: what the run used, not a wall of
+ *  figures. The bar is omitted when there is no meaningful ceiling. */
+function Tile({ label, value, of, pct, hint }: { label: string; value: string; of?: string; pct?: number; hint?: string }) {
+  return (
+    <div className="min-w-0 rounded-lg bg-bg/60 px-2.5 py-2">
+      <div className="truncate text-[10px] font-medium uppercase tracking-wide text-mu">{label}</div>
+      <div className="mt-0.5 flex items-baseline gap-1 tabular-nums">
+        <span className="truncate text-sm font-semibold">{value}</span>
+        {of && <span className="truncate text-[11px] text-mu">/ {of}</span>}
+      </div>
+      {pct != null && (
+        <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-hov">
+          <div className="h-full rounded-full bg-ac transition-all" style={{ width: `${Math.max(2, Math.min(100, pct))}%` }} />
+        </div>
+      )}
+      {hint && <div className={cx('truncate text-[10px] text-mu', pct != null && 'mt-1')}>{hint}</div>}
+    </div>
+  )
+}
 
 /** One plan step: its icon, label and the numbered research directions under
  * it. Read-only here; editing happens in `ResearchPlanCard`. */
@@ -37,20 +64,24 @@ function PlanStepRow({ step, last }: { step: ResearchPlanStep; last: boolean }) 
   )
 }
 
-/** The estimate/tier summary shown on the plan card before the run starts. */
+/** The estimate shown on the plan card before the run starts: three quiet
+ *  facts instead of a sentence of figures. The number is a token budget for
+ *  the run — lead plus team — priced only when the model has a price. */
 function PlanEstimate({ msg }: { msg: Msg }) {
   const configuredRounds = useS((s) => s.researchRounds)
   const rs = msg.research
   const est = rs?.estimate
   if (!est) return null
   const tier = tierOf(rs?.tier ?? 'standard', configuredRounds)
-  const team = tier.agentRounds > 0 ? `${tier.agentRounds} rounds × ${tier.agentsPerRound} agents · ` : ''
-  const cost = est.costUsd != null
-    ? fmtEstimate(est.costUsd)
-    : `≈${Math.round(est.inputTokens / 1000)}k in / ${Math.round(est.outputTokens / 1000)}k out tokens`
-  const perAgent = est.agentCostUsd != null ? ` · ${fmtEstimate(est.agentCostUsd)}/agent` : ''
-  const perRound = est.roundCostUsd != null ? ` · ${fmtEstimate(est.roundCostUsd)}/round` : ''
-  return <p className="text-xs text-mu" title="A moderate-use estimate with a small buffer; runs often finish below it. Agent and round figures use the same expected depth.">{team}~{est.searches} searches · ~{est.reads} reads · {cost} estimated{perAgent}{perRound}</p>
+  const agents = Math.max(0, tier.agentRounds) * Math.max(0, tier.agentsPerRound)
+  const tokens = `${fmtTokens(est.inputTokens)} in · ${fmtTokens(est.outputTokens)} out tokens`
+  return (
+    <div className="grid grid-cols-3 gap-2" title={est.costUsd != null ? `Projected from ${tokens}. Measured usage replaces this once the run starts.` : `Projected from ${tokens}. Set a price for this model to see dollars.`}>
+      <Tile label="Searches" value={`~${est.searches}`} hint={agents ? `+${agents} field agents` : `${tier.maxSearches} max`} />
+      <Tile label="Page reads" value={`~${est.reads}`} hint={`${tier.maxReads} max`} />
+      <Tile label={est.costUsd != null ? 'Estimated' : 'Tokens'} value={est.costUsd != null ? fmtEstimate(est.costUsd) : fmtTokens(est.inputTokens + est.outputTokens)} hint={est.costUsd != null ? tokens : 'no price set'} />
+    </div>
+  )
 }
 
 function AgentStatus({ status, failed }: { status: ResearchAgent['status']; failed?: boolean }) {
@@ -65,10 +96,17 @@ function AgentRow({ agent }: { agent: ResearchAgent }) {
   const failedFollowUps = agent.followUpErrors?.length ?? 0
   return (
     <details>
-      <summary className="flex cursor-pointer items-center gap-2 rounded px-1 py-0.5 text-xs hover:bg-hov">
+      <summary className="flex cursor-pointer items-center gap-2 rounded px-1 py-1 text-xs hover:bg-hov">
         <AgentStatus status={agent.status} failed={failedFollowUps > 0} />
         <span className="min-w-0 flex-1 truncate">{agent.label}</span>
-        <span className="shrink-0 text-mu">{agent.depth ?? 'standard'} · {agent.searches} searches · {agent.reads} reads{agent.followUps?.length ? ` · ${agent.followUps.length} follow-ups` : ''}{failedFollowUps ? ` · ${failedFollowUps} failed` : ''}{agent.costUsd ? ` · ${fmtEstimate(agent.costUsd)}` : ''}</span>
+        <span className="flex shrink-0 items-center gap-1">
+          <Chip>{agent.depth ?? 'standard'}</Chip>
+          <Chip>{`${agent.searches} searches`}</Chip>
+          <Chip>{`${agent.reads} reads`}</Chip>
+          {!!agent.followUps?.length && <Chip>{`${agent.followUps.length} follow-ups`}</Chip>}
+          {failedFollowUps > 0 && <Chip tone="er">{`${failedFollowUps} failed`}</Chip>}
+          {agent.costUsd ? <Chip tone="ac">{fmtEstimate(agent.costUsd)}</Chip> : null}
+        </span>
       </summary>
       <div className="space-y-1 px-3 pb-1 pt-1.5">
         <p className="text-xs leading-relaxed text-mu">{agent.brief}</p>
@@ -102,18 +140,22 @@ function ResearchTeam({ agents, rounds }: { agents: ResearchAgent[]; rounds: num
   }, [agents])
   return (
     <div className="space-y-2">
-      {waves.map(([round, list]) => (
-        <div key={round} className="space-y-1">
-          {(rounds > 1 || waves.length > 1) && (
-            <div className="flex items-center gap-2 px-1 text-[11px] font-medium uppercase tracking-wide text-mu">
-              <span>Round {round}</span>
-              <span aria-hidden="true" className="h-px flex-1 bg-hov" />
-              <span>{list.filter((a) => a.status === 'done').length}/{list.length} done{(() => { const n = list.filter((a) => a.followUpErrors?.length).length; return n ? ` · ${n} follow-up failed` : '' })()}</span>
+      {waves.map(([round, list]) => {
+        const finished = list.filter((a) => a.status === 'done').length
+        const failedFollowUps = list.filter((a) => a.followUpErrors?.length).length
+        return (
+          <div key={round} className="rounded-lg border border-bor/60 bg-bg/40 p-2">
+            <div className="flex items-center justify-between gap-2 text-[11px] font-medium uppercase tracking-wide text-mu">
+              <span>Round {round}{rounds > 1 ? ` of ${rounds}` : ''}</span>
+              <span className="normal-case tracking-normal tabular-nums">{finished}/{list.length} done{failedFollowUps ? ` · ${failedFollowUps} follow-up failed` : ''}</span>
             </div>
-          )}
-          {list.map((a) => <AgentRow key={a.id} agent={a} />)}
-        </div>
-      ))}
+            <div role="progressbar" aria-label={`Round ${round} progress`} aria-valuemin={0} aria-valuemax={list.length} aria-valuenow={finished} className="mt-1.5 h-1 overflow-hidden rounded-full bg-hov">
+              <div className="h-full rounded-full bg-ac transition-all" style={{ width: `${(finished / Math.max(1, list.length)) * 100}%` }} />
+            </div>
+            <div className="mt-1.5 space-y-0.5">{list.map((a) => <AgentRow key={a.id} agent={a} />)}</div>
+          </div>
+        )
+      })}
     </div>
   )
 }
@@ -422,35 +464,59 @@ export function ResearchProgressCard({ msg }: { msg: Msg }) {
   const teamCost = agents.reduce((n, a) => n + (a.costUsd ?? 0), 0)
   const activeFocus = (rs.steer ?? '').trim()
   const usedSearches = countedSteps(rs.steps, 'search')
+  const usedReads = countedSteps(rs.steps, 'read')
   const canResume = rs.status === 'stopped' && usedSearches < tier.maxSearches && !!msg.toolRounds?.length
+  const measured = rs.usage
+  const spend = measured?.cost ?? 0
+  const projected = rs.estimate?.costUsd ?? null
+  const tokens = measured ? `${fmtTokens(measured.input)} in · ${fmtTokens(measured.output)} out` : ''
+  const title = rs.status === 'running' ? `Researching · ${tier.label}` : rs.status === 'stopped' ? 'Research stopped' : 'Research needs attention'
+  const subtitle = rs.status !== 'running'
+    ? 'The report panel keeps what was gathered'
+    : tier.agentRounds > 0
+      ? `Round ${Math.min(Math.max(roundsUsed, 1), tier.agentRounds)} of ${tier.agentRounds} · ${rs.steps.length ? `${done} of ${rs.steps.length} steps` : `${agents.length} agent${agents.length === 1 ? '' : 's'} briefed`}`
+      : rs.steps.length ? `${done} of ${rs.steps.length} steps done` : 'Gathering evidence'
+  const runPct = tier.agentRounds > 0
+    ? (roundsUsed / Math.max(1, tier.agentRounds)) * 100
+    : rs.steps.length ? (done / rs.steps.length) * 100 : 6
   return (
-    <section aria-label="Deep research progress" aria-live="polite" className="max-w-xl space-y-2 rounded-xl border border-bor bg-surf p-4">
-      <div className="flex items-center gap-2 text-sm">
-        <ListOrdered size={15} className="shrink-0 text-ac" />
-        <span className="min-w-0 flex-1 truncate font-medium">
-          {rs.status === 'running' ? `Researching · ${tier.label} · ${tier.agentRounds > 0 ? `${roundsUsed}/${tier.agentRounds} rounds · ` : ''}${rs.steps.length ? `${done}/${rs.steps.length} steps` : `${agents.length} agent${agents.length === 1 ? '' : 's'}`}` : rs.status === 'stopped' ? 'Research stopped' : 'Research needs attention'}
-        </span>
+    <section aria-label="Deep research progress" aria-live="polite" className="max-w-xl overflow-hidden rounded-xl border border-bor bg-surf">
+      <div aria-hidden="true" className="h-0.5 bg-hov">
+        <div className="h-full bg-ac transition-all" style={{ width: `${Math.max(2, Math.min(100, runPct))}%` }} />
+      </div>
+      <header className="flex items-start gap-2 border-b border-bor px-3 py-2">
+        <ListOrdered size={15} className="mt-0.5 shrink-0 text-ac" />
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-sm font-medium">{title}</p>
+          <p className="truncate text-[11px] text-mu">{subtitle}</p>
+        </div>
         {rs.status === 'running' && busy && (
-          <button onClick={() => stop(msg.id)} className="inline-flex items-center gap-1.5 rounded-lg bg-hov px-2.5 py-1.5 text-xs font-medium hover:opacity-80">
+          <button onClick={() => stop(msg.id)} className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-hov px-2.5 py-1.5 text-xs font-medium hover:opacity-80">
             <Square size={12} fill="currentColor" />Stop
           </button>
         )}
         {canResume && (
-          <button disabled={busy} onClick={() => resume(msg.id)} title="Continue with the remaining search budget" className="inline-flex items-center gap-1.5 rounded-lg bg-hov px-2.5 py-1.5 text-xs font-medium hover:opacity-80 disabled:opacity-50">
+          <button disabled={busy} onClick={() => resume(msg.id)} title="Continue with the remaining search budget" className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-hov px-2.5 py-1.5 text-xs font-medium hover:opacity-80 disabled:opacity-50">
             <RotateCcw size={12} />Resume
           </button>
         )}
-      </div>
-      {rs.plan && (
-        <details className="rounded-lg bg-bg/60 px-2.5 py-1.5">
-          <summary className="cursor-pointer text-xs font-medium text-mu hover:text-tx">Research plan · {rs.plan.steps.length} steps</summary>
-          <ol className="mt-1.5 space-y-2">
-            {rs.plan.steps.map((s, i) => <PlanStepRow key={s.id} step={s} last={i === rs.plan!.steps.length - 1} />)}
-          </ol>
-        </details>
-      )}
+      </header>
+      <div className="space-y-3 p-3">
+        {/* What the run has used, each against its own ceiling: measured
+            tokens after every round, never a wall of figures. */}
+        <div className="grid grid-cols-3 gap-2">
+          <Tile label="Searches" value={String(usedSearches)} of={String(tier.maxSearches)} pct={(usedSearches / Math.max(1, tier.maxSearches)) * 100} />
+          <Tile label="Page reads" value={String(usedReads)} of={String(tier.maxReads)} pct={(usedReads / Math.max(1, tier.maxReads)) * 100} />
+          <Tile
+            label="Spend"
+            value={spend > 0 ? fmtEstimate(spend) : '—'}
+            of={projected != null && spend > 0 ? fmtEstimate(projected) : undefined}
+            pct={projected != null && spend > 0 ? (spend / projected) * 100 : undefined}
+            hint={tokens || `${projected != null ? `${fmtEstimate(projected)} projected` : 'measured per round'}`}
+          />
+        </div>
       {rs.status === 'running' && (
-        <div className="space-y-1.5 rounded-lg bg-bg/60 p-2.5">
+        <div className="space-y-1.5 rounded-lg border border-bor/60 bg-bg/40 p-2.5">
           {activeFocus && (
             <div className="flex items-start gap-2">
               <span className="shrink-0 text-xs font-medium text-mu">Focus</span>
@@ -472,16 +538,29 @@ export function ResearchProgressCard({ msg }: { msg: Msg }) {
         </div>
       )}
       {agents.length > 0 && (
-        <div className="space-y-2 rounded-lg bg-bg/60 p-2.5">
-          <div className="flex items-center justify-between gap-2">
-            <p className="text-xs font-medium text-mu">Research team · {roundsUsed}/{tier.agentRounds} rounds</p>
-            <p className="shrink-0 text-[11px] text-mu">{teamSearches} searches · {teamReads} reads{teamCost > 0 ? ` · ${fmtEstimate(teamCost)} spent` : ''}{rs.estimate?.costUsd != null ? ` · ${fmtEstimate(rs.estimate.costUsd)} est.` : ''}</p>
-          </div>
-          <div role="progressbar" aria-label="Subagent rounds used" aria-valuemin={0} aria-valuemax={tier.agentRounds} aria-valuenow={roundsUsed} className="h-1 overflow-hidden rounded-full bg-hov">
-            <div className="h-full rounded-full bg-ac transition-all" style={{ width: `${Math.min(100, (roundsUsed / Math.max(1, tier.agentRounds)) * 100)}%` }} />
+        <div className="space-y-2 rounded-lg border border-bor/60 bg-bg/40 p-2.5">
+          <div className="flex flex-wrap items-baseline justify-between gap-x-2 gap-y-1">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-mu">Research team</p>
+            <p className="flex shrink-0 items-center gap-1 text-[11px] tabular-nums text-mu">
+              <Chip>{`${roundsUsed}/${tier.agentRounds} rounds`}</Chip>
+              <Chip>{`${teamSearches} searches`}</Chip>
+              <Chip>{`${teamReads} reads`}</Chip>
+              {teamCost > 0 && <Chip tone="ac">{fmtEstimate(teamCost)}</Chip>}
+            </p>
           </div>
           <ResearchTeam agents={agents} rounds={tier.agentRounds} />
         </div>
+      )}
+      {rs.plan && (
+        <details className="rounded-lg border border-bor/60 bg-bg/40 px-2.5 py-1.5">
+          <summary className="cursor-pointer text-[11px] font-semibold uppercase tracking-wide text-mu hover:text-tx">Plan · {rs.plan.steps.length} steps</summary>
+          <ol className="mt-1.5 space-y-2">
+            {rs.plan.steps.map((s, i) => <PlanStepRow key={s.id} step={s} last={i === rs.plan!.steps.length - 1} />)}
+          </ol>
+        </details>
+      )}
+      {(rs.steps.length > 0 || note) && (
+        <p className="px-0.5 text-[11px] font-semibold uppercase tracking-wide text-mu">Activity</p>
       )}
       <ol className="space-y-2">
         {rs.steps.map((s) => (
@@ -491,7 +570,7 @@ export function ResearchProgressCard({ msg }: { msg: Msg }) {
             <div className="flex items-center gap-2 text-sm">
               {s.state === 'done' ? <Check size={14} className="shrink-0 text-ac" /> : s.state === 'running' ? <span className="size-2 shrink-0 animate-pulse rounded-full bg-ac" /> : s.state === 'error' ? <X size={14} className="shrink-0 text-er" /> : <span className="size-2 shrink-0 rounded-full bg-hov" />}
               <span className="min-w-0 flex-1 truncate">{s.label}{s.query ? <span className="text-mu"> · {s.query.slice(0, 70)}</span> : ''}</span>
-              {s.sources != null && <span className="shrink-0 text-xs text-mu">{s.sources} sources</span>}
+              {s.sources != null && <Chip>{`${s.sources} sources`}</Chip>}
             </div>
           </li>
         ))}
@@ -508,8 +587,8 @@ export function ResearchProgressCard({ msg }: { msg: Msg }) {
         </p>
       )}
       {(trace.length > 0 || reasoning) && (
-        <details className="rounded-lg bg-bg/60 px-2.5 py-1.5">
-          <summary className="cursor-pointer text-xs font-medium text-mu hover:text-tx">Model reasoning · {trace.length + (reasoning ? 1 : 0)}</summary>
+        <details className="rounded-lg border border-bor/60 bg-bg/40 px-2.5 py-1.5">
+          <summary className="cursor-pointer text-[11px] font-semibold uppercase tracking-wide text-mu hover:text-tx">Model reasoning · {trace.length + (reasoning ? 1 : 0)}</summary>
           <div className="mt-1.5 space-y-1.5">
             {trace.map((t, i) => (
               <p key={i} className="whitespace-pre-wrap border-l-2 border-ac/40 pl-2.5 text-xs leading-relaxed text-mu">{t.slice(0, 1200)}</p>
@@ -519,6 +598,7 @@ export function ResearchProgressCard({ msg }: { msg: Msg }) {
         </details>
       )}
       {rs.status === 'error' && rs.error && <p className="text-xs text-er">{rs.error}</p>}
+      </div>
     </section>
   )
 }
