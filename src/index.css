@@ -439,18 +439,21 @@ html[data-codewrap] .code-lines .code-line > code { flex: 1 1 auto; min-width: 0
    The circle sits a notch larger than a dot and stays centered on the rail.
    The cross is two clipped diagonals rather than rotated bars: each arm runs
    the full inner diameter, so the glyph fills the circle and meets the ring
-   on all four sides instead of floating short of it. */
-.process-x { width:11px; height:11px; left:-1px; top:calc(.68rem - 1px); background:var(--surf); }
+   on all four sides instead of floating short of it. Arms and ring share one
+   colour and one 1.5px weight, so the mark reads as a single glyph rather
+   than a cross sitting inside a differently drawn circle. */
+.process-x { width:11px; height:11px; left:-1px; top:calc(.68rem - 1px); background:var(--surf); --cross:color-mix(in srgb, var(--er) 85%, transparent); }
 /* Arms run the full diameter and the ring is painted last, on top, so the
    cross bleeds under the stroke instead of stopping at its inner edge: the
-   four tips meet the ring with no gap at any zoom or pixel ratio. */
+   four tips meet the ring with no gap at any zoom or pixel ratio. Each arm is
+   1.5px wide — the same weight as the ring it meets. */
 .process-x::before {
   content:''; position:absolute; inset:0; border-radius:50%;
   background:
-    linear-gradient(45deg, transparent calc(50% - .95px), var(--er) calc(50% - .95px), var(--er) calc(50% + .95px), transparent calc(50% + .95px)),
-    linear-gradient(-45deg, transparent calc(50% - .95px), var(--er) calc(50% - .95px), var(--er) calc(50% + .95px), transparent calc(50% + .95px));
+    linear-gradient(45deg, transparent calc(50% - .75px), var(--cross) calc(50% - .75px), var(--cross) calc(50% + .75px), transparent calc(50% + .75px)),
+    linear-gradient(-45deg, transparent calc(50% - .75px), var(--cross) calc(50% - .75px), var(--cross) calc(50% + .75px), transparent calc(50% + .75px));
 }
-.process-x::after { content:''; position:absolute; inset:0; box-sizing:border-box; border-radius:50%; border:1.5px solid color-mix(in srgb, var(--er) 85%, transparent); }
+.process-x::after { content:''; position:absolute; inset:0; box-sizing:border-box; border-radius:50%; border:1.5px solid var(--cross); }
 /* Only a call that is still running stays open, and it wears a shine that
    travels around its rim — busy, without a spinner. */
 .process-ring[data-live] { border-color:color-mix(in srgb, var(--ac) 70%, transparent); box-shadow:0 0 0 2.5px color-mix(in srgb, var(--ac) 12%, transparent); }
