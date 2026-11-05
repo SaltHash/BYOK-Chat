@@ -260,7 +260,7 @@ const makeC = (bare: boolean, cites?: CiteMap): any => ({
   mark: E('mark', 'rounded bg-ac/25 px-1 text-tx'),
   kbd: E('kbd', 'rounded-md bg-hov px-1.5 py-0.5 text-xs font-medium'),
   hr: E('hr', 'my-6 h-px border-0 bg-hov'),
-  blockquote: E('blockquote', 'relative my-4 rounded-xl bg-surf py-1 pl-5 pr-4 text-mu before:absolute before:inset-y-2 before:left-2 before:w-1 before:rounded-full before:bg-ac/60 [&>p]:my-2'),
+  blockquote: E('blockquote', 'my-4 border-l-2 border-ac/60 py-1 pl-4 pr-1 text-mu [&>p]:my-2'),
   ol: E('ol', 'my-3 list-decimal space-y-1 pl-6 marker:text-mu'),
   ul: ({ node, className, ...p }: any) => createElement('ul', { ...p, className: cx('my-3 space-y-1', /contains-task-list/.test(className ?? '') ? 'list-none pl-1' : 'list-disc pl-6 marker:text-mu') }),
   li: E('li', 'pl-1 [&>ol]:my-1 [&>p]:my-1 [&>ul]:my-1'),
