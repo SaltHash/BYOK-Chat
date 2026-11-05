@@ -276,7 +276,6 @@ export function ResearchPlanCard({ msg }: { msg: Msg }) {
               <span className="reply-dots" aria-hidden="true"><i /><i /><i /></span>
               <span className="ml-2">{liveDraft?.title ? 'Drafting the research plan…' : rs.scope ? `Getting context · ${rs.scope} ${rs.scope === 1 ? 'search' : 'searches'}…` : 'Generating research plan…'}</span>
             </p>
-            {liveDraft?.title && <p className="text-sm font-medium">{liveDraft.title}</p>}
             {!!liveDraft?.steps.length && (
               <ol className="space-y-1">
                 {liveDraft.steps.map((label, i) => <li key={`${label}-${i}`} className="text-xs leading-relaxed text-mu">{i + 1}. {label}</li>)}
