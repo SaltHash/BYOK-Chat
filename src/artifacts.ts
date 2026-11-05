@@ -29,7 +29,7 @@ export const ARTIFACT_CLASS_GUIDE = ARTIFACT_CLASSES.map((c) => `  .${c}`).join(
 /** How a chart is written without any styling of its own: one inline SVG with a
  *  viewBox, series grouped by `data-series`, and axes in a muted group. */
 export const ARTIFACT_CHART_GUIDE = [
-  'Charts: <figure class="artifact-chart"><svg viewBox="0 0 W H">…</svg><figcaption>…</figcaption></figure>. Give the SVG a viewBox and no width/height: the app sizes it to the card.',
+  'Charts: <figure class="artifact-chart"><svg viewBox="0 0 W H">…</svg><figcaption>…</figcaption></figure>. Give the SVG a viewBox and no width/height: the app sizes it to the full width of the reply.',
   'Inside the SVG, group each series in <g data-series="1"> … <g data-series="5">; the app colors each group from the theme, so draw its shapes with fill="currentColor" or stroke="currentColor".',
   'Put axes, gridlines, and tick labels in <g class="artifact-muted">. Axis text inherits its color, so leave fill off <text>.',
   'Name the series in <div class="artifact-legend"><span><i class="artifact-swatch" data-series="1"></i>Exa</span>…</div>, matching each swatch data-series to its group.',
@@ -116,10 +116,10 @@ export function sanitizeArtifactBody(html: string): string {
  *  and data images only; there is no connect-src, so fetch/XHR/WebSocket all
  *  fail even before the sandbox denies same-origin access.
  *
- *  The body is transparent so the artifact sits on the card's own surface
- *  rather than tinting its own rectangle. A tiny local script fills `data-value`
- *  meters and reports the content height, which the card uses to size the
- *  frame exactly (no clipped charts, no dead space). */
+ *  The body is transparent and flush with the reply, so the artifact reads as
+ *  part of the message instead of a tinted panel. A tiny local script fills
+ *  `data-value` meters and reports the content height, which the frame uses to
+ *  size itself exactly (no clipped charts, no scrollbars, no dead space). */
 export function artifactDocument(spec: ArtifactSpec, theme: ArtifactTheme = FALLBACK_THEME): string {
   const t = theme
   const c2 = t.c2 ?? t.ac
@@ -129,8 +129,8 @@ export function artifactDocument(spec: ArtifactSpec, theme: ArtifactTheme = FALL
   return `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data: blob:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'none'; form-action 'none'; base-uri 'none'"><meta name="referrer" content="no-referrer"><style>
 :root{color-scheme:light dark}
 *{box-sizing:border-box}
-html,body{margin:0;background:transparent}
-body{color:${t.tx};font:13.5px/1.55 ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;padding:14px 16px 16px;overflow-wrap:break-word}
+html,body{margin:0;background:transparent;overflow:hidden}
+body{color:${t.tx};font:13.5px/1.55 ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;padding:1px 0;overflow-wrap:break-word}
 h1,h2,h3,h4{margin:0 0 .4em;line-height:1.3;font-weight:650}
 h1{font-size:1.08rem}h2{font-size:.98rem}h3{font-size:.9rem}
 h4{font-size:.8rem;text-transform:uppercase;letter-spacing:.05em;color:${t.mu}}
@@ -172,7 +172,7 @@ figcaption{font-size:.76rem;color:${t.mu};margin-top:.45em}
  * SVG with a viewBox; every fill and stroke is currentColor, so data-series is
  * all it takes to color a series. */
 .artifact-chart{min-width:0}
-.artifact-chart svg{display:block;width:100%;height:auto;overflow:visible;fill:currentColor}
+.artifact-chart svg{display:block;width:100%;height:auto;margin-inline:auto;overflow:visible;fill:currentColor}
 .artifact-chart svg text{font-size:11px;font-variant-numeric:tabular-nums}
 .artifact-legend{display:flex;flex-wrap:wrap;gap:.3em .9em;margin-top:.5em;font-size:.76rem;color:${t.mu}}
 .artifact-legend>span{display:inline-flex;align-items:center;gap:.42em}
@@ -187,7 +187,10 @@ figcaption{font-size:.76rem;color:${t.mu};margin-top:.45em}
 var bars=document.querySelectorAll('.artifact-bar[data-value]');
 for(var i=0;i<bars.length;i++){var b=bars[i];var v=Number(b.getAttribute('data-value'));v=isFinite(v)?Math.max(0,Math.min(100,v)):0;var s=b.firstElementChild;if(!s||s.tagName!=='SPAN'){s=document.createElement('span');b.appendChild(s)}s.style.width=v+'%'}
 var last=-1;
-function post(){var h=Math.ceil(document.body.getBoundingClientRect().height);if(h!==last){last=h;try{parent.postMessage({source:'byok-artifact',height:h},'*')}catch(e){}}}
+/* An SVG scales its text with its viewBox, so a small chart stretched across a
+ * wide reply would read like a poster. Cap the upscale instead. */
+function fit(){var ss=document.querySelectorAll('svg');for(var i=0;i<ss.length;i++){var s=ss[i];var vb=s.viewBox&&s.viewBox.baseVal;if(!vb||!vb.width)continue;s.style.maxWidth=Math.max(220,Math.min(760,Math.round(vb.width*1.35)))+'px'}}
+function post(){fit();var h=Math.ceil(document.body.getBoundingClientRect().height);if(h!==last){last=h;try{parent.postMessage({source:'byok-artifact',height:h},'*')}catch(e){}}}
 post();addEventListener('load',post);setTimeout(post,60);setTimeout(post,400);
 if(window.ResizeObserver)new ResizeObserver(post).observe(document.body);
 })()</script></body></html>`
