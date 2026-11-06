@@ -163,7 +163,7 @@ type PersistMsg = {
   t?: string
   err?: boolean
   research?: unknown
-  att?: { name: string; kind: string; size: string; mime?: string; source?: string; pages?: number }[]
+  att?: { name: string; kind: string; size: string; mime?: string; source?: string; pages?: number; chars?: number; truncated?: boolean; modelName?: string }[]
 }
 type PersistChat = { msgs: PersistMsg[] }
 
@@ -172,7 +172,7 @@ export const pruneChatForPersist = <C extends PersistChat>(chat: C): C => ({
   msgs: chat.msgs
     .filter((m) => !(m.r === 'assistant' && !m.t && !m.err && !m.research))
     .map((m) => (m.att?.length
-      ? { ...m, att: m.att.map(({ name, kind, size, mime, source, pages }) => ({ name, kind, size, ...(mime ? { mime } : {}), ...(source ? { source } : {}), ...(pages ? { pages } : {}) })) }
+      ? { ...m, att: m.att.map(({ name, kind, size, mime, source, pages, chars, truncated, modelName }) => ({ name, kind, size, ...(mime ? { mime } : {}), ...(source ? { source } : {}), ...(pages ? { pages } : {}), ...(chars ? { chars } : {}), ...(truncated ? { truncated: true } : {}), ...(modelName ? { modelName } : {}) })) }
       : m)),
 }) as C
 
@@ -311,7 +311,12 @@ export function compactChatForQuota(chat: unknown, keep = 80): unknown {
       if (!m || typeof m !== 'object') return m
       const x = m as Record<string, unknown>
       const { toolRounds, reasoning, log, full, sys, ...keepMsg } = x
-      return keepMsg
+      // `att.text` is already stripped from this copy, so `full` is the only
+      // remaining place the file contents live. Dropping it for an attachment
+      // message silently disabled the model's access to those files after a
+      // quota prune; keep the body when any attachment metadata is present.
+      const hasAttachments = Array.isArray(x.att) && x.att.length > 0
+      return hasAttachments ? { ...keepMsg, full } : keepMsg
     }),
   }
 }

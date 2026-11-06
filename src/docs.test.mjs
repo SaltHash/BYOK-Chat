@@ -54,10 +54,12 @@ test('extractOdt, extractRtf, extractXlsx and extractPptx read text', () => {
   const xlsx = zipSync({
     'xl/sharedStrings.xml': strToU8('<sst><si><t>Name</t></si><si><t>Ann</t></si></sst>'),
     'xl/worksheets/sheet1.xml': strToU8('<worksheet><sheetData><row><c t="s"><v>0</v></c><c t="s"><v>1</v></c></row><row><c><v>42</v></c></row></sheetData></worksheet>'),
+    'xl/worksheets/sheet2.xml': strToU8('<worksheet><sheetData><row><c t="s"><v>0</v></c><c><v>99</v></c></row></sheetData></worksheet>'),
   })
   const sheet = d.extractXlsx(xlsx)
-  assert.equal(sheet.sheets, 1)
-  assert.match(sheet.text, /Name, Ann/)
+  assert.equal(sheet.sheets, 2)
+  assert.match(sheet.text, /\[sheet 1\]\nName, Ann/)
+  assert.match(sheet.text, /\[sheet 2\]\nName, 99/)
   assert.match(sheet.text, /42/)
   const pptx = zipSync({ 'ppt/slides/slide1.xml': strToU8('<p:sld><p:cSld><p:spTree><a:t>Slide one</a:t></p:spTree></p:cSld></p:sld>') })
   const deck = d.extractPptx(pptx)
@@ -84,14 +86,17 @@ test('expandArchives turns zips into files with notices', async () => {
   assert.deepEqual((await d.expandArchives([plain], { archives: false })).files, [plain])
 })
 
-test('fitDoc prefers line boundaries and always marks truncation', () => {
-  assert.deepEqual(d.fitDoc('short', 100), { text: 'short', truncated: false })
+test('fitDoc keeps the opening and conclusion and always marks truncation', () => {
+  assert.deepEqual(d.fitDoc('short', 100), { text: 'short', truncated: false, kept: 5, total: 5 })
   const md = `# Title\n${'x'.repeat(90)}\n## Next\n${'y'.repeat(90)}`
   const fit = d.fitDoc(md, 100)
   assert.equal(fit.truncated, true)
   assert.match(fit.text, /^# Title/)
-  assert.doesNotMatch(fit.text, /## Next/)
+  // A long report's conclusion lives at the end, so the tail is kept too.
+  assert.match(fit.text, /y+$/)
   assert.match(fit.text, /truncated: kept/)
+  assert.match(fit.text, /middle was omitted/)
+  assert.ok(fit.kept < fit.total)
 })
 
 test('pairTranscripts merges matching transcripts into media', () => {
@@ -140,4 +145,15 @@ test('extractOffThread falls back to in-process extraction without workers', asy
   assert.match(sheet.text, /Name/)
   const bad = await d.extractOffThread('docx', zipSync({ 'other.txt': strToU8('x') })).then(() => null, (e) => e)
   assert.match(bad.message, /Word document/)
+})
+
+test('the message-wide document budget is configurable and clamped', () => {
+  assert.equal(d.normDocs({ totalChars: 9999999 }).totalChars, 1000000)
+  assert.equal(d.normDocs({ totalChars: 1 }).totalChars, 50000)
+  assert.equal(d.normDocs({}).totalChars, 500000)
+})
+
+test('private file names default on and can be turned off', () => {
+  assert.equal(d.normDocs({}).privateNames, true)
+  assert.equal(d.normDocs({ privateNames: false }).privateNames, false)
 })

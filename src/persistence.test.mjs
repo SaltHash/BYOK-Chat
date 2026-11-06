@@ -114,3 +114,12 @@ test('persist mapper output is stable state, not mutated by later writes', () =>
   map([a2])
   assert.equal(out[0].msgs.length, 1)
 })
+
+test('attachment prompt names and truncation state survive persistence', () => {
+  const chats = [{ id: 'c', msgs: [{ id: 'm', r: 'user', t: 'read', att: [{ name: 'Payroll.pdf', modelName: 'file-3.pdf', kind: 'pdf', size: '2 KB', truncated: true, chars: 48000 }] }] }]
+  const out = createPersistMapper()(chats)
+  assert.equal(out[0].msgs[0].att[0].modelName, 'file-3.pdf')
+  assert.equal(out[0].msgs[0].att[0].truncated, true)
+  assert.equal(out[0].msgs[0].att[0].chars, 48000)
+  assert.equal('text' in out[0].msgs[0].att[0], false)
+})

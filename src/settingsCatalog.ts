@@ -141,6 +141,8 @@ export const SETTING_LINKS: SettingLink[] = [
   { tab: 'chats', anchor: 'documents', title: 'Document extraction (PDF / Office / archives)', keywords: 'pdf text office docx unpack zip transcripts attachments' },
   { tab: 'chats', anchor: 'ocr', title: 'Image text extraction (OCR)', keywords: 'ocr vision endpoint auto always image transcription attachments' },
   { tab: 'chats', anchor: 'per-file-chars', title: 'Text per document', keywords: 'per file characters budget document attachments' },
+  { tab: 'chats', anchor: 'total-file-chars', title: 'Text across all files', keywords: 'total characters budget message attachments context window' },
+  { tab: 'chats', anchor: 'private-file-names', title: 'Private file names', keywords: 'file name anonymize neutral private attachments model prompt' },
   { tab: 'tools', anchor: 'deep-research', title: 'Deep research default depth', keywords: 'research quick standard thorough tier' },
   { tab: 'tools', anchor: 'search-provider', title: 'Search API provider', keywords: 'tinyfish you exa firecrawl brightdata jina provider grounding' },
   { tab: 'tools', anchor: 'search-key', title: 'Search API key', keywords: 'search key bring your own stored browser' },

@@ -415,8 +415,9 @@ export function Composer({ cfg, quote, onClearQuote }: { cfg: (t: string) => voi
     try {
       const page = await fetchPage(u, fetchOptsOf(normSearch(s.search)))
       const txtChars = att.reduce((a, x) => a + (x.text?.length ?? 0), 0)
-      const { text } = fitDoc(page.text, Math.min(normDocs(s.docPrefs).perFileChars, 200000))
-      if (txtChars + text.length > 500000) { s.patch({ notice: { t: 'That page did not fit, because this message is already at its text limit. Shorten the message or remove an attachment, then try again.' } }); return }
+      const dp = normDocs(s.docPrefs)
+      const { text } = fitDoc(page.text, Math.min(dp.perFileChars, 200000))
+      if (txtChars + text.length > dp.totalChars) { s.patch({ notice: { t: 'That page did not fit, because this message is already at its text limit. Shorten the message or remove an attachment, then try again.' } }); return }
       setAtt((a) => [...a, { name: (page.title || u).slice(0, 80), kind: 'txt', size: `${Math.round(text.length / 1024)} KB`, source: 'url', text: `[from URL: ${page.url}]\n${text}` }])
       setUrlVal(''); setUrlOpen(false)
     } catch (x: any) { s.patch({ notice: { t: `That page could not be attached (${String(x?.message ?? x)}). Check the link is reachable, or paste the text instead.` } }) }

@@ -1,7 +1,7 @@
 import type { Ep, Att, Msg } from './store'
 import { TOOLS } from './meta'
 import { BLANK_DOCS, expandArchives, extractOffThread, fitDoc, pairTranscripts } from './docs'
-import { attachmentManifest, promptNameOf } from './attachments'
+import { attachmentAppendix, attachmentManifest, promptNameOf } from './attachments'
 import { WORKSPACE_ACTIONS, compactWorkspaceHistory, isWorkspaceReadAction, sanitizePath, withWorkspaceTags } from './workspace'
 import { withCode, type ErrorCode } from './errors'
 import { buildStreamRequest, splitSseBuffer } from './streamRequest'
@@ -52,8 +52,24 @@ export const DEFAULT_CONTEXT_LIMIT = 128000
 export const DEFAULT_CONTEXT_RESERVE = 8000
 export const estimateTokens = (text: string, charsPerToken = 4) =>
   Math.ceil(String(text ?? '').length / Math.max(1, charsPerToken))
-const msgSize = (m: Msg, charsPerToken: number, liveRounds = false) =>
-  estimateTokens(JSON.stringify({ t: m.t, full: (m as any).full, fx: (m as any).fx, ctx: (m as any).ctx, att: (m.att ?? []).map((a) => ({ name: promptNameOf(a), text: (a as any).text ?? '' })), toolRounds: liveRounds ? (m.toolRounds ?? []) : [] }), charsPerToken)
+/* `full` already contains the extracted attachment text (it is built as
+ * body + tool results + fx), so counting `fx` and `att.text` again made a
+ * 60k-character document look like 180k characters. That inflated the context
+ * meter, compacted early, and could trim away the very message holding the
+ * file. Count the actual text once, then add a flat allowance for native media
+ * that never appears as text in the payload. */
+const NATIVE_MEDIA_TOKENS = 1400
+const msgSize = (m: Msg, charsPerToken: number, liveRounds = false) => {
+  // `full` already contains the visible prompt, tool results (`ctx`) and the
+  // attachment section. Counting `t`, `ctx`, `fx` or `att.text` alongside it
+  // multiplied the same characters, inflated the meter, and trimmed history
+  // early. When `full` is absent (an imported/assistant message), reconstruct
+  // the text from its parts once.
+  const full = (m as any).full
+  const text = full || `${m.t ?? ''}${(m as any).fx ?? (m.att ?? []).map((a) => a.text ?? '').join('')}${(m as any).ctx?.length ? `\n\n${(m as any).ctx.join('\n')}` : ''}`
+  const mediaTokens = (m.att ?? []).reduce((n, a) => n + (!a.text && a.data && (a.kind === 'img' || a.kind === 'pdf') ? NATIVE_MEDIA_TOKENS : 0), 0)
+  return mediaTokens + estimateTokens(JSON.stringify({ full: text, toolRounds: liveRounds ? (m.toolRounds ?? []) : [] }), charsPerToken)
+}
 /** Index of the assistant message whose tool rounds wire() will resend. Older
  *  rounds are dropped from the request, so counting them here made history
  *  trimming discard messages that did not actually consume context. */
@@ -713,11 +729,24 @@ export const ATT_TOTAL_TXT_BUDGET = 500000
 export const ATT_MEDIA_MAX_BYTES = 200_000_000
 export type AttachmentRejection = 'office' | 'media' | 'archive' | 'unsupported' | 'too_large' | 'budget' | 'unreadable'
 export type ReadAttResult = { ok: true; att: Att } | { ok: false; file: string; reason: AttachmentRejection; message: string }
-const TXT_EXT = /\.(txt|md|markdown|csv|tsv|json|jsonl|jsx?|tsx?|py|html?|css|scss|xml|ya?ml|toml|ini|env|log|sql|sh|rs|go|java|cpp?|h|hpp|rb|php|swift|kt|scala|r|pl|vue|svelte|astro|srt|vtt|lrc)$/i
+const TXT_EXT = /\.(txt|md|markdown|csv|tsv|json|jsonl|ipynb|jsx?|tsx?|py|html?|css|scss|xml|ya?ml|toml|ini|env|conf|cfg|log|sql|sh|bat|ps1|rs|go|java|cpp?|h|hpp|cs|fs|rb|php|swift|kt|scala|r|pl|lua|dart|ex|exs|hs|clj|jl|vue|svelte|astro|tex|rst|diff|patch|proto|graphql|gql|tf|sol|srt|vtt|lrc)$/i
 const OFFICE_RX = /officedocument|msword|ms-excel|ms-powerpoint|opendocument|\.(docx?|xlsx?|pptx?|odt|ods|odp|rtf)$/i
 const ARCHIVE_RX = /\.zip$|\.tar|\.gz$|\.7z$|\.rar$|^(application\/(zip|x-tar|gzip|x-7z-compressed|x-rar))/
 const isTxtFile = (f: File) =>
   /^text\//.test(f.type) || /json|xml|javascript|yaml|toml|csv/.test(f.type) || TXT_EXT.test(f.name)
+/* Decode a text attachment faithfully. `File.text()` always assumes UTF-8, so
+ * a CSV exported by Excel as Windows-1252 (or a UTF-16 file from a Windows
+ * editor) turned into replacement characters and the model confidently read
+ * the wrong values. Honour BOMs, then try strict UTF-8, then Windows-1252. */
+const decodeTextBytes = (bytes: Uint8Array): string => {
+  if (bytes[0] === 0xff && bytes[1] === 0xfe) return new TextDecoder('utf-16le').decode(bytes.subarray(2)).replace(/^\uFEFF/, '')
+  if (bytes[0] === 0xfe && bytes[1] === 0xff) return new TextDecoder('utf-16be').decode(bytes.subarray(2)).replace(/^\uFEFF/, '')
+  try { return new TextDecoder('utf-8', { fatal: true }).decode(bytes).replace(/^\uFEFF/, '') }
+  catch {
+    try { return new TextDecoder('windows-1252').decode(bytes) }
+    catch { return new TextDecoder().decode(bytes) }
+  }
+}
 /* Structured attachment loader: success carries the Att, failures carry a
  * machine-readable reason + user-facing message. Never returns a bare string.
  * Documents (PDF text layer, Office, RTF, sheets, slides) are extracted to
@@ -753,32 +782,32 @@ export async function readAtt(f: File, existingTxtChars = 0, docs = BLANK_DOCS):
         // workers are unavailable), so large files never block the UI.
         const { text, paragraphs } = await extractOffThread('docx', bytes)
         if (!text.trim()) return fail('unreadable', `${f.name}: no readable text found. It may be image-only; export it as PDF or attach the text instead.`)
-        const { text: fit } = fitDoc(text, perFile)
-        return { ok: true, att: { name: f.name, kind: 'txt', size: sz(f.size), source: 'docx', text: `[extracted from Word document, ${paragraphs} paragraphs]\n${fit}` } }
+        const { text: fit, truncated } = fitDoc(text, perFile)
+        return { ok: true, att: { name: f.name, kind: 'txt', size: sz(f.size), source: 'docx', chars: text.length, ...(truncated ? { truncated: true } : {}), text: `[extracted from Word document, ${paragraphs} paragraphs]\n${fit}` } }
       }
       if (/\.odt$/i.test(lower)) {
         const { text, paragraphs } = await extractOffThread('odt', bytes)
         if (!text.trim()) return fail('unreadable', `${f.name}: no readable text found.`)
-        const { text: fit } = fitDoc(text, perFile)
-        return { ok: true, att: { name: f.name, kind: 'txt', size: sz(f.size), source: 'odt', text: `[extracted from OpenDocument, ${paragraphs} paragraphs]\n${fit}` } }
+        const { text: fit, truncated } = fitDoc(text, perFile)
+        return { ok: true, att: { name: f.name, kind: 'txt', size: sz(f.size), source: 'odt', chars: text.length, ...(truncated ? { truncated: true } : {}), text: `[extracted from OpenDocument, ${paragraphs} paragraphs]\n${fit}` } }
       }
       if (/\.rtf$/i.test(lower)) {
         const { text } = await extractOffThread('rtf', bytes)
         if (!text.trim()) return fail('unreadable', `${f.name}: no readable text found.`)
-        const { text: fit } = fitDoc(text, perFile)
-        return { ok: true, att: { name: f.name, kind: 'txt', size: sz(f.size), source: 'rtf', text: `[extracted from RTF]\n${fit}` } }
+        const { text: fit, truncated } = fitDoc(text, perFile)
+        return { ok: true, att: { name: f.name, kind: 'txt', size: sz(f.size), source: 'rtf', chars: text.length, ...(truncated ? { truncated: true } : {}), text: `[extracted from RTF]\n${fit}` } }
       }
       if (/\.pptx$/i.test(lower)) {
         const { text, slides } = await extractOffThread('pptx', bytes)
         if (!text.trim()) return fail('unreadable', `${f.name}: no readable text found on the slides.`)
-        const { text: fit } = fitDoc(text, perFile)
-        return { ok: true, att: { name: f.name, kind: 'txt', size: sz(f.size), source: 'pptx', pages: slides, text: `[extracted from presentation, ${slides} slides]\n${fit}` } }
+        const { text: fit, truncated } = fitDoc(text, perFile)
+        return { ok: true, att: { name: f.name, kind: 'txt', size: sz(f.size), source: 'pptx', pages: slides, chars: text.length, ...(truncated ? { truncated: true } : {}), text: `[extracted from presentation, ${slides} slides]\n${fit}` } }
       }
       if (/\.xlsx$/i.test(lower)) {
         const { text, sheets, rows } = await extractOffThread('xlsx', bytes)
         if (!text.trim()) return fail('unreadable', `${f.name}: no readable cells found.`)
-        const { text: fit } = fitDoc(text, perFile)
-        return { ok: true, att: { name: f.name, kind: 'txt', size: sz(f.size), source: 'xlsx', pages: sheets, text: `[extracted from spreadsheet, first of ${sheets} sheet(s), ${rows} rows]\n${fit}` } }
+        const { text: fit, truncated } = fitDoc(text, perFile)
+        return { ok: true, att: { name: f.name, kind: 'txt', size: sz(f.size), source: 'xlsx', pages: sheets, chars: text.length, ...(truncated ? { truncated: true } : {}), text: `[extracted from spreadsheet, ${sheets} sheet(s), ${rows} rows]\n${fit}` } }
       }
       return fail('office', `${f.name}: legacy Office binaries (.doc/.xls/.ppt) cannot be read here. Save it as .docx/.xlsx/.pptx, export as PDF, or paste the text instead.`)
     } catch (x: any) {
@@ -790,10 +819,14 @@ export async function readAtt(f: File, existingTxtChars = 0, docs = BLANK_DOCS):
   }
   if (f.size > 2e7) return fail('too_large', `${f.name} is over 20 MB and was not attached.`)
   if (!img && !pdf) {
-    if (existingTxtChars >= ATT_TOTAL_TXT_BUDGET) return fail('budget', `${f.name} was not attached: the message already carries ~${Math.round(existingTxtChars / 1000)}k characters of text files (budget ${ATT_TOTAL_TXT_BUDGET / 1000}k).`)
-    let t = await f.text()
-    if (t.length > ATT_TXT_LIMIT) t = t.slice(0, ATT_TXT_LIMIT) + `\n[truncated at ${ATT_TXT_LIMIT.toLocaleString()} characters]`
-    return { ok: true, att: { name: f.name, kind: 'txt', size: sz(f.size), text: t } }
+    const totalBudget = Math.max(50000, Math.floor(Number(docs.totalChars) || ATT_TOTAL_TXT_BUDGET))
+    if (existingTxtChars >= totalBudget) return fail('budget', `${f.name} was not attached: the message already carries ~${Math.round(existingTxtChars / 1000)}k characters of text files (budget ${Math.round(totalBudget / 1000)}k). Raise the limit in Settings → Chats → Documents if the model has a larger context window.`)
+    const decoded = decodeTextBytes(new Uint8Array(await f.arrayBuffer()))
+    const total = decoded.length
+    // Use the same head/tail excerpt as extracted documents, so a long log or
+    // source file keeps its conclusion and carries one consistent marker.
+    const fitted = total > ATT_TXT_LIMIT ? fitDoc(decoded, ATT_TXT_LIMIT).text : decoded
+    return { ok: true, att: { name: f.name, kind: 'txt', size: sz(f.size), chars: total, ...(total > ATT_TXT_LIMIT ? { truncated: true } : {}), text: fitted } }
   }
   if (pdf && docs.pdfText) {
     try {
@@ -804,8 +837,8 @@ export async function readAtt(f: File, existingTxtChars = 0, docs = BLANK_DOCS):
       if (!d) return fail('unreadable', `${f.name} could not be read.`)
       const data = d.split(',')[1]
       if (text.trim()) {
-        const { text: fit } = fitDoc(text, perFile)
-        return { ok: true, att: { name: f.name, kind: 'pdf', size: sz(f.size), mime: f.type || 'application/pdf', data, source: 'pdf', pages, text: `[extracted from PDF${pages ? `, ${pages} pages` : ''}]\n${fit}` } }
+        const { text: fit, truncated } = fitDoc(text, perFile)
+        return { ok: true, att: { name: f.name, kind: 'pdf', size: sz(f.size), mime: f.type || 'application/pdf', data, source: 'pdf', pages, chars: text.length, ...(truncated ? { truncated: true } : {}), text: `[extracted from PDF${pages ? `, ${pages} pages` : ''}]\n${fit}` } }
       }
       return { ok: true, att: { name: f.name, kind: 'pdf', size: sz(f.size), mime: f.type || 'application/pdf', data, source: 'pdf-scanned' } }
     } catch { /* fall through to binary-only attach */ }
@@ -844,8 +877,13 @@ export async function ocrImage(ep: Ep, model: string, att: Att): Promise<string>
     ? { type: 'image', source: { type: 'base64', media_type: att.mime || 'image/png', data: att.data } }
     : { type: 'image_url', image_url: { url: `data:${att.mime || 'image/png'};base64,${att.data}` } }
   const x = await stream({ ...ep, model }, '', [{ role: 'user', content: [imageBlock, { type: 'text', text: OCR_PROMPT }] }], () => {}, new AbortController(), { cap: 2000 })
-  const text = x.text.trim().slice(0, 6000)
-  if (!text) throw Error('The vision model returned no text.')
+  const full = x.text.trim()
+  if (!full) throw Error('The vision model returned no text.')
+  // Never cut a transcription silently: a model that assumes the OCR text is
+  // complete will quote a truncated page as if it were whole.
+  const text = full.length > 6000
+    ? `${full.slice(0, 6000)}\n[truncated: OCR text kept 6,000 of ${full.length.toLocaleString()} characters; the end was omitted]`
+    : full
   ocrCache.set(key, text)
   if (ocrCache.size > 50) { const oldest = ocrCache.keys().next().value; if (oldest !== undefined) ocrCache.delete(oldest) }
   return text
@@ -908,12 +946,25 @@ export function wire(e: Ep, msgs: Msg[]): Wire[] {
       return [{ role: 'assistant', content: live ? x.t : withWorkspaceTags(x.t, x.workspaceIds) }]
     }
     let t = x.full || x.t || ' '
-    // Name every file (including images and PDFs sent as native blocks) so the
-    // model can refer to a specific upload by name in its answer.
-    const manifest = attachmentManifest(x.att)
-    if (manifest) t += `\n\n[${manifest}]`
+    const atts = x.att ?? []
+    // New messages carry a complete `<attachments>` index and delimited bodies
+    // inside `full`. Older stored (or synced) messages predate that structure:
+    // add the index, and add the bodies too when `full` clearly does not hold
+    // the extracted text (a synced copy drops it). This keeps file content
+    // reachable instead of silently sending only a list of names.
+    const hasAppendix = t.includes('<attachments count=')
+    // Presence of the first part of each body is a reliable test for whether
+    // `full` already carries the file text; length comparison alone missed a
+    // short attachment in a long user prompt.
+    const missingBodies = atts.some((a) => !!a.text && !t.includes(a.text.slice(0, Math.min(64, a.text.length))))
+    if (!hasAppendix && atts.length) {
+      if (missingBodies) t += attachmentAppendix(atts)
+      else t += `\n\n[${attachmentManifest(atts)}]`
+    }
     const c: any[] = []
-    for (const a of x.att ?? []) {
+    const total = atts.length
+    for (let i = 0; i < atts.length; i++) {
+      const a = atts[i]
       if (a.kind === 'txt') continue
       // PDFs ride natively on Anthropic document blocks. Everywhere else the
       // extracted text (already inlined above via fx) carries the content —
@@ -937,11 +988,15 @@ export function wire(e: Ep, msgs: Msg[]): Wire[] {
       // Files dragged in without a MIME mapping carry an empty `type`;
       // never send an empty media_type to Anthropic.
       const mime = a.mime || (a.kind === 'img' ? 'image/png' : 'application/pdf')
+      // A text label immediately before its block is what keeps several
+      // images/PDFs distinguishable: the attachment index also numbers text
+      // files, so "item 1" alone does not reliably name the first block.
+      c.push({ type: 'text', text: `[${promptNameOf(a)} — attachment ${i + 1} of ${total}]` })
       c.push(e.type === 'anthropic'
         ? { type: a.kind === 'img' ? 'image' : 'document', source: { type: 'base64', media_type: mime, data: a.data } }
         : { type: 'image_url', image_url: { url: `data:${mime};base64,${a.data}` } })
     }
-    return [{ role: 'user', content: c.length ? [...c, { type: 'text', text: t }] : t }]
+    return [{ role: 'user', content: c.length ? [{ type: 'text', text: t }, ...c] : t }]
   })
 }
 function findLastIndex<T>(a: T[], f: (x: T) => boolean): number { for (let i = a.length - 1; i >= 0; i--) if (f(a[i])) return i; return -1 }

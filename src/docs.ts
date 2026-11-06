@@ -16,6 +16,9 @@ export type DocPrefs = {
   ocrEp: string
   ocrModel: string
   perFileChars: number
+  totalChars: number
+  /** Keep real file names out of the prompt (neutral `file-1.pdf` aliases). */
+  privateNames: boolean
 }
 export const BLANK_DOCS: DocPrefs = {
   pdfText: true,
@@ -25,6 +28,8 @@ export const BLANK_DOCS: DocPrefs = {
   ocrEp: '',
   ocrModel: '',
   perFileChars: 60000,
+  totalChars: 500000,
+  privateNames: true,
 }
 export const normDocs = (v: any): DocPrefs => ({
   pdfText: v?.pdfText !== false,
@@ -34,6 +39,8 @@ export const normDocs = (v: any): DocPrefs => ({
   ocrEp: typeof v?.ocrEp === 'string' ? v.ocrEp : '',
   ocrModel: typeof v?.ocrModel === 'string' ? v.ocrModel : '',
   perFileChars: Math.min(200000, Math.max(5000, Math.floor(Number(v?.perFileChars) || 60000))),
+  totalChars: Math.min(1000000, Math.max(50000, Math.floor(Number(v?.totalChars) || 500000))),
+  privateNames: v?.privateNames !== false,
 })
 
 export const DOC_MAX_ENTRIES = 25
@@ -367,27 +374,38 @@ export function extractXlsx(bytes: Uint8Array): XlsxData {
       shared.push([...m[1].matchAll(/<t(?: [^>]*)?>([\s\S]*?)<\/t>/g)].map((x) => xmlEntities(x[1])).join(''))
     }
   }
-  const sheetNames = Object.keys(files).filter((k) => /(^|\/)xl\/worksheets\/sheet\d+\.xml$/.test(k)).sort()
+  const sheetNames = Object.keys(files)
+    .filter((k) => /(^|\/)xl\/worksheets\/sheet\d+\.xml$/.test(k))
+    .sort((a, b) => Number(/sheet(\d+)\.xml/.exec(a)?.[1] ?? 0) - Number(/sheet(\d+)\.xml/.exec(b)?.[1] ?? 0))
   if (!sheetNames.length) throw Error('No worksheets found.')
-  const sheet = utf8(files[sheetNames[0]])
-  const rows = sheet.split(/<row[ >]/).slice(1)
+  // Every sheet is read, not just the first: a workbook's answer often lives
+  // on sheet 2+, and the old first-sheet-only extraction silently answered
+  // from the wrong data. The 2000-row budget is shared across sheets.
   const out: string[] = []
-  for (const r of rows.slice(0, 2000)) {
-    const body = r.split(/<\/row>/)[0]
-    const cells = [...body.matchAll(/<c(\s[^>]*)?>([\s\S]*?)<\/c>/g)].map((m) => {
-      const attrs = m[1] ?? '', inner = m[2]
-      if (/\bt="s"/.test(attrs)) {
-        const idx = Number(/<v>(-?\d+)/.exec(inner)?.[1] ?? -1)
-        return shared[idx] ?? ''
-      }
-      const inline = /<is>([\s\S]*)<\/is>/.exec(inner)
-      if (inline) return [...inline[1].matchAll(/<t(?: [^>]*)?>([\s\S]*?)<\/t>/g)].map((x) => xmlEntities(x[1])).join('')
-      return xmlEntities((/<v>([\s\S]*?)<\/v>/.exec(inner)?.[1] ?? '').trim())
-    })
-    while (cells.length && !cells[cells.length - 1]) cells.pop()
-    if (cells.some(Boolean)) out.push(cells.join(', '))
+  let usedRows = 0
+  for (let si = 0; si < sheetNames.length && usedRows < 2000; si++) {
+    const rows = utf8(files[sheetNames[si]]).split(/<row[ >]/).slice(1)
+    const take = Math.min(rows.length, 2000 - usedRows)
+    const lines: string[] = []
+    for (const r of rows.slice(0, take)) {
+      const body = r.split(/<\/row>/)[0]
+      const cells = [...body.matchAll(/<c(\s[^>]*)?>([\s\S]*?)<\/c>/g)].map((m) => {
+        const attrs = m[1] ?? '', inner = m[2]
+        if (/\bt="s"/.test(attrs)) {
+          const idx = Number(/<v>(-?\d+)/.exec(inner)?.[1] ?? -1)
+          return shared[idx] ?? ''
+        }
+        const inline = /<is>([\s\S]*)<\/is>/.exec(inner)
+        if (inline) return [...inline[1].matchAll(/<t(?: [^>]*)?>([\s\S]*?)<\/t>/g)].map((x) => xmlEntities(x[1])).join('')
+        return xmlEntities((/<v>([\s\S]*?)<\/v>/.exec(inner)?.[1] ?? '').trim())
+      })
+      while (cells.length && !cells[cells.length - 1]) cells.pop()
+      if (cells.some(Boolean)) lines.push(cells.join(', '))
+    }
+    usedRows += take
+    if (lines.length) out.push(sheetNames.length > 1 ? `[sheet ${si + 1}]\n${lines.join('\n')}` : lines.join('\n'))
   }
-  return { text: out.join('\n'), sheets: sheetNames.length, rows: Math.min(rows.length, 2000) }
+  return { text: out.join(sheetNames.length > 1 ? '\n\n' : '\n'), sheets: sheetNames.length, rows: usedRows }
 }
 
 /** PPTX → slide texts in order. */
@@ -603,18 +621,34 @@ export async function expandArchives(files: File[], prefs: Pick<DocPrefs, 'archi
 
 /* ---- Chunking: fit extracted text to a per-file budget ---- */
 
-/** Truncate to maxChars, preferring markdown-header then line boundaries.
- *  Never throws; always returns a truncation marker when cutting. */
-export function fitDoc(text: string, maxChars: number): { text: string; truncated: boolean } {
+/** Truncate to maxChars, keeping the opening and the conclusion. A long
+ *  report's decision or data table is often at the end, so head-only cuts made
+ *  answers read the introduction and miss the point. Prefers markdown-header
+ *  then line boundaries in both halves and always returns an explicit marker
+ *  saying how much was kept. Never throws. */
+export function fitDoc(text: string, maxChars: number): { text: string; truncated: boolean; kept: number; total: number } {
   const t = String(text ?? '')
-  if (t.length <= maxChars) return { text: t, truncated: false }
-  let cut = maxChars
-  const header = t.lastIndexOf('\n#', maxChars)
-  const line = t.lastIndexOf('\n', maxChars)
-  if (header > maxChars * 0.4) cut = header + 1
-  else if (line > maxChars * 0.5) cut = line
-  const kept = t.slice(0, cut).trimEnd()
-  return { text: `${kept}\n[truncated: kept ${kept.length.toLocaleString()} of ${t.length.toLocaleString()} characters]`, truncated: true }
+  const total = t.length
+  if (total <= maxChars) return { text: t, truncated: false, kept: total, total }
+  const reserve = 120
+  const usable = Math.max(20, maxChars - reserve)
+  const headBudget = Math.floor(usable * 0.72)
+  const tailBudget = usable - headBudget
+  let headEnd = headBudget
+  const header = t.lastIndexOf('\n#', headBudget)
+  const line = t.lastIndexOf('\n', headBudget)
+  if (header > headBudget * 0.4) headEnd = header + 1
+  else if (line > headBudget * 0.5) headEnd = line
+  let tailStart = Math.max(headEnd, total - tailBudget)
+  // Start the tail on a line boundary when one is close, so a table row or a
+  // sentence is not cut in half.
+  const nextLine = t.indexOf('\n', tailStart)
+  if (nextLine >= 0 && nextLine < tailStart + 200) tailStart = nextLine + 1
+  const head = t.slice(0, headEnd).trimEnd()
+  const tail = t.slice(tailStart).trimStart()
+  const kept = head.length + tail.length
+  const marker = `\n[truncated: kept ${kept.toLocaleString()} of ${total.toLocaleString()} characters; the middle was omitted]\n`
+  return { text: `${head}\n${marker}${tail}`, truncated: true, kept, total }
 }
 
 /* ---- Transcript pairing ---- */
@@ -638,7 +672,7 @@ export function pairTranscripts<T extends Pairable>(atts: T[]): { atts: T[]; not
       (base(t.name).startsWith(b) || b.startsWith(base(t.name).replace(TRANSCRIPT_HINT, '').replace(/[-_. ]+$/, ''))))
     if (j >= 0) {
       used.add(j)
-      out[i] = { ...a, text: `[transcript of ${a.name}]\n${out[j].text}` }
+      out[i] = { ...a, text: `[transcript of ${a.name}]\n${out[j].text}`, chars: out[j].text?.length ?? 0 }
       notices.push(`Paired transcript ${out[j].name} with ${a.name}.`)
     }
   }

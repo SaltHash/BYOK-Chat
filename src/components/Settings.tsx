@@ -1127,7 +1127,7 @@ function DocumentsCard() {
     <Anchor id="documents">
     <Card icon={FileText} title="Documents" sub="PDF text, Office files, archives, transcripts, image OCR">
       <div className="flex items-center justify-between gap-3"><div><div className="text-sm font-medium">Extract PDF text</div><div className="text-xs text-mu">Read the text layer of PDFs so every endpoint (not just Anthropic) can use them. Scanned pages still need OCR or a vision endpoint.</div></div><Toggle on={d.pdfText} set={(pdfText) => set({ pdfText })} /></div>
-      <div className="flex items-center justify-between gap-3"><div><div className="text-sm font-medium">Read Office documents</div><div className="text-xs text-mu">Extract text from .docx, .odt, .rtf, .pptx and first-sheet .xlsx locally. Legacy .doc/.xls/.ppt still need conversion.</div></div><Toggle on={d.office} set={(office) => set({ office })} /></div>
+      <div className="flex items-center justify-between gap-3"><div><div className="text-sm font-medium">Read Office documents</div><div className="text-xs text-mu">Extract text from .docx, .odt, .rtf, .pptx and every .xlsx sheet locally. Legacy .doc/.xls/.ppt still need conversion.</div></div><Toggle on={d.office} set={(office) => set({ office })} /></div>
       <div className="flex items-center justify-between gap-3"><div><div className="text-sm font-medium">Unpack archives</div><div className="text-xs text-mu">Expand .zip and .gz attachments into individual files (up to 25 entries). Pair .vtt/.srt transcripts with matching audio/video automatically.</div></div><Toggle on={d.archives} set={(archives) => set({ archives })} /></div>
       <Field label="Image text extraction (OCR)" hint="Auto transcribes images only when the answering model can't read images itself. Always transcribes every image. Uses the vision endpoint below.">
         <Seg v={d.ocr} set={(ocr) => set({ ocr })} opts={[['off', 'Off'], ['auto', 'Auto'], ['always', 'Always']]} />
@@ -1146,6 +1146,12 @@ function DocumentsCard() {
         <Sel value={String(d.perFileChars)} set={(v) => set({ perFileChars: Number(v) })} opts={[['15000', '15k characters'], ['30000', '30k characters'], ['60000', '60k characters'], ['100000', '100k characters'], ['200000', '200k characters (max)']]} />
       </Field>
       </Anchor>
+      <Anchor id="total-file-chars">
+      <Field label="Text across all files" hint="Combined character budget for this message's attachments and pasted pages. Raise it for a large-context model; lower it to keep requests small. When a file exceeds its own limit, the opening and conclusion are kept and the omission is marked.">
+        <Sel value={String(d.totalChars)} set={(v) => set({ totalChars: Number(v) })} opts={[['100000', '100k characters'], ['250000', '250k characters'], ['500000', '500k characters (default)'], ['750000', '750k characters'], ['1000000', '1M characters']]} />
+      </Field>
+      </Anchor>
+      <div className="flex items-center justify-between gap-3"><div><div className="text-sm font-medium">Private file names</div><div className="text-xs text-mu">The model sees neutral names like file-1.pdf, so a private client, date, or address in a file name never leaves the device. Turn this off when you refer to files by their real names in your request; duplicates still get distinct names.</div></div><Toggle on={d.privateNames} set={(privateNames) => set({ privateNames })} /></div>
     </Card>
     </Anchor>
   )

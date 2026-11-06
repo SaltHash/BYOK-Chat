@@ -728,7 +728,8 @@ test('readAtt extracts documents, accepts media, and caps text budgets', async (
   assert.equal(big.ok, true)
   if (big.ok) {
     assert.equal(big.att.kind, 'txt')
-    assert.match(big.att.text ?? '', /truncated at 200,000/)
+    assert.match(big.att.text ?? '', /truncated: kept/)
+    assert.equal(big.att.truncated, true)
   }
   const csv = await readAtt(file('data.csv', 'text/csv', 'a,b\n1,2'))
   assert.equal(csv.ok, true)
@@ -906,4 +907,66 @@ test('a summarized page is still labelled as a page result', () => {
   const text = formatPage({ url: 'https://a.test/p', title: 'T', text: 'summary body' }, { citeId: 's3', summarized: true })
   assert.match(text, /^Page summary \[Source S3\] for https:\/\/a\.test\/p/)
   assert.match(text, /<page_excerpt>/)
+})
+
+test('history estimates count attachment text once, not three times', () => {
+  const body = 'x'.repeat(60000)
+  const full = `read this\n\n<attachments count="1">\n1. [file-1.txt] text\n</attachments>\n\n<attached_file name="file-1.txt">\n${body}\n</attached_file>`
+  const att = { name: 'notes.txt', modelName: 'file-1.txt', kind: 'txt', size: '60 KB', text: body, chars: 60000 }
+  const withAtt = { id: 'u', r: 'user', t: 'read this', full, att: [att] }
+  const withoutAtt = { id: 'u', r: 'user', t: 'read this', full }
+  // `full` already contains the body; counting `att.text` a second time made
+  // the same message look three times larger and trimmed it away early.
+  assert.ok(estimateHistoryTokens([withAtt]) - estimateHistoryTokens([withoutAtt]) < 30)
+  // A stale `fx` copy alongside the same `full` must not be added again.
+  const withFx = { ...withAtt, fx: `[file: file-1.txt]\n${body}` }
+  assert.ok(Math.abs(estimateHistoryTokens([withFx]) - estimateHistoryTokens([withAtt])) < 30)
+})
+
+test('wire adds a file index and labels every native block by name', () => {
+  const atts = [
+    { name: 'secret.pdf', modelName: 'file-1.pdf', kind: 'pdf', size: '1 KB', data: 'AAA', text: '[payload] body', pages: 2, chars: 12 },
+    { name: 'photo.png', modelName: 'image-1.png', kind: 'img', size: '2 KB', data: 'BBB' },
+  ]
+  const msg = { id: 'u', r: 'user', t: 'look', full: 'look', att: atts }
+  const w = wire(anthropic, [msg])
+  assert.equal(w[0].role, 'user')
+  const text = w[0].content[0].text
+  assert.match(text, /<attachments count="2">/)
+  assert.match(text, /<attached_file name="file-1\.pdf"/)
+  const blocks = w[0].content.slice(1)
+  assert.match(blocks[0].text, /file-1\.pdf — attachment 1 of 2/)
+  assert.equal(blocks[1].type, 'document')
+  assert.match(blocks[2].text, /image-1\.png — attachment 2 of 2/)
+  assert.equal(blocks[3].type, 'image')
+  assert.doesNotMatch(JSON.stringify(w), /secret|photo/)
+})
+
+test('readAtt decodes UTF-16 and Windows-1252 text instead of replacement characters', async () => {
+  const utf16 = new File([Uint8Array.from([0xff, 0xfe, 0x48, 0x00, 0x69, 0x00])], 'utf16.txt', { type: 'text/plain' })
+  const r = await readAtt(utf16)
+  assert.equal(r.ok, true)
+  if (r.ok) assert.equal(r.att.text, 'Hi')
+  const cp1252 = new File([Uint8Array.from([0x63, 0x61, 0x66, 0xe9])], 'legacy.csv', { type: 'text/csv' })
+  const c = await readAtt(cp1252)
+  assert.equal(c.ok, true)
+  if (c.ok) assert.equal(c.att.text, 'café')
+})
+
+test('readAtt honours the configurable message-wide file budget', async () => {
+  const file = (text) => new File([text], 'notes.txt', { type: 'text/plain' })
+  const roomy = await readAtt(file('small'), 60000, { totalChars: 200000 })
+  assert.equal(roomy.ok, true)
+  const full = await readAtt(file('small'), 500000, { totalChars: 500000 })
+  assert.equal(full.ok, false)
+  if (!full.ok) assert.match(full.message, /Raise the limit in Settings/)
+})
+
+test('history estimates use the built prompt once instead of t plus full plus ctx', () => {
+  const user = { id: 'u', r: 'user', t: 'hello there', full: 'hello there' }
+  const withCtx = { id: 'u2', r: 'user', t: 'run it', full: 'run it\n\n[tool results]\nresult body', ctx: ['result body'] }
+  // `t` and `ctx` are already inside `full`; counting them again doubled the
+  // request estimate.
+  assert.ok(estimateHistoryTokens([user]) < 25)
+  assert.ok(estimateHistoryTokens([withCtx]) < 35)
 })
