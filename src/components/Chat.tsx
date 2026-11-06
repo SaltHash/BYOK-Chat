@@ -1223,7 +1223,7 @@ export function Chat({ side, toggle, cfg, pal }: { side: boolean; toggle: () => 
   }, [c?.msgs])
 
   return (
-    <section className="flex min-h-0 min-w-0 flex-1 flex-col bg-bg">
+    <section className="chat-surface flex min-h-0 min-w-0 flex-1 flex-col bg-bg">
       <Header side={side} toggle={toggle} cfg={cfg} pal={pal} title={c?.title ?? (project ? project.name : pendingTemp ? 'Temporary chat' : 'New chat')} />
       {pinned && !project && (
         <div className="mx-3 mt-2 flex items-center gap-2 rounded-xl border border-ac/30 bg-ac/5 px-3 py-1.5">

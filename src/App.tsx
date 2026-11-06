@@ -3,7 +3,8 @@ import { useShallow } from 'zustand/react/shallow'
 import { useS, exportChat, featOn } from './store'
 import { combo, rec } from './engine'
 import { clampSidebarWidth, clampWidgetWidth } from './layout'
-import { canUseDOM, focusComposer, useThemeCss, useStyleCss, useVisualPrefs, usePanelResize } from './hooks'
+import { canUseDOM, focusComposer, useThemeCss, useStyleCss, useVisualPrefs, usePanelResize, useBackgroundImage } from './hooks'
+import { normBgBlur, normBgDim } from './background'
 import { useFontCss, sanitizeFontName } from './fonts'
 import { nextThemePatch, stepModelSelection, stepPromptSelection } from './selection'
 import { Sidebar } from './components/Sidebar'
@@ -57,6 +58,11 @@ export default function App() {
   useFontCss(prefs.fontBody, prefs.fontHeader, prefs.fontMono)
   useStyleCss(prefs.stylePreset, prefs.density, prefs.uiSpacing)
   useVisualPrefs(prefs.textScale, prefs.codeWrap, prefs.reduceTransparency, prefs.highContrast)
+  // The image is hidden in flat mode, where the shell is deliberately opaque.
+  const bgOn = prefs.bgImageOn === true && prefs.reduceTransparency !== true && !shareId
+  const bgSrc = useBackgroundImage({ enabled: bgOn, image: prefs.bgImage })
+  const bgBlur = normBgBlur(prefs.bgImageBlur)
+  const bgDim = normBgDim(prefs.bgImageDim)
   useEffect(() => {
     if (!canUseDOM()) return
     const purge = () => {
@@ -173,7 +179,14 @@ export default function App() {
   }, [])
   if (shareId) return <ShareView id={shareId} />
   return (
-    <div className="flex h-dvh overflow-hidden">
+    <>
+      {bgOn && (
+        <div className="app-backdrop" aria-hidden="true">
+          <div className="app-backdrop-image" style={{ backgroundImage: `url(${JSON.stringify(bgSrc)})`, filter: `blur(${bgBlur}px)`, transform: `scale(${1 + bgBlur / 500})` }} />
+          <div className="app-backdrop-dim" style={{ opacity: bgDim / 100 }} />
+        </div>
+      )}
+      <div className="relative z-10 flex h-dvh overflow-hidden">
       {storageWarning && <div role="alert" className="fixed inset-x-3 top-3 z-50 flex flex-wrap items-center gap-2 rounded-xl border border-er bg-bg p-3 text-sm shadow-lg">
         <span className="min-w-0 flex-1">{storageWarning}</span>
         <Btn v="soft" onClick={() => setCfg('data#export')}>Export data</Btn>
@@ -193,7 +206,8 @@ export default function App() {
       {pal && <Palette close={() => setPal(false)} cfg={setCfg} toggleSide={() => setSide((v) => !v)} />}
       {cfg && <Settings tab={cfg} setTab={setCfg} />}
       {!setupDone && <Welcome addEndpoint={() => { const s = useS.getState(); if (!s.eps.length) s.add('eps'); setCfg('eps') }} close={() => {}} />}
-    </div>
+      </div>
+    </>
   )
 }
 export { sanitizeFontName }

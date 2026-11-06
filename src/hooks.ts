@@ -1,5 +1,6 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { THEME_COLOR_KEYS, themeKeyOf, themeCustomOf } from './store'
+import { DEFAULT_BG_IMAGE, resolveBgImage } from './background'
 import { clampSidebarWidth, clampWidgetWidth, roundFrac } from './layout'
 import { normDensity, normStylePreset, spacingVars, type SpacingOverrides } from './style'
 import { createFrameThrottle } from './throttle'
@@ -54,6 +55,28 @@ export function useThemeCss(opts: {
       root.style.colorScheme = luminance > 145 ? 'light' : 'dark'
     } else root.style.removeProperty('color-scheme')
   }, [theme, customColors, opts.modalBlur])
+}
+
+/** Load the optional background source and flag the document while it is on.
+ *  The layer itself is rendered by App; this hook only resolves a custom blob
+ *  and publishes the switch the CSS uses to soften the main surfaces. */
+export function useBackgroundImage(opts: { enabled: boolean; image?: string }): string {
+  const [src, setSrc] = useState(DEFAULT_BG_IMAGE)
+  useEffect(() => {
+    if (!opts.enabled) return
+    let live = true
+    void resolveBgImage(opts.image)
+      .then((value) => { if (live) setSrc(value) })
+      .catch(() => { if (live) setSrc(DEFAULT_BG_IMAGE) })
+    return () => { live = false }
+  }, [opts.enabled, opts.image])
+  useEffect(() => {
+    if (!canUseDOM()) return
+    const root = document.documentElement
+    if (opts.enabled) root.dataset.bgImage = 'on'
+    else delete root.dataset.bgImage
+  }, [opts.enabled])
+  return src
 }
 
 /** Applies the style preset (`data-style`), the density (`data-density`) and

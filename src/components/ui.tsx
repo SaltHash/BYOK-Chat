@@ -37,10 +37,11 @@ export const Surface = ({ children, className, padded = true }: { children: Reac
   <div className={cx('rounded-xl bg-surf', padded && 'p-3', className)}>{children}</div>
 )
 
-/* Single dropdown-menu primitive: one bg, radius, shadow, max-h for Pop,
- * SearchSelect, Palette and ModelMenu. */
+/* Single dropdown-menu primitive: one bg, radius, border, shadow and max-h
+ * for Pop, SearchSelect, Palette, ModelMenu, chat actions and the context
+ * meter. */
 export const Menu = ({ children, className }: { children: ReactNode; className?: string }) => (
-  <div className={cx('edge-border rounded-xl bg-hov p-1.5 shadow-md', className)}>{children}</div>
+  <div className={cx('menu-surface rounded-xl bg-hov p-1.5', className)}>{children}</div>
 )
 
 export function Checkbox({ checked, set, label, disabled = false, className = '' }: { checked: boolean; set: (v: boolean) => void; label: string; disabled?: boolean; className?: string }) {
@@ -143,7 +144,7 @@ export function SearchSelect({ value, set, opts, ariaLabel = 'Choose an option',
   const choose = (item: [string, string]) => { set(item[0]); setOpen(false); setQuery(''); trigger.current?.focus() }
   return <div ref={root} className="relative">
     <button ref={trigger} type="button" aria-label={ariaLabel} aria-haspopup="listbox" aria-expanded={open} onClick={() => setOpen(!open)} onKeyDown={(e) => { if (e.key === 'ArrowDown' || e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setOpen(true) } }} className={cx(IN, 'flex items-center justify-between text-left')}><span className="truncate">{opts.find(([k]) => k === value)?.[1] ?? value}</span><ChevronRight size={14} aria-hidden="true" className={cx('ml-2 shrink-0 text-mu transition-transform', open && 'rotate-90')} /></button>
-    {open && <div className="absolute z-40 mt-1 w-full"><Menu className="settings-dropdown">
+    {open && <div className="absolute z-40 mt-1 w-full"><Menu>
       <input ref={search} value={query} onChange={(e) => { setQuery(e.target.value); setActive(0) }} onKeyDown={(e) => { if (e.key === 'ArrowDown') { e.preventDefault(); setActive((n) => Math.min(n + 1, filtered.length - 1)) } else if (e.key === 'ArrowUp') { e.preventDefault(); setActive((n) => Math.max(n - 1, 0)) } else if (e.key === 'Enter' && filtered[active]) { e.preventDefault(); choose(filtered[active]) } else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); dismiss(); trigger.current?.focus() } }} placeholder={placeholder} aria-label="Search options" className="mb-1 w-full rounded-lg bg-surf px-2.5 py-2 text-sm outline-none focus:ring-2 focus:ring-ac/40" />
       <div role="listbox" aria-label={ariaLabel} className="dd-list max-h-56 overflow-y-auto overscroll-contain">{filtered.map((item, i) => <button type="button" role="option" aria-selected={item[0] === value} key={item[0]} onMouseEnter={() => setActive(i)} onClick={() => choose(item)} className={cx('block w-full rounded-lg px-2.5 py-2 text-left text-sm', active === i ? 'bg-hov text-tx' : 'text-mu')}>{item[1]}</button>)}{!filtered.length && <div className="px-2.5 py-2 text-sm text-mu">No matches</div>}</div>
     </Menu></div>}

@@ -83,7 +83,7 @@ function RowBody({ c, mv, del, dnd, container, index, time }: RowProps) {
       {menu && (
         <div role="menu" aria-label={`Actions for ${c.title}`} onMouseDown={(e) => e.stopPropagation()}
           style={{ left: menuLeft, top: menuTop }}
-          className="dnd-actions fixed z-40 w-52 rounded-xl bg-hov p-1.5 shadow-md">
+          className="dnd-actions menu-surface fixed z-40 w-52 rounded-xl bg-hov p-1.5">
           <button role="menuitem" onClick={() => { setEd(true); setMenu(null) }} className={rowMenuItem}><Pencil size={16} className="text-mu" />Rename</button>
           <button role="menuitem" title="Export this chat (.md + .json)" onClick={() => { exportThis(); setMenu(null) }} className={rowMenuItem}><Download size={16} className="text-mu" />Export (.md + .json)</button>
           <button role="menuitem" onClick={() => { mv(c.id, menuLeft, menuTop); setMenu(null) }} className={rowMenuItem}><Folder size={16} className="text-mu" />Move to project</button>
@@ -634,7 +634,7 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
       {themeMenu && (
         <div role="menu" aria-label="Choose a theme" onMouseDown={(e) => e.stopPropagation()}
           style={{ left: Math.max(8, Math.min(themeMenu.x - 208, (typeof window !== 'undefined' ? window.innerWidth : 0) - 216)), top: Math.max(8, themeMenu.y - 8 - (th.length * 40 + 40)) }}
-          className="fixed z-40 w-52 rounded-xl bg-hov p-1.5 shadow-md">
+          className="menu-surface fixed z-40 w-52 rounded-xl bg-hov p-1.5">
           <div className="px-2.5 pb-1 text-xs font-medium text-mu">{s.themeMode === 'light' ? 'Light themes' : 'Dark themes'}</div>
           {th.map((k) => {
             const active = k === thCur
@@ -653,7 +653,7 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
         </div>
       )}
       {menu && (
-        <div onMouseDown={(e) => e.stopPropagation()} style={{ left: Math.min(menu.x, Math.max(8, (typeof window !== 'undefined' ? window.innerWidth : 0) - 216)), top: Math.min(menu.y, Math.max(8, (typeof window !== 'undefined' ? window.innerHeight : 0) - (60 + (s.projects.length + 1) * 36))) }} className="fixed z-40 w-52 rounded-xl bg-hov p-1.5">
+        <div onMouseDown={(e) => e.stopPropagation()} style={{ left: Math.min(menu.x, Math.max(8, (typeof window !== 'undefined' ? window.innerWidth : 0) - 216)), top: Math.min(menu.y, Math.max(8, (typeof window !== 'undefined' ? window.innerHeight : 0) - (60 + (s.projects.length + 1) * 36))) }} className="menu-surface fixed z-40 w-52 rounded-xl bg-hov p-1.5">
           <button onClick={() => { s.moveChat(menu.id, ''); setMenu(null) }} className={item}><FolderMinus size={16} className="text-mu" />No project</button>
           {s.projects.map((f) => <button key={f.id} onClick={() => { s.moveChat(menu.id, f.id); setMenu(null) }} className={item}><Folder size={16} className="text-mu" /><span className="truncate">{f.name}</span></button>)}
           {!s.projects.length && <p className="px-2.5 py-2 text-xs text-mu">Create a project first with the project button.</p>}

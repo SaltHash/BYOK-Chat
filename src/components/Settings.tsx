@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { X, Plus, Trash2, ArrowUp, ArrowDown, CornerDownRight, ChevronDown, ChevronRight, Eye, EyeOff, Play, ShieldCheck, Shield, Download, Upload, Check, CircleCheck, CircleX, Cpu, Route, GripVertical, Server, ListMusic, ScrollText, Terminal, Wrench, Palette, FolderOpen, FileText, PanelRight, TrendingUp, Keyboard, Search, Brain, Pencil, Sparkles, RotateCcw, SlidersHorizontal, FlaskConical, Library, Database, Lock, LockOpen, LayoutTemplate, Share2, Plug, Image as ImageIcon, Volume2, AudioLines, Code2, Star } from 'lucide-react'
+import { X, Plus, Trash2, ArrowUp, ArrowDown, CornerDownRight, ChevronDown, ChevronRight, Eye, EyeOff, Play, ShieldCheck, Shield, Download, Upload, Check, CircleCheck, CircleX, Cpu, Route, GripVertical, Server, ListMusic, ScrollText, Terminal, Wrench, Palette, FolderOpen, PanelRight, TrendingUp, Keyboard, Search, Brain, Pencil, Sparkles, RotateCcw, SlidersHorizontal, FlaskConical, Library, Database, Lock, LockOpen, LayoutTemplate, Share2, Plug, Image as ImageIcon, Volume2, AudioLines, Code2, Star } from 'lucide-react'
 import { modelListEdit } from '../models'
 import { useS, useSConfig, PRE, BLANK, THEMES, DARK_THEMES, LIGHT_THEMES, BASE_THEMES, THEME_COLOR_KEYS, THEME_COLOR_LABELS, THEME_COLORS, defaultCustomTheme, customThemeColors, normCustomTheme, accentHue, SEARCH_PROVIDERS, READER_PROVIDERS, FEATURES, LIBRARY_ITEMS, FEATURE_TABS, FEATURE_WIDGETS, DEFAULT_LIBRARY_SHOW, DEFAULT_ADVANCED, featOn, normSearch, normAdvanced, normLogDetail, normDocs, usable, modelsOf, modelNameOf, helperRef, splitHelperRef, favRef, toggleFavRef, effortClassifierOf, TOOL_ROUNDS_DEFAULT, TOOL_ROUNDS_MIN, TOOL_ROUNDS_BASE_MAX, TOOL_ROUNDS_MAX, toolRoundLimitOf, isToolRoundsUnlimited, GENERAL_PROMPT_TEXT, STARTUP_MODES, normStartup, PROMPT_RECALL_MODES, normPromptRecall, type PromptRecallMode, type Kind, type FeatureId, type DocPrefs, type ModelPrice } from '../store'
 import { normSkills, resolveSkill, validateCustomSkill, enabledSkills, BUILTIN_SKILLS, SKILL_TOOL_NAME, type SkillState } from '../skills'
@@ -25,6 +25,7 @@ import { normVoice, VOICE_LANGS, speak, stopSpeaking, speechAvailable, dictation
 import { DENSITIES, DENSITY_IDS, SPACING_LIMITS, STYLE_PRESETS, STYLE_PRESET_IDS, hasSpacingOverrides, resolveSpacing } from '../style'
 import { accentOnlyColors } from '../theme'
 import { USAGE_PERIODS } from '../usageStats'
+import { DEFAULT_BG_IMAGE, deleteBackgroundImage, isCustomBg, normBgBlur, normBgDim, resolveBgImage, storeBackgroundFile } from '../background'
 import { normCompactAt } from '../compaction'
 import { UsageStats } from './UsageStats'
 
@@ -111,7 +112,7 @@ function AddEndpointSplit({ onAdd }: { onAdd: (type: 'openai' | 'anthropic') => 
         <ChevronDown size={14} className={cx('transition-transform', open && 'rotate-180')} />
       </button>
       {open && (
-        <div ref={menu} role="menu" onKeyDown={(e) => { if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return; e.preventDefault(); const buttons = Array.from(menu.current?.querySelectorAll<HTMLButtonElement>('button') ?? []); const i = buttons.indexOf(document.activeElement as HTMLButtonElement); buttons[(i + (e.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length]?.focus() }} className="edge-border absolute left-0 top-full z-20 mt-1.5 w-64 rounded-xl bg-hov p-1.5">
+        <div ref={menu} role="menu" onKeyDown={(e) => { if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return; e.preventDefault(); const buttons = Array.from(menu.current?.querySelectorAll<HTMLButtonElement>('button') ?? []); const i = buttons.indexOf(document.activeElement as HTMLButtonElement); buttons[(i + (e.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length]?.focus() }} className="menu-surface absolute left-0 top-full z-20 mt-1.5 w-64 rounded-xl bg-hov p-1.5">
           <Item icon={Cpu} onClick={() => pick('openai')} sub="Most providers, local servers, OpenRouter">OpenAI-compatible</Item>
           <Item icon={ScrollText} onClick={() => pick('anthropic')} sub="Anthropic Messages API shape">Anthropic-compatible</Item>
         </div>
@@ -1117,7 +1118,7 @@ function ToolLimitCard() {
   )
 }
 
-function DocumentsCard() {
+function DocumentsSettings() {
   const s = useSConfig()
   const d = normDocs(s.docPrefs)
   const set = (p: Partial<DocPrefs>) => s.patch({ docPrefs: { ...d, ...p } })
@@ -1125,7 +1126,7 @@ function DocumentsCard() {
   const ocrEp = s.eps.find((e) => e.id === d.ocrEp)
   return (
     <Anchor id="documents">
-    <Card icon={FileText} title="Documents" sub="PDF text, Office files, archives, transcripts, image OCR">
+    <div className="space-y-4">
       <div className="flex items-center justify-between gap-3"><div><div className="text-sm font-medium">Extract PDF text</div><div className="text-xs text-mu">Read the text layer of PDFs so every endpoint (not just Anthropic) can use them. Scanned pages still need OCR or a vision endpoint.</div></div><Toggle on={d.pdfText} set={(pdfText) => set({ pdfText })} /></div>
       <div className="flex items-center justify-between gap-3"><div><div className="text-sm font-medium">Read Office documents</div><div className="text-xs text-mu">Extract text from .docx, .odt, .rtf, .pptx and every .xlsx sheet locally. Legacy .doc/.xls/.ppt still need conversion.</div></div><Toggle on={d.office} set={(office) => set({ office })} /></div>
       <div className="flex items-center justify-between gap-3"><div><div className="text-sm font-medium">Unpack archives</div><div className="text-xs text-mu">Expand .zip and .gz attachments into individual files (up to 25 entries). Pair .vtt/.srt transcripts with matching audio/video automatically.</div></div><Toggle on={d.archives} set={(archives) => set({ archives })} /></div>
@@ -1134,7 +1135,7 @@ function DocumentsCard() {
       </Field>
       <Anchor id="ocr">
       {d.ocr !== 'off' && (
-        <div className="space-y-2 rounded-lg bg-bg p-3">
+        <div className="space-y-3">
           <Field label="OCR vision endpoint"><Sel value={d.ocrEp} set={(ocrEp) => set({ ocrEp, ocrModel: '' })} opts={[['', 'First vision-capable endpoint'], ...visionEps.map((e) => [e.id, e.name] as [string, string])]} /></Field>
           {ocrEp && <Field label="OCR model"><Sel value={d.ocrModel} set={(ocrModel) => set({ ocrModel })} opts={[['', 'Endpoint default'], ...modelsOf(ocrEp).map((m) => [m, m] as [string, string])]} /></Field>}
           {!visionEps.length && <p className="text-xs text-er">No usable vision-capable endpoint yet. Add one in Settings → Endpoints for OCR to work.</p>}
@@ -1152,7 +1153,7 @@ function DocumentsCard() {
       </Field>
       </Anchor>
       <div className="flex items-center justify-between gap-3"><div><div className="text-sm font-medium">Private file names</div><div className="text-xs text-mu">The model sees neutral names like file-1.pdf, so a private client, date, or address in a file name never leaves the device. Turn this off when you refer to files by their real names in your request; duplicates still get distinct names.</div></div><Toggle on={d.privateNames} set={(privateNames) => set({ privateNames })} /></div>
-    </Card>
+    </div>
     </Anchor>
   )
 }
@@ -1922,7 +1923,7 @@ function FontPicker({ value, set, options }: { value: string; set: (v: string) =
       if (e.key === 'Enter') { e.preventDefault(); const q = query.trim(); if (q) { const exact = options.find(([font, label]) => font.toLowerCase() === q.toLowerCase() || label.toLowerCase() === q.toLowerCase()); choose(exact?.[0] ?? q) } }
       if (e.key === 'Escape') setOpen(false)
     }} className="w-full rounded-lg bg-bg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ac/40" />
-    {open && <div className="settings-dropdown dd-list absolute inset-x-0 top-full z-20 mt-1 max-h-44 overflow-y-auto rounded-xl bg-hov p-1.5 shadow-md">
+    {open && <div className="menu-surface dd-list absolute inset-x-0 top-full z-20 mt-1 max-h-44 overflow-y-auto rounded-xl bg-hov p-1.5">
       {matches.map(([font, label]) => <button type="button" key={font} onMouseDown={(e) => e.preventDefault()} onClick={() => choose(font)} className="block w-full rounded-lg px-2.5 py-2 text-left text-sm hover:bg-surf">{label}</button>)}
       {!matches.length && query.trim() && <p className="px-2.5 py-2 text-xs text-mu">Press Enter to use “{query.trim()}”.</p>}
     </div>}
@@ -1952,6 +1953,36 @@ function Look() {
   const settingsHeight = s.prefs.settingsHeight ?? 780
   const modelPickerHeight = s.prefs.modelPickerHeight ?? 480
   const [colorPicker, setColorPicker] = useState<string | null>(null)
+  const bgOn = s.prefs.bgImageOn === true
+  const bgBlur = normBgBlur(s.prefs.bgImageBlur)
+  const bgDim = normBgDim(s.prefs.bgImageDim)
+  const [bgPreview, setBgPreview] = useState(DEFAULT_BG_IMAGE)
+  const [bgBusy, setBgBusy] = useState(false)
+  const [bgError, setBgError] = useState('')
+  const bgInput = useRef<HTMLInputElement>(null)
+  useEffect(() => {
+    let live = true
+    void resolveBgImage(s.prefs.bgImage).then((src) => { if (live) setBgPreview(src) }).catch(() => {})
+    return () => { live = false }
+  }, [s.prefs.bgImage])
+  const setBg = (patch: Partial<typeof s.prefs>) => s.patch({ prefs: { ...s.prefs, ...patch } })
+  const uploadBg = async (file?: File) => {
+    if (!file) return
+    setBgBusy(true); setBgError('')
+    try {
+      const id = await storeBackgroundFile(file)
+      const before = useS.getState().prefs
+      useS.getState().patch({ prefs: { ...before, bgImage: id, bgImageOn: true } })
+      void deleteBackgroundImage(before.bgImage)
+    } catch (e) {
+      setBgError(e instanceof Error ? e.message : 'That image could not be loaded.')
+    } finally { setBgBusy(false) }
+  }
+  const resetBg = () => {
+    const old = useS.getState().prefs.bgImage
+    setBg({ bgImage: DEFAULT_BG_IMAGE })
+    void deleteBackgroundImage(old)
+  }
   const row = (anchor: string, k: PrefToggle, t: string, d: string) => prefRow(s, anchor, k, t, d)
   return (
     <Panel id="look">
@@ -2049,7 +2080,7 @@ function Look() {
           <button type="button" aria-label={`Choose ${THEME_COLOR_LABELS[key]} color`} aria-expanded={colorPicker === key} onClick={() => setColorPicker(colorPicker === key ? null : key)} className="size-9 shrink-0 rounded-lg border border-white/30 shadow-sm" style={{ backgroundColor: colors[key] }} />
           <span className="min-w-0 flex-1 leading-tight">{THEME_COLOR_LABELS[key]}</span>
           <input aria-label={`${THEME_COLOR_LABELS[key]} hex color`} value={colors[key]} onChange={(e) => { const value = e.target.value; if (/^#[\da-f]{0,6}$/i.test(value)) { const next = { ...colors, [key]: value }; s.patch(mode === 'light' ? { customLightColors: next } : { customDarkColors: next }) } }} onBlur={() => { if (!/^#[\da-f]{6}$/i.test(colors[key])) { const next = { ...colors, [key]: '#000000' }; s.patch(mode === 'light' ? { customLightColors: next } : { customDarkColors: next }) } }} className="w-20 rounded-md border border-white/20 bg-transparent px-1.5 py-1 font-mono text-xs uppercase" />
-          {colorPicker === key && <div className="settings-dropdown absolute left-2 top-full z-30 mt-1 w-56 rounded-xl bg-bg p-3"><label className="flex items-center justify-between gap-3 text-xs text-mu">Choose color<input type="color" aria-label={`Choose ${THEME_COLOR_LABELS[key]} color`} value={colors[key]} onChange={(e) => { const next = { ...colors, [key]: e.target.value }; s.patch(mode === 'light' ? { customLightColors: next } : { customDarkColors: next }) }} className="h-9 w-12 cursor-pointer rounded-md border border-bor bg-transparent p-1" /></label></div>}
+          {colorPicker === key && <div className="menu-surface absolute left-2 top-full z-30 mt-1 w-56 rounded-xl bg-bg p-3"><label className="flex items-center justify-between gap-3 text-xs text-mu">Choose color<input type="color" aria-label={`Choose ${THEME_COLOR_LABELS[key]} color`} value={colors[key]} onChange={(e) => { const next = { ...colors, [key]: e.target.value }; s.patch(mode === 'light' ? { customLightColors: next } : { customDarkColors: next }) }} className="h-9 w-12 cursor-pointer rounded-md border border-bor bg-transparent p-1" /></label></div>}
         </div>)}</div>
         </details>
       </div>
@@ -2076,6 +2107,34 @@ function Look() {
           <span className="w-20 text-right text-sm">{(s.prefs.tempGlowSent ?? 0.5) === 0 ? 'Off' : `${(s.prefs.tempGlowSent ?? 0.5).toFixed(2)}x`}</span>
         </div>
       </div>
+      </Anchor>
+      </Section>
+      <Section title="Background" desc="An optional image behind the app, with its own blur and dim.">
+      <Anchor id="background-image">
+      <Card icon={ImageIcon} title="Image background" sub={bgOn ? `On · ${isCustomBg(s.prefs.bgImage) ? 'custom image' : 'Clay Banks photo'}` : 'Off · default photo ready'} muted={!bgOn} open0={bgOn} right={<Toggle on={bgOn} set={(bgImageOn) => setBg({ bgImageOn })} label="Image background" />}>
+        <div className="relative h-32 overflow-hidden rounded-xl border border-bor bg-bg">
+          <div className="absolute inset-0" style={{ backgroundImage: `url(${JSON.stringify(bgPreview)})`, backgroundPosition: 'center', backgroundSize: 'cover', filter: `blur(${bgBlur}px)` }} />
+          <div className="absolute inset-0 bg-black" style={{ opacity: bgDim / 100 }} />
+          <div className="absolute inset-x-0 bottom-0 flex items-center justify-between gap-2 bg-black/55 px-2.5 py-1.5 text-[11px] text-white">
+            <span>{isCustomBg(s.prefs.bgImage) ? 'Custom image' : 'Clay Banks · default'}</span>
+            <span>{bgBlur}px blur · {bgDim}% dim</span>
+          </div>
+        </div>
+        <p className="text-xs text-mu">The image sits behind the conversation and sidebar. Upload a PNG, JPEG, WebP, AVIF or GIF (up to 16 MB); uploads stay on this device in the durable blob store. The default photo is bundled with the app.</p>
+        {s.prefs.reduceTransparency === true && <p className="text-xs text-c3">Reduce transparency is on, so the image stays hidden behind opaque surfaces. Turn that setting off to see the background.</p>}
+        <div className="flex flex-wrap gap-2">
+          <Btn v="soft" icon={Upload} disabled={bgBusy} onClick={() => bgInput.current?.click()}>{bgBusy ? 'Reading image…' : 'Upload image'}</Btn>
+          <Btn v="ghost" icon={RotateCcw} disabled={!isCustomBg(s.prefs.bgImage)} onClick={resetBg}>Use default image</Btn>
+          <input ref={bgInput} type="file" accept="image/png,image/jpeg,image/webp,image/avif,image/gif" className="hidden" onChange={(e) => { const file = e.currentTarget.files?.[0]; e.currentTarget.value = ''; void uploadBg(file) }} />
+        </div>
+        {bgError && <p role="alert" className="rounded-lg bg-er/10 px-3 py-2 text-xs text-er">{bgError}</p>}
+        <Anchor id="background-blur">
+          <Field label={`Blur · ${bgBlur}px`} hint="0–100 px. Blurring softens the photo behind the app without touching the conversation text."><RangeSlider label="Image background blur" min={0} max={100} step={1} value={bgBlur} set={(v) => setBg({ bgImageBlur: Math.round(v) })} className="w-full" /></Field>
+        </Anchor>
+        <Anchor id="background-dim">
+          <Field label={`Dim · ${bgDim}%`} hint="0–95%. A dark overlay keeps the background from competing with the interface; 95% leaves only a trace of the image."><RangeSlider label="Image background dim" min={0} max={95} step={1} value={bgDim} set={(v) => setBg({ bgImageDim: Math.round(v) })} className="w-full" /></Field>
+        </Anchor>
+      </Card>
       </Anchor>
       </Section>
       <Section title="Style" desc="The shape of surfaces and how much room the chat breathes.">
@@ -2523,7 +2582,7 @@ function Chats() {
       </Anchor>
       </Section>
       <Section title="Documents" desc="Reading attached files and images.">
-      <DocumentsCard />
+      <DocumentsSettings />
       <HelperPointer anchor="title-model" title="Title generation model" desc="Set in Endpoints → Helper models. Names new chats automatically; when empty, the model that answered is used." current={helperLabel(s, helperRef(s.prefs.titleEp, s.prefs.titleModel), 'Default (model that answered)')} />
       </Section>
     </Panel>

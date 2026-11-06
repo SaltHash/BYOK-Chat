@@ -7,7 +7,7 @@ import { composerWidth } from '../layout'
 import { can, readAtts, ocrImage, fetchPage } from '../engine'
 import { fitDoc } from '../docs'
 import { bannerOf, armMention, isPill, mentionsOf, stripMention, tokenizeMentions, type Mention, type Seg as MentionSeg } from '../mentions'
-import { Btn, Item, Pop, Seg, RangeSlider, ImageLightbox, cx, type Ic } from './ui'
+import { Btn, Item, Menu, Pop, Seg, RangeSlider, ImageLightbox, cx, type Ic } from './ui'
 import { SortableList } from './dnd'
 import { MentionBanner, MentionInfo, QuoteBanner } from './Mention'
 import { Notice } from './Extra'
@@ -587,11 +587,11 @@ export function Composer({ cfg, quote, onClearQuote }: { cfg: (t: string) => voi
         {quote && <QuoteBanner text={quote} onDismiss={() => { onClearQuote?.(); ta.current?.focus() }} />}
         {banner && <MentionBanner kind={banner} onDismiss={dismissBanner} warning={banner === 'search' && !searchEnabled ? 'Web search is off.' : undefined} onEnable={banner === 'search' && !searchEnabled ? () => { s.patch({ features: { ...s.features, tools: true }, tools: { ...s.tools, search: true } }) } : undefined} />}
         {menu && !menuOff && (
-          <div className="edge-border absolute inset-x-0 bottom-full mb-2 rounded-xl bg-hov p-1.5">
+          <Menu className="absolute inset-x-0 bottom-full mb-2">
             {menu.length ? menu.map((o, i) => (
               <Item key={o.k} icon={o.icon} on={i === hl} sub={o.hint} onClick={() => { pending.current = 'end'; o.pick(); ta.current?.focus() }}>{o.label}</Item>
             )) : <p className="px-2.5 py-3 text-sm text-mu">{tw ? 'No tool matches.' : 'No enabled command matches. Manage commands in Settings.'}</p>}
-          </div>
+          </Menu>
         )}
         {att.length > 0 && (
           <div className="mb-2" role="group" aria-label="Attachments">

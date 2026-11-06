@@ -345,7 +345,7 @@ function WorkspaceRevisionPicker({ workspace, selectedId, onSelect, className }:
         <span className="shrink-0">{open ? '▲' : '▼'}</span>
       </button>
       {open && (
-        <div className="absolute bottom-full left-0 right-0 mb-1 max-h-60 overflow-y-auto rounded-xl border border-bor bg-surf shadow-lg z-10">
+        <div className="menu-surface absolute bottom-full left-0 right-0 z-10 mb-1 max-h-60 overflow-y-auto rounded-xl bg-surf p-1.5">
           {workspace.revisions.map((rev, i) => (
             <button
               key={rev.id}
