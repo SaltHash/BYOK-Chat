@@ -391,7 +391,7 @@ The focused test file covers: default Full, Standard per-tool, Restricted every-
 | `npx tsc --noEmit` | clean after the final wiring pass |
 | `npm test` | 811/811 passed |
 | `npm run test:worker` | 14/14 passed |
-| `npm run build` | passed; main bundle 899.14 kB / 301.82 kB gzip; Settings 201.59 kB plus a lazy 65.41 kB stats chunk |
+| `npm run build` | passed; main bundle 900.99 kB / 302.30 kB gzip; Settings 201.41 kB plus a lazy 65.41 kB stats chunk |
 | Approval policy tests | 9/9 passed |
 | Browser checks | composer lock menu, Settings access card, archive/restore row flow, Shift icon swap, and the archived-retention control verified in the running app; approval policy and queue behavior covered by tests; a full visual pass of every tool card and the device-tool dialog is still worth doing before release |
 

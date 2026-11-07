@@ -11,7 +11,7 @@ import { PROMPT_QUALITIES, type GlobalPrompt } from '../flair'
 import { PROMPT_VARS } from '../promptVars'
 import { DataTab, KeysTab, TestRow, TestAllEndpoints } from './Extra'
 import { ToolAccessCard } from './ToolAccess'
-import { Btn, Field, Input, Area, Sel, SearchSelect, Toggle, Seg, RangeSlider, Checkbox, HelpTip, Modal, Surface, Chip, Item, Confirm, cx, useEscapeClose, type Ic } from './ui'
+import { Btn, Field, Input, Area, Sel, SearchSelect, Toggle, Seg, RangeSlider, Checkbox, HelpTip, Modal, Surface, Chip, Item, Confirm, cx, useMenuNav, type Ic } from './ui'
 import { Anchor, Panel, Section } from './settingsPrimitives'
 import { SortableList, useFlipAnimate, type SortHandleProps, type SortItemApi } from './dnd'
 import { fetchModelCatalogCached, clearCatalogCache, prefetchModelCatalog, fetchModelProviders, filterCatalogByEndpoint, prioritizeProviderRows, discoverEndpointModels, clearModelDiscoveryCache, type CatalogEntry, type CatalogProvider, type CatalogSource } from '../catalog'
@@ -80,7 +80,7 @@ function AddEndpointSplit({ onAdd }: { onAdd: (type: 'openai' | 'anthropic') => 
   const ref = useRef<HTMLDivElement>(null)
   const trigger = useRef<HTMLButtonElement>(null)
   const menu = useRef<HTMLDivElement>(null)
-  useEscapeClose(() => { setOpen(false); trigger.current?.focus() }, open)
+  const menuKeys = useMenuNav(open, menu, () => setOpen(false), () => trigger.current?.focus())
   useEffect(() => {
     if (!open) return
     const f = (e: MouseEvent) => { if (!ref.current?.contains(e.target as Node)) setOpen(false) }
@@ -104,9 +104,9 @@ function AddEndpointSplit({ onAdd }: { onAdd: (type: 'openai' | 'anthropic') => 
         <ChevronDown size={14} className={cx('transition-transform', open && 'rotate-180')} />
       </button>
       {open && (
-        <div ref={menu} role="menu" onKeyDown={(e) => { if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return; e.preventDefault(); const buttons = Array.from(menu.current?.querySelectorAll<HTMLButtonElement>('button') ?? []); const i = buttons.indexOf(document.activeElement as HTMLButtonElement); buttons[(i + (e.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length]?.focus() }} className="menu-surface absolute left-0 top-full z-20 mt-1.5 w-64 rounded-xl bg-hov p-1.5">
-          <Item icon={Cpu} onClick={() => pick('openai')} sub="Most providers, local servers, OpenRouter">OpenAI-compatible</Item>
-          <Item icon={ScrollText} onClick={() => pick('anthropic')} sub="Anthropic Messages API shape">Anthropic-compatible</Item>
+        <div ref={menu} role="menu" aria-label="Endpoint type" onKeyDown={menuKeys} className="menu-surface absolute left-0 top-full z-20 mt-1.5 w-64 rounded-xl bg-hov p-1.5">
+          <Item role="menuitem" icon={Cpu} onClick={() => pick('openai')} sub="Most providers, local servers, OpenRouter">OpenAI-compatible</Item>
+          <Item role="menuitem" icon={ScrollText} onClick={() => pick('anthropic')} sub="Anthropic Messages API shape">Anthropic-compatible</Item>
         </div>
       )}
     </div>

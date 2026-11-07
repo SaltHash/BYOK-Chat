@@ -6,7 +6,7 @@ import { searchChats } from '../recall'
 import { bookmarkEntries } from '../bookmarks'
 import { clampSidebarWidth } from '../layout'
 import { focusComposer, useShiftHeld } from '../hooks'
-import { Btn, Confirm, cx, useEscapeClose } from './ui'
+import { Btn, Confirm, cx, useMenuNav } from './ui'
 import { ProjectModal } from './ProjectModal'
 import { DndPlaceholder, DndLiveRegion, showDragOverlay, moveDragOverlay, hideDragOverlay, measureBox, DND_ACTIVATION_PX, useFlipAnimate, restDocTop, pointerDocY, edgeScroll } from './dnd'
 import { stepInsertion } from '../dndShared'
@@ -40,7 +40,9 @@ function RowBody({ c, mv, del, dnd, container, index, shift, onNavigate, time }:
   const finished = useS((s) => s.chat !== c.id && s.doneChats?.[c.id] === true)
   const [ed, setEd] = useState(false)
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null)
-  useEscapeClose(() => setMenu(null), !!menu)
+  const moreRef = useRef<HTMLButtonElement>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
+  const menuKeys = useMenuNav(!!menu, menuRef, () => setMenu(null), () => moreRef.current?.focus())
   const dragging = dnd?.activeId === c.id
   const h = dnd ? dnd.handle(c, container, index) : null
   // Drag/keyboard-lift props belong on the title button, not the row wrapper:
@@ -84,10 +86,10 @@ function RowBody({ c, mv, del, dnd, container, index, shift, onNavigate, time }:
       {time && <span title={c.expiresAt ? `Deletes in ${time}` : 'Deletes when you leave'} className="shrink-0 text-xs text-mu">{time}</span>}
       <span className="dnd-actions hidden shrink-0 max-md:flex md:group-hover:flex md:group-focus-within:flex">
         <button aria-label={shift ? `Permanently delete ${c.title}` : c.archived ? `Restore ${c.title} from archive` : `Archive ${c.title}`} title={shift ? 'Delete chat permanently' : c.archived ? 'Restore from archive' : 'Archive chat (hold Shift to delete permanently)'} onClick={(e) => del(c.id, e.shiftKey)} className={cx(act, shift ? 'hover:text-er' : 'hover:text-tx')}>{shift ? <Trash2 size={14} /> : c.archived ? <ArchiveRestore size={14} /> : <Archive size={14} />}</button>
-        <button aria-label={`More actions for ${c.title}`} title="More actions" aria-haspopup="menu" aria-expanded={!!menu} onClick={(e) => { e.stopPropagation(); const r = e.currentTarget.getBoundingClientRect(); setMenu({ x: r.right, y: r.bottom + 4 }) }} className={act}><MoreVertical size={14} /></button>
+        <button ref={moreRef} aria-label={`More actions for ${c.title}`} title="More actions" aria-haspopup="menu" aria-expanded={!!menu} onClick={(e) => { e.stopPropagation(); const r = e.currentTarget.getBoundingClientRect(); setMenu({ x: r.right, y: r.bottom + 4 }) }} className={act}><MoreVertical size={14} /></button>
       </span>
       {menu && (
-        <div role="menu" aria-label={`Actions for ${c.title}`} onMouseDown={(e) => e.stopPropagation()}
+        <div ref={menuRef} role="menu" aria-label={`Actions for ${c.title}`} onMouseDown={(e) => e.stopPropagation()} onKeyDown={menuKeys}
           style={{ left: menuLeft, top: menuTop }}
           className="dnd-actions menu-surface fixed z-40 w-52 rounded-xl bg-hov p-1.5">
           <button role="menuitem" onClick={() => { setEd(true); setMenu(null) }} className={rowMenuItem}><Pencil size={16} className="text-mu" />Rename</button>
@@ -126,6 +128,9 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
   const [fe, setFe] = useState('')
   const [menu, setMenu] = useState<{ id: string; x: number; y: number } | null>(null)
   const [themeMenu, setThemeMenu] = useState<{ x: number; y: number } | null>(null)
+  const themeMenuRef = useRef<HTMLDivElement>(null)
+  const themeTriggerRef = useRef<HTMLSpanElement>(null)
+  const themeMenuKeys = useMenuNav(!!themeMenu, themeMenuRef, () => setThemeMenu(null), () => themeTriggerRef.current?.querySelector('button')?.focus())
   const [projectId, setProjectId] = useState('')
   const shiftHeld = useShiftHeld()
   const [newModal, setNewModal] = useState(false)
@@ -662,15 +667,15 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
       )}
       <div className="flex items-center gap-1">
         <Btn icon={Settings} className="flex-1 justify-start" onClick={() => cfg('eps')}>Settings</Btn>
-        <Btn icon={Palette} title={`Theme: ${THEMES[themeKeyOf(s)]} · Shift-click to cycle`} aria-haspopup="menu" aria-expanded={!!themeMenu} onClick={(e) => {
+        <span ref={themeTriggerRef} className="inline-flex"><Btn icon={Palette} title={`Theme: ${THEMES[themeKeyOf(s)]} · Shift-click to cycle`} aria-haspopup="menu" aria-expanded={!!themeMenu} onClick={(e) => {
           // Shift-click keeps the old gesture: cycle to the next theme.
           if (e.shiftKey) { s.patch(s.themeMode === 'light' ? { themeLight: thNext as typeof s.themeLight } : { themeDark: thNext as typeof s.themeDark }); return }
           const r = e.currentTarget.getBoundingClientRect()
           setThemeMenu({ x: r.right, y: r.top })
-        }} />
+        }} /></span>
       </div>
       {themeMenu && (
-        <div role="menu" aria-label="Choose a theme" onMouseDown={(e) => e.stopPropagation()}
+        <div ref={themeMenuRef} role="menu" aria-label="Choose a theme" onMouseDown={(e) => e.stopPropagation()} onKeyDown={themeMenuKeys}
           style={{ left: Math.max(8, Math.min(themeMenu.x - 208, (typeof window !== 'undefined' ? window.innerWidth : 0) - 216)), top: Math.max(8, themeMenu.y - 8 - (th.length * 40 + 40)) }}
           className="menu-surface fixed z-40 w-52 rounded-xl bg-hov p-1.5">
           <div className="px-2.5 pb-1 text-xs font-medium text-mu">{s.themeMode === 'light' ? 'Light themes' : 'Dark themes'}</div>

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ButtonHTMLAttributes, type ImgHTMLAttributes, type InputHTMLAttributes, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type TextareaHTMLAttributes } from 'react'
+import { useEffect, useRef, useState, type ButtonHTMLAttributes, type ImgHTMLAttributes, type InputHTMLAttributes, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type RefObject, type TextareaHTMLAttributes } from 'react'
 import { createPortal } from 'react-dom'
 import { Check, ChevronRight, CircleHelp, Star, TriangleAlert, X, type LucideIcon } from 'lucide-react'
 
@@ -78,6 +78,48 @@ export function useEscapeClose(close: () => void, active = true): void {
       if (i >= 0) escStack.splice(i, 1)
     }
   }, [active])
+}
+
+/* Shared keyboard contract for pop-up menus: opening moves focus to the
+ * selected item (or the first action), arrows/Home/End move between items,
+ * and Escape or Tab closes and returns focus to the trigger. */
+export function useMenuNav(open: boolean, menuRef: RefObject<HTMLElement>, close: () => void, returnFocus?: () => void) {
+  const closeRef = useRef(close)
+  const returnRef = useRef(returnFocus)
+  closeRef.current = close
+  returnRef.current = returnFocus
+  useEscapeClose(() => { closeRef.current(); returnRef.current?.() }, open)
+  useEffect(() => {
+    if (!open) return
+    const frame = requestAnimationFrame(() => {
+      const menu = menuRef.current
+      if (!menu) return
+      const items = Array.from(menu.querySelectorAll<HTMLElement>('button:not([disabled]), [role="menuitem"]:not([disabled])')).filter((item) => item.getClientRects().length > 0)
+      const selected = items.find((item) => item.getAttribute('aria-checked') === 'true')
+      ;(selected ?? items[0])?.focus()
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [open, menuRef])
+  return (e: ReactKeyboardEvent<HTMLElement>) => {
+    if (e.key === 'Tab') {
+      e.preventDefault()
+      closeRef.current()
+      returnRef.current?.()
+      return
+    }
+    if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) return
+    const menu = menuRef.current
+    if (!menu) return
+    const items = Array.from(menu.querySelectorAll<HTMLElement>('button:not([disabled]), [role="menuitem"]:not([disabled])')).filter((item) => item.getClientRects().length > 0)
+    if (!items.length) return
+    e.preventDefault()
+    const at = items.indexOf(document.activeElement as HTMLElement)
+    const next = e.key === 'Home' ? 0
+      : e.key === 'End' ? items.length - 1
+        : at < 0 ? (e.key === 'ArrowDown' ? 0 : items.length - 1)
+          : (at + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length
+    items[next]?.focus()
+  }
 }
 
 export function HelpTip({ text, label = 'Help' }: { text: string; label?: string }) {
@@ -200,11 +242,16 @@ export function RangeSlider({ value, set, min, max, step = 1, label, valueText, 
   </div>
 }
 
-export function Pop({ trigger, children, up, right, w = 'w-72', scroll = true, onOpenChange }: { trigger: (o: boolean) => ReactNode; children: (close: () => void) => ReactNode; up?: boolean; right?: boolean; w?: string; scroll?: boolean; onOpenChange?: (o: boolean) => void }) {
+export function Pop({ trigger, children, up, right, w = 'w-72', scroll = true, autoFocus = false, onOpenChange }: { trigger: (o: boolean) => ReactNode; children: (close: () => void) => ReactNode; up?: boolean; right?: boolean; w?: string; scroll?: boolean; /** Move focus into the first action when the popover opens. */ autoFocus?: boolean; onOpenChange?: (o: boolean) => void }) {
   const [o, setO] = useState(false)
-  const r = useRef<HTMLDivElement>(null), triggerRef = useRef<HTMLDivElement>(null)
+  const r = useRef<HTMLDivElement>(null), triggerRef = useRef<HTMLDivElement>(null), menuRef = useRef<HTMLDivElement>(null)
   const flip = (v: boolean) => { setO(v); onOpenChange?.(v) }
   useEscapeClose(() => { flip(false); triggerRef.current?.querySelector<HTMLElement>('button')?.focus() }, o)
+  useEffect(() => {
+    if (!o || !autoFocus) return
+    const frame = requestAnimationFrame(() => menuRef.current?.querySelector<HTMLElement>('button:not([disabled])')?.focus())
+    return () => cancelAnimationFrame(frame)
+  }, [o, autoFocus])
   useEffect(() => {
     if (!o) return
     const f = (e: MouseEvent) => { if (!r.current?.contains(e.target as Node)) flip(false) }
@@ -214,7 +261,7 @@ export function Pop({ trigger, children, up, right, w = 'w-72', scroll = true, o
   return (
     <div ref={r} className="relative">
       <div ref={triggerRef} onClick={() => flip(!o)} onKeyDown={(e) => { if (e.key === 'ArrowDown' && !o) { e.preventDefault(); flip(true) } }}>{trigger(o)}</div>
-      {o && <div onKeyDown={(e) => { if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return; const target = e.target as HTMLElement; if (target.closest('input,textarea,select,[role="slider"],[contenteditable="true"]')) return; const items = Array.from(e.currentTarget.querySelectorAll<HTMLButtonElement>('button:not([disabled])')).filter(item => item.getClientRects().length > 0); if (!items.length) return; e.preventDefault(); const index = items.indexOf(document.activeElement as HTMLButtonElement); const next = index < 0 ? (e.key === 'ArrowDown' ? 0 : items.length - 1) : (index + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length; items[next].focus() }} className={cx('absolute z-30 max-w-[calc(100vw-1rem)]', w, up ? 'bottom-full mb-2' : 'top-full mt-2', right ? 'right-0' : 'left-0')}><Menu className={cx(scroll ? 'max-h-96 overflow-y-auto overscroll-contain' : 'overflow-hidden')}>{children(() => flip(false))}</Menu></div>}
+      {o && <div ref={menuRef} onKeyDown={(e) => { if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) return; const target = e.target as HTMLElement; if (target.closest('input,textarea,select,[role="slider"],[contenteditable="true"]')) return; const items = Array.from(e.currentTarget.querySelectorAll<HTMLButtonElement>('button:not([disabled])')).filter(item => item.getClientRects().length > 0); if (!items.length) return; e.preventDefault(); const index = items.indexOf(document.activeElement as HTMLButtonElement); const next = e.key === 'Home' ? 0 : e.key === 'End' ? items.length - 1 : index < 0 ? (e.key === 'ArrowDown' ? 0 : items.length - 1) : (index + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length; items[next].focus() }} className={cx('absolute z-30 max-w-[calc(100vw-1rem)]', w, up ? 'bottom-full mb-2' : 'top-full mt-2', right ? 'right-0' : 'left-0')}><Menu className={cx(scroll ? 'max-h-96 overflow-y-auto overscroll-contain' : 'overflow-hidden')}>{children(() => flip(false))}</Menu></div>}
     </div>
   )
 }
