@@ -21,7 +21,7 @@ export function detectAvailableCategories(j: Record<string, unknown>, themes: Re
       || o(j.customDarkColors) || o(j.customLightColors) || o(j.customDarkTheme) || o(j.customLightTheme)
       || (typeof j.theme === 'string' && (j.theme as string) in themes) || o(j.customColors) || o(j.prefs),
     features: o(j.features) || Array.isArray(j.featureOrder) || o(j.libraryShow) || o(j.advanced),
-    tools: o(j.tools) || o(j.search) || Array.isArray(j.mcps) || o(j.imageGen) || o(j.codeRun),
+    tools: o(j.tools) || o(j.search) || typeof j.toolMode === 'string' || o(j.toolApproval) || Array.isArray(j.mcps) || o(j.imageGen) || o(j.codeRun),
     tuning: o(j.params) || o(j.effort) || o(j.workspacePrefs) || o(j.docPrefs) || o(j.voicePrefs),
     widgets: o(j.widgets) || o(j.widgetPrefs),
     stats: o(j.stats) || o(j.routeStats),
@@ -38,7 +38,7 @@ type ExportState = {
   pls: unknown; cmds: unknown; skills: unknown
   memories: unknown; memoryPrefs: unknown
   features: unknown; featureOrder: unknown; libraryShow: unknown; advanced: unknown
-  tools: unknown; search: { keys: Record<string, string> }; mcps: unknown; imageGen: unknown; codeRun: unknown
+  tools: unknown; toolMode: unknown; toolApproval: unknown; search: { keys: Record<string, string> }; mcps: unknown; imageGen: unknown; codeRun: unknown
   params: unknown; effort: unknown; workspacePrefs: unknown; docPrefs: unknown; voicePrefs: unknown
   widgets: unknown; widgetPrefs: unknown; stats: unknown; routeStats: unknown
   chats: unknown; projects: unknown; chat: unknown; todos: unknown; snips: unknown; pad: unknown
@@ -104,6 +104,8 @@ export function buildExportPayload(
   if (exports.features) { data.features = s.features; data.featureOrder = s.featureOrder; data.libraryShow = s.libraryShow; data.advanced = s.advanced }
   if (exports.tools) {
     data.tools = s.tools
+    data.toolMode = s.toolMode
+    data.toolApproval = s.toolApproval
     const sp = normSearch(s.search)
     // The reader key is a credential like the search keys: it is only
     // exported when the export explicitly includes keys. Every provider key is

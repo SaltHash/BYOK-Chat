@@ -4,6 +4,7 @@ import {
   TrendingUp, Database, FlaskConical, MessagesSquare, Plug, Volume2,
 } from 'lucide-react'
 import type { Ic } from './components/ui'
+import { FEATURE_TABS, featOn, type FeatureId } from './store'
 
 /** Single source of truth for settings navigation.
  *  Previously the tab list was hardcoded in both Settings.tsx and Palette.tsx
@@ -15,6 +16,17 @@ export type SettingsTabId =
   | 'features' | 'eps' | 'prompts' | 'skills' | 'pls' | 'cmds'
   | 'workspace' | 'tools' | 'mcp' | 'memory' | 'widgets' | 'look' | 'chats'
   | 'voice' | 'keys' | 'stats' | 'data' | 'adv'
+
+/** Tabs hidden while their owning feature is disabled. Lives here (not in
+ *  Settings.tsx) so the command palette can filter tabs without pulling the
+ *  whole settings bundle onto its load path. */
+export const visibleTabs = (features?: Record<FeatureId, boolean>) => {
+  const hidden = new Set<string>()
+  for (const [f, tabs] of Object.entries(FEATURE_TABS)) {
+    if (!featOn({ features }, f as FeatureId)) for (const t of tabs as string[]) hidden.add(t)
+  }
+  return SETTINGS_TABS.filter(([k]) => !hidden.has(k))
+}
 
 export const SETTINGS_TABS: [SettingsTabId, string, Ic][] = [
   ['features', 'Features', SlidersHorizontal],
@@ -45,7 +57,7 @@ export const TAB_KEYWORDS: Record<SettingsTabId, string> = {
   pls: 'playlists routes groups ordered fastest cheapest classifier routing performance',
   cmds: 'commands slash input template run on playlist',
   workspace: 'workspace files panel templates gist share default view auto open follow',
-  tools: 'tools helpers search fetch calculator date time clipboard location workspace memory navigate prompt poll count json base64 uuid random hash execution limit citations reader jina firecrawl exa summary',
+  tools: 'tools helpers search fetch calculator date time clipboard location workspace memory navigate prompt poll count json base64 uuid random hash execution limit citations reader jina firecrawl exa summary access approval permission lock full standard restricted disabled',
   mcp: 'mcp model context protocol servers tools external remote connect url headers bearer token',
   memory: 'memory tool mode recall method classifier add stored duplicates categories temporary temp chats recall save',
   widgets: 'widgets panels context meter endpoint status usage scratchpad snippets cost last reply prompts shortcuts draft counter checklist',
@@ -131,6 +143,7 @@ export const SETTING_LINKS: SettingLink[] = [
   { tab: 'mcp', anchor: 'add-mcp-server', title: 'Add an MCP server', keywords: 'mcp model context protocol add server remote url' },
 
   // Tools
+  { tab: 'tools', anchor: 'tool-access', title: 'Tool access and approvals', keywords: 'tool access approval permission lock full standard restricted disabled composer ask allow deny' },
   { tab: 'tools', anchor: 'tool-limit', title: 'Tool execution limit', keywords: 'tool rounds limit unlock unlimited sequential loop stop' },
   { tab: 'tools', anchor: 'code-execution', title: 'Code execution', keywords: 'code execution run snippet javascript python sandbox pyodide timeout output limit stdout' },
   { tab: 'tools', anchor: 'code-timeout', title: 'Code time limit', keywords: 'code timeout seconds limit runaway loop infinite sandbox' },

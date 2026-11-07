@@ -158,7 +158,7 @@ export const fmt = (c: string) => c.replace('Mod', /Mac|iPhone|iPad/.test(naviga
 
 /* Every exposed tool has one schema and one explicitly registered handler. */
 export type ToolCall = { id: string; name: string; arguments: string; extra_content?: unknown }
-export type ToolResult = ToolCall & { result: string; error?: boolean; ms?: number }
+export type ToolResult = ToolCall & { result: string; error?: boolean; /** The raw result exceeded MAX_TOOL_RESULT_CHARS and was cut before reaching the model. */ truncated?: boolean; /** The user refused permission, so the handler was never run. */ denied?: boolean; ms?: number }
 export type ToolSpec = {
   description: string
   parameters: Record<string, unknown>
@@ -604,8 +604,9 @@ export async function executeTool(call: ToolCall, enabled: Record<string, boolea
       }
       if ((prop.type === 'string' && typeof value !== 'string') || (prop.type === 'number' && typeof value !== 'number') || (prop.type === 'integer' && !Number.isInteger(value))) throw Error(`Invalid argument: ${key}`)
     }
-    const result = capToolResult(String(await (handlers[call.name] ? handlers[call.name](args) : spec.run(args))))
-    return { ...call, result, ms: Math.round(performance.now() - started) }
+    const raw = String(await (handlers[call.name] ? handlers[call.name](args) : spec.run(args)))
+    const result = capToolResult(raw)
+    return { ...call, result, ...(raw.length > MAX_TOOL_RESULT_CHARS ? { truncated: true } : {}), ms: Math.round(performance.now() - started) }
   } catch (error: any) { return { ...call, result: error?.message || 'Tool execution failed', error: true, ms: Math.round(performance.now() - started) } }
 }
 
@@ -617,14 +618,25 @@ export async function executeToolCalls(
   calls: ToolCall[],
   enabled: Record<string, boolean>,
   handlers: Record<string, (args: any) => unknown | Promise<unknown>> = {},
-  opts: { serialize?: string[]; maxParallel?: number } = {},
+  opts: { serialize?: string[]; maxParallel?: number; approve?: (call: ToolCall) => boolean | Promise<boolean> } = {},
 ): Promise<ToolResult[]> {
   const serialize = new Set(opts.serialize ?? [])
   const out: ToolResult[] = new Array(calls.length)
   const serialIdx: number[] = []
   const parallelIdx: number[] = []
   calls.forEach((c, i) => (serialize.has(c.name) ? serialIdx : parallelIdx).push(i))
-  for (const i of serialIdx) out[i] = await executeTool(calls[i], enabled, handlers)
+  // Permission is checked immediately before the handler, so an approval card
+  // can pause the loop without the model seeing a made-up result. A refusal is
+  // a real tool error: the model gets to adapt instead of retrying blindly.
+  const runOne = async (i: number) => {
+    const call = calls[i]
+    if (opts.approve && !(await opts.approve(call))) {
+      out[i] = { ...call, result: 'The user denied permission to run this tool, so it was not executed. Continue without it and explain what is missing.', error: true, denied: true, ms: 0 }
+      return
+    }
+    out[i] = await executeTool(call, enabled, handlers)
+  }
+  for (const i of serialIdx) await runOne(i)
   // Bounded concurrency for everything else, preserving call order in `out`.
   const maxParallel = Math.max(1, Math.min(Math.floor(opts.maxParallel ?? parallelIdx.length) || 1, parallelIdx.length || 1))
   let next = 0
@@ -632,8 +644,7 @@ export async function executeToolCalls(
     for (;;) {
       const n = next++
       if (n >= parallelIdx.length) return
-      const i = parallelIdx[n]
-      out[i] = await executeTool(calls[i], enabled, handlers)
+      await runOne(parallelIdx[n])
     }
   }
   await Promise.all(Array.from({ length: maxParallel }, worker))
@@ -1295,7 +1306,7 @@ export async function stream(e: Ep, sys: string, ms: Wire[], on: (t: string) => 
  * it to answer is better than discarding a nearly finished reply. */
 export const TOOL_BUDGET_NOTE = 'The tool budget for this reply is used up, so no further tool calls can run. Answer now from the results already gathered. State what the evidence supports, and name anything that is still unverified instead of guessing or asking for another search.'
 
-export async function runToolLoop(e: Ep, sys: string, messages: (rounds: { text: string; calls: ToolResult[] }[]) => Wire[], enabled: Record<string, boolean>, on: (text: string) => void, ac: AbortController, o: O = {}, onSummary: (text: string) => void = () => {}, onRound: (rounds: { text: string; calls: ToolResult[] }[]) => void = () => {}, maxRounds = 8, handlers: Record<string, (args: any) => unknown | Promise<unknown>> = {}, onToolDelta: (calls: ToolCall[]) => void = () => {}, execTools: { serialize?: string[]; maxParallel?: number } = {}) {
+export async function runToolLoop(e: Ep, sys: string, messages: (rounds: { text: string; calls: ToolResult[] }[]) => Wire[], enabled: Record<string, boolean>, on: (text: string) => void, ac: AbortController, o: O = {}, onSummary: (text: string) => void = () => {}, onRound: (rounds: { text: string; calls: ToolResult[] }[]) => void = () => {}, maxRounds = 8, handlers: Record<string, (args: any) => unknown | Promise<unknown>> = {}, onToolDelta: (calls: ToolCall[]) => void = () => {}, execTools: { serialize?: string[]; maxParallel?: number; approve?: (call: ToolCall) => boolean | Promise<boolean> } = {}) {
   const rounds: { text: string; calls: ToolResult[] }[] = []
   let text = '', finalText = '', tin = 0, tout = 0, contextTin = 0, contextTout = 0, cost = 0, cacheRead = 0, cacheWrite = 0, roundCount = 0
   /* True when the round cap was reached and the reply had to be written from

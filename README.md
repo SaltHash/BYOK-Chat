@@ -2,6 +2,8 @@
 
 A local-first chat app for the model endpoints you already use. Bring an OpenAI-compatible or Anthropic Messages endpoint, keep your keys in your browser, and use one model or route across several. Visiting [chat.icodebugs.com](https://chat.icodebugs.com/#chat) or using a small optional Node or Cloudflare backend adds web search, page reading, sharing, device sync, and a relay for providers that block browser requests.
 
+For the complete feature inventory, maturity review, and prioritised improvement roadmap, see [FEATURE_AUDIT.md](FEATURE_AUDIT.md).
+
 ## Why this app
 
 - Your model keys stay in the browser. The backend does not store model credentials.
@@ -61,12 +63,12 @@ Direct fetch, Jina Reader, Firecrawl, Exa Contents, TinyFish Fetch, Tavily Extra
 
 ## Features
 
-- **Chat:** streaming replies, temporary chats, folders, search, drafts, queued messages, rich copy, and read-only share links.
+- **Chat:** streaming replies, reply bookmarks, temporary chats, folders, search, drafts, queued messages, rich copy, and read-only share links.
 - **Models:** multiple endpoints, favorites, OpenRouter provider pinning, playlists with fallback, model discovery, and usage estimates.
 - **Grounding:** automatic or explicit `@search`, numbered sources, inline citations, page reading, page summaries, and deep research with reviewable plans and cited reports.
 - **Files and documents:** PDF, DOCX, ODT, RTF, PPTX, XLSX, ZIP, GZ, text, images, audio, and transcript pairing. Optional OCR for scanned images.
 - **Workspaces:** model-created files with code, preview, diff, revisions, templates, downloads, and optional GitHub Gist sharing.
-- **Tools:** calculator, time, date, JSON, Base64, hashing, UUIDs, memory, graphs, image generation, code execution, MCP servers, skills, and follow-up widgets.
+- **Tools:** calculator, time, date, JSON, Base64, hashing, UUIDs, memory, graphs, image generation, code execution, MCP servers, skills, and follow-up widgets. The composer lock chooses Full, Standard, Restricted, or Disabled access, and any tool can be marked Require approval for per-call permission.
 - **Memory:** on-device recall with optional model-assisted saving, duplicate cleanup, and temporary-chat controls.
 - **Usage:** local dashboard with model and tool breakdowns, charts, costs, token counts, and kept history.
 - **Customization:** light and dark themes, custom palettes, density, fonts, chat width, reduced motion, high contrast, and configurable system prompts.

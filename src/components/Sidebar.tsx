@@ -1,8 +1,9 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useShallow } from 'zustand/react/shallow'
-import { Plus, Clock, Search, PanelLeftClose, Pin, Pencil, Trash2, MessageSquare, Server, ListMusic, ScrollText, Terminal, Wrench, Settings, Palette, PanelRight, Folder, FolderPlus, FolderMinus, ChevronRight, Bookmark, Download, Archive, ArchiveRestore, MoreVertical, Check } from 'lucide-react'
+import { Plus, Clock, Search, PanelLeftClose, Pin, Pencil, Trash2, MessageSquare, Server, ListMusic, ScrollText, Terminal, Wrench, Settings, Palette, PanelRight, Folder, FolderPlus, FolderMinus, ChevronRight, Bookmark, Download, Archive, ArchiveRestore, MoreVertical, Check, X } from 'lucide-react'
 import { useS, chatMd, dl, THEMES, DARK_THEMES, LIGHT_THEMES, THEME_COLORS, themeKeyOf, DEFAULT_LIBRARY_SHOW, featOn, type Chat, type FeatureId } from '../store'
 import { searchChats } from '../recall'
+import { bookmarkEntries } from '../bookmarks'
 import { clampSidebarWidth } from '../layout'
 import { focusComposer } from '../hooks'
 import { Btn, Confirm, cx } from './ui'
@@ -41,6 +42,11 @@ function RowBody({ c, mv, del, dnd, container, index, time }: RowProps) {
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null)
   const dragging = dnd?.activeId === c.id
   const h = dnd ? dnd.handle(c, container, index) : null
+  // Drag/keyboard-lift props belong on the title button, not the row wrapper:
+  // a wrapper with role="button" that contains the delete and actions buttons
+  // is nested interactive content, which screen readers flatten or misread.
+  const { className: dragClass, ...dragProps } = h ?? {}
+  void dragClass
   useEffect(() => {
     if (!menu) return
     const f = () => setMenu(null)
@@ -61,11 +67,10 @@ function RowBody({ c, mv, del, dnd, container, index, time }: RowProps) {
   const menuLeft = menu ? Math.max(8, Math.min(menu.x - 208, vw - 216)) : 0
   const menuTop = menu ? Math.max(8, Math.min(menu.y, vh - menuH)) : 0
   return (
-    <div ref={dnd ? dnd.register(c.id) : undefined} data-chat-row={c.id}
-      {...(h ?? {})} title={dnd ? 'Drag to move to a project' : undefined}
+    <div ref={dnd ? dnd.register(c.id) : undefined} data-chat-row={c.id} title={dnd ? 'Drag to move to a project' : undefined}
       className={cx('group flex items-center rounded-lg pr-1 text-sm', dnd && 'dnd-handle cursor-grab', selected ? 'bg-hov' : 'hover:bg-surf', dragging && 'opacity-25')}>
       {ed ? <Name v={c.title} save={(t) => useS.getState().rename(c.id, t)} done={() => setEd(false)} /> : (
-        <button onDoubleClick={() => setEd(true)} onClick={() => useS.getState().patch({ chat: c.id, activeProject: '' })} className="side-item flex min-w-0 flex-1 items-center gap-2.5 px-2.5 text-left">
+        <button {...dragProps} onDoubleClick={() => setEd(true)} onClick={() => useS.getState().patch({ chat: c.id, activeProject: '' })} aria-current={selected ? 'page' : undefined} className="side-item flex min-w-0 flex-1 items-center gap-2.5 px-2.5 text-left">
           {c.pin ? <Pin size={15} className="shrink-0 text-ac" /> : c.temporary ? <Clock size={15} className="shrink-0 text-mu" /> : <MessageSquare size={15} className="shrink-0 text-mu" />}
           <span className="flex min-w-0 flex-1 items-center gap-1.5">
             <span className="truncate">{c.title}{c.temporary && container !== 'temporary' ? ' · temporary' : ''}</span>
@@ -126,6 +131,7 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
   // The temporary section shows only `prefs.tempShow` chats by default and is
   // capped at a fraction of the sidebar's height, past which it scrolls.
   const [tempOpen, setTempOpen] = useState(false)
+  const [marksAll, setMarksAll] = useState(false)
   const [sideH, setSideH] = useState(0)
   const asideRef = useRef<HTMLElement>(null)
   // Pointer-based cross-container drag state (replaces HTML5 DnD): the dragged
@@ -189,6 +195,7 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
     out.temporary.sort((a, b) => (b.expiresAt ?? 0) - (a.expiresAt ?? 0))
     return out
   }, [L])
+  const marks = useMemo(() => bookmarkEntries(s.chats), [s.chats])
   const projectCounts = useMemo(() => {
     const m = new Map<string, number>()
     // Count only what the project actually lists: pinned and temporary chats
@@ -509,7 +516,7 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
   const item = 'side-item flex w-full items-center gap-2.5 rounded-lg px-2.5 text-left text-sm hover:bg-surf'
   const safeWidth = clampSidebarWidth(width)
   return (
-    <aside ref={asideRef} style={{ width: safeWidth, maxWidth: '90vw', padding: 'var(--ui-side-pad)', gap: 'var(--ui-side-gap)' }} className="side-shell z-20 flex min-w-0 shrink-0 flex-col border-r border-bor bg-side max-md:fixed max-md:inset-y-0 max-md:left-0">
+    <aside ref={asideRef} aria-label="Chats and projects" style={{ width: safeWidth, maxWidth: '90vw', padding: 'var(--ui-side-pad)', gap: 'var(--ui-side-gap)' }} className="side-shell z-20 flex min-w-0 shrink-0 flex-col border-r border-bor bg-side max-md:fixed max-md:inset-y-0 max-md:left-0">
       <div className="flex gap-2">
         <Btn v="solid" icon={s.prefs.temporaryByDefault ? Clock : Plus} title={s.prefs.temporaryByDefault ? 'New temporary chat' : 'New chat'} className="flex-1" onClick={() => { s.newChat(); focusComposer() }}>{s.prefs.temporaryByDefault ? 'Temporary chat' : 'New chat'}</Btn>
         <Btn icon={s.prefs.temporaryByDefault ? Plus : Clock} title={s.prefs.temporaryByDefault ? 'New regular chat' : 'New temporary chat'} onClick={() => { s.newChat(!s.prefs.temporaryByDefault); focusComposer() }} />
@@ -525,7 +532,7 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
           Archived{archivedCount ? <span className="text-[10px] opacity-70">{archivedCount}</span> : null}
         </button>
       </div>
-      <nav ref={navRef} data-dnd-scroll="" className="-mx-1 flex-1 space-y-3 overflow-y-auto px-1">
+      <nav ref={navRef} aria-label="Chats" data-dnd-scroll="" className="-mx-1 flex-1 space-y-3 overflow-y-auto px-1">
         {k ? (
           <div>
             <div className="px-2.5 pb-1 text-xs font-medium text-mu">{hits.length ? `Top matches (${hits.length})` : 'No matches'}</div>
@@ -556,6 +563,33 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
           </div>
         ) : (<>
         {!!pinned.length && <div><div className="px-2.5 pb-1 text-xs font-medium text-mu">Pinned</div><div className="side-rows">{rows(pinned, 'pinned')}</div></div>}
+        {!!marks.length && (
+          <div>
+            <div className="flex items-center justify-between px-2.5 pb-1 text-xs font-medium text-mu">
+              <span>Bookmarks</span>
+              <span className="tabular-nums">{marks.length}</span>
+            </div>
+            <div className="side-rows">
+              {(marksAll ? marks : marks.slice(0, 4)).map((b) => (
+                <div key={b.msgId} className="group flex items-center rounded-lg pr-1 text-sm hover:bg-surf">
+                  <button onClick={() => jump(b.chatId, b.msgId)} title={`${b.chatTitle}: ${b.text}`} className="side-item flex min-w-0 flex-1 items-start gap-2 px-2.5 text-left">
+                    <Bookmark size={14} className="mt-0.5 shrink-0 text-ac" aria-hidden="true" />
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-xs font-medium">{b.chatTitle}</span>
+                      <span className="mt-0.5 block truncate text-xs text-mu">{b.text || 'Empty message'}</span>
+                    </span>
+                  </button>
+                  <button onClick={() => useS.getState().bookmarkMsg(b.msgId)} aria-label={`Remove bookmark from ${b.chatTitle}`} title="Remove bookmark" className="hidden size-7 shrink-0 place-items-center rounded-md text-mu hover:bg-hov hover:text-tx group-hover:grid group-focus-within:grid max-md:grid"><X size={13} /></button>
+                </div>
+              ))}
+            </div>
+            {marks.length > 4 && (
+              <button onClick={() => setMarksAll((v) => !v)} aria-expanded={marksAll} className="mt-0.5 w-full rounded-lg px-2.5 py-1.5 text-left text-xs font-medium text-mu hover:bg-surf hover:text-tx">
+                {marksAll ? 'Show less' : `Show all (${marks.length})`}
+              </button>
+            )}
+          </div>
+        )}
         <div className="flex flex-col rounded-lg" style={{ maxHeight: tempMaxH }}>
           <div className="shrink-0 px-2.5 pb-1 text-xs font-medium text-mu">Temporary chats</div>
           <div className="side-rows min-h-0 overflow-y-auto">

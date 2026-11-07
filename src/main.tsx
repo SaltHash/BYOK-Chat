@@ -1,6 +1,7 @@
 import { createRoot } from 'react-dom/client'
 import './index.css'
 import App from './App'
+import { ErrorBoundary } from './components/ErrorBoundary'
 import { useS } from './store'
 import { hydrateDurable, mirrorToDurable } from './storage/boot'
 import { startSyncRuntime, DEVICE_SYNC_ENABLED } from './storage/syncRuntime'
@@ -49,7 +50,7 @@ void hydrateDurable((p) => useS.setState(p as Parameters<typeof useS.setState>[0
     if (DEVICE_SYNC_ENABLED) startSyncRuntime()
     ;(window as Window & { __byokReady?: boolean }).__byokReady = true
     window.dispatchEvent(new Event('byok:ready'))
-    createRoot(document.getElementById('root')!).render(<App />)
+    createRoot(document.getElementById('root')!).render(<ErrorBoundary><App /></ErrorBoundary>)
   })
   .catch(() => {
     // Do not mount a fresh empty store or start sync after failed recovery.

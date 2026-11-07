@@ -1,6 +1,6 @@
 import { memo, useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
-import { GitBranch, ChevronLeft, ChevronRight, ChevronDown, Server, Cpu, Copy, Check, RefreshCw, Trash2, ListOrdered, TriangleAlert, Paperclip, Download, ExternalLink, Volume2, Pin, PinOff, Search, ArrowUp, ArrowDown, X, Quote } from 'lucide-react'
+import { GitBranch, ChevronLeft, ChevronRight, ChevronDown, Server, Cpu, Copy, Check, RefreshCw, Trash2, ListOrdered, TriangleAlert, Paperclip, Download, ExternalLink, Volume2, Pin, PinOff, Bookmark, Search, ArrowUp, ArrowDown, X, Quote } from 'lucide-react'
 import { useS, useLive, usable, featOn, previewSysFor, activeWorkspaceForChat, pinnedReplyOf, type LogDetail, type Msg } from '../store'
 import { clampWorkspaceFrac, roundFrac, CHAT_WIDTH } from '../layout'
 import { focusComposer, startPointerDrag } from '../hooks'
@@ -412,6 +412,7 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
   const logTiming = prefs.logTiming !== false
   const logModels = prefs.logModels !== false
   const busy = useS((s) => s.busyChats?.[s.chat] === true)
+  const bookmarked = useS((s) => s.chats.find((c) => c.id === s.chat)?.bookmarks?.includes(m.id) === true)
   const advanced = useS((s) => s.advanced)
   const features = useS((s) => s.features)
   const workspaces = useS((s) => s.workspaces)
@@ -649,6 +650,8 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
                             {logTiming && call.ms != null && <span className={cx('ml-auto shrink-0 pl-2 text-xs tabular-nums text-mu', call.error && 'text-er')}>{duration(call.ms).trim()}</span>}
                           </span>
                           {desc && <div className={cx('mt-0.5 break-words text-xs text-mu', call.error && 'text-er')}>{desc}</div>}
+                          {call.denied && <div className="mt-0.5 text-xs text-er">Denied by you — the tool did not run.</div>}
+                          {call.truncated && <div className="mt-0.5 text-xs text-ac">Result capped at 100,000 characters — ask for a narrower query, line range or page excerpt to read the rest.</div>}
                           {adv?.showToolPayloads && (
                             <div className="mt-1 space-y-1">
                               <Payload label="args" text={prettyArgs(call.arguments)} open={!!expanded[`args-${i}`]} onToggle={() => togglePayload(`args-${i}`)} />
@@ -822,6 +825,15 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
         <Btn icon={ok ? Check : Copy} title="Copy with formatting — Shift-click for Markdown, Ctrl/Cmd-click for plain text" onClick={(e) => copyReply(e.shiftKey ? 'markdown' : e.ctrlKey || e.metaKey ? 'plain' : 'rich')} />
         {!m.err && !hideBody && (
           <Btn icon={m.pin ? PinOff : Pin} title={m.pin ? 'Unpin this reply (it stays in the model context until unpinned)' : 'Pin this reply (shown under the header and kept in the model context)'} className={m.pin ? 'text-ac' : undefined} onClick={() => useS.getState().pinMsg(m.id)} />
+        )}
+        {!hideBody && !m.err && (
+          <Btn
+            icon={Bookmark}
+            title={bookmarked ? 'Remove this reply from bookmarks' : 'Bookmark this reply (listed in the sidebar)'}
+            aria-pressed={bookmarked}
+            className={bookmarked ? 'text-ac' : undefined}
+            onClick={() => useS.getState().bookmarkMsg(m.id)}
+          />
         )}
         {voiceOn({ features }) && speechAvailable() && !hideBody && !m.err && !!displayText.trim() && (
           <Btn icon={Volume2} title="Read aloud" onClick={() => speak(displayText, normVoice(useS.getState().voicePrefs))} />
@@ -1222,7 +1234,7 @@ export function Chat({ side, toggle, cfg, pal }: { side: boolean; toggle: () => 
   }, [c?.msgs])
 
   return (
-    <section className="chat-surface flex min-h-0 min-w-0 flex-1 flex-col bg-bg">
+    <main id="conversation" aria-label="Conversation" tabIndex={-1} className="chat-surface flex min-h-0 min-w-0 flex-1 flex-col bg-bg outline-none">
       <Header side={side} toggle={toggle} cfg={cfg} pal={pal} title={c?.title ?? (project ? project.name : pendingTemp ? 'Temporary chat' : 'New chat')} />
       {pinned && !project && (
         <div className="mx-3 mt-2 flex items-center gap-2 rounded-xl border border-ac/30 bg-ac/5 px-3 py-1.5">
@@ -1349,6 +1361,6 @@ export function Chat({ side, toggle, cfg, pal }: { side: boolean; toggle: () => 
       {/* The empty temporary chat already explains itself under the headline;
           once the conversation starts, the standing provider caveat takes over. */}
       {isTemp && !project && !empty && <div className="px-4 pb-2 text-center text-xs text-mu">Some providers may retain temporary chats for safety or model training.</div>}
-    </section>
+    </main>
   )
 }

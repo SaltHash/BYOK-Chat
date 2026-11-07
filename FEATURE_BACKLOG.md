@@ -6,9 +6,6 @@ partly addresses an idea, the remaining gap is described explicitly.
 
 ## Chat & conversation
 
-- **Reply bookmarks** — bookmark individual messages and list them in the
-  sidebar (distinct from chat pinning).
-
 ## Multitasking
 
 Several chats can stream at once now; these are the gaps that remain around
@@ -112,13 +109,15 @@ round limit. What is still missing, roughly by value:
 - **Serialize MCP side effects** — MCP calls run in parallel today. Use the
   server's `readOnlyHint` annotations to parallelize reads and run the rest in
   order, so two writes cannot race.
-- **Approval policy for side effects** — MCP tools and workspace deletes run
-  without asking. Add per-server approval for destructive tools, remembered per
-  server, matching the sandbox-vs-approval split coding agents use.
+- **Per-server approval policy** — the composer access lock and per-tool
+  Require approval switches now cover ordinary tools, including Restricted
+  mode for every MCP call. A server-level policy (remembered per server and
+  per destructive tool) would still beat one global restriction for mixed
+  read/write MCP servers.
 - **Retry one failed step** — a tool error is explained to the model, but the
   user cannot retry just that call from the process panel.
-- **Truncation badge** — a result cut at the size cap looks complete in the
-  payload viewer; mark it explicitly and offer the narrower follow-up.
+- **Truncation badge** — shipped: capped results carry a visible badge and a
+  narrower-follow-up hint in the process log.
 - **Live MCP progress** — an MCP call shows one spinner; stream progress
   notifications when the server sends them.
 - **Research spend ceiling** — tiers cap searches and time, not money. Add an

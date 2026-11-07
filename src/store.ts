@@ -3,6 +3,7 @@ import { persist } from 'zustand/middleware'
 import { useShallow } from 'zustand/react/shallow'
 import { DEFAULT_TOOLS, KEYS, WIDGETS } from './meta'
 import { est, redact, stream, wire, trimHistory, estimateHistoryTokens, estimateTokens, runToolLoop, type ToolCall, type ToolResult, searchWeb, formatSearch, fetchPage, formatPage, can, ocrImage, clearSessionCache, setDynamicTools, DYNAMIC_TOOLS, type ToolSpec, type PageExcerpt } from './engine'
+import { DEFAULT_TOOL_APPROVAL, cancelToolApprovals, needsToolApproval, normToolApproval, normToolMode, requestToolApproval, type ToolMode } from './toolApprovals'
 import { withCompaction, shouldCompact, selectCompactionMessages, transcriptFor, compactionSystemPrompt, compactionAsk, compactionOutputTokens, compactionInputChars, compactionAnchor, compactionDetail, isHandoff, type CompactionRecord } from './compaction'
 import { normMcpServers, mcpBindings, callMcpTool, toolParameters, type McpServer, type McpTool } from './mcp'
 import { attachmentAppendix, projectFileBlock, uniqueAttachmentNames, anonymizeAttachmentNames, realPromptNames, promptNameOf } from './attachments'
@@ -17,6 +18,7 @@ export { tierOf, RESEARCH_TIERS, RESEARCH_AGENT_ROUNDS_DEFAULT, RESEARCH_AGENT_R
 export type { ResearchState, ResearchTierId, ResearchPlan, ResearchPlanStep, ResearchAgent, ResearchQuestion, ResearchAnswer } from './research'
 import { collectMessageSources, citationCoverage, citationRule, createCiteIds, mergeSources } from './citations'
 import { appendHint, getErrorCode, classifyModelError, type ErrorCode } from './errors'
+import { toggleBookmark } from './bookmarks'
 import { celebrate, normGlobalPrompt, type GlobalPrompt } from './flair'
 // Set by workspace writes; read once when a reply ends to decide on the completion cue.
 let workspaceWritesPending = false
@@ -67,7 +69,7 @@ export type Att = Attachment
 export type Message = { id: string; r: 'user' | 'assistant'; t: string; at?: number; by?: string; tps?: number; log?: Attempt[]; att?: Attachment[]; err?: boolean; trunc?: boolean; capped?: boolean; full?: string; ctx?: string[]; fx?: string; cmd?: string; alts?: Snap[]; ai?: number; historyTokens?: number; explicitTokens?: number; reasoning?: string; toolRounds?: { text: string; calls: ToolResult[] }[]; toolFinal?: string; sys?: string; workspaceIds?: string[]; research?: ResearchState; /** Kept visible under the header and added to the model context (see prefs.pinContext). */ pin?: boolean }
 export type Msg = Message
 export type Snap = { t: string; by?: string; tps?: number; log?: Try[]; err?: boolean; toolRounds?: { text: string; calls: ToolResult[] }[]; toolFinal?: string; workspaceIds?: string[] }
-export type Chat = { id: string; title: string; pin?: boolean; started?: boolean; project?: string; msgs: Msg[]; temporary?: boolean; expiresAt?: number; titleAuto?: boolean; /** Hidden from the normal sidebar until the Archived filter is opened. */ archived?: boolean; /** Model-written handoff that replaces the messages up to `through` in requests. The stored transcript is untouched. */ compact?: CompactionRecord }
+export type Chat = { id: string; title: string; pin?: boolean; started?: boolean; project?: string; msgs: Msg[]; temporary?: boolean; expiresAt?: number; titleAuto?: boolean; /** Hidden from the normal sidebar until the Archived filter is opened. */ archived?: boolean; /** Bookmarked message ids, newest first (see bookmarks.ts). */ bookmarks?: string[]; /** Model-written handoff that replaces the messages up to `through` in requests. The stored transcript is untouched. */ compact?: CompactionRecord }
 /** An optional context file attached to a project: name and size for display,
  *  plus the extracted text the AI may consult. Text is capped at import time. */
 export type ProjectFile = { id: string; name: string; size: string; mime?: string; text: string }
@@ -215,10 +217,10 @@ export const THEME_COLORS: Record<string, ThemeColors> = {
   claude: { bg: '#181817', side: '#121211', surf: '#20201f', hov: '#2c2b2a', tx: '#ece7db', mu: '#a09891', ac: '#d97757', acx: '#121211', er: '#f95353', code: '#111110', codeh: '#121211', c2: '#7ec699', c3: '#f4a58a', c4: '#7cace8', c5: '#e8c47c' },
   obsidian: { bg: '#0f141c', side: '#090c10', surf: '#161e2b', hov: '#222e40', tx: '#e1e7ed', mu: '#788896', ac: '#2dd4bf', acx: '#0b1e1c', er: '#f95353', code: '#0a0d12', codeh: '#131a24', c2: '#34d399', c3: '#fbbf24', c4: '#38bdf8', c5: '#c084fc' },
   graphite: { bg: '#0f0f0f', side: '#0a0a0a', surf: '#1c1c1c', hov: '#262626', tx: '#eaeaea', mu: '#888888', ac: '#c0c0c0', acx: '#131313', er: '#f95353', code: '#0f0f0f', codeh: '#1a1a1a', c2: '#a3e635', c3: '#fb923c', c4: '#facc15', c5: '#e879f9' },
-  paper: { bg: '#fbfbf9', side: '#f1f1ec', surf: '#efefe9', hov: '#e4e4dc', tx: '#1d1d1b', mu: '#6f6f66', ac: '#3b5bdb', acx: '#ffffff', er: '#c92a2a', code: '#e6e5dd', codeh: '#d3d2c6', c2: '#2b8a3e', c3: '#d9480f', c4: '#7048e8', c5: '#0b7285' },
-  sage: { bg: '#f4f7f5', side: '#e6ece8', surf: '#ffffff', hov: '#d6e2db', tx: '#1c2826', mu: '#617571', ac: '#0d9488', acx: '#ffffff', er: '#e11d48', code: '#eaefea', codeh: '#dfe6e0', c2: '#15803d', c3: '#c2410c', c4: '#0284c7', c5: '#7e22ce' },
-  frost: { bg: '#f8fafc', side: '#eef2f6', surf: '#ffffff', hov: '#e2e8f0', tx: '#0f172a', mu: '#64748b', ac: '#2563eb', acx: '#ffffff', er: '#e11d48', code: '#f1f5f9', codeh: '#e2e8f0', c2: '#16a34a', c3: '#ea580c', c4: '#0369a1', c5: '#9333ea' },
-  sunset: { bg: '#faf5f0', side: '#efe6dd', surf: '#ffffff', hov: '#e4d5c7', tx: '#3b2c24', mu: '#8c7769', ac: '#ea580c', acx: '#ffffff', er: '#dc2626', code: '#f3eae1', codeh: '#e7dad0', c2: '#3f6212', c3: '#b45309', c4: '#1d4ed8', c5: '#a21caf' },
+  paper: { bg: '#fbfbf9', side: '#f1f1ec', surf: '#efefe9', hov: '#e4e4dc', tx: '#1d1d1b', mu: '#6c6c63', ac: '#3b5bdb', acx: '#ffffff', er: '#c92a2a', code: '#e6e5dd', codeh: '#d3d2c6', c2: '#2b8a3e', c3: '#d9480f', c4: '#7048e8', c5: '#0b7285' },
+  sage: { bg: '#f4f7f5', side: '#e6ece8', surf: '#ffffff', hov: '#d6e2db', tx: '#1c2826', mu: '#5a6c69', ac: '#0d9488', acx: '#ffffff', er: '#e11d48', code: '#eaefea', codeh: '#dfe6e0', c2: '#15803d', c3: '#c2410c', c4: '#0284c7', c5: '#7e22ce' },
+  frost: { bg: '#f8fafc', side: '#eef2f6', surf: '#ffffff', hov: '#e2e8f0', tx: '#0f172a', mu: '#5e6d83', ac: '#2563eb', acx: '#ffffff', er: '#e11d48', code: '#f1f5f9', codeh: '#e2e8f0', c2: '#16a34a', c3: '#ea580c', c4: '#0369a1', c5: '#9333ea' },
+  sunset: { bg: '#faf5f0', side: '#efe6dd', surf: '#ffffff', hov: '#e4d5c7', tx: '#3b2c24', mu: '#756358', ac: '#ea580c', acx: '#ffffff', er: '#dc2626', code: '#f3eae1', codeh: '#e7dad0', c2: '#3f6212', c3: '#b45309', c4: '#1d4ed8', c5: '#a21caf' },
 }
 /** A fresh custom palette starts from a built-in theme's three primary colours. */
 export const defaultCustomTheme = (base: BaseTheme): CustomTheme => {
@@ -593,6 +595,10 @@ export const readerSummaryModelsOf = (
 type S = {
   eps: Ep[]; prompts: Prompt[]; pls: Pl[]; cmds: Cmd[]; mcps: McpServer[]; chats: Chat[]; chat: string
   tools: Record<string, boolean>
+  /** Composer lock: how enabled tools may run. */
+  toolMode: ToolMode
+  /** Per-tool "Require approval" switches used by Standard access. */
+  toolApproval: Record<string, boolean>
   /** One shared answer to the allow prompt shown before enabling a tool that
    *  reads the device (location, clipboard, date, time). True stops the prompt
    *  for all of them; the prompt is never shown for any other tool. */
@@ -672,6 +678,8 @@ type S = {
   chatOp: (id: string, op: 'pin' | 'del' | 'archive') => void
   /** Pin an assistant reply (one per chat) and keep it in the model context. */
   pinMsg: (id: string) => void
+  /** Toggle a reply bookmark; bookmarks are stored on the chat so they persist, sync and die with it. */
+  bookmarkMsg: (id: string) => void
   send: (v: string, att: Att[]) => Promise<boolean>
   stop: () => void
   /** Abort every chat currently streaming a reply. */
@@ -2337,16 +2345,19 @@ export const useS = create<S>()(
                 return wire(e, [...histFor(), partial])
               }, (() => {
                 const g = get(), GF = g.features ?? DEFAULT_FEATURES
-                const base: Record<string, boolean> = GF.tools ? { ...g.tools, memory: memOn } : {}
+                // The composer lock can turn every schema off; keeping the
+                // per-tool switches intact means choosing Full restores them.
+                const toolsAllowed = GF.tools && normToolMode(g.toolMode) !== 'off'
+                const base: Record<string, boolean> = toolsAllowed ? { ...g.tools, memory: memOn } : {}
                 // MCP tools are registered at reply time with their own names;
                 // the per-server switch already decided whether they exist.
-                if (GF.tools && featOn(g, 'mcp')) for (const name of Object.keys(DYNAMIC_TOOLS)) base[name] = true
+                if (toolsAllowed && featOn(g, 'mcp')) for (const name of Object.keys(DYNAMIC_TOOLS)) base[name] = true
                 // Image generation has its own on switch and endpoint picker.
-                if (GF.tools && normImageGen(g.imageGen).on) base.generate_image = true
+                if (toolsAllowed && normImageGen(g.imageGen).on) base.generate_image = true
                 // Code execution is likewise its own opt-in switch.
-                if (GF.tools && normCodeRun(g.codeRun).on) base.run_code = true
+                if (toolsAllowed && normCodeRun(g.codeRun).on) base.run_code = true
                 // use_skill is a hidden model capability (not listed in Settings → Tools).
-                if (featOn(get(), 'skills') && (p.skills ?? []).length) base[SKILL_TOOL_NAME] = true
+                if (toolsAllowed && featOn(get(), 'skills') && (p.skills ?? []).length) base[SKILL_TOOL_NAME] = true
                 return base
               })(), (t) => {
                 txt += t
@@ -2526,7 +2537,23 @@ export const useS = create<S>()(
               },
               // Live tool deltas feed the ephemeral streaming preview; rewritten
               // wholesale each chunk so backspaces re-render instead of appending.
-            }, (calls) => { useLive.getState().set(mid, calls.map((c) => ({ ...c }))) }, { serialize: ['workspace_upsert'], maxParallel: 4 })
+            }, (calls) => { useLive.getState().set(mid, calls.map((c) => ({ ...c }))) }, {
+              serialize: ['workspace_upsert'],
+              maxParallel: 4,
+              approve: async (call) => {
+                const g = get()
+                const mode = normToolMode(g.toolMode)
+                // Off can be chosen while a reply is in flight; refuse at the
+                // boundary instead of letting a queued call slip through.
+                if (mode === 'off') return false
+                if (!needsToolApproval(mode, g.toolApproval, call.name)) return true
+                const allowed = await requestToolApproval({ chatId: id, name: call.name, args: call.arguments }, r.ctl?.signal)
+                // Re-check after the wait: Disabled may have been chosen while
+                // the prompt was open. A permission card must never outlive the
+                // policy that produced it.
+                return allowed && normToolMode(get().toolMode) !== 'off'
+              },
+            })
               txt = x.text
               responseTokensIn = x.tin; responseTokensOut = x.tout
               const current = get().chats.find(c => c.id === id)
@@ -2625,7 +2652,7 @@ export const useS = create<S>()(
           { id: 'k6', name: 'translate', desc: 'Translate text', in: 'text', sys: 'Translate the provided text into the language requested. If no target language is specified, ask which language.', tpl: '{{input}}', pl: '', on: true, args: '<text> to <language>' },
           { id: 'k7', name: 'brainstorm', desc: 'Generate useful ideas', in: 'text', sys: 'Generate varied, practical ideas. Keep each idea distinct and briefly explain why it may work.', tpl: '{{input}}', pl: '', on: true, args: '<topic>' },
         ],
-        chats: [], chat: '', drafts: {}, memories: [], imageGen: { ...BLANK_IMAGE_GEN }, codeRun: { ...BLANK_CODE_RUN }, voicePrefs: { ...BLANK_VOICE }, memoryPrefs: { ...DEFAULT_MEMORY_PREFS }, docPrefs: { ...BLANK_DOCS }, tools: { ...DEFAULT_TOOLS }, toolConsent: false, search: { ...BLANK_SEARCH, keys: { ...BLANK_SEARCH.keys } }, researchRounds: RESEARCH_AGENT_ROUNDS_DEFAULT, skills: DEFAULT_SKILL_STATE.map((s) => ({ ...s })), widgets: {}, widgetPrefs: { ...DEFAULT_WIDGET_PREFS, widgetOrder: [...DEFAULT_WIDGET_PREFS.widgetOrder], shortcuts: [...DEFAULT_WIDGET_PREFS.shortcuts] }, rail: false, pad: '', snips: [],
+        chats: [], chat: '', drafts: {}, memories: [], imageGen: { ...BLANK_IMAGE_GEN }, codeRun: { ...BLANK_CODE_RUN }, voicePrefs: { ...BLANK_VOICE }, memoryPrefs: { ...DEFAULT_MEMORY_PREFS }, docPrefs: { ...BLANK_DOCS }, tools: { ...DEFAULT_TOOLS }, toolMode: 'full', toolApproval: { ...DEFAULT_TOOL_APPROVAL }, toolConsent: false, search: { ...BLANK_SEARCH, keys: { ...BLANK_SEARCH.keys } }, researchRounds: RESEARCH_AGENT_ROUNDS_DEFAULT, skills: DEFAULT_SKILL_STATE.map((s) => ({ ...s })), widgets: {}, widgetPrefs: { ...DEFAULT_WIDGET_PREFS, widgetOrder: [...DEFAULT_WIDGET_PREFS.widgetOrder], shortcuts: [...DEFAULT_WIDGET_PREFS.shortcuts] }, rail: false, pad: '', snips: [],
         params: { ...DEFAULT_PARAMS }, effort: {},
         workspacePrefs: { defaultView: 'latest', autoOpen: true, autoFollow: true },
         advanced: { ...DEFAULT_ADVANCED },
@@ -2701,6 +2728,7 @@ export const useS = create<S>()(
             // looking busy.
             const far = runs.get(id)
             if (far) { far.stopped = true; far.ctl?.abort(); runs.delete(id) }
+            cancelToolApprovals(id)
           }
           set((s) => {
             const chats = op === 'del'
@@ -2723,6 +2751,9 @@ export const useS = create<S>()(
           const next = target.pin !== true
           return { chats: s.chats.map((c) => (c.id === chat.id ? { ...c, msgs: c.msgs.map((m) => (m.r === 'assistant' ? { ...m, pin: m.id === id ? next : false } : m)) } : c)) }
         }),
+        bookmarkMsg: (id) => set((s) => ({
+          chats: s.chats.map((c) => (c.msgs.some((m) => m.id === id) ? { ...c, bookmarks: toggleBookmark(c.bookmarks, id) } : c)),
+        })),
 
         send: async (v, att) => {
           const s = get()
@@ -2882,6 +2913,9 @@ export const useS = create<S>()(
           const chatId = get().chat
           const r = runs.get(chatId)
           if (r) { r.stopped = true; r.ctl?.abort(); runs.delete(chatId) }
+          // Stop is also a refusal: clear a prompt immediately even if the
+          // provider stream has not noticed the abort yet.
+          cancelToolApprovals(chatId)
           setChatBusy(chatId, false)
           flushQueued(chatId)
         },
@@ -2890,6 +2924,7 @@ export const useS = create<S>()(
           for (const id of ids) {
             const r = runs.get(id)
             if (r) { r.stopped = true; r.ctl?.abort() }
+            cancelToolApprovals(id)
           }
           runs.clear()
           const stopped = new Set(ids)
@@ -2955,7 +2990,11 @@ export const useS = create<S>()(
         delMsg: (id) => {
           const gone = get().chats.flatMap((c) => c.msgs).find((m) => m.id === id)
           if (gone?.att?.length) void import('./storage/boot').then(({ dropAttachmentBytes }) => dropAttachmentBytes([gone]).catch(() => {})).catch(() => {})
-          set((s) => ({ chats: s.chats.map((c) => ({ ...c, msgs: c.msgs.filter((m) => m.id !== id) })) }))
+          set((s) => ({ chats: s.chats.map((c) => ({
+            ...c,
+            msgs: c.msgs.filter((m) => m.id !== id),
+            ...(c.bookmarks?.includes(id) ? { bookmarks: c.bookmarks.filter((x) => x !== id) } : {}),
+          })) }))
         },
         chooseResearchTier: (mid, tier) => {
           const s = get()
@@ -3258,6 +3297,8 @@ export const useS = create<S>()(
         delete (p.prefs as Record<string, unknown>).tempGlow
         delete (p.prefs as Record<string, unknown>).tempGlowSent
         p.tools = { ...DEFAULT_TOOLS, ...(p.tools ?? {}) }
+        p.toolMode = normToolMode(p.toolMode)
+        p.toolApproval = { ...DEFAULT_TOOL_APPROVAL, ...normToolApproval(p.toolApproval) }
         // Only boolean flags for known tools survive a reload.
         // Older builds remembered consent per tool; the prompt is shared now,
         // so any saved "do not ask" answer carries over to the one flag.

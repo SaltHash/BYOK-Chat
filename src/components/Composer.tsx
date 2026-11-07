@@ -11,6 +11,7 @@ import { Btn, Item, Menu, Pop, Seg, RangeSlider, ImageLightbox, cx, type Ic } fr
 import { SortableList } from './dnd'
 import { MentionBanner, MentionInfo, QuoteBanner } from './Mention'
 import { Notice } from './Extra'
+import { ToolAccessButton, ToolApprovalPrompt } from './ToolAccess'
 import { dictationAvailable, startDictation, stopSpeaking, normVoice, type Dictation } from '../voice'
 import { getPromptHistory, pushPromptHistory } from '../promptHistory'
 import { quoteForSend } from '../quote'
@@ -309,14 +310,14 @@ export function Composer({ cfg, quote, onClearQuote }: { cfg: (t: string) => voi
   const tw = v.match(/(?:^|\s)(@\w*)$/)?.[1]
   const menu: { k: string; icon: Ic; label: string; hint: string; pick: () => void }[] | null = /^\/\S*$/.test(v) && featOn(s, 'commands')
     ? s.cmds.filter((c) => c.on && c.name.startsWith(v.slice(1))).map((c) => ({ k: c.id, icon: CI[c.in], label: '/' + c.name, hint: `${c.desc || c.in}${c.args ? ` · /${c.name} ${c.args}` : ''}`, pick: () => s.patch({ draft: '/' + c.name + ' ' }) }))
-    : tw && featOn(s, 'tools')
+    : tw && featOn(s, 'tools') && s.toolMode !== 'off'
       ? [
         ...orderTools(s.tools).filter((t) => t[3].startsWith(tw.toLowerCase())).map((t) => ({ k: t[0], icon: t[2], label: t[3].split('(')[0], hint: s.tools[t[0]] ? t[4] : 'Off. Enable in Settings → Tools', pick: () => s.patch({ draft: v.slice(0, v.length - tw.length) + '@' + t[0] + (/^(calc|count|json|base64|search|fetch_page|random|hash)$/.test(t[0]) ? '(' : ' ') }) })),
         ...('@research'.startsWith(tw.toLowerCase()) ? [{ k: 'deep_research', icon: BookOpen as Ic, label: '@research', hint: 'Start deep research: pick a depth, review the plan, then run', pick: () => s.patch({ draft: v.slice(0, v.length - tw.length) + '@research(' }) }] : []),
       ]
       : null
   const hl = Math.min(hi, Math.max((menu?.length ?? 1) - 1, 0))
-  const segs = useMemo(() => tokenizeMentions(v, { cmds: s.cmds, tools: s.tools, commandsOn: featOn(s, 'commands'), toolsOn: featOn(s, 'tools') }), [v, s.cmds, s.tools, s.features])
+  const segs = useMemo(() => tokenizeMentions(v, { cmds: s.cmds, tools: s.tools, commandsOn: featOn(s, 'commands'), toolsOn: featOn(s, 'tools') && s.toolMode !== 'off' }), [v, s.cmds, s.tools, s.features, s.toolMode])
   const pills = useMemo(() => mentionsOf(segs).filter(isPill), [segs])
   const typed = useMemo(() => bannerOf(v, segs), [v, segs])
   // Banner reflects a pre-send state only (armed/typed mentions). A sent
@@ -583,9 +584,10 @@ export function Composer({ cfg, quote, onClearQuote }: { cfg: (t: string) => voi
     <div className="w-full self-center">
       <div className="mx-auto w-full" style={{ maxWidth: composerWidth(s.prefs.chatWidth), paddingLeft: 'var(--ui-chat-pad-x)', paddingRight: 'var(--ui-chat-pad-x)' }}>
       <Notice cfg={cfg} />
+      <ToolApprovalPrompt chatId={s.chat} />
       <div ref={box} style={{ padding: 'var(--ui-composer-pad)', '--glass-blur': `${s.prefs.glassBlur ?? 14}px`, '--glass-opacity': `${s.prefs.glassOpacity ?? 80}%` } as CSSProperties} className={cx('composer-shell relative rounded-2xl transition-colors', s.prefs.glassComposer !== false ? 'glass-composer border border-hov hover:border-bor focus-within:border-bor shadow-lg shadow-black/10' : 'edge-border bg-surf hover:border-bor focus-within:border-bor')} data-lit={menusOpen || listening || typing ? '1' : undefined} onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); add(e.dataTransfer.files) }}>
         {quote && <QuoteBanner text={quote} onDismiss={() => { onClearQuote?.(); ta.current?.focus() }} />}
-        {banner && <MentionBanner kind={banner} onDismiss={dismissBanner} warning={banner === 'search' && !searchEnabled ? 'Web search is off.' : undefined} onEnable={banner === 'search' && !searchEnabled ? () => { s.patch({ features: { ...s.features, tools: true }, tools: { ...s.tools, search: true } }) } : undefined} />}
+        {banner && <MentionBanner kind={banner} onDismiss={dismissBanner} warning={banner === 'search' && !searchEnabled ? 'Web search is off.' : undefined} onEnable={banner === 'search' && !searchEnabled ? () => { s.patch({ features: { ...s.features, tools: true }, tools: { ...s.tools, search: true }, toolMode: 'full' }) } : undefined} />}
         {menu && !menuOff && (
           <Menu className="absolute inset-x-0 bottom-full mb-2">
             {menu.length ? menu.map((o, i) => (
@@ -818,6 +820,7 @@ export function Composer({ cfg, quote, onClearQuote }: { cfg: (t: string) => voi
             </button>
             )
           }}>{(close) => <ModelMenu close={close} cfg={cfg} />}</Pop>
+          <ToolAccessButton cfg={cfg} />
           {featOn(s, 'prompts') && <Pop up onOpenChange={setMenusOpen} trigger={(o) => (
             <button className={chip}><ScrollText size={16} /><span className="max-w-20 truncate sm:max-w-32">{pr ? pr.name : 'No prompt'}</span><ChevronRight size={14} className={cx('transition-transform', o && 'rotate-90')} /></button>
           )}>

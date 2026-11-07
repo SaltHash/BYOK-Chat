@@ -5,6 +5,7 @@ import { modelsOf, usable } from './models'
 import { qualityPrompt, type GlobalPrompt } from './flair'
 import { applyPromptVars, dateContext } from './promptVars'
 import type { Ep, Pl, Cmd, Msg, Notice, FeatureId } from './store'
+import type { ToolMode } from './toolApprovals'
 
 export const splitEntry = (ref: string) => {
   const i = ref.indexOf('::')
@@ -18,6 +19,8 @@ type PlanState = {
   globalPrompt: GlobalPrompt
   features?: Record<FeatureId, boolean>
   tools: Record<string, boolean>
+  /** Full/standard/restricted/off; off must not advertise tools to the model. */
+  toolMode?: ToolMode
   skills: unknown
 }
 
@@ -68,7 +71,7 @@ export function planRequest(s: PlanState, um: Msg, defaultFeatures: Record<Featu
   // The date context rides along with every prompt so the model always knows
   // which day it is, even when the user wrote no prompt at all.
   const baseSys = [dateContext(), globalSys, scoped].filter(Boolean).join('\n\n')
-  const enabledTools = F.tools ? TOOLS.filter(([name]) => s.tools[name] === true).map(([name]) => name) : []
+  const enabledTools = F.tools && s.toolMode !== 'off' ? TOOLS.filter(([name]) => s.tools[name] === true).map(([name]) => name) : []
   const widgetTools = enabledTools.some((name) => name === 'prompt_chip' || name === 'inline_poll')
   const widgetSys = widgetTools ? 'Follow-up chips and choice cards are rendered by the interface after your reply. Never mention them in your prose, never say that you added follow-up options, and never tell the user to click or fill them.' : ''
   const toolSys = enabledTools.length ? `${baseSys}${baseSys ? '\n\n' : ''}You may use the enabled tools when needed to answer the user. Call a tool for requests that need its actual result, then base your answer on the returned result.${widgetSys ? ` ${widgetSys}` : ''}` : baseSys

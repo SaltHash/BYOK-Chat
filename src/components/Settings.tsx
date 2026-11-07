@@ -6,11 +6,13 @@ import { normSkills, resolveSkill, validateCustomSkill, enabledSkills, BUILTIN_S
 import { findDuplicatePairs, mergeMemory } from '../recall'
 import { TOOL_REGISTRY, can, stream } from '../engine'
 import { CI, TOOLS, WIDGETS, KEYS, orderTools } from '../meta'
-import { SETTINGS_TABS, SETTINGS_GROUPS, searchSettings, splitSettingTarget, settingDomId } from '../settingsCatalog'
+import { SETTINGS_TABS, SETTINGS_GROUPS, visibleTabs, searchSettings, splitSettingTarget, settingDomId } from '../settingsCatalog'
 import { PROMPT_QUALITIES, type GlobalPrompt } from '../flair'
 import { PROMPT_VARS } from '../promptVars'
 import { DataTab, KeysTab, TestRow, TestAllEndpoints } from './Extra'
+import { ToolAccessCard } from './ToolAccess'
 import { Btn, Field, Input, Area, Sel, SearchSelect, Toggle, Seg, RangeSlider, Checkbox, HelpTip, Modal, Surface, Chip, Item, cx, useEscapeClose, type Ic } from './ui'
+import { Anchor, Panel, Section } from './settingsPrimitives'
 import { SortableList, useFlipAnimate, type SortHandleProps, type SortItemApi } from './dnd'
 import { fetchModelCatalogCached, clearCatalogCache, prefetchModelCatalog, fetchModelProviders, filterCatalogByEndpoint, prioritizeProviderRows, discoverEndpointModels, clearModelDiscoveryCache, type CatalogEntry, type CatalogProvider, type CatalogSource } from '../catalog'
 import { resolveProvider } from '../providerRegistry'
@@ -29,19 +31,6 @@ import { ColorPicker } from './ColorPicker'
 import { UsageStats } from './UsageStats'
 
 const TABS = SETTINGS_TABS
-/** Tabs hidden while their owning feature is disabled. */
-export const visibleTabs = (features?: Record<FeatureId, boolean>) => {
-  const hidden = new Set<string>()
-  for (const [f, tabs] of Object.entries(FEATURE_TABS)) {
-    if (!featOn({ features }, f as FeatureId)) for (const t of tabs as string[]) hidden.add(t)
-  }
-  return SETTINGS_TABS.filter(([k]) => !hidden.has(k))
-}
-/** Addressable wrapper: renders id="setting-<anchor>" so the palette can
- *  deep-link to an individual setting. Unknown anchors still open the tab. */
-export function Anchor({ id, children }: { id: string; children: ReactNode }) {
-  return <div id={settingDomId(id)} data-anchor={id} className="scroll-mt-6">{children}</div>
-}
 /** Briefly highlight a deep-linked section after scrolling to it. */
 export function flashAnchor(anchor: string) {
   try {
@@ -116,62 +105,6 @@ function AddEndpointSplit({ onAdd }: { onAdd: (type: 'openai' | 'anthropic') => 
           <Item icon={ScrollText} onClick={() => pick('anthropic')} sub="Anthropic Messages API shape">Anthropic-compatible</Item>
         </div>
       )}
-    </div>
-  )
-}
-
-const INFO: Record<string, string> = {
-  features: 'Turn whole features on or off. A disabled feature is hidden everywhere and is never used by the AI or the app until you turn it back on.',
-  library: 'Choose which shortcuts appear in the sidebar library.',
-  eps: 'Model APIs you connect with your own key. Add several, disable any, and test each one.',
-  prompts: 'Reusable system prompts. Pick one from the prompt menu under the chat box to override a playlist prompt. A global system prompt can also apply to every message in every chat.',
-  skills: 'Extra instructions the AI can use for specific tasks. Turn on the ones you want available.',
-  pls: 'Ordered lists of models from your endpoints. A request tries each model from top to bottom and stops at the first that succeeds. An optional classifier model picks one entry first.',
-  cmds: 'Slash commands apply a system prompt and template to a typed input and run on the first endpoint that accepts that input type.',
-  tools: 'Model tools such as date, calculator, and web search. Only enabled tools are sent to the provider.',
-  mcp: 'External tool servers speaking the Model Context Protocol. Connect a server, load its tools, and every enabled server\u2019s tools join the normal tool loop. URLs and headers stay in this browser.',
-  voice: 'Dictate messages with the microphone and have replies read aloud. Both use the browser\u2019s own speech features, with the language and speed you choose.',
-  memory: 'Optional local memory. When enabled, the memory tool summarizes durable details and adds selected memories to future requests.',
-  widgets: 'Optional panels beside the chat. Widgets are off by default; enable them here and drag the grip in the panel to rearrange them.',
-  stats: 'Windowed usage dashboard built from every saved reply, including replies from temporary, archived and deleted chats: cost, tokens, models and recent attempts. The lifetime counters at the bottom are separate all-time totals that survive deleting chats.',
-  keys: 'Click Change, then press the keys you want. Shortcuts need Ctrl/Cmd or Alt so they never fire while you type.',
-  look: 'Theme, display options, and auto-generated chat names settings.',
-  data: 'Export or import your setup. Exports leave API keys out unless you include them.',
-  adv: 'Debugging aids for understanding what the model sees and does. Everything here is off by default; enable the Advanced feature to use it.',
-}
-
-/** A titled group of related settings inside a tab. Sections give every
- *  settings page the same shape: a header, then the settings that belong
- *  together. */
-export function Section({ title, desc, children }: { title: string; desc?: string; children: ReactNode }) {
-  return (
-    <section className="space-y-3">
-      <div className="border-b border-bor pb-1.5">
-        <h3 className="text-sm font-semibold tracking-wide text-tx">{title}</h3>
-        {desc && <p className="mt-0.5 text-xs text-mu">{desc}</p>}
-      </div>
-      {children}
-    </section>
-  )
-}
-
-export function Panel({ id, k, n, add, children }: { id: string; k?: Kind; n?: number; add?: string; children: ReactNode }) {
-  const a = useS((s) => s.add)
-  const t = TABS.find((x) => x[0] === id)!
-  const I = t[2]
-  return (
-    <div className="space-y-5">
-      <div className="flex items-start gap-3 pr-10">
-        <div className="flex-1">
-          <h2 className="flex items-center gap-2 text-lg font-semibold"><I size={20} className="text-ac" />{t[1]}</h2>
-          <p className="mt-1 text-sm text-mu">{INFO[id]}</p>
-        </div>
-        {k && <Btn v="solid" icon={Plus} onClick={() => a(k)}>{add}</Btn>}
-      </div>
-      <div className="space-y-3">
-        {n === 0 && <p className="rounded-xl bg-surf p-6 text-center text-sm text-mu">{id === 'eps' ? 'No endpoints yet. Press Add endpoint, choose a provider preset, paste your API key, enter the model id, then press Test connection.' : 'Nothing here yet. Use the button above to add one.'}</p>}
-        {children}
-      </div>
     </div>
   )
 }
@@ -1194,6 +1127,10 @@ function ImageGenCard() {
             <Sel value={String(g.count)} set={(v) => set({ count: Number(v) })} opts={[['1', '1'], ['2', '2'], ['3', '3'], ['4', '4']]} />
           </Field>
         </div>
+        <div className="flex items-center justify-between gap-3 rounded-lg bg-bg p-2.5">
+          <div className="min-w-0"><div className="text-sm font-medium">Require approval</div><div className="text-xs text-mu">In Standard access, pause before generating an image.</div></div>
+          <Toggle on={!!s.toolApproval.generate_image} set={(v) => s.patch({ toolApproval: { ...s.toolApproval, generate_image: v } })} label="Require approval for image generation" />
+        </div>
         <div className="flex justify-end"><Btn v="soft" icon={RotateCcw} onClick={() => s.patch({ imageGen: { ...BLANK_IMAGE_GEN, on: g.on } })}>Reset sizes and endpoint</Btn></div>
       </Card>
     </Anchor>
@@ -1240,6 +1177,10 @@ function CodeRunCard() {
           </Anchor>
           <p role="note" className="rounded-lg bg-bg px-3 py-2 text-xs text-mu">Python runs locally, but its runtime can reach the network through its JavaScript bridge. Only keep Python enabled if you trust code the model writes. Pyodide URL changes apply to the next run.</p>
         </>}
+        <div className="flex items-center justify-between gap-3 rounded-lg bg-bg p-2.5">
+          <div className="min-w-0"><div className="text-sm font-medium">Require approval</div><div className="text-xs text-mu">In Standard access, pause before running a snippet.</div></div>
+          <Toggle on={!!s.toolApproval.run_code} set={(v) => s.patch({ toolApproval: { ...s.toolApproval, run_code: v } })} label="Require approval for code execution" />
+        </div>
         <div className="flex justify-end"><Btn v="soft" icon={RotateCcw} onClick={() => s.patch({ codeRun: { ...BLANK_CODE_RUN, on: c.on } })}>Reset limits</Btn></div>
       </Card>
     </Anchor>
@@ -1264,6 +1205,7 @@ function Tools() {
   const s = useSConfig()
   const [ask, setAsk] = useState<string | null>(null)
   const [askAlways, setAskAlways] = useState(false)
+  const [askApprove, setAskApprove] = useState(true)
   const [showSearchKey, setShowSearchKey] = useState(false)
   const [showReaderKey, setShowReaderKey] = useState(false)
   const [health, setHealth] = useState<{ searchConfigured?: boolean; apiProviders?: Record<string, { label: string; configured: boolean; needsZone?: boolean; optionalKey?: boolean }> } | null>(null)
@@ -1329,11 +1271,16 @@ function Tools() {
     if (!v || consent || !DEVICE_TOOLS.has(k)) { setTool(k, v); return }
     rememberScroll(k)
     setAskAlways(false)
+    setAskApprove(s.toolApproval[k] ?? true)
     setAsk(k)
   }
   const allowTool = (k: string, always: boolean) => {
     rememberScroll(k)
-    s.patch({ tools: { ...s.tools, [k]: true }, ...(always ? { toolConsent: true } : {}) })
+    s.patch({
+      tools: { ...s.tools, [k]: true },
+      toolApproval: { ...s.toolApproval, [k]: askApprove },
+      ...(always ? { toolConsent: true } : {}),
+    })
     setAsk(null)
     setAskAlways(false)
   }
@@ -1353,7 +1300,8 @@ function Tools() {
   }, [layoutKey])
   return (
     <Panel id="tools">
-      <Section title="Execution" desc="How many model → tool rounds a single reply may run, and the extra capabilities the model can call.">
+      <Section title="Execution" desc="How many model → tool rounds a single reply may run, the access level, and the extra capabilities the model can call.">
+      <ToolAccessCard />
       <ToolLimitCard />
       <CodeRunCard />
       </Section>
@@ -1383,6 +1331,10 @@ function Tools() {
         }>
           <p className="text-sm">{d}</p>
           <p className="text-sm text-mu">Permission: {p}</p>
+          <div className="flex items-center justify-between gap-3 rounded-lg bg-bg p-2.5">
+            <div className="min-w-0"><div className="text-sm font-medium">Require approval</div><div className="text-xs text-mu">In Standard access, pause before this tool runs. Full access ignores this switch; Restricted asks for every tool.</div></div>
+            <Toggle on={!!s.toolApproval[k]} set={(v) => s.patch({ toolApproval: { ...s.toolApproval, [k]: v } })} label={`Require approval for ${n}`} />
+          </div>
           {k === 'workspace_upsert' && <Anchor id="workspace-view"><div className="space-y-3 rounded-xl bg-bg p-3">
             <div className="flex items-center justify-between gap-3"><div><div className="text-sm font-medium">Default view for workspace tiles</div><div className="text-xs text-mu">Pinned shows the revision created by each message. Latest shows the most recent revision with a dropdown to go back.</div></div><Seg v={s.workspacePrefs?.defaultView ?? 'pinned'} set={(defaultView) => s.patch({ workspacePrefs: { ...s.workspacePrefs, defaultView } })} opts={[['pinned', 'Pinned'], ['latest', 'Latest']]} /></div>
             <div className="flex items-center justify-between gap-3"><div><div className="text-sm font-medium">Auto-open workspace panel</div><div className="text-xs text-mu">Automatically open the side panel when the AI starts writing files.</div></div><Toggle on={s.workspacePrefs?.autoOpen ?? true} set={(autoOpen) => s.patch({ workspacePrefs: { ...s.workspacePrefs, autoOpen } })} /></div>
@@ -1561,6 +1513,10 @@ function Tools() {
           <div className="modal-panel w-full max-w-sm space-y-4 rounded-2xl bg-bg p-5">
             <div className="flex items-center gap-2 font-semibold"><ShieldCheck size={18} className="text-ac" />Enable {asked[1]}?</div>
             <p className="text-sm text-mu">{asked[5]}</p>
+            <label className="flex items-start gap-3 rounded-xl bg-surf p-3 text-sm">
+              <input type="checkbox" checked={askApprove} onChange={(e) => setAskApprove(e.target.checked)} className="mt-0.5 size-4 accent-[var(--accent)]" />
+              <span><span className="font-medium">Require approval before each call</span><span className="mt-0.5 block text-xs text-mu">Takes effect in Standard access. The tool is enabled now, but the model must ask before it runs.</span></span>
+            </label>
             <label className="flex items-start gap-3 rounded-xl bg-surf p-3 text-sm">
               <input type="checkbox" checked={askAlways} onChange={(e) => setAskAlways(e.target.checked)} className="mt-0.5 size-4 accent-[var(--accent)]" />
               <span><span className="font-medium">Do not show again</span><span className="mt-0.5 block text-xs text-mu">Skips this prompt for Location, Clipboard, Date and Date and time. Turn it back on with Ask before enabling device tools.</span></span>
@@ -1789,6 +1745,10 @@ function MemoryTab() {
     <Anchor id="memory-tool">
     <div className="rounded-xl bg-surf p-4 space-y-3">
       <div className="flex items-center justify-between gap-3"><div><div className="font-medium">Memory tool</div><div className="text-sm text-mu">Disabled by default. Memories stay in this browser and are sent to your selected model when recalled.</div></div><Toggle on={mp.enabled} set={(enabled) => setPrefs({ enabled })} /></div>
+      <div className="flex items-center justify-between gap-3 border-t border-bor pt-3">
+        <div className="min-w-0"><div className="text-sm font-medium">Require approval</div><div className="text-xs text-mu">In Standard access, pause before the model stores a memory.</div></div>
+        <Toggle on={!!s.toolApproval.memory} set={(v) => s.patch({ toolApproval: { ...s.toolApproval, memory: v } })} label="Require approval for memory writes" />
+      </div>
       <Anchor id="memory-mode">
       <Field label="Memory mode" hint="Intentional stores explicit remember requests. Balanced also stores important disclosures. Aggressive includes smaller details and preferences.">
         <Seg v={mp.intent} set={(intent) => setPrefs({ intent })} opts={[["intentional", "Intentional"], ["balanced", "Balanced"], ["aggressive", "Aggressive"]]} />

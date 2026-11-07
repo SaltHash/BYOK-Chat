@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { lazy, Suspense, useEffect, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import { useS, exportChat, featOn } from './store'
 import { combo, rec } from './engine'
@@ -8,11 +8,15 @@ import { useFontCss, sanitizeFontName } from './fonts'
 import { nextThemePatch, stepModelSelection, stepPromptSelection } from './selection'
 import { Sidebar } from './components/Sidebar'
 import { Chat } from './components/Chat'
-import { Settings } from './components/Settings'
-import { Palette } from './components/Palette'
-import { Widgets } from './components/Widgets'
 import { Welcome } from './components/Welcome'
-import { ShareView } from './components/ShareView'
+
+/* Settings, the command palette, the widget rail and the share view are all
+ * opened on demand. Loading them lazily keeps their editors, charts and share
+ * reader off the first-paint path; the chat shell and composer stay eager. */
+const Settings = lazy(() => import('./components/Settings').then((m) => ({ default: m.Settings })))
+const Palette = lazy(() => import('./components/Palette').then((m) => ({ default: m.Palette })))
+const Widgets = lazy(() => import('./components/Widgets').then((m) => ({ default: m.Widgets })))
+const ShareView = lazy(() => import('./components/ShareView').then((m) => ({ default: m.ShareView })))
 import { shareIdFromHash, shareHash, updateShare } from './share'
 import { getStorageWarning, subscribeStorageWarning } from './persistence'
 import { Btn } from './components/ui'
@@ -174,9 +178,17 @@ export default function App() {
     window.addEventListener('keydown', f)
     return () => window.removeEventListener('keydown', f)
   }, [])
-  if (shareId) return <ShareView id={shareId} />
+  if (shareId) return (
+    <Suspense fallback={<div role="status" className="grid h-dvh place-items-center bg-bg text-sm text-mu">Loading shared chat…</div>}>
+      <ShareView id={shareId} />
+    </Suspense>
+  )
   return (
     <>
+      <a
+        href="#conversation"
+        className="sr-only focus:not-sr-only focus:fixed focus:left-3 focus:top-3 focus:z-[60] focus:rounded-lg focus:border focus:border-bor focus:bg-surf focus:px-3 focus:py-2 focus:text-sm focus:text-tx focus:shadow-lg"
+      >Skip to conversation</a>
       <div className="relative z-10 flex h-dvh overflow-hidden">
       {storageWarning && <div role="alert" className="fixed inset-x-3 top-3 z-50 flex flex-wrap items-center gap-2 rounded-xl border border-er bg-bg p-3 text-sm shadow-lg">
         <span className="min-w-0 flex-1">{storageWarning}</span>
@@ -191,11 +203,17 @@ export default function App() {
         <>
           <div className="fixed inset-0 z-10 bg-black/50 lg:hidden" onClick={() => useS.getState().patch({ rail: false })} />
           <div role="separator" aria-orientation="vertical" aria-label="Resize widget panel" onPointerDown={resize('widgetWidth', true)} className="shell-resizer hidden w-1 shrink-0 cursor-col-resize lg:block" />
-          <Widgets width={clampWidgetWidth(prefs.widgetWidth)} />
+          <Suspense fallback={<div className="hidden w-80 shrink-0 lg:block" aria-hidden="true" />}>
+            <Widgets width={clampWidgetWidth(prefs.widgetWidth)} />
+          </Suspense>
         </>
       )}
-      {pal && <Palette close={() => setPal(false)} cfg={setCfg} toggleSide={() => setSide((v) => !v)} />}
-      {cfg && <Settings tab={cfg} setTab={setCfg} />}
+      {pal && <Suspense fallback={null}><Palette close={() => setPal(false)} cfg={setCfg} toggleSide={() => setSide((v) => !v)} /></Suspense>}
+      {cfg && (
+        <Suspense fallback={<div role="status" className="fixed inset-0 z-40 grid place-items-center bg-bg/70 text-sm text-mu backdrop-blur-sm">Loading settings…</div>}>
+          <Settings tab={cfg} setTab={setCfg} />
+        </Suspense>
+      )}
       {!setupDone && <Welcome addEndpoint={() => { const s = useS.getState(); if (!s.eps.length) s.add('eps'); setCfg('eps') }} close={() => {}} />}
       </div>
     </>
