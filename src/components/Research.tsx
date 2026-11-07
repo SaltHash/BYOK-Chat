@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { BookOpen, Check, Copy, Download, FileText, Globe, ListFilter, ListOrdered, Pencil, Play, RotateCcw, Sparkles, Square, X } from 'lucide-react'
 import { useS, useLive, type Msg } from '../store'
-import { PLAN_INTRO, RESEARCH_TIERS, agentRoundsUsed, agentSources, countedSteps, dedupTrace, reasoningBlocks, tierOf, type ResearchAgent, type ResearchPlan, type ResearchPlanStep, type ResearchTierId } from '../research'
+import { PLAN_INTRO, RESEARCH_TIERS, agentRoundsUsed, agentSources, countedSteps, dedupTrace, reasoningBlocks, researchProgress, tierOf, type ResearchAgent, type ResearchPlan, type ResearchPlanStep, type ResearchTierId } from '../research'
 import { claimForCitation, collectMessageSources, linkifyCitations, mergeSources, stripCitations } from '../citations'
 import { Md } from './Md'
 import { ArtifactCard, ArtifactList, artifactBlocks } from './Artifact'
@@ -452,7 +452,6 @@ export function ResearchProgressCard({ msg }: { msg: Msg }) {
   // the chat never shows an unexplained empty gap.
   if (!rs || (rs.status !== 'running' && rs.status !== 'stopped' && rs.status !== 'error')) return null
   if (rs.status !== 'running' && !rs.steps.length && !rs.error && rs.status !== 'stopped') return null
-  const done = rs.steps.filter((s) => s.state === 'done').length
   const tier = tierOf(rs.tier ?? 'standard')
   const activeFocus = (rs.steer ?? '').trim()
   const usedSearches = countedSteps(rs.steps, 'search')
@@ -465,12 +464,12 @@ export function ResearchProgressCard({ msg }: { msg: Msg }) {
   const title = rs.status === 'running' ? `Researching · ${tier.label}` : rs.status === 'stopped' ? 'Research stopped' : 'Research needs attention'
   const subtitle = rs.status !== 'running'
     ? 'The report panel keeps what was gathered'
-    : rs.steps.length ? `${done} of ${rs.steps.length} steps done` : 'Gathering evidence'
-  const runPct = rs.steps.length ? (done / rs.steps.length) * 100 : 6
+    : rs.steps.length ? `Overall progress · ${Math.round(researchProgress(rs))}%` : 'Gathering evidence'
+  const runPct = researchProgress(rs)
   return (
     <section aria-label="Deep research progress" aria-live="polite" className="max-w-xl overflow-hidden rounded-xl border border-bor bg-surf">
-      <div aria-hidden="true" className="h-0.5 bg-hov">
-        <div className="h-full bg-ac transition-all" style={{ width: `${Math.max(2, Math.min(100, runPct))}%` }} />
+      <div role="progressbar" aria-label="Overall research progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(runPct)} className="h-0.5 bg-hov">
+        <div aria-hidden="true" className="h-full bg-ac transition-all" style={{ width: `${Math.max(2, Math.min(100, runPct))}%` }} />
       </div>
       <header className="flex items-start gap-2 border-b border-bor px-3 py-2">
         <ListOrdered size={15} className="mt-0.5 shrink-0 text-ac" />

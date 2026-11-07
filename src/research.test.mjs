@@ -371,6 +371,19 @@ test('a usage estimate scales with the tier and only costs when priced', () => {
   assert.ok(Math.abs(thorough.costUsd - (thorough.inputTokens * 1 + thorough.outputTokens * 2) / 1e6) < 1e-9)
 })
 
+test('research progress uses the run-wide estimate and never shrinks when steps append', () => {
+  const estimate = r.estimateResearchUsage(r.tierOf('standard'))
+  const done = { id: 's1', kind: 'search', label: 'Search 1', state: 'done' }
+  const running = { id: 's2', kind: 'read', label: 'Read 1', state: 'running' }
+  const first = r.researchProgress({ tier: 'standard', estimate, steps: [done] })
+  const same = r.researchProgress({ tier: 'standard', estimate, steps: [done, running] })
+  const next = r.researchProgress({ tier: 'standard', estimate, steps: [done, { ...running, state: 'done' }] })
+  assert.equal(first, 100 / (estimate.searches + estimate.reads))
+  assert.equal(same, first, 'the target is fixed when the run starts')
+  assert.ok(next > first)
+  assert.equal(r.researchProgress({ tier: 'standard', steps: [] }), 0)
+})
+
 test('a reply that is JSON but not a plan is worth one repair pass', () => {
   const step = (kind, label) => ({ id: label, kind, label, items: ['(1) a'] })
   assert.equal(r.planNeedsRepair(null), true)

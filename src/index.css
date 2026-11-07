@@ -241,12 +241,17 @@ html[data-codewrap] .code-lines .code-line > code { flex: 1 1 auto; min-width: 0
    Flat mode stays fully opaque and never enters this block. */
 html[data-bg-image="on"]:not([data-flat]) {
   --wall-tint: 0%;
-  --wall-panel-tint: calc(8% + var(--wall-tint) * 0.12);
-  --wall-panel-soft: calc(6% + var(--wall-tint) * 0.09);
-  --glass-chat: color-mix(in srgb, var(--ac) calc(4% + var(--wall-tint) * 0.06), color-mix(in srgb, var(--bg) 54%, transparent));
-  --glass-side: color-mix(in srgb, var(--ac) calc(3% + var(--wall-tint) * 0.05), color-mix(in srgb, var(--side) 62%, transparent));
+  --wall-strength: 0;
+  /* The structural panes and their background-colour insets scale with tint,
+     so 0% leaves the photo untouched by the background or sidebar colour (and
+     removes their added blur). Menus, the composer and hover feedback stay
+     readable. */
+  --wall-panel-tint: calc(var(--wall-tint) * 0.20);
+  --wall-panel-soft: calc(var(--wall-tint) * 0.15);
+  --glass-chat: color-mix(in srgb, var(--ac) calc(var(--wall-tint) * 0.10), color-mix(in srgb, var(--bg) calc(var(--wall-tint) * 0.54), transparent));
+  --glass-side: color-mix(in srgb, var(--ac) calc(var(--wall-tint) * 0.08), color-mix(in srgb, var(--side) calc(var(--wall-tint) * 0.62), transparent));
   --glass-surface: color-mix(in srgb, var(--ac) calc(5% + var(--wall-tint) * 0.07), color-mix(in srgb, var(--surf) 48%, transparent));
-  --glass-inset: color-mix(in srgb, var(--ac) calc(3% + var(--wall-tint) * 0.05), color-mix(in srgb, var(--bg) 42%, transparent));
+  --glass-inset: color-mix(in srgb, var(--ac) calc(var(--wall-tint) * 0.08), color-mix(in srgb, var(--bg) calc(var(--wall-tint) * 0.42), transparent));
   --glass-hover: color-mix(in srgb, var(--ac) calc(7% + var(--wall-tint) * 0.08), color-mix(in srgb, var(--hov) 54%, transparent));
   --glass-menu: color-mix(in srgb, var(--ac) calc(8% + var(--wall-tint) * 0.08), color-mix(in srgb, var(--hov) 74%, transparent));
   --panel-bg: color-mix(in srgb, var(--ac) var(--wall-panel-tint), var(--bg));
@@ -276,15 +281,15 @@ html[data-bg-image="on"]:not([data-flat]) {
 html[data-bg-image="on"] body { background: transparent; }
 html[data-bg-image="on"]:not([data-flat]) .chat-surface {
   background-color: var(--glass-chat);
-  -webkit-backdrop-filter: blur(24px) saturate(145%);
-  backdrop-filter: blur(24px) saturate(145%);
+  -webkit-backdrop-filter: blur(calc(var(--wall-strength, 0) * 24px)) saturate(calc(1 + var(--wall-strength, 0) * 0.45));
+  backdrop-filter: blur(calc(var(--wall-strength, 0) * 24px)) saturate(calc(1 + var(--wall-strength, 0) * 0.45));
 }
 html[data-bg-image="on"]:not([data-flat]) .side-shell,
 html[data-bg-image="on"]:not([data-flat]) .widgets-shell {
   background-color: var(--glass-side);
   border-color: color-mix(in srgb, var(--ac) 18%, var(--bor));
-  -webkit-backdrop-filter: blur(22px) saturate(140%);
-  backdrop-filter: blur(22px) saturate(140%);
+  -webkit-backdrop-filter: blur(calc(var(--wall-strength, 0) * 22px)) saturate(calc(1 + var(--wall-strength, 0) * 0.40));
+  backdrop-filter: blur(calc(var(--wall-strength, 0) * 22px)) saturate(calc(1 + var(--wall-strength, 0) * 0.40));
   box-shadow: inset 0 1px 0 rgb(255 255 255 / 5%);
 }
 html[data-bg-image="on"]:not([data-flat]) .panel-shell {

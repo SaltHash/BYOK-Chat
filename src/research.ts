@@ -514,6 +514,21 @@ export function estimateResearchUsage(tier: ResearchTier, price?: { input: numbe
   return { searches, reads, rounds: lead.rounds, inputTokens, outputTokens, costUsd }
 }
 
+/** Overall progress through the evidence volume the run projected when it
+ * started. The denominator is fixed, so appending another search or read can
+ * never make the top bar jump backwards. Failed attempts count as finished
+ * work, even though they do not consume the tier's budget. */
+export function researchProgress(rs: {
+  steps: ResearchStep[]
+  tier?: ResearchTierId | null
+  estimate?: ResearchUsageEstimate
+}): number {
+  const tier = tierOf(rs.tier ?? 'standard')
+  const target = Math.max(1, rs.estimate ? rs.estimate.searches + rs.estimate.reads : tier.maxSearches + tier.maxReads)
+  const finished = rs.steps.filter((s) => s.state !== 'running').length
+  return Math.max(0, Math.min(100, (finished / target) * 100))
+}
+
 /* ---- Prompts ---- */
 
 /** The fixed report sections, as [heading, description] pairs. Single source of

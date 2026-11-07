@@ -55,8 +55,14 @@ export function useThemeCss(opts: {
       if (colors) root.style.setProperty(`--${key}`, colors[key])
       else root.style.removeProperty(`--${key}`)
     }
-    if (opts.wallpaperAccent) root.style.setProperty('--wall-tint', `${Math.max(0, Math.min(100, opts.wallpaperTint ?? 0))}%`)
-    else root.style.removeProperty('--wall-tint')
+    if (opts.wallpaperAccent) {
+      const tint = Math.max(0, Math.min(100, opts.wallpaperTint ?? 0))
+      root.style.setProperty('--wall-tint', `${tint}%`)
+      root.style.setProperty('--wall-strength', String(tint / 100))
+    } else {
+      root.style.removeProperty('--wall-tint')
+      root.style.removeProperty('--wall-strength')
+    }
     if (colors) {
       const hex = colors.bg.slice(1)
       const luminance = hex.length === 6 ? (parseInt(hex.slice(0, 2), 16) * 0.299 + parseInt(hex.slice(2, 4), 16) * 0.587 + parseInt(hex.slice(4, 6), 16) * 0.114) : 40
