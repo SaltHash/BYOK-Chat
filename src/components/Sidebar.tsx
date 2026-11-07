@@ -132,6 +132,11 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
   const themeTriggerRef = useRef<HTMLSpanElement>(null)
   const themeMenuKeys = useMenuNav(!!themeMenu, themeMenuRef, () => setThemeMenu(null), () => themeTriggerRef.current?.querySelector('button')?.focus())
   const [projectId, setProjectId] = useState('')
+  const projectMenuRef = useRef<HTMLDivElement>(null)
+  const projectMenuKeys = useMenuNav(!!menu, projectMenuRef, () => setMenu(null), () => {
+    const row = Array.from(document.querySelectorAll<HTMLElement>('[data-chat-row]')).find((el) => el.dataset.chatRow === menu?.id)
+    row?.querySelector<HTMLButtonElement>('button[aria-label^="More actions"]')?.focus()
+  })
   const shiftHeld = useShiftHeld()
   const [newModal, setNewModal] = useState(false)
   // The temporary section shows only `prefs.tempShow` chats by default and is
@@ -696,9 +701,9 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
         </div>
       )}
       {menu && (
-        <div onMouseDown={(e) => e.stopPropagation()} style={{ left: Math.min(menu.x, Math.max(8, (typeof window !== 'undefined' ? window.innerWidth : 0) - 216)), top: Math.min(menu.y, Math.max(8, (typeof window !== 'undefined' ? window.innerHeight : 0) - (60 + (s.projects.length + 1) * 36))) }} className="menu-surface fixed z-40 w-52 rounded-xl bg-hov p-1.5">
-          <button onClick={() => { s.moveChat(menu.id, ''); setMenu(null) }} className={item}><FolderMinus size={16} className="text-mu" />No project</button>
-          {s.projects.map((f) => <button key={f.id} onClick={() => { s.moveChat(menu.id, f.id); setMenu(null) }} className={item}><Folder size={16} className="text-mu" /><span className="truncate">{f.name}</span></button>)}
+        <div ref={projectMenuRef} role="menu" aria-label="Move chat to a project" onMouseDown={(e) => e.stopPropagation()} onKeyDown={projectMenuKeys} style={{ left: Math.min(menu.x, Math.max(8, (typeof window !== 'undefined' ? window.innerWidth : 0) - 216)), top: Math.min(menu.y, Math.max(8, (typeof window !== 'undefined' ? window.innerHeight : 0) - (60 + (s.projects.length + 1) * 36))) }} className="menu-surface fixed z-40 w-52 rounded-xl bg-hov p-1.5">
+          <button role="menuitem" onClick={() => { s.moveChat(menu.id, ''); setMenu(null) }} className={item}><FolderMinus size={16} className="text-mu" />No project</button>
+          {s.projects.map((f) => <button key={f.id} role="menuitem" onClick={() => { s.moveChat(menu.id, f.id); setMenu(null) }} className={item}><Folder size={16} className="text-mu" /><span className="truncate">{f.name}</span></button>)}
           {!s.projects.length && <p className="px-2.5 py-2 text-xs text-mu">Create a project first with the project button.</p>}
         </div>
       )}
