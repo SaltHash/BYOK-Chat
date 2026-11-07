@@ -4,17 +4,20 @@ import assert from 'node:assert/strict'
 const {
   DEFAULT_BG_BLUR,
   DEFAULT_BG_IMAGE,
+  DEFAULT_BG_SATURATION,
   WALLPAPERS,
   isCustomBg,
   normBgBlur,
   normBgDim,
+  normBgSaturation,
   safeBgSource,
   wallpaperLabel,
   wallpaperThumb,
 } = await import('./background.ts')
 
-test('background blur and dim clamp to their supported ranges', () => {
+test('background blur, dim and saturation clamp to their supported ranges', () => {
   assert.equal(DEFAULT_BG_BLUR, 10)
+  assert.equal(DEFAULT_BG_SATURATION, 100)
   assert.equal(normBgBlur(-10), 0)
   assert.equal(normBgBlur(100.4), 100)
   assert.equal(normBgBlur(45.6), 46)
@@ -23,6 +26,10 @@ test('background blur and dim clamp to their supported ranges', () => {
   assert.equal(normBgDim(95.4), 95)
   assert.equal(normBgDim(120), 95)
   assert.equal(normBgDim(undefined), 0)
+  assert.equal(normBgSaturation(-1), 0)
+  assert.equal(normBgSaturation(149.6), 150)
+  assert.equal(normBgSaturation(240), 200)
+  assert.equal(normBgSaturation(undefined), 100)
 })
 
 test('only the bundled assets and local paths are valid background sources', () => {

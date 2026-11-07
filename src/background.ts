@@ -30,6 +30,7 @@ export const DEFAULT_BG_IMAGE = '/wallpapers/clay-banks-u27Rrbs9Dwc-unsplash.jpg
 const LEGACY_DEFAULT_BG_IMAGE = '/clay-banks-u27Rrbs9Dwc-unsplash.jpg'
 export const DEFAULT_BG_BLUR = 10
 export const DEFAULT_BG_DIM = 35
+export const DEFAULT_BG_SATURATION = 100
 export const BG_IMAGE_MAX_BYTES = 16 * 1024 * 1024
 export const BG_BLOB_PREFIX = 'background:'
 
@@ -54,6 +55,10 @@ export const normBgBlur = (value: unknown): number =>
 /** Dim is a whole percentage from 0 to 95, so the image never goes fully black. */
 export const normBgDim = (value: unknown): number =>
   typeof value === 'number' && Number.isFinite(value) ? Math.max(0, Math.min(95, Math.round(value))) : 0
+
+/** Saturation is a whole percentage from 0 (grayscale) to 200 (vivid). */
+export const normBgSaturation = (value: unknown): number =>
+  typeof value === 'number' && Number.isFinite(value) ? Math.max(0, Math.min(200, Math.round(value))) : 100
 
 /** Only the bundled assets or a path in this app. `//host` is not a local path. */
 export function safeBgSource(value: unknown): string {

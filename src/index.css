@@ -232,9 +232,17 @@ html[data-codewrap] .code-lines .code-line > code { flex: 1 1 auto; min-width: 0
   .cursor-col-resize, .cursor-row-resize { cursor: default; }
 }
 
-/* Optional image background. The layer sits behind the shell; the main
-   surfaces become slightly translucent only while the image is active, so the
-   conversation stays readable and flat mode remains fully opaque. */
+/* Optional image background. The layer sits behind the shell; every shell and
+   in-chat surface becomes a related translucent tint only while the image is
+   active, so the app reads as one glass composition. Menus, dialogs and
+   Settings stay opaque, and flat mode remains fully opaque. */
+html[data-bg-image="on"]:not([data-flat]) {
+  --glass-chat: color-mix(in srgb, var(--bg) 80%, transparent);
+  --glass-side: color-mix(in srgb, var(--side) 84%, transparent);
+  --glass-surface: color-mix(in srgb, var(--surf) 80%, transparent);
+  --glass-inset: color-mix(in srgb, var(--bg) 72%, transparent);
+  --glass-hover: color-mix(in srgb, var(--hov) 80%, transparent);
+}
 .app-backdrop {
   position: fixed;
   inset: 0;
@@ -254,18 +262,32 @@ html[data-codewrap] .code-lines .code-line > code { flex: 1 1 auto; min-width: 0
 .app-backdrop-dim { position: absolute; inset: 0; background: #000; }
 html[data-bg-image="on"] body { background: transparent; }
 html[data-bg-image="on"]:not([data-flat]) .chat-surface {
-  background-color: color-mix(in srgb, var(--bg) 80%, transparent);
+  background-color: var(--glass-chat);
 }
 html[data-bg-image="on"]:not([data-flat]) .side-shell,
 html[data-bg-image="on"]:not([data-flat]) .widgets-shell {
-  background-color: color-mix(in srgb, var(--side) 84%, transparent);
+  background-color: var(--glass-side);
 }
+
+/* The same tint continues through cards, inputs, message bubbles, code
+ * blocks, the composer and panel chrome. Menus and dialogs are deliberately
+ * excluded: they are floating reading surfaces and need a stable backdrop. */
+html[data-bg-image="on"]:not([data-flat]) :is(.chat-surface, .side-shell, .widgets-shell, .panel-shell) .bg-surf:not(.menu-surface):not(.modal-panel):not([role="dialog"]) {
+  background-color: var(--glass-surface);
+}
+html[data-bg-image="on"]:not([data-flat]) :is(.chat-surface, .side-shell, .widgets-shell, .panel-shell) .bg-bg:not(.menu-surface):not(.modal-panel):not([role="dialog"]) {
+  background-color: var(--glass-inset);
+}
+html[data-bg-image="on"]:not([data-flat]) :is(.chat-surface, .side-shell, .widgets-shell, .panel-shell) .bg-hov:not(.menu-surface):not(.modal-panel):not([role="dialog"]) {
+  background-color: var(--glass-hover);
+}
+
 /* The resize corridors sit between panes. Without their own surface the
  * wallpaper shows through at full strength as a bright stripe beside the
  * dimmed sidebar and chat, so they share the sidebar's tint and dim. */
 .shell-resizer { background-color: transparent; }
 html[data-bg-image="on"]:not([data-flat]) .shell-resizer {
-  background-color: color-mix(in srgb, var(--side) 84%, transparent);
+  background-color: var(--glass-side);
 }
 .shell-resizer:hover { background-color: color-mix(in srgb, var(--ac) 50%, transparent); }
 

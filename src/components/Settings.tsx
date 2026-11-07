@@ -25,7 +25,7 @@ import { normVoice, VOICE_LANGS, speak, stopSpeaking, speechAvailable, dictation
 import { DENSITIES, DENSITY_IDS, SPACING_LIMITS, STYLE_PRESETS, STYLE_PRESET_IDS, hasSpacingOverrides, resolveSpacing } from '../style'
 import { accentOnlyColors } from '../theme'
 import { USAGE_PERIODS } from '../usageStats'
-import { DEFAULT_BG_IMAGE, WALLPAPERS, deleteBackgroundImage, isCustomBg, normBgBlur, normBgDim, resolveBgImage, storeBackgroundFile, wallpaperLabel, wallpaperThumb } from '../background'
+import { WALLPAPERS, deleteBackgroundImage, isCustomBg, normBgBlur, normBgDim, normBgSaturation, storeBackgroundFile, wallpaperLabel, wallpaperThumb } from '../background'
 import { normCompactAt } from '../compaction'
 import { UsageStats } from './UsageStats'
 
@@ -1956,16 +1956,11 @@ function Look() {
   const bgOn = s.prefs.bgImageOn === true
   const bgBlur = normBgBlur(s.prefs.bgImageBlur)
   const bgDim = normBgDim(s.prefs.bgImageDim)
+  const bgSaturation = normBgSaturation(s.prefs.bgImageSaturation)
   const bgName = isCustomBg(s.prefs.bgImage) ? 'Custom image' : wallpaperLabel(s.prefs.bgImage)
-  const [bgPreview, setBgPreview] = useState(DEFAULT_BG_IMAGE)
   const [bgBusy, setBgBusy] = useState(false)
   const [bgError, setBgError] = useState('')
   const bgInput = useRef<HTMLInputElement>(null)
-  useEffect(() => {
-    let live = true
-    void resolveBgImage(s.prefs.bgImage).then((src) => { if (live) setBgPreview(src) }).catch(() => {})
-    return () => { live = false }
-  }, [s.prefs.bgImage])
   const setBg = (patch: Partial<typeof s.prefs>) => s.patch({ prefs: { ...s.prefs, ...patch } })
   const uploadBg = async (file?: File) => {
     if (!file) return
@@ -1985,7 +1980,6 @@ function Look() {
     useS.getState().patch({ prefs: { ...before, bgImage: src, bgImageOn: true } })
     void deleteBackgroundImage(before.bgImage)
   }
-  const resetBg = () => chooseBg(DEFAULT_BG_IMAGE)
   const row = (anchor: string, k: PrefToggle, t: string, d: string) => prefRow(s, anchor, k, t, d)
   return (
     <Panel id="look">
@@ -2092,21 +2086,16 @@ function Look() {
       {row('seasonal', 'seasonal', 'Seasonal touches', 'Show a festive greeting on holidays. Turn off to keep the greeting plain.')}
       {row('completion-cues', 'cues', 'Completion cues', 'A soft chime and a little confetti when deep research or a workspace update finishes.')}
       </Section>
-      <Section title="Background" desc="An optional image behind the app, with its own blur and dim.">
+      <Section title="Background" desc="An optional image behind the app, with its own tone controls.">
       <Anchor id="background-image">
       <Card icon={ImageIcon} title="Image background" sub={bgOn ? `On · ${bgName}` : `Off · ${bgName} ready`} muted={!bgOn} open0={bgOn} right={<Toggle on={bgOn} set={(bgImageOn) => setBg({ bgImageOn })} label="Image background" />}>
-        <div className="relative h-32 overflow-hidden rounded-xl border border-bor bg-bg">
-          <div className="absolute inset-0" style={{ backgroundImage: `url(${JSON.stringify(bgPreview)})`, backgroundPosition: 'center', backgroundSize: 'cover', filter: `blur(${bgBlur}px)` }} />
-          <div className="absolute inset-0 bg-black" style={{ opacity: bgDim / 100 }} />
-          <div className="absolute inset-x-0 bottom-0 flex items-center justify-between gap-2 bg-black/55 px-2.5 py-1.5 text-[11px] text-white">
-            <span>{bgName}</span>
-            <span>{bgBlur}px blur · {bgDim}% dim</span>
-          </div>
-        </div>
         <div className="space-y-2">
-          <div className="flex items-center justify-between gap-2 text-xs font-medium">
-            <span>Bundled wallpapers</span>
-            <span className="text-mu">{WALLPAPERS.length} photos</span>
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-xs font-medium">Wallpaper</span>
+            <div className="flex min-w-0 items-center gap-2">
+              <span className="truncate text-xs text-mu">{bgName}</span>
+              <Btn v="soft" sm icon={Upload} disabled={bgBusy} onClick={() => bgInput.current?.click()}>{bgBusy ? 'Reading…' : 'Upload'}</Btn>
+            </div>
           </div>
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
             {WALLPAPERS.map((wallpaper) => {
@@ -2121,20 +2110,22 @@ function Look() {
             })}
           </div>
         </div>
-        <p className="text-xs text-mu">Pick a bundled wallpaper or upload a PNG, JPEG, WebP, AVIF or GIF (up to 16 MB). Uploads stay on this device in the durable blob store; the picker uses small thumbnails while the full photo sits behind the app.</p>
+        <input ref={bgInput} type="file" accept="image/png,image/jpeg,image/webp,image/avif,image/gif" className="hidden" onChange={(e) => { const file = e.currentTarget.files?.[0]; e.currentTarget.value = ''; void uploadBg(file) }} />
+        <p className="text-xs text-mu">Click a photo to apply it instantly. Uploads stay on this device; the full image sits behind the app.</p>
         {s.prefs.reduceTransparency === true && <p className="text-xs text-c3">Reduce transparency is on, so the image stays hidden behind opaque surfaces. Turn that setting off to see the background.</p>}
-        <div className="flex flex-wrap gap-2">
-          <Btn v="soft" icon={Upload} disabled={bgBusy} onClick={() => bgInput.current?.click()}>{bgBusy ? 'Reading image…' : 'Upload image'}</Btn>
-          <Btn v="ghost" icon={RotateCcw} disabled={s.prefs.bgImage === DEFAULT_BG_IMAGE} onClick={resetBg}>Use default image</Btn>
-          <input ref={bgInput} type="file" accept="image/png,image/jpeg,image/webp,image/avif,image/gif" className="hidden" onChange={(e) => { const file = e.currentTarget.files?.[0]; e.currentTarget.value = ''; void uploadBg(file) }} />
-        </div>
         {bgError && <p role="alert" className="rounded-lg bg-er/10 px-3 py-2 text-xs text-er">{bgError}</p>}
-        <Anchor id="background-blur">
-          <Field label={`Blur · ${bgBlur}px`} hint="0–100 px. Blurring softens the photo behind the app without touching the conversation text."><RangeSlider label="Image background blur" min={0} max={100} step={1} value={bgBlur} set={(v) => setBg({ bgImageBlur: Math.round(v) })} className="w-full" /></Field>
-        </Anchor>
-        <Anchor id="background-dim">
-          <Field label={`Dim · ${bgDim}%`} hint="0–95%. A dark overlay keeps the background from competing with the interface; 95% leaves only a trace of the image."><RangeSlider label="Image background dim" min={0} max={95} step={1} value={bgDim} set={(v) => setBg({ bgImageDim: Math.round(v) })} className="w-full" /></Field>
-        </Anchor>
+        <p className="text-xs text-mu">Blur, saturation and dim affect only the photo; the conversation stays crisp.</p>
+        <div className="grid gap-3 sm:grid-cols-3">
+          <Anchor id="background-blur">
+            <Field label={`Blur · ${bgBlur}px`}><RangeSlider label="Image background blur" min={0} max={100} step={1} value={bgBlur} set={(v) => setBg({ bgImageBlur: Math.round(v) })} className="w-full" /></Field>
+          </Anchor>
+          <Anchor id="background-saturation">
+            <Field label={`Saturation · ${bgSaturation}%`}><RangeSlider label="Image background saturation" min={0} max={200} step={1} value={bgSaturation} set={(v) => setBg({ bgImageSaturation: Math.round(v) })} className="w-full" /></Field>
+          </Anchor>
+          <Anchor id="background-dim">
+            <Field label={`Dim · ${bgDim}%`}><RangeSlider label="Image background dim" min={0} max={95} step={1} value={bgDim} set={(v) => setBg({ bgImageDim: Math.round(v) })} className="w-full" /></Field>
+          </Anchor>
+        </div>
       </Card>
       </Anchor>
       </Section>
