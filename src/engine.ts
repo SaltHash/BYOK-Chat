@@ -1253,7 +1253,10 @@ export async function stream(e: Ep, sys: string, ms: Wire[], on: (t: string) => 
       ev(j)
       if (calls.size) onToolDelta([...calls.values()].map((c) => ({ ...c })))
     } else {
-      const r = res.body!.getReader(), d = new TextDecoder()
+      // A 200 with no body is a transport failure, not a crash: code it so the
+      // caller can retry or fall back like any other empty response.
+      if (!res.body) throw withCode('Empty response', 'empty_response', { retryable: true })
+      const r = res.body.getReader(), d = new TextDecoder()
       let buf = ''
       // SSE events are normally one complete `data:` line, but the spec allows
       // a JSON value to span several `data:` lines. Accumulate only when a

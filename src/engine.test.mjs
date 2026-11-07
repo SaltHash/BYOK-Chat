@@ -1062,6 +1062,21 @@ test('a custom gateway gets a non-stream fallback after a broken SSE reply', asy
   } finally { globalThis.fetch = original }
 })
 
+test('a 200 with no body falls back instead of crashing on a missing stream', async () => {
+  const original = globalThis.fetch
+  let calls = 0
+  globalThis.fetch = async () => {
+    calls++
+    if (calls === 1) return new Response(null, { status: 200, headers: { 'content-type': 'text/event-stream' } })
+    return jsonResponse({ choices: [{ message: { content: 'recovered' }, finish_reason: 'stop' }] })
+  }
+  try {
+    const result = await stream(openai, '', [{ role: 'user', content: 'hello' }], () => {}, new AbortController())
+    assert.equal(result.text, 'recovered')
+    assert.equal(calls, 2)
+  } finally { globalThis.fetch = original }
+})
+
 test('a fallback that answers with HTML reports a transport response, not a JSON parse crash', async () => {
   const original = globalThis.fetch
   let calls = 0
