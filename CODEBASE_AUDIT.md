@@ -329,7 +329,7 @@ Keep the visual track at 20 px if desired, but give the button a 24 px minimum h
 
 **Evidence**
 
-- Main chunk: 902.33 kB / 302.73 kB gzip.
+- Main chunk: 902.67 kB / 302.81 kB gzip.
 - Markdown chunk: 753.11 kB / 209.81 kB gzip.
 - Settings chunk: 201.41 kB / 56.74 kB gzip, plus a separate 65.41 kB stats chunk loaded on demand.
 - `Settings.tsx` statically imports `UsageStats` (`src/components/Settings.tsx:34`), so the 1,454-line stats surface travels with the already-large settings chunk.
@@ -652,6 +652,7 @@ This audit was carried through into implementation. The confirmed, user-visible 
 | P1.3 segmented state | `Seg` is a labelled radiogroup with roving focus and `aria-checked`. | `d73745c` |
 | P1.4 unnamed dialogs | Share, project, palette, graph, sync, and lightbox dialogs are labelled; duplicate nested dialog roles are removed; palette search is named. | `d73745c` |
 | P1.5 delete recovery | Permanent deletion keeps an eight-second undo, including messages and sidebar position; attachment cleanup is deferred until expiry. | `d73745c` |
+| P2.1 browser history | Chat switches and opening/closing Settings now push history entries; tab changes replace the current entry. Back/Forward restores the route and selected chat. | this pass |
 | P2.1 chat deep links | `#chat/<id>` opens a stored chat on load or hash change, `Copy chat link` copies the local URL, and the address bar follows chat selection. Settings share and chat routes remain separate. | this pass |
 | P2.2 menu keyboard contract | A shared menu hook moves focus to the selected/first item on open, handles arrows/Home/End, closes on Escape or Tab, and restores focus. Row actions, theme picker, endpoint type and the header actions use it. | this pass |
 | P2.6 CI gate | A GitHub Actions workflow runs `tsc`, the full unit suite, Worker smoke checks, and the production build on every push and pull request. | this pass |
@@ -683,12 +684,12 @@ All six are fixed in `f0821ef` and `9b2f7c5`, with focused regressions in `src/e
 | `npx tsc --noEmit` | clean |
 | `npm test` | 813/813 passed |
 | `npm run test:worker` | 14/14 passed |
-| `npm run build` | passed; main 902.33 kB / 302.73 kB gzip, Settings 201.41 kB, lazy stats 65.41 kB |
+| `npm run build` | passed; main 902.67 kB / 302.81 kB gzip, Settings 201.41 kB, lazy stats 65.41 kB |
 | Browser checks | Settings opens on the requested deep link, grouped navigation and Recent render, search ranks results, keyboard ArrowDown reaches the first result, and the mobile/archive flows were exercised. |
 
 ### Still open / deliberately deferred
 
-- **P2.1 remaining history:** chat deep links and copying work, but navigation still uses `replaceState`; Back/Forward does not traverse chats or Settings, and chat links intentionally open only where the chat is stored.
+- **P2.1 local-only links:** chat links open only where the chat is stored; there is no cross-device chat URL or server-side chat sync.
 - **P2.2 remaining menus:** row actions, theme, endpoint type, move-to-project, and header actions now share initial focus, arrows, Home/End, Escape and Tab dismissal. A few inline popovers still use older local behavior.
 - **P2.3 remaining touch targets:** switches now have a larger pseudo-element hit area; some icon-only composer controls still need the same treatment.
 - **P2.5 module size:** `Settings.tsx`, `store.ts`, and `Chat.tsx` remain large. This pass extracted the stats surface but did not attempt a risky big-bang split.

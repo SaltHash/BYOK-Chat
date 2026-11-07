@@ -38,6 +38,9 @@ export default function App() {
   const [shareId, setShareId] = useState(() => (canUseDOM() ? shareIdFromHash(window.location.hash) : ''))
   const currentChat = useS((s) => s.chat)
   const chatRoute = useRef(false)
+  const routeReady = useRef(false)
+  const prevChat = useRef(currentChat)
+  const prevSettingsOpen = useRef(!!cfg)
   useEffect(() => {
     if (!canUseDOM()) return
     const openRoute = () => {
@@ -64,12 +67,34 @@ export default function App() {
     }
     openRoute()
     window.addEventListener('hashchange', openRoute)
-    return () => window.removeEventListener('hashchange', openRoute)
+    window.addEventListener('popstate', openRoute)
+    return () => {
+      window.removeEventListener('hashchange', openRoute)
+      window.removeEventListener('popstate', openRoute)
+    }
   }, [])
   useEffect(() => {
     if (!canUseDOM() || shareId) return
     const hash = cfg ? `#settings/${cfg}` : chatHash(currentChat)
-    if (window.location.hash !== hash) window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}${hash}`)
+    if (window.location.hash === hash) {
+      routeReady.current = true
+      prevChat.current = currentChat
+      prevSettingsOpen.current = !!cfg
+      return
+    }
+    const url = `${window.location.pathname}${window.location.search}${hash}`
+    // First paint and deep-link restoration normalize the URL without adding
+    // an extra entry. Later chat switches push; tab changes within Settings
+    // replace so Back closes Settings instead of walking every tab.
+    if (!routeReady.current) {
+      window.history.replaceState(null, '', url)
+    } else {
+      const push = prevChat.current !== currentChat || prevSettingsOpen.current !== !!cfg
+      window.history[push ? 'pushState' : 'replaceState'](null, '', url)
+    }
+    routeReady.current = true
+    prevChat.current = currentChat
+    prevSettingsOpen.current = !!cfg
   }, [cfg, shareId, currentChat])
   const resize = usePanelResize()
   useFontCss(prefs.fontBody, prefs.fontHeader, prefs.fontMono)
