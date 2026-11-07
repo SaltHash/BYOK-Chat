@@ -72,16 +72,13 @@ export const TAB_KEYWORDS: Record<SettingsTabId, string> = {
   adv: 'advanced debugging verbose errors additional capabilities system prompt payloads token counts model parameters temperature top p max tokens',
 }
 
-/** Navigation groups preserve tab ids and deep links while organizing by task.
- *  The order is deliberate: everyday surfaces come first, setup and
- *  power-user controls later. `Features` used to lead the list even though it
- *  is the least frequently opened section in normal use. */
+/** Navigation groups preserve tab ids and deep links while organizing by task. */
 export const SETTINGS_GROUPS: { label: string; tabs: SettingsTabId[] }[] = [
-  { label: 'Everyday', tabs: ['chats', 'look', 'tools'] },
+  { label: 'Chat', tabs: ['chats', 'prompts', 'cmds', 'voice', 'keys'] },
   { label: 'Models & providers', tabs: ['profiles', 'eps', 'pls'] },
-  { label: 'Writing & automation', tabs: ['prompts', 'cmds', 'voice', 'keys'] },
-  { label: 'Capabilities', tabs: ['skills', 'mcp', 'memory', 'workspace'] },
-  { label: 'Usage & app', tabs: ['stats', 'widgets', 'data', 'features', 'adv'] },
+  { label: 'Tools & research', tabs: ['tools', 'skills', 'mcp', 'memory', 'workspace'] },
+  { label: 'Personalize', tabs: ['look', 'widgets', 'features'] },
+  { label: 'Data & advanced', tabs: ['stats', 'data', 'adv'] },
 ]
 
 export type SettingLink = {
@@ -95,6 +92,7 @@ export type SettingLink = {
 /** Every individually addressable setting/section. `cfg("tab#anchor")` opens
  *  the tab and scrolls to the anchor; unknown anchors still open the tab. */
 export const SETTING_LINKS: SettingLink[] = [
+  // Profiles — one entry per concept, not per saved record (those are actions).
   { tab: 'profiles', anchor: 'profiles', title: 'Profiles', keywords: 'profiles presets bundles setups model prompt tools access apply' },
   { tab: 'profiles', anchor: 'profiles-save', title: 'Save the current setup as a profile', keywords: 'save profile current setup snapshot capture' },
   { tab: 'profiles', anchor: 'profiles-list', title: 'Saved profiles', keywords: 'saved profiles apply update rename delete list' },

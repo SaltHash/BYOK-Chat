@@ -1,12 +1,12 @@
 import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { X, Plus, Trash2, ArrowUp, ArrowDown, CornerDownRight, ChevronDown, ChevronRight, Eye, EyeOff, Play, ShieldCheck, Shield, Download, Check, CircleCheck, CircleX, Cpu, Route, GripVertical, Server, ListMusic, ScrollText, Terminal, Wrench, Palette, FolderOpen, PanelRight, TrendingUp, Keyboard, Search, Brain, Pencil, Sparkles, RotateCcw, SlidersHorizontal, FlaskConical, Library, Database, Lock, LockOpen, LayoutTemplate, Share2, Plug, Image as ImageIcon, Volume2, AudioLines, Code2, Star, History } from 'lucide-react'
+import { X, Plus, Trash2, ArrowUp, ArrowDown, CornerDownRight, ChevronDown, ChevronRight, Eye, EyeOff, Play, ShieldCheck, Shield, Download, Check, CircleCheck, CircleX, Cpu, Route, GripVertical, Server, ListMusic, ScrollText, Terminal, Wrench, Palette, FolderOpen, PanelRight, TrendingUp, Keyboard, Search, Brain, Pencil, Sparkles, RotateCcw, SlidersHorizontal, FlaskConical, Library, Database, Lock, LockOpen, LayoutTemplate, Share2, Plug, Image as ImageIcon, Volume2, AudioLines, Code2, Star } from 'lucide-react'
 import { modelListEdit } from '../models'
 import { useS, useSConfig, PRE, BLANK, THEMES, DARK_THEMES, LIGHT_THEMES, THEME_COLOR_KEYS, THEME_COLOR_LABELS, THEME_COLORS, defaultCustomTheme, customThemeColors, normCustomTheme, SEARCH_PROVIDERS, READER_PROVIDERS, FEATURES, LIBRARY_ITEMS, FEATURE_TABS, FEATURE_WIDGETS, DEFAULT_LIBRARY_SHOW, DEFAULT_ADVANCED, featOn, normSearch, normAdvanced, normLogDetail, normDocs, usable, modelsOf, modelNameOf, helperRef, splitHelperRef, favRef, toggleFavRef, effortClassifierOf, TOOL_ROUNDS_DEFAULT, TOOL_ROUNDS_MIN, TOOL_ROUNDS_BASE_MAX, TOOL_ROUNDS_MAX, toolRoundLimitOf, isToolRoundsUnlimited, GENERAL_PROMPT_TEXT, STARTUP_MODES, normStartup, PROMPT_RECALL_MODES, normPromptRecall, type PromptRecallMode, type Kind, type FeatureId, type DocPrefs, type ModelPrice } from '../store'
 import { normSkills, resolveSkill, validateCustomSkill, enabledSkills, BUILTIN_SKILLS, SKILL_TOOL_NAME, type SkillState } from '../skills'
 import { findDuplicatePairs, mergeMemory } from '../recall'
 import { TOOL_REGISTRY, can, stream } from '../engine'
 import { CI, TOOLS, WIDGETS, KEYS, orderTools } from '../meta'
-import { SETTINGS_TABS, SETTINGS_GROUPS, visibleTabs, searchSettings, splitSettingTarget, settingDomId, type SettingsTabId } from '../settingsCatalog'
+import { SETTINGS_TABS, SETTINGS_GROUPS, visibleTabs, searchSettings, splitSettingTarget, settingDomId } from '../settingsCatalog'
 import { PROMPT_QUALITIES, type GlobalPrompt } from '../flair'
 import { PROMPT_VARS } from '../promptVars'
 import { DataTab, KeysTab, TestRow, TestAllEndpoints } from './Extra'
@@ -2466,17 +2466,6 @@ function Chats() {
 
 const VIEWS: Record<string, () => ReactNode> = { features: FeaturesTab, profiles: ProfilesTab, eps: Eps, prompts: Prompts, skills: SkillsTab, pls: Pls, cmds: Cmds, workspace: WorkspaceTab, tools: Tools, mcp: McpTab, memory: MemoryTab, widgets: WidgetsTab, look: Look, chats: Chats, voice: VoiceTab, keys: KeysTab, data: DataTab, adv: AdvancedTab }
 
-/* Recently opened sections are device-local navigation state, not settings:
- * they never sync, never touch the persisted store and never change the tab a
- * deep link opens. */
-const RECENT_KEY = 'byok.settings.recent'
-const readRecent = (): SettingsTabId[] => {
-  try {
-    const raw = JSON.parse(localStorage.getItem(RECENT_KEY) || '[]')
-    return Array.isArray(raw) ? raw.filter((x): x is SettingsTabId => SETTINGS_TABS.some(([k]) => k === x)).slice(0, 4) : []
-  } catch { return [] }
-}
-
 export function Settings({ tab, setTab }: { tab: string; setTab: (t: string) => void }) {
   const features = useS((s) => s.features)
   const showOff = useS((s) => s.prefs.showDisabledFeatures === true)
@@ -2488,28 +2477,8 @@ export function Settings({ tab, setTab }: { tab: string; setTab: (t: string) => 
     .filter((g) => g.tabs.length)
   const [query, setQuery] = useState('')
   const results = useMemo(() => searchSettings(query), [query])
-  const [recent, setRecent] = useState<SettingsTabId[]>(readRecent)
-  const searchRef = useRef<HTMLInputElement>(null)
-  const resultsRef = useRef<HTMLDivElement>(null)
   const { tab: rawTab, anchor } = splitSettingTarget(tab)
   const active = SETTINGS_TABS.some(([k]) => k === rawTab) ? rawTab : 'features'
-  // Remember where the reader has been, so the next visit starts with the
-  // four most useful shortcuts instead of a wall of every section.
-  useEffect(() => {
-    if (!SETTINGS_TABS.some(([k]) => k === rawTab)) return
-    setRecent((prev) => {
-      const next: SettingsTabId[] = [rawTab as SettingsTabId, ...prev.filter((x) => x !== rawTab)].slice(0, 4)
-      if (next.join('|') === prev.join('|')) return prev
-      try { localStorage.setItem(RECENT_KEY, JSON.stringify(next)) } catch { /* private mode */ }
-      return next
-    })
-  }, [rawTab])
-  const focusResult = (delta: number) => {
-    const buttons = Array.from(resultsRef.current?.querySelectorAll<HTMLButtonElement>('button') ?? [])
-    if (!buttons.length) return
-    const at = buttons.indexOf(document.activeElement as HTMLButtonElement)
-    buttons[(at + delta + buttons.length) % buttons.length]?.focus()
-  }
   const disabledFeature = Object.entries(FEATURE_TABS).find(([f, ids]) => (ids as string[]).includes(active) && !featOn({ features }, f as FeatureId))?.[0] as FeatureId | undefined
   const featureLabel = FEATURES.find(([id]) => id === disabledFeature)?.[1] ?? 'This feature'
   const openResult = (target: string) => { setQuery(''); setTab(target) }
@@ -2538,61 +2507,12 @@ export function Settings({ tab, setTab }: { tab: string; setTab: (t: string) => 
     <Modal close={() => setTab('')} blur={false} opacity={settingsOpacity} labelledBy="settings-title">
       <div style={{ width: `min(${settingsWidth}px, 100%)`, height: `min(${settingsHeight}px, 92dvh)` }} className="settings-root modal-panel flex overflow-hidden rounded-2xl bg-bg">
         <span id="settings-title" className="sr-only">Settings</span>
-        <nav aria-label="Settings sections" className="hidden w-60 shrink-0 flex-col border-r border-bor bg-side p-3 sm:flex">
-          <h2 className="px-2 pb-3 text-lg font-semibold tracking-tight">Settings</h2>
-          <div className="relative mb-3">
-            <Search size={15} aria-hidden="true" className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-mu" />
-            <input
-              ref={searchRef} aria-label="Search settings" value={query}
-              onChange={e => setQuery(e.target.value)} placeholder="Search settings"
-              onKeyDown={(e) => {
-                if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); focusResult(e.key === 'ArrowDown' ? 1 : -1) }
-                else if (e.key === 'Enter' && results[0]) { e.preventDefault(); openResult(results[0].target) }
-                else if (e.key === 'Escape' && query) { e.preventDefault(); e.stopPropagation(); setQuery(''); searchRef.current?.focus() }
-              }}
-              className="w-full rounded-lg bg-surf py-2 pl-9 pr-3 text-sm outline-none focus:ring-2 focus:ring-ac/40"
-            />
-          </div>
-          <div
-            ref={resultsRef} className="min-h-0 flex-1 space-y-4 overflow-y-auto"
-            onKeyDown={(e) => {
-              if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); focusResult(e.key === 'ArrowDown' ? 1 : -1) }
-              else if (e.key === 'Home' || e.key === 'End') { e.preventDefault(); const buttons = Array.from(resultsRef.current?.querySelectorAll<HTMLButtonElement>('button') ?? []); buttons[e.key === 'Home' ? 0 : buttons.length - 1]?.focus() }
-              else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); setQuery(''); searchRef.current?.focus() }
-            }}
-          >
-            {query.trim() ? (
-              <>
-                <h3 className="px-2 text-[11px] font-semibold uppercase tracking-wider text-mu">{results.length} result{results.length === 1 ? '' : 's'}</h3>
-                <div className="space-y-0.5">{results.map(result => {
-                  const Icon = SETTINGS_TABS.find(([k]) => k === result.target.split('#')[0])?.[2] ?? Search
-                  return <button key={result.target} onClick={() => openResult(result.target)} className="flex w-full items-start gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm hover:bg-surf focus-visible:bg-surf focus-visible:outline-none"><Icon size={15} className="mt-0.5 shrink-0 text-mu" /><span className="min-w-0"><span className="block truncate">{result.title}</span><span className="mt-0.5 block truncate text-[11px] text-mu">{result.section}</span></span></button>
-                })}</div>
-              </>
-            ) : (
-              <>
-                {recent.length > 0 && (
-                  <div>
-                    <h3 className="flex items-center gap-1.5 px-2 pb-1 text-[11px] font-semibold uppercase tracking-wider text-mu"><History size={11} />Recent</h3>
-                    {recent.map(id => {
-                      const [, label, I] = SETTINGS_TABS.find(([k]) => k === id)!
-                      return <button key={id} onClick={() => setTab(id)} aria-current={active === id ? 'page' : undefined} className={cx('flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-sm', active === id ? 'bg-ac/15 text-tx' : 'text-mu hover:bg-surf hover:text-tx')}><I size={15} /><span className="min-w-0 flex-1 truncate">{label}</span></button>
-                    })}
-                  </div>
-                )}
-                {navGroups.map(group => (
-                  <div key={group.label}>
-                    <h3 className="px-2 pb-1 text-[11px] font-semibold uppercase tracking-wider text-mu">{group.label}</h3>
-                    {group.tabs.map(id => {
-                      const [, l, I] = SETTINGS_TABS.find(([k]) => k === id)!
-                      const off = !tabs.some(([visible]) => visible === id)
-                      return <button key={id} onClick={() => setTab(id)} aria-current={active === id ? 'page' : undefined} className={cx('relative flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm', active === id ? 'bg-ac/15 font-medium text-tx before:absolute before:inset-y-1.5 before:left-0 before:w-0.5 before:rounded-full before:bg-ac' : 'text-mu hover:bg-surf hover:text-tx')}><I size={16} className={active === id ? 'text-ac' : undefined} /><span className="min-w-0 flex-1 truncate">{l}</span>{off && <span className="text-[10px] uppercase tracking-wide">Off</span>}</button>
-                    })}
-                  </div>
-                ))}
-              </>
-            )}
-            {query.trim() && !results.length && <p className="px-2 py-2 text-sm text-mu">No settings found. Try a shorter word.</p>}
+        <nav aria-label="Settings sections" className="hidden w-56 shrink-0 flex-col border-r border-bor bg-side p-3 sm:flex">
+          <h2 className="px-3 pb-3 text-lg font-semibold">Settings</h2>
+          <input aria-label="Search settings" value={query} onChange={e => setQuery(e.target.value)} placeholder="Search settings" className="mb-3 w-full rounded-lg bg-surf px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ac/40" />
+          <div className="min-h-0 flex-1 space-y-3 overflow-y-auto">
+            {query.trim() ? results.map(result => <button key={result.target} onClick={() => openResult(result.target)} className="block w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-surf"><span className="block">{result.title}</span><span className="block text-xs text-mu">{result.section}</span></button>) : navGroups.map(group => <div key={group.label}><h3 className="px-3 pb-1 text-xs font-medium text-mu">{group.label}</h3>{group.tabs.map(id => { const entry = SETTINGS_TABS.find(([k]) => k === id)!; const [k, l, I] = entry; const off = !tabs.some(([visible]) => visible === k); return <button key={k} onClick={() => setTab(k)} aria-current={active === k ? 'page' : undefined} className={cx('flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm', active === k ? 'bg-hov' : 'text-mu hover:bg-surf hover:text-tx')}><I size={16} /><span className="min-w-0 flex-1">{l}</span>{off && <span className="text-xs">Off</span>}</button> })}</div>)}
+            {query.trim() && !results.length && <p className="px-3 py-2 text-sm text-mu">No settings found.</p>}
           </div>
         </nav>
         <div className="relative min-w-0 flex-1">
