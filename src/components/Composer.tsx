@@ -820,7 +820,6 @@ export function Composer({ cfg, quote, onClearQuote }: { cfg: (t: string) => voi
             </button>
             )
           }}>{(close) => <ModelMenu close={close} cfg={cfg} />}</Pop>
-          <ToolAccessButton cfg={cfg} />
           {featOn(s, 'prompts') && <Pop up onOpenChange={setMenusOpen} trigger={(o) => (
             <button className={chip}><ScrollText size={16} /><span className="max-w-20 truncate sm:max-w-32">{pr ? pr.name : 'No prompt'}</span><ChevronRight size={14} className={cx('transition-transform', o && 'rotate-90')} /></button>
           )}>
@@ -867,6 +866,7 @@ export function Composer({ cfg, quote, onClearQuote }: { cfg: (t: string) => voi
             </button>
           )}
           {queueMode && <Btn icon={StopIcon} v="soft" onClick={s.stop} title="Stop this reply" className="rounded-full" />}
+          <ToolAccessButton cfg={cfg} />
           <Btn
             icon={streaming && !queueMode ? StopIcon : queueMode ? ListPlus : ArrowUp}
             v={streaming || ready ? 'solid' : 'soft'}

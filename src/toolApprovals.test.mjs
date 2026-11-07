@@ -19,14 +19,14 @@ import { executeToolCalls } from './engine.ts'
 
 test.beforeEach(() => resetToolApprovals())
 
-test('mode policy is explicit and defaults to full', () => {
-  assert.equal(DEFAULT_TOOL_MODE, 'full')
+test('mode policy is explicit and defaults to standard', () => {
+  assert.equal(DEFAULT_TOOL_MODE, 'standard')
   assert.equal(needsToolApproval('full', { location: true }, 'location'), false)
   assert.equal(needsToolApproval('standard', { location: true }, 'location'), true)
   assert.equal(needsToolApproval('standard', { location: false }, 'location'), false)
   assert.equal(needsToolApproval('restricted', {}, 'anything'), true)
   assert.equal(needsToolApproval('off', { location: true }, 'location'), false)
-  assert.equal(normToolMode('nonsense'), 'full')
+  assert.equal(normToolMode('nonsense'), 'standard')
   assert.equal(modeInfo('restricted').label, 'Restricted')
   assert.equal(DEFAULT_TOOL_APPROVAL.location, true)
 })

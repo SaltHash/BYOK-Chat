@@ -9,10 +9,10 @@ import { create } from 'zustand'
  */
 export type ToolMode = 'full' | 'standard' | 'restricted' | 'off'
 
-export const DEFAULT_TOOL_MODE: ToolMode = 'full'
+export const DEFAULT_TOOL_MODE: ToolMode = 'standard'
 
-/** Side-effecting or private tools ask under Standard by default. Full access
- *  is still the default mode, so this only makes the opt-in useful at once. */
+/** Side-effecting or private tools ask by default, so Standard access is useful
+ *  without any per-tool setup. Full access ignores these switches. */
 export const DEFAULT_TOOL_APPROVAL: Record<string, boolean> = {
   location: true,
   clipboard: true,
