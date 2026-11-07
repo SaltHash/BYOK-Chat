@@ -21,6 +21,7 @@ const ShareView = lazy(() => import('./components/ShareView').then((m) => ({ def
 import { shareIdFromHash, shareHash, updateShare } from './share'
 import { getStorageWarning, subscribeStorageWarning } from './persistence'
 import { Btn } from './components/ui'
+import { ErrorBoundary } from './components/ErrorBoundary'
 
 export default function App() {
   const { themeMode, themeDark, themeLight, customDarkColors, customLightColors, rail, widgets, prefs, setupDone, features } = useS(useShallow((s) => ({
@@ -207,7 +208,7 @@ export default function App() {
           <div className="fixed inset-0 z-10 bg-black/50 lg:hidden" onClick={() => useS.getState().patch({ rail: false })} />
           <div role="separator" aria-orientation="vertical" aria-label="Resize widget panel" onPointerDown={resize('widgetWidth', true)} className="shell-resizer hidden w-1 shrink-0 cursor-col-resize lg:block" />
           <Suspense fallback={<div className="hidden w-80 shrink-0 lg:block" aria-hidden="true" />}>
-            <Widgets width={clampWidgetWidth(prefs.widgetWidth)} />
+            <ErrorBoundary compact title="The widgets panel could not render"><Widgets width={clampWidgetWidth(prefs.widgetWidth)} /></ErrorBoundary>
           </Suspense>
         </>
       )}

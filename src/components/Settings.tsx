@@ -30,6 +30,7 @@ import { normCompactAt } from '../compaction'
 import { ARCHIVE_RETENTION_NEVER, archiveRetentionLabel, normArchiveDays } from '../archive'
 import { ColorPicker } from './ColorPicker'
 import { UsageStats } from './UsageStats'
+import { ErrorBoundary } from './ErrorBoundary'
 
 const TABS = SETTINGS_TABS
 /** Briefly highlight a deep-linked section after scrolling to it. */
@@ -225,7 +226,7 @@ function ProviderPicker({ e, model, openRouter, update }: { e: any; model: strin
     <button type="button" onClick={() => void load()} title="Choose the inference provider for this model" className="inline-flex items-center gap-1.5 rounded-md px-1.5 py-0.5 hover:bg-hov hover:text-tx">
       <Server size={12} />Provider: <span className={current ? 'font-medium text-tx' : ''}>{current?.name ?? 'Automatic'}</span>
     </button>
-    {open && <Modal close={() => setOpen(false)}>
+    {open && <Modal close={() => setOpen(false)} label="Inference provider">
       <div className="modal-panel flex max-h-[80dvh] w-full max-w-lg flex-col gap-3 rounded-2xl bg-bg p-5 shadow-2xl">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
@@ -627,7 +628,7 @@ function CurlImportModal({ close, importProvider }: { close: () => void; importP
     } finally { setBusy(false) }
   }
   const mask = (key: string) => !key ? 'No key found' : `••••${key.slice(-4)}`
-  return <Modal close={close}>
+  return <Modal close={close} label="Add provider from cURL">
     <div className="modal-panel flex max-h-[88dvh] w-full max-w-2xl flex-col gap-4 overflow-y-auto rounded-2xl bg-bg p-5 shadow-2xl">
       <div className="flex items-start justify-between gap-3">
         <div>
@@ -2633,7 +2634,7 @@ export function Settings({ tab, setTab }: { tab: string; setTab: (t: string) => 
             <div className="mb-4 space-y-2 pr-12 sm:hidden"><h2 id="settings-mobile-title" className="text-lg font-semibold">Settings</h2><input aria-label="Search settings" value={query} onChange={e => setQuery(e.target.value)} placeholder="Search settings" className="w-full rounded-lg bg-surf px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ac/40" />{query.trim() ? <div className="max-h-48 overflow-y-auto rounded-lg bg-surf">{results.map(result => <button key={result.target} onClick={() => openResult(result.target)} className="block w-full px-3 py-2 text-left text-sm hover:bg-hov">{result.title}<span className="ml-2 text-xs text-mu">{result.section}</span></button>)}{!results.length && <p className="p-3 text-sm text-mu">No settings found.</p>}</div> : <SearchSelect ariaLabel="Settings section" value={active} set={setTab} opts={SETTINGS_TABS.filter(([k]) => showOff || tabs.some(([v]) => v === k)).map(([k, l]) => [k, `${l}${tabs.some(([v]) => v === k) ? '' : ' (off)'}`] as [string, string])} />}</div>
             {disabledFeature ? <div className="space-y-3"><h2 className="text-lg font-semibold">{featureLabel} is off</h2><p className="text-sm text-mu">Turn it on in Features to use its settings.</p><Btn v="soft" onClick={() => setTab(`features#feature-${disabledFeature}`)}>Open Features</Btn></div> : active === 'stats'
               ? <UsageStats onOpenChat={(chatId, messageId) => { useS.getState().patch({ chat: chatId, flashMsg: messageId, activeProject: '' }); setTab('') }} />
-              : <V />}
+              : <ErrorBoundary compact title="These settings could not render"><V /></ErrorBoundary>}
           </div>
         </div>
       </div>

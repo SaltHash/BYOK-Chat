@@ -267,6 +267,9 @@ test('non-API requests fall back to the ASSETS binding', async () => {
   const res = await call('/some/spa/route', {}, env)
   assert.equal(res.status, 200)
   assert.match(res.headers.get('content-type') || '', /text\/html/)
+  assert.match(res.headers.get('content-security-policy') || '', /frame-ancestors 'none'|object-src 'none'/)
+  assert.equal(res.headers.get('referrer-policy'), 'strict-origin-when-cross-origin')
+  assert.equal(res.headers.get('x-content-type-options'), 'nosniff')
   assert.match(await res.text(), /id="root"/)
 })
 

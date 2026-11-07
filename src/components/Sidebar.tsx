@@ -6,7 +6,7 @@ import { searchChats } from '../recall'
 import { bookmarkEntries } from '../bookmarks'
 import { clampSidebarWidth } from '../layout'
 import { focusComposer, useShiftHeld } from '../hooks'
-import { Btn, Confirm, cx } from './ui'
+import { Btn, Confirm, cx, useEscapeClose } from './ui'
 import { ProjectModal } from './ProjectModal'
 import { DndPlaceholder, DndLiveRegion, showDragOverlay, moveDragOverlay, hideDragOverlay, measureBox, DND_ACTIVATION_PX, useFlipAnimate, restDocTop, pointerDocY, edgeScroll } from './dnd'
 import { stepInsertion } from '../dndShared'
@@ -40,6 +40,7 @@ function RowBody({ c, mv, del, dnd, container, index, shift, onNavigate, time }:
   const finished = useS((s) => s.chat !== c.id && s.doneChats?.[c.id] === true)
   const [ed, setEd] = useState(false)
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null)
+  useEscapeClose(() => setMenu(null), !!menu)
   const dragging = dnd?.activeId === c.id
   const h = dnd ? dnd.handle(c, container, index) : null
   // Drag/keyboard-lift props belong on the title button, not the row wrapper:
