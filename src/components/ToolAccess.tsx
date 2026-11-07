@@ -1,5 +1,7 @@
-import { Check, Lock, LockKeyhole, ShieldCheck, ShieldOff, X } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { Check, ListChecks, Lock, LockKeyhole, ShieldCheck, ShieldOff, X } from 'lucide-react'
 import { featOn, useS, useSConfig } from '../store'
+import { useQuestions } from '../questions'
 import { TOOL_MODES, decideToolApproval, modeInfo, normToolMode, settleToolApprovals, useApprovals, type ToolMode } from '../toolApprovals'
 import { toolLabel } from '../toolLabels'
 import { Btn, Pop, Seg, cx, type Ic } from './ui'
@@ -125,6 +127,48 @@ export function ToolApprovalPrompt({ chatId }: { chatId: string }) {
             )}
             <Btn v="soft" icon={X} onClick={() => decideToolApproval(pending.id, false)}>Deny</Btn>
             <span className="text-xs text-mu">Tip: change this in the lock menu or Settings → Tools.</span>
+          </div>
+        </div>
+      </div>
+    </section>
+  )
+}
+
+/** Rendered above the composer while the model waits on a mid-turn question. */
+export function QuestionPrompt({ chatId }: { chatId: string }) {
+  const pending = useQuestions((s) => s.queue.find((q) => q.chatId === chatId))
+  const answerQuestion = useS((s) => s.answerQuestion)
+  const skipQuestion = useS((s) => s.skipQuestion)
+  const [text, setText] = useState('')
+  useEffect(() => { setText('') }, [pending?.id])
+  if (!pending) return null
+  const send = (value: string) => {
+    const answer = value.trim()
+    if (answer) answerQuestion(pending.id, answer)
+  }
+  return (
+    <section role="group" aria-label="Question from the assistant" className="mb-2 rounded-xl border border-ac/40 bg-surf p-3 shadow-sm">
+      <div className="flex items-start gap-2.5">
+        <span className="mt-0.5 grid size-7 shrink-0 place-items-center rounded-lg bg-ac/15 text-ac"><ListChecks size={16} /></span>
+        <div className="min-w-0 flex-1">
+          <div className="text-sm font-semibold">The assistant needs an answer</div>
+          <p className="mt-0.5 text-xs leading-5 text-mu">The reply is paused mid-turn. Your answer goes straight back to the model, so it can keep working.</p>
+          <p className="mt-2 text-sm">{pending.question}</p>
+          {!!pending.options.length && (
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {pending.options.map((option) => (
+                <button key={option} type="button" onClick={() => send(option)} className="rounded-full border border-bor bg-bg px-3 py-1.5 text-xs transition-colors hover:border-ac hover:text-ac">{option}</button>
+              ))}
+            </div>
+          )}
+          {pending.allowText !== false && (
+            <div className="mt-2 flex gap-2">
+              <input value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) { e.preventDefault(); send(text) } }} placeholder="Type your answer…" aria-label="Your answer" className="h-9 min-w-0 flex-1 rounded-lg bg-bg px-3 text-sm outline-none focus:ring-2 focus:ring-ac/40" />
+              <Btn v="solid" onClick={() => send(text)}>Answer</Btn>
+            </div>
+          )}
+          <div className="mt-2">
+            <Btn v="soft" onClick={() => skipQuestion(pending.id)} title="Continue without answering; the model will state its assumption">Skip</Btn>
           </div>
         </div>
       </div>

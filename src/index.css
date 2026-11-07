@@ -411,6 +411,12 @@ html[data-codewrap] .code-lines .code-line > code { flex: 1 1 auto; min-width: 0
 
 /* rendered markdown */
 @keyframes reply-in { from { opacity: 0; } to { opacity: 1; } }
+/* A background reply is alive, not blocked: one thin bar travels along the
+   bottom edge of its sidebar row instead of a pulsing dot that reads as an
+   error or a notification. */
+@keyframes row-progress { from { transform: translateX(-110%); } to { transform: translateX(310%); } }
+.row-progress-bar { animation: row-progress 1.35s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) { .row-progress-bar { animation: none; width: 100%; opacity: .55; } }
 /* `--reply-in-duration` is set per-message from the stream-fade setting. When it
  * is 0 the animation is disabled outright (not just `0s`, which would still
  * queue a transition and repaint). `prefers-reduced-motion` always wins. */

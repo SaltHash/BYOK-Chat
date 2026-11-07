@@ -768,6 +768,12 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
           <button onClick={() => { void useS.getState().send('Continue from where you left off.', []) }} className="rounded-lg bg-ac px-2.5 py-1 text-xs font-medium text-acx transition-opacity hover:opacity-90">Continue</button>
         </div>
       )}
+      {m.interrupted && !busy && (
+        <div className="mt-2 flex flex-wrap items-center gap-2 rounded-xl border border-er/30 bg-er/10 px-3 py-2 text-xs text-mu">
+          <TriangleAlert size={13} className="shrink-0 text-er" />
+          This reply stopped when the tab closed and could not be resumed automatically. Send a message or regenerate to continue.
+        </div>
+      )}
       {/* Workspace tiles for this message — shown above message controls but below content */}
       {m.research && <ResearchTierPicker msg={m} />}
       {m.research && <ResearchQuestionsCard msg={m} />}

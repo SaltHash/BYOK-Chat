@@ -58,7 +58,7 @@ export const SYNC_PUSH_RETRY_MS = 30_000
  *  browser's permanent usage history (its own storage key, capped at 12,000
  *  attempts), so uploading it would bloat every payload and let a peer's
  *  history replace this device's. */
-export const SYNC_LIVE_ONLY = ['busy', 'busyChats', 'doneChats', 'queued', 'draft', 'drafts', 'notice', 'flashMsg', 'researchPanel', 'chat', 'newChatPending', 'activeProject', 'usage', 'usageTitles']
+export const SYNC_LIVE_ONLY = ['busy', 'busyChats', 'doneChats', 'queued', 'draft', 'drafts', 'notice', 'flashMsg', 'researchPanel', 'chat', 'newChatPending', 'activeProject', 'usage', 'usageTitles', 'runJournal']
 
 export const getSyncToken = (): string => { try { return localStorage.getItem(TOKEN_KEY) ?? '' } catch { return '' } }
 export const setSyncToken = (t: string): void => { try { t ? localStorage.setItem(TOKEN_KEY, t) : localStorage.removeItem(TOKEN_KEY) } catch { /* blocked storage */ } }

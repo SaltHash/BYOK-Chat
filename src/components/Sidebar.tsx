@@ -1,9 +1,10 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useShallow } from 'zustand/react/shallow'
-import { Plus, Clock, Search, PanelLeftClose, Pin, Pencil, Trash2, MessageSquare, Server, ListMusic, ScrollText, Terminal, Wrench, Settings, Palette, PanelRight, Folder, FolderPlus, FolderMinus, ChevronRight, Bookmark, Download, Archive, ArchiveRestore, MoreVertical, Check, X } from 'lucide-react'
+import { Plus, Clock, Search, PanelLeftClose, Pin, Pencil, Trash2, MessageSquare, Server, ListMusic, ScrollText, Terminal, Wrench, Settings, Palette, PanelRight, Folder, FolderPlus, FolderMinus, ChevronRight, Bookmark, Download, Archive, ArchiveRestore, MoreVertical, Check, X, ListChecks, LockKeyhole } from 'lucide-react'
 import { useS, chatMd, dl, THEMES, DARK_THEMES, LIGHT_THEMES, THEME_COLORS, themeKeyOf, DEFAULT_LIBRARY_SHOW, featOn, type Chat, type FeatureId } from '../store'
 import { searchChats } from '../recall'
 import { useApprovals } from '../toolApprovals'
+import { useQuestions } from '../questions'
 import { bookmarkEntries } from '../bookmarks'
 import { clampSidebarWidth } from '../layout'
 import { focusComposer, useShiftHeld } from '../hooks'
@@ -43,6 +44,7 @@ function RowBody({ c, mv, del, dnd, container, index, shift, onNavigate, time }:
   // cannot signal by itself: without this, the prompt is invisible until the
   // chat is opened. The badge is the smallest honest marker.
   const waiting = useApprovals((q) => q.queue.some((a) => a.chatId === c.id))
+  const asking = useQuestions((q) => q.queue.some((x) => x.chatId === c.id))
   const [ed, setEd] = useState(false)
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null)
   const moreRef = useRef<HTMLButtonElement>(null)
@@ -76,16 +78,19 @@ function RowBody({ c, mv, del, dnd, container, index, shift, onNavigate, time }:
   const menuTop = menu ? Math.max(8, Math.min(menu.y, vh - menuH)) : 0
   return (
     <div ref={dnd ? dnd.register(c.id) : undefined} data-chat-row={c.id} title={dnd ? 'Drag to move to a project' : undefined}
-      className={cx('group flex items-center rounded-lg pr-1 text-sm', dnd && 'dnd-handle cursor-grab', selected ? 'bg-hov' : 'hover:bg-surf', dragging && 'opacity-25')}>
+      className={cx('group relative flex items-center rounded-lg pr-1 text-sm', dnd && 'dnd-handle cursor-grab', selected ? 'bg-hov' : 'hover:bg-surf', dragging && 'opacity-25')}>
       {ed ? <Name v={c.title} save={(t) => useS.getState().rename(c.id, t)} done={() => setEd(false)} /> : (
         <button {...dragProps} onDoubleClick={() => setEd(true)} onClick={() => { useS.getState().patch({ chat: c.id, activeProject: '' }); onNavigate() }} aria-current={selected ? 'page' : undefined} className="side-item flex min-w-0 flex-1 items-center gap-2.5 px-2.5 text-left">
           {c.pin ? <Pin size={15} className="shrink-0 text-ac" /> : c.temporary ? <Clock size={15} className="shrink-0 text-mu" /> : <MessageSquare size={15} className="shrink-0 text-mu" />}
           <span className="flex min-w-0 flex-1 items-center gap-1.5">
             <span className="truncate">{c.title}{c.temporary && container !== 'temporary' ? ' · temporary' : ''}</span>
-            {/* A running reply stays visible from anywhere: a small pulsing dot, no counter. */}
-            {busy && <><span aria-hidden="true" title="Replying" className="size-1.5 shrink-0 animate-pulse rounded-full bg-ac motion-reduce:animate-none" /><span className="sr-only">Replying</span></>}
+            {/* Background work reads as motion along the row's bottom edge.
+                A waiting chat is a static, distinct icon instead: it is not
+                making progress, it is blocked on the reader. */}
+            {busy && <span className="sr-only">Replying in the background</span>}
             {!busy && finished && <><span aria-hidden="true" title="Finished while you were away" className="size-1.5 shrink-0 rounded-full bg-ac/70" /><span className="sr-only">Finished while you were away</span></>}
-            {waiting && <><span aria-hidden="true" title="Waiting for your approval" className="size-1.5 shrink-0 rounded-full bg-er" /><span className="sr-only">Waiting for your approval</span></>}
+            {waiting && <><LockKeyhole aria-hidden="true" size={14} className="shrink-0 text-er" /><span className="sr-only">Waiting for your approval</span></>}
+            {asking && <><ListChecks aria-hidden="true" size={14} className="shrink-0 text-er" /><span className="sr-only">Waiting for your answer</span></>}
           </span>
         </button>
       )}
@@ -94,6 +99,11 @@ function RowBody({ c, mv, del, dnd, container, index, shift, onNavigate, time }:
         <button aria-label={shift ? `Permanently delete ${c.title}` : c.archived ? `Restore ${c.title} from archive` : `Archive ${c.title}`} title={shift ? 'Delete chat permanently' : c.archived ? 'Restore from archive' : 'Archive chat (hold Shift to delete permanently)'} onClick={(e) => del(c.id, e.shiftKey)} className={cx(act, shift ? 'hover:text-er' : 'hover:text-tx')}>{shift ? <Trash2 size={14} /> : c.archived ? <ArchiveRestore size={14} /> : <Archive size={14} />}</button>
         <button ref={moreRef} aria-label={`More actions for ${c.title}`} title="More actions" aria-haspopup="menu" aria-expanded={!!menu} onClick={(e) => { e.stopPropagation(); const r = e.currentTarget.getBoundingClientRect(); setMenu({ x: r.right, y: r.bottom + 4 }) }} className={act}><MoreVertical size={14} /></button>
       </span>
+      {busy && (
+        <span aria-hidden="true" className="pointer-events-none absolute inset-x-2 bottom-0.5 h-[2px] overflow-hidden rounded-full bg-ac/15">
+          <span className="row-progress-bar block h-full w-1/3 rounded-full bg-ac/80" />
+        </span>
+      )}
       {menu && (
         <div ref={menuRef} role="menu" aria-label={`Actions for ${c.title}`} onMouseDown={(e) => e.stopPropagation()} onKeyDown={menuKeys}
           style={{ left: menuLeft, top: menuTop }}
@@ -126,6 +136,8 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
     eps: st.eps, pls: st.pls, prompts: st.prompts, cmds: st.cmds, tools: st.tools, memories: st.memories, widgets: st.widgets, features: st.features,
     patch: st.patch, newChat: st.newChat, renameProject: st.renameProject, delProject: st.delProject, openProject: st.openProject, moveChat: st.moveChat, promoteChat: st.promoteChat,
   })))
+  const questions = useQuestions((q) => q.queue)
+  const approvals = useApprovals((q) => q.queue)
   const [clock, setClock] = useState(Date.now())
   const [q, setQ] = useState('')
   // Archived chats are kept out of every normal section and only rendered in
@@ -197,6 +209,14 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
     [s.chats, k, showArchived],
   )
   const archivedCount = useMemo(() => s.chats.filter((c) => c.archived).length, [s.chats])
+  // Chats blocked on a permission or a mid-turn question are a to-do list, not
+  // history: they sit above Pinned in every normal view. Search keeps its own
+  // ranked results, and the archive view stays archive-only.
+  const needs = useMemo(() => {
+    if (showArchived || k) return []
+    const ids = new Set([...approvals.map((a) => a.chatId), ...questions.map((x) => x.chatId)])
+    return s.chats.filter((c) => c.archived !== true && ids.has(c.id))
+  }, [s.chats, showArchived, k, approvals, questions])
   const { temporary, pinned, free } = useMemo(() => {
     const out = { temporary: [] as Chat[], pinned: [] as Chat[], free: [] as Chat[] }
     for (const c of L) {
@@ -582,6 +602,17 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
             {!L.length && <p className="px-2.5 py-2 text-sm text-mu">{k ? 'No archived chats match.' : 'No archived chats. Use the archive button on a chat to move it here.'}</p>}
           </div>
         ) : (<>
+        {!!needs.length && (
+          <div>
+            <div className="flex items-center justify-between px-2.5 pb-1 text-xs font-medium text-er">
+              <span>Needs you</span>
+              <span className="tabular-nums">{needs.length}</span>
+            </div>
+            <div className="side-rows">
+              {needs.map((c) => <Row key={`need-${c.id}`} c={c} mv={mv} del={del} dnd={null} container="needs" index={0} shift={shiftHeld} onNavigate={onNavigate} />)}
+            </div>
+          </div>
+        )}
         {!!pinned.length && <div><div className="px-2.5 pb-1 text-xs font-medium text-mu">Pinned</div><div className="side-rows">{rows(pinned, 'pinned')}</div></div>}
         {!!marks.length && (
           <div>

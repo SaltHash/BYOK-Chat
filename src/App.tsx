@@ -41,6 +41,7 @@ export default function App() {
   const routeReady = useRef(false)
   const prevChat = useRef(currentChat)
   const prevSettingsOpen = useRef(!!cfg)
+  const resumedRuns = useRef(false)
   useEffect(() => {
     if (!canUseDOM()) return
     const openRoute = () => {
@@ -139,6 +140,14 @@ export default function App() {
     const pick = mode === 'permanent' ? st.chats.find(c => !c.temporary && !c.archived) : st.chats.find(c => !c.archived)
     if (st.chat !== (pick?.id ?? '')) st.patch({ chat: pick?.id ?? '' })
   }, [])
+  // A fresh tab cannot continue a run where it left off, but it can restart it
+  // from the last persisted reply and tool rounds. StrictMode replays effects,
+  // so only the first call may resume anything.
+  useEffect(() => {
+    if (!canUseDOM() || resumedRuns.current) return
+    resumedRuns.current = true
+    useS.getState().resumeOrphanedRuns()
+  }, [])
   // Auto-updating shares: when a chat with `auto` set changes, refresh its
   // snapshot (debounced). Best-effort; a failure keeps the old hash so the next
   // change retries.
@@ -171,7 +180,12 @@ export default function App() {
   }, [])
   useEffect(() => {
     if (!canUseDOM()) return
-    const f = (e: BeforeUnloadEvent) => { if (useS.getState().busy) e.preventDefault() }
+    // Ordinary replies are journaled and resumed on the next visit, so only a
+    // research run (which is not resumed) still asks before closing.
+    const f = (e: BeforeUnloadEvent) => {
+      const research = useS.getState().chats.some((c) => c.msgs.some((m) => m.research && ['running', 'writing', 'planning', 'questions', 'plan', 'tier-pick'].includes(m.research.status)))
+      if (research) e.preventDefault()
+    }
     window.addEventListener('beforeunload', f)
     return () => window.removeEventListener('beforeunload', f)
   }, [])

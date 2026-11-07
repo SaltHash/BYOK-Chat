@@ -4,6 +4,8 @@ import { useShallow } from 'zustand/react/shallow'
 import { DEFAULT_TOOLS, KEYS, WIDGETS } from './meta'
 import { est, redact, stream, wire, trimHistory, estimateHistoryTokens, estimateTokens, runToolLoop, type ToolCall, type ToolResult, searchWeb, formatSearch, fetchPage, formatPage, can, ocrImage, clearSessionCache, setDynamicTools, DYNAMIC_TOOLS, type ToolSpec, type PageExcerpt } from './engine'
 import { DEFAULT_TOOL_APPROVAL, cancelToolApprovals, needsToolApproval, normToolApproval, normToolMode, requestToolApproval, type ToolMode } from './toolApprovals'
+import { answerUserQuestion, cancelUserQuestions, clearOrphanQuestions, normalizeQuestionInput, queueOrphanQuestion, requestUserQuestion, useQuestions } from './questions'
+import { continueNote, normRunJournal, type RunEntry, type RunJournal } from './runJournal'
 import { forkAt as forkTree, switchTo as switchTree, type Fork } from './conversationTree'
 import { captureProfile, freshProfileName, normProfiles, profileMatches, profilePatch, type Profile } from './profiles'
 import { withCompaction, shouldCompact, selectCompactionMessages, transcriptFor, compactionSystemPrompt, compactionAsk, compactionOutputTokens, compactionInputChars, compactionAnchor, compactionDetail, isHandoff, type CompactionRecord } from './compaction'
@@ -69,7 +71,7 @@ export type Attempt = { n: string; m: string; detail?: string; ms?: number; err?
 export type Try = Attempt
 export type Attachment = { name: string; kind: 'img' | 'pdf' | 'txt' | 'media'; size: string; mime?: string; data?: string; text?: string; source?: string; pages?: number; /** Original extracted character count, before the per-file budget. */ chars?: number; /** The text in the prompt is a head/tail excerpt, not the whole file. */ truncated?: boolean; /** Neutral name shown to the model instead of the real file name. */ modelName?: string }
 export type Att = Attachment
-export type Message = { id: string; r: 'user' | 'assistant'; t: string; at?: number; by?: string; tps?: number; log?: Attempt[]; att?: Attachment[]; err?: boolean; trunc?: boolean; capped?: boolean; full?: string; ctx?: string[]; fx?: string; cmd?: string;  alts?: Snap[]; ai?: number; historyTokens?: number; explicitTokens?: number; reasoning?: string; toolRounds?: { text: string; calls: ToolResult[] }[]; toolFinal?: string; sys?: string; workspaceIds?: string[]; research?: ResearchState; /** Kept visible under the header and added to the model context (see prefs.pinContext). */ pin?: boolean; /** Sibling continuations after this message (see conversationTree). */ fork?: Fork }
+export type Message = { id: string; r: 'user' | 'assistant'; t: string; at?: number; by?: string; tps?: number; log?: Attempt[]; att?: Attachment[]; err?: boolean; trunc?: boolean; capped?: boolean; full?: string; ctx?: string[]; fx?: string; cmd?: string;  alts?: Snap[]; ai?: number; historyTokens?: number; explicitTokens?: number; reasoning?: string; toolRounds?: { text: string; calls: ToolResult[] }[]; toolFinal?: string; sys?: string; workspaceIds?: string[]; research?: ResearchState; /** Kept visible under the header and added to the model context (see prefs.pinContext). */ pin?: boolean; /** This reply was interrupted by a closed tab and is waiting to resume. */ interrupted?: boolean; /** Sibling continuations after this message (see conversationTree). */ fork?: Fork }
 export type Msg = Message
 export type Snap = { t: string; by?: string; tps?: number; log?: Try[]; err?: boolean; toolRounds?: { text: string; calls: ToolResult[] }[]; toolFinal?: string; workspaceIds?: string[] }
 export type Chat = { id: string; title: string; pin?: boolean; started?: boolean; project?: string; msgs: Msg[]; temporary?: boolean; expiresAt?: number; titleAuto?: boolean; /** Hidden from the normal sidebar until the Archived filter is opened. */ archived?: boolean; /** When the chat was archived, used for retention. */ archivedAt?: number; /** Bookmarked message ids, newest first (see bookmarks.ts). */ bookmarks?: string[]; /** Model-written handoff that replaces the messages up to `through` in requests. The stored transcript is untouched. */ compact?: CompactionRecord; /** Sibling continuations before the first message. */ fork?: Fork }
@@ -667,6 +669,10 @@ type S = {
   /** Chat ids streaming a reply right now. `busy` is true while any of them
    *  runs, so per-chat controls read this map instead of the global flag. */
   busyChats: Record<string, true>
+  /** Durable journal of replies that were streaming when the tab closed. The
+   *  transcript is already persisted; this records only which reply was in
+   *  flight, its retry count and whether it was waiting on the user. */
+  runJournal: RunJournal
   /** Chat ids whose reply finished while another chat was open. Cleared when
    *  that chat is opened; keeps a finished temporary chat listed in the sidebar. */
   doneChats: Record<string, true>
@@ -697,6 +703,15 @@ type S = {
   stop: () => void
   /** Abort every chat currently streaming a reply. */
   stopAll: () => void
+  /** Continue a reply that was cut off by a closed tab. `note` overrides the
+   *  default continuation instruction. */
+  resumeRun: (chatId: string, note?: string) => void
+  /** On boot: resume interrupted replies and restore questions from the last tab. */
+  resumeOrphanedRuns: () => void
+  /** Answer the inline question card; the paused reply continues with it. */
+  answerQuestion: (id: string, answer: string) => void
+  /** Skip the inline question and let the reply proceed with an assumption. */
+  skipQuestion: (id: string) => void
   /** Re-run a finished report's plan from the start against fresh sources. */
   rerunResearch: (mid: string) => void
   regen: () => void
@@ -1067,6 +1082,25 @@ export const useS = create<S>()(
         if (get().chat !== chatId) set((s) => ({ doneChats: { ...(s.doneChats ?? {}), [chatId]: true } }))
         flushQueued(chatId)
       }
+      /* Journal writes are the durable trace of a live run. Keeping them out of
+         `Run` means a fresh tab can see what the closed tab knew, without
+         persisting the whole request a second time. */
+      const journalRun = (chatId: string, mid: string, status: RunEntry['status'], extra: Partial<RunEntry> = {}) => set((s) => {
+        const old = s.runJournal?.[chatId]
+        return {
+          runJournal: {
+            ...(s.runJournal ?? {}),
+            [chatId]: { ...(old?.mid === mid ? old : {}), mid, at: Date.now(), attempts: old?.mid === mid ? old.attempts : 0, status, ...extra },
+          },
+        }
+      })
+      const forgetRun = (chatId: string, mid?: string) => set((s) => {
+        const entry = s.runJournal?.[chatId]
+        if (!entry || (mid && entry.mid !== mid)) return {}
+        const runJournal = { ...(s.runJournal ?? {}) }
+        delete runJournal[chatId]
+        return { runJournal }
+      })
       /* Permanent usage history: once a reply finishes, copy its attempts into
        * the ledger so its tokens and cost keep counting after the chat is
        * deleted, archived or expires. Chat titles ride along as labels, because
@@ -2142,15 +2176,25 @@ export const useS = create<S>()(
         endRun(chatId, r)
       }
 
-      async function answer(um: Msg, prev?: Snap[]) {
+      async function answer(um: Msg, prev?: Snap[], resume?: { chatId: string; mid: string; text: string; rounds: { text: string; calls: ToolResult[] }[]; log?: Try[]; attempt: number; note?: string }) {
         syncMcpTools()
-        const s = get(), id = s.chat, p = plan(s, um)
+        const s = get(), id = resume?.chatId ?? s.chat, p = plan(s, um)
         if (p.err) { set({ notice: p.err }); return }
         const r: Run = { stopped: false, ctl: null }
         runs.set(id, r)
-        const mid = uid(), log: Try[] = []
+        const mid = resume?.mid ?? uid(), priorLog = resume?.log ?? [], log: Try[] = []
         useLive.getState().clear(mid)
-        set((st) => ({ busy: true, busyChats: { ...st.busyChats, [id]: true }, notice: null, chats: st.chats.map((c) => (c.id === id ? { ...c, msgs: [...c.msgs, { id: mid, r: 'assistant', t: '', at: Date.now(), by: '', log: [], ...(prev ? { alts: prev, ai: prev.length } : {}) }] } : c)) }))
+        if (resume) {
+          set((st) => ({ busy: true, busyChats: { ...st.busyChats, [id]: true }, notice: null, chats: st.chats.map((c) => (c.id === id ? { ...c, msgs: c.msgs.map((m) => (m.id === mid ? { ...m, interrupted: false, err: undefined } : m)) } : c)) }))
+          log.push({ n: 'Resume', m: '', detail: `Resumed the reply after the tab closed (attempt ${resume.attempt}).`, at: Date.now() })
+        } else {
+          // A new message supersedes a question restored from the last tab;
+          // leaving it above the composer would offer to resume a reply the
+          // reader has already moved on from.
+          clearOrphanQuestions(id)
+          set((st) => ({ busy: true, busyChats: { ...st.busyChats, [id]: true }, notice: null, chats: st.chats.map((c) => (c.id === id ? { ...c, msgs: [...c.msgs, { id: mid, r: 'assistant', t: '', at: Date.now(), by: '', log: [], ...(prev ? { alts: prev, ai: prev.length } : {}) }] } : c)) }))
+        }
+        journalRun(id, mid, 'running')
         const hist = () => (get().chats.find((c) => c.id === id)?.msgs ?? []).filter((m) => m.id !== mid)
         let order = p.cand, ok = false, usedEp: Ep | undefined, system = p.sys
         // Citation ids for this reply: one S<n> per distinct source, numbered
@@ -2356,7 +2400,7 @@ export const useS = create<S>()(
             const attemptKey = `${e.id}::${e.model}`
             const attemptNo = (attempts.get(attemptKey) ?? 0) + 1
             attempts.set(attemptKey, attemptNo)
-            let txt = ''
+            let txt = resume?.text ?? ''
             const t0 = Date.now(), q = get().params
             // Effort is classified once per model: a retry must not re-bill
             // the helper classification call.
@@ -2376,7 +2420,7 @@ export const useS = create<S>()(
               }
             }
             effortCache.set(e.model, effort)
-            edit(id, mid, (m) => ({ ...m, by: `${e.name} · ${e.model}`, t: '' }))
+            edit(id, mid, (m) => ({ ...m, by: `${e.name} · ${e.model}`, t: resume?.text ?? '' }))
             // A failed attempt leaves its streamed chunks behind; clear them so
             // the live preview cannot show text the committed reply does not.
             useLive.getState().clear(mid)
@@ -2395,8 +2439,11 @@ export const useS = create<S>()(
             try {
               r.ctl = new AbortController()
               const x = await runToolLoop(e, system, (rounds) => {
-                const partial = { id: mid, r: 'assistant' as const, t: '', toolRounds: rounds }
-                return wire(e, [...histFor(), partial])
+                const partial = { id: mid, r: 'assistant' as const, t: resume?.text ?? '', toolRounds: rounds }
+                // Every provider request is rebuilt from history, so the note
+                // must accompany each round, not just the resumed one.
+                const note = resume ? [{ id: `${mid}-resume`, r: 'user' as const, t: resume.note ?? continueNote() }] : []
+                return wire(e, [...histFor(), ...note, partial])
               }, (() => {
                 const g = get(), GF = g.features ?? DEFAULT_FEATURES
                 // The composer lock can turn every schema off; keeping the
@@ -2525,6 +2572,17 @@ export const useS = create<S>()(
                 if (typeof code !== 'string' || !code.trim()) throw Error('Provide code to run')
                 return formatCodeResult(language, await runCode(language, code, prefs))
               },
+              ask: async (raw: { question?: unknown; options?: unknown; allowText?: unknown }) => {
+                const question = normalizeQuestionInput(raw)
+                if (!question) throw Error('Ask one clear question, with at most six short options.')
+                journalRun(id, mid, 'question', { question: { id: `q-${mid}`, ...question, at: Date.now() } })
+                try {
+                  const answer = await requestUserQuestion({ chatId: id, ...question }, r.ctl?.signal)
+                  return `The user answered: ${answer}`
+                } finally {
+                  journalRun(id, mid, 'running', { question: undefined })
+                }
+              },
               workspace_upsert: async ({
                 workspaceId, createNew, workspaceName, revisionName, action, path, language, content, template,
                 startLine, endLine, query, regex, caseSensitive, glob, contextLines, maxResults, to, against, dryRun,
@@ -2601,17 +2659,19 @@ export const useS = create<S>()(
                 // boundary instead of letting a queued call slip through.
                 if (mode === 'off') return false
                 if (!needsToolApproval(mode, g.toolApproval, call.name)) return true
+                journalRun(id, mid, 'approval', { approval: { name: call.name, args: String(call.arguments ?? '').slice(0, 1600) } })
                 const allowed = await requestToolApproval({ chatId: id, name: call.name, args: call.arguments }, r.ctl?.signal)
+                journalRun(id, mid, 'running', { approval: undefined })
                 // Re-check after the wait: Disabled may have been chosen while
                 // the prompt was open. A permission card must never outlive the
                 // policy that produced it.
                 return allowed && normToolMode(get().toolMode) !== 'off'
               },
-            })
+            }, resume ? { rounds: resume.rounds, text: resume.text, roundCount: resume.rounds.length } : undefined)
               txt = x.text
               responseTokensIn = x.tin; responseTokensOut = x.tout
               const current = get().chats.find(c => c.id === id)
-              if (txt.trim() && current && (current.titleAuto || current.title === 'New chat' || !current.title)) void generateTitle(id, e, txt)
+              if (!resume && txt.trim() && current && (current.titleAuto || current.title === 'New chat' || !current.title)) void generateTitle(id, e, txt)
 
               const elapsed = Date.now() - t0
               const toolElapsed = toolRounds.reduce((total, round) => total + Math.max(0, ...round.calls.map((call) => call.ms ?? 0)), 0)
@@ -2674,11 +2734,12 @@ export const useS = create<S>()(
           // previous alternative so the earlier answer is not lost.
           const last = prev?.[prev.length - 1]
           if (last) edit(id, mid, (m) => ({ ...m, ...last, alts: prev, ai: prev!.length - 1 }))
+          else if (resume) edit(id, mid, (m) => ({ ...m, t: m.t || resume.text }))
           else set((st) => ({ chats: st.chats.map((c) => (c.id === id ? { ...c, msgs: c.msgs.filter((m) => m.id !== mid) } : c)) }))
         } else {
           const failure = ok ? '' : log.filter((x) => x.err).map((x) => `${x.n}${x.m ? ' · ' + x.m : ''}: ${x.err}`).join('\n')
-          edit(id, mid, (m) => ok ? { ...m, sys: system, log }
-            : { ...m, sys: system, log, err: true, by: 'No model responded', t: appendHint(failure, log) })
+          edit(id, mid, (m) => ok ? { ...m, sys: system, log: [...priorLog, ...log], interrupted: false }
+            : { ...m, sys: system, log: [...priorLog, ...log], err: true, interrupted: false, by: 'No model responded', t: resume && m.t?.trim() ? `${m.t}\n\n${appendHint(failure, log)}` : appendHint(failure, log) })
           keepUsage(id, mid, log)
           if (prev) edit(id, mid, (m) => ({ ...m, alts: [...prev, snap(m)], ai: prev.length }))
         }
@@ -2686,6 +2747,7 @@ export const useS = create<S>()(
         const workspaceTouched = workspaceWritesPending
         workspaceWritesPending = false
         if (ok && !r.stopped && workspaceTouched) celebrate(get().prefs.cues === true)
+        forgetRun(id, mid)
         endRun(id, r)
         // Sync push is handled by the background runtime (storage/syncRuntime).
       }
@@ -2715,7 +2777,7 @@ export const useS = create<S>()(
         usage: initialLedger.rows, usageTitles: initialLedger.titles,
         profiles: [], profile: '', projects: [], activeProject: '', price: { in: 0, out: 0 }, todos: [],
         routeStats: {}, shares: [], flashMsg: null,
-        draft: '', busy: false, busyChats: {}, doneChats: {}, queued: {}, notice: null, undo: null,
+        draft: '', busy: false, busyChats: {}, runJournal: {}, doneChats: {}, queued: {}, notice: null, undo: null,
         /* Workspace (first-class entity) */
         workspaces: {}, selectedRevision: {},            researchPanel: null,
 
@@ -2785,6 +2847,7 @@ export const useS = create<S>()(
             const far = runs.get(id)
             if (far) { far.stopped = true; far.ctl?.abort(); runs.delete(id) }
             cancelToolApprovals(id)
+            cancelUserQuestions(id)
             if (deleteTimer) { clearTimeout(deleteTimer); deleteTimer = null }
             commitPendingDelete()
             undo = { chat: gone, index: before.chats.findIndex((c) => c.id === id), wasOpen: before.chat === id, draft: before.drafts[id] }
@@ -2808,10 +2871,11 @@ export const useS = create<S>()(
             const busyChats = { ...s.busyChats }
             const doneChats = { ...(s.doneChats ?? {}) }
             const queued = { ...(s.queued ?? {}) }
-            if (op === 'del') { delete busyChats[id]; delete doneChats[id]; delete queued[id] }
+            const runJournal = { ...(s.runJournal ?? {}) }
+            if (op === 'del') { delete busyChats[id]; delete doneChats[id]; delete queued[id]; delete runJournal[id] }
             return {
               chats, chat: s.chat === id && op === 'del' ? chats[0]?.id ?? '' : s.chat, drafts,
-              ...(op === 'del' ? { busyChats, busy: Object.keys(busyChats).length > 0, doneChats, queued, undo, notice: { t: `Deleted “${pendingDelete?.chat.title ?? 'chat'}”.`, undo: true } } : {}),
+              ...(op === 'del' ? { busyChats, busy: Object.keys(busyChats).length > 0, doneChats, queued, runJournal, undo, notice: { t: `Deleted “${pendingDelete?.chat.title ?? 'chat'}”.`, undo: true } } : {}),
             }
           })
         },
@@ -3000,6 +3064,68 @@ export const useS = create<S>()(
           void answer(um)
           return true
         },
+        resumeRun: (chatId, note) => {
+          const s = get(), entry = s.runJournal?.[chatId]
+          if (!entry || chatBusy(s, chatId)) return
+          const chat = s.chats.find((c) => c.id === chatId)
+          const at = chat?.msgs.findIndex((m) => m.id === entry.mid) ?? -1
+          if (!chat || at < 0) { forgetRun(chatId); return }
+          const msg = chat.msgs[at]
+          if (msg.r !== 'assistant' || msg.research) { forgetRun(chatId); return }
+          let j = at - 1
+          while (j >= 0 && chat.msgs[j].r !== 'user') j--
+          if (j < 0) { forgetRun(chatId); return }
+          const um = chat.msgs[j]
+          const pre = plan(s, um)
+          if (pre.err) { forgetRun(chatId); set({ notice: pre.err }); return }
+          journalRun(chatId, entry.mid, 'running', { question: undefined, approval: undefined })
+          void answer(um, undefined, {
+            chatId,
+            mid: entry.mid,
+            text: msg.t,
+            rounds: msg.toolRounds ?? [],
+            log: msg.log ?? [],
+            attempt: entry.attempts,
+            note: note ?? continueNote({ approval: entry.status === 'approval' ? entry.approval?.name : undefined }),
+          })
+        },
+        resumeOrphanedRuns: () => {
+          const s = get()
+          for (const [chatId, entry] of Object.entries(s.runJournal ?? {}) as [string, RunEntry][]) {
+            const chat = s.chats.find((c) => c.id === chatId)
+            const msg = chat?.msgs.find((m) => m.id === entry.mid)
+            if (!chat || !msg || msg.r !== 'assistant' || msg.research) { forgetRun(chatId); continue }
+            if (entry.status === 'question' && entry.question) {
+              queueOrphanQuestion({ ...entry.question, chatId, orphan: true })
+              continue
+            }
+            if (entry.attempts >= 2) {
+              set((st) => ({ chats: st.chats.map((c) => (c.id === chatId ? { ...c, msgs: c.msgs.map((m) => (m.id === entry.mid ? { ...m, interrupted: true } : m)) } : c)) }))
+              forgetRun(chatId)
+              continue
+            }
+            set((st) => ({ runJournal: { ...(st.runJournal ?? {}), [chatId]: { ...entry, attempts: entry.attempts + 1, at: Date.now() } } }))
+            get().resumeRun(chatId)
+          }
+        },
+        answerQuestion: (id, answer) => {
+          const question = useQuestions.getState().queue.find((q) => q.id === id)
+          const value = String(answer ?? '').trim().slice(0, 4000)
+          if (!question || !value) return
+          if (answerUserQuestion(id, value)) return
+          const entry = get().runJournal?.[question.chatId]
+          if (!entry) {
+            useQuestions.setState((st) => ({ queue: st.queue.filter((q) => q.id !== id) }))
+            return
+          }
+          const note = continueNote({ question: { question: question.question, answer: value } })
+          useQuestions.setState((st) => ({ queue: st.queue.filter((q) => q.id !== id) }))
+          set((st) => ({ runJournal: { ...(st.runJournal ?? {}), [question.chatId]: { ...entry, status: 'running', question: undefined } } }))
+          get().resumeRun(question.chatId, note)
+        },
+        skipQuestion: (id) => {
+          get().answerQuestion(id, 'I am skipping this question. Proceed with your best assumption and state it briefly.')
+        },
         stop: () => {
           const chatId = get().chat
           const r = runs.get(chatId)
@@ -3007,6 +3133,8 @@ export const useS = create<S>()(
           // Stop is also a refusal: clear a prompt immediately even if the
           // provider stream has not noticed the abort yet.
           cancelToolApprovals(chatId)
+          cancelUserQuestions(chatId)
+          forgetRun(chatId)
           setChatBusy(chatId, false)
           flushQueued(chatId)
         },
@@ -3016,6 +3144,7 @@ export const useS = create<S>()(
             const r = runs.get(id)
             if (r) { r.stopped = true; r.ctl?.abort() }
             cancelToolApprovals(id)
+            cancelUserQuestions(id)
           }
           runs.clear()
           const stopped = new Set(ids)
@@ -3023,6 +3152,7 @@ export const useS = create<S>()(
             busy: false,
             busyChats: {},
             queued: {},
+            runJournal: Object.fromEntries(Object.entries(s.runJournal ?? {}).filter(([id]) => !stopped.has(id))),
             chats: s.chats.map((c) => stopped.has(c.id)
               ? { ...c, msgs: c.msgs.map((m) => m.research && (m.research.status === 'running' || m.research.status === 'writing' || m.research.status === 'planning')
                 ? { ...m, research: { ...m.research, status: 'stopped', finishedAt: Date.now() } }
@@ -3480,6 +3610,7 @@ export const useS = create<S>()(
         p.profiles = normProfiles(p.profiles)
         p.profile = p.profiles.some((x: Profile) => x.id === p.profile) ? p.profile : ''
         if (Array.isArray(p.projects)) p.projects = p.projects.map((f: Project) => (f?.profile && !p.profiles.some((x: Profile) => x.id === f.profile) ? { ...f, profile: undefined } : f))
+        p.runJournal = normRunJournal(p.runJournal)
         p.mcps = normMcpServers(p.mcps)
         p.imageGen = normImageGen(p.imageGen)
         p.codeRun = normCodeRun(p.codeRun)
@@ -3671,7 +3802,7 @@ useS.subscribe((s, prev) => {
  * chunk, so they are off the streaming render path entirely. Components that
  * need any of these fields must use their own selector. */
 export const useSConfig = () => useS(useShallow((s) => {
-  const { chats, drafts, busy, busyChats, doneChats, queued, draft, notice, flashMsg, usage, usageTitles, undo, ...config } = s
+  const { chats, drafts, busy, busyChats, runJournal, doneChats, queued, draft, notice, flashMsg, usage, usageTitles, undo, ...config } = s
   void chats; void drafts; void busy; void busyChats; void doneChats; void queued; void draft; void notice; void flashMsg; void usage; void usageTitles; void undo
   return config
 }))

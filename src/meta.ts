@@ -1,4 +1,4 @@
-import { Type, Image, ImagePlus, FileText, Files, Clock, Clipboard, Calculator, Activity, Layers, StickyNote, Bookmark, Fingerprint, Dices, Hash, MapPin, Coins, Timer, ScrollText, Keyboard, ListChecks, Search, Link, CornerDownLeft, LineChart } from 'lucide-react'
+import { Type, Image, ImagePlus, FileText, Files, Clock, Clipboard, Calculator, Activity, Layers, StickyNote, Bookmark, Fingerprint, Dices, Hash, MapPin, Coins, Timer, ScrollText, Keyboard, ListChecks, Search, Link, CornerDownLeft, LineChart, MessageSquare } from 'lucide-react'
 
 export const CI = { text: Type, image: Image, 'image+text': ImagePlus, doc: FileText }
 
@@ -7,6 +7,7 @@ export const CI = { text: Type, image: Image, 'image+text': ImagePlus, doc: File
 // reply. Web research first, then everyday utilities, then workspaces and
 // memory, then reply widgets, then niche developer utilities last.
 export const TOOLS: [string, string, typeof Clock, string, string, string][] = [
+  ['ask', 'Ask a question', MessageSquare, 'ask(question, options?, allowText?)', 'Pauses the reply to ask you one question inline and continues with your answer. The card appears above the composer; pending questions also collect in the sidebar’s Needs you section.', 'Shows a question card and waits for your answer. Nothing is sent to a provider while it waits.'],
   ['search', 'Web search and grounding', Search, '@search(query)', 'Searches the web and adds linked sources to your message context.', 'Sends your query to the configured server search provider. Search results are sent to the selected model.'],
   ['fetch_page', 'Page reader', FileText, '@fetch_page(url, info?)', 'Reads the full text of a search result page for deeper quotes.', 'Fetches the page through the configured reader API and sends an excerpt to the selected model. With page summaries on, a second model summarizes the page first; the reading model can say what it wants from the page via info, and the summary answers that while keeping other important information.'],
   ['calc', 'Calculator', Calculator, '@calc(2*(3+4))', 'Evaluates arithmetic locally and inserts the result.', 'Runs the arithmetic evaluator (functions, constants, lists) inside the page.'],
@@ -51,7 +52,7 @@ export const WIDGETS: [string, string, typeof Clock, string][] = [
   ['todo', 'Checklist', ListChecks, 'A small persistent task list.'],
 ]
 
-export const DEFAULT_TOOLS: Record<string, boolean> = { search: false, fetch_page: true, calc: true, count: true, date: true, time: true, random: true, navigate: true, prompt_chip: true, inline_poll: true, graph: true, show_artifact: true, workspace_upsert: true }
+export const DEFAULT_TOOLS: Record<string, boolean> = { ask: true, search: false, fetch_page: true, calc: true, count: true, date: true, time: true, random: true, navigate: true, prompt_chip: true, inline_poll: true, graph: true, show_artifact: true, workspace_upsert: true }
 export const fmtDuration = (ms: number, unit: 'ms' | 's' | 'auto' = 'auto') => {
   if (unit === 'ms' || (unit === 'auto' && ms < 1000)) return `${Math.round(ms)} ms`
   return `${(ms / 1000).toFixed(unit === 's' ? 2 : 1)} s`

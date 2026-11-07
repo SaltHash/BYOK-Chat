@@ -11,7 +11,7 @@ import { Btn, Item, Menu, Pop, Seg, RangeSlider, ImageLightbox, cx, type Ic } fr
 import { SortableList } from './dnd'
 import { MentionBanner, MentionInfo, QuoteBanner } from './Mention'
 import { Notice } from './Extra'
-import { ToolAccessButton, ToolApprovalPrompt } from './ToolAccess'
+import { ToolAccessButton, ToolApprovalPrompt, QuestionPrompt } from './ToolAccess'
 import { dictationAvailable, startDictation, stopSpeaking, normVoice, type Dictation } from '../voice'
 import { getPromptHistory, pushPromptHistory } from '../promptHistory'
 import { quoteForSend } from '../quote'
@@ -585,6 +585,7 @@ export function Composer({ cfg, quote, onClearQuote }: { cfg: (t: string) => voi
       <div className="mx-auto w-full" style={{ maxWidth: composerWidth(s.prefs.chatWidth), paddingLeft: 'var(--ui-chat-pad-x)', paddingRight: 'var(--ui-chat-pad-x)' }}>
       <Notice cfg={cfg} />
       <ToolApprovalPrompt chatId={s.chat} />
+      <QuestionPrompt chatId={s.chat} />
       <div ref={box} style={{ padding: 'var(--ui-composer-pad)', '--glass-blur': `${s.prefs.glassBlur ?? 14}px`, '--glass-opacity': `${s.prefs.glassOpacity ?? 80}%` } as CSSProperties} className={cx('composer-shell relative rounded-2xl transition-colors', s.prefs.glassComposer !== false ? 'glass-composer border border-hov hover:border-bor focus-within:border-bor shadow-lg shadow-black/10' : 'edge-border bg-surf hover:border-bor focus-within:border-bor')} data-lit={menusOpen || listening || typing ? '1' : undefined} onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); add(e.dataTransfer.files) }}>
         {quote && <QuoteBanner text={quote} onDismiss={() => { onClearQuote?.(); ta.current?.focus() }} />}
         {banner && <MentionBanner kind={banner} onDismiss={dismissBanner} warning={banner === 'search' && !searchEnabled ? 'Web search is off.' : undefined} onEnable={banner === 'search' && !searchEnabled ? () => { s.patch({ features: { ...s.features, tools: true }, tools: { ...s.tools, search: true }, toolMode: 'full' }) } : undefined} />}

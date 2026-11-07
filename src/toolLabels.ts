@@ -3,6 +3,7 @@
  *  covers MCP server tools, whose ids are built from the configured server and
  *  function names. */
 export const TOOL_LABELS: Record<string, string> = {
+  ask: 'Question',
   search: 'Web search',
   fetch_page: 'Page reader',
   time: 'Time',
