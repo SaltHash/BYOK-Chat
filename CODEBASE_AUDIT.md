@@ -329,9 +329,9 @@ Keep the visual track at 20 px if desired, but give the button a 24 px minimum h
 
 **Evidence**
 
-- Main chunk: 894.49 kB / 300.33 kB gzip.
+- Main chunk: 899.14 kB / 301.82 kB gzip.
 - Markdown chunk: 753.11 kB / 209.81 kB gzip.
-- Settings chunk: 262.33 kB / 71.55 kB gzip.
+- Settings chunk: 201.59 kB / 56.80 kB gzip, plus a separate 65.41 kB stats chunk loaded on demand.
 - `Settings.tsx` statically imports `UsageStats` (`src/components/Settings.tsx:34`), so the 1,454-line stats surface travels with the already-large settings chunk.
 
 **Impact**
@@ -376,7 +376,7 @@ Carve `Settings` tabs into folder-level modules and move store slices into domai
 
 **Evidence**
 
-- 73 test files and 798 tests pass, but there is no React DOM test dependency, no Playwright/Cypress setup, and no checked-in `.github/workflows` directory.
+- 73 test files and 811 tests pass, but there is no React DOM test dependency, no Playwright/Cypress setup, and no checked-in `.github/workflows` directory.
 - `package.json` has no `lint` script (`package.json:5-15`).
 - The mobile drawer, unnamed switches, unnamed dialogs, and Seg state all passed the logic suite.
 
@@ -636,3 +636,61 @@ navigation
 This is a capable, thoughtfully engineered app with unusually good local-first persistence and backend hygiene. Its biggest weakness is not missing functionality; it is that the same interaction contract is reimplemented inconsistently across the UI. Naming controls, exposing selected state, closing the mobile drawer, and naming dialogs are small fixes that would materially improve the product for keyboard, screen-reader, and mobile users.
 
 The highest-leverage next step is a single accessibility-and-mobile hardening pass, followed by browser-level regression tests and CI. Structural decomposition and bundle reduction should follow, not precede, those user-facing fixes.
+
+---
+
+## 12. Remediation log
+
+This audit was carried through into implementation. The confirmed, user-visible defects below are fixed and covered by checks; the remaining items are listed honestly rather than implied complete.
+
+### Closed in this pass
+
+| Finding | Change | Commit |
+|---|---|---|
+| P1.1 mobile drawer | Row, new-chat, and project navigation now dismiss the drawer at narrow widths. | `d73745c` |
+| P1.2 switch names | `Toggle.label` is required; every feature, prompt, command, document, welcome, and header switch is named. | `d73745c` |
+| P1.3 segmented state | `Seg` is a labelled radiogroup with roving focus and `aria-checked`. | `d73745c` |
+| P1.4 unnamed dialogs | Share, project, palette, graph, sync, and lightbox dialogs are labelled; duplicate nested dialog roles are removed; palette search is named. | `d73745c` |
+| P1.5 delete recovery | Permanent deletion keeps an eight-second undo, including messages and sidebar position; attachment cleanup is deferred until expiry. | `d73745c` |
+| P2.4 Settings weight | `UsageStats` is lazy-loaded: Settings fell from 262 kB to 201.59 kB, with a separate 65.41 kB stats chunk that loads only on demand. | `8b28a46` |
+| P2.7 app-shell headers | Conservative CSP, `nosniff`, referrer policy, and frame/form restrictions are served by the static host and Worker. | `d73745c` |
+| P2.8 error containment | Settings content and the widget rail have compact boundaries; the top-level boundary remains the final catch. | `91bfea3` |
+| P3.2 native confirm | “Delete all stored memories” now uses the themed, focus-managed `Confirm` dialog. | `8b28a46` |
+| P3.3 floating icon version | `lucide-react` is pinned to `^1.55.0` instead of `latest`. | `8b28a46` |
+| Settings navigation | Groups now lead with Everyday (chats, appearance, tools), then models, writing, capabilities, and usage/app controls; search ranks an exact section above its child settings. | `8b28a46` |
+| Private shares | A content-only update no longer silently makes a private share public; a regression test covers it. | `acd08b4` |
+
+### Additional confirmed defects found while tracing model flows
+
+These were not in the initial static review; they surfaced while exercising the transport path:
+
+- SSE `error` events were parsed as malformed JSON, hiding the provider's message.
+- The non-stream fallback did not share the header timeout or Stop handling.
+- Invalid fallback JSON surfaced as a parse crash instead of a transport error.
+- Custom gateways could not use the non-stream fallback.
+- Retry budgeting was keyed only by endpoint, so two models shared one budget.
+- A `200` reply with no body reached the stream reader and crashed instead of falling back.
+
+All six are fixed in `f0821ef` and `9b2f7c5`, with focused regressions in `src/engine.test.mjs`.
+
+### Verification at the end of this pass
+
+| Check | Result |
+|---|---|
+| `npx tsc --noEmit` | clean |
+| `npm test` | 811/811 passed |
+| `npm run test:worker` | 14/14 passed |
+| `npm run build` | passed; main 899.14 kB / 301.82 kB gzip, Settings 201.59 kB, lazy stats 65.41 kB |
+| Browser checks | Settings opens on the requested deep link, grouped navigation and Recent render, search ranks results, keyboard ArrowDown reaches the first result, and the mobile/archive flows were exercised. |
+
+### Still open / deliberately deferred
+
+- **P2.1 history and deep links:** chats and Settings still use `replaceState`; Back/Forward does not traverse them.
+- **P2.2 full menu contract:** row menus close on Escape, but there is no single shared menu primitive with initial focus, Home/End, and Tab dismissal. Header and settings menus still vary.
+- **P2.3 remaining touch targets:** switches now have a larger pseudo-element hit area; some icon-only composer controls still need the same treatment.
+- **P2.5 module size:** `Settings.tsx`, `store.ts`, and `Chat.tsx` remain large. This pass extracted the stats surface but did not attempt a risky big-bang split.
+- **P2.6 browser/CI gate:** there is still no Playwright/axe suite or `.github/workflows` gate. The regression suite remains Node-level plus manual browser checks.
+- **P2.7 key protection:** CSP is defense in depth, not encryption at rest; provider keys remain in browser storage by design.
+- **P3.4 math advisories:** the low-severity KaTeX/micromark advisories need a planned breaking upgrade and a rendered-math regression test.
+- **P3.5 catalog probe:** the LiteLLM catalog can still log a browser CORS failure during discovery; the endpoint remains usable.
+- **Markdown weight:** the separate Markdown/highlight/KaTeX chunk is still about 753 kB and loads on first rendered reply.

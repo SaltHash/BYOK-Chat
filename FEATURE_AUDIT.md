@@ -24,7 +24,7 @@ The single highest-value product change is a **native conversation tree**. The e
 | 1.4 | **Temporary chats** | Expire by hours or when leaving; removable, promotable to permanent, sorted by remaining time. | Add a countdown and one-click “keep forever”; warn before leaving with an unsent draft. |
 | 1.5 | **Pinned chats** | Pins sort above ordinary chats and survive reloads. | Add pin limits or a separate “pinned” section that can collapse, so the list does not crowd recent work. |
 | 1.6 | **Projects/folders** | Create, rename, delete, open, move chats, drag-and-drop rows, project context files, optional shared workspace context. | Add nested projects (or tags) and bulk move/archive; project deletion currently only unassigns chats. |
-| 1.7 | **Archive** | Archived chats leave every normal section and have a dedicated view and restore action. | Add archive search and “archive all older than…” bulk action. |
+| 1.7 | **Archive** | The row's default action is a one-click archive icon; hold Shift to turn it into permanent delete. Archived chats leave every normal section and have a dedicated view and restore action. Retention defaults to 60 days, adjustable from 1–180 days or Never. | Add archive search and “archive all older than…” bulk action. |
 | 1.8 | **Chat search** | Sidebar substring filtering plus BM25 message recall, snippets, jump-to-message, and highlight/flash. | Add filters (role, tool, source, date), saved searches, and result pagination; currently caps at 30 hits. |
 | 1.9 | **Rename** | Inline rename with Enter/Escape and double-click. | Preserve auto-title provenance so a manual rename is not overwritten by title generation. |
 | 1.10 | **Automatic titles** | First reply can generate a short title through a helper model. | Add a title-style setting, debounce, and “regenerate title” action; show token cost of title calls. |
@@ -281,7 +281,7 @@ Standard defaults requiring approval: Location, Clipboard, Workspace files, Code
 
 | # | Feature | How it works today | Improvement |
 |---|---|---|---|
-| 14.1 | **Test suite** | 794 unit/integration tests plus 14 worker smoke checks. | Add browser-level tests for the composer, approvals, and settings deep links. |
+| 14.1 | **Test suite** | 811 unit/integration tests plus 14 worker smoke checks. | Add browser-level tests for the composer, approvals, and settings deep links. |
 | 14.2 | **Type safety** | `tsc --noEmit` clean at baseline; shared store/types. | Add `noUncheckedIndexedAccess` incrementally and lint for floating promises. |
 | 14.3 | **Build** | Vite build passes; main bundle ~885 kB / ~297 kB gzip. | Split heavy tool schemas and settings tabs; set and test a bundle budget. |
 | 14.4 | **Error containment** | Top-level ErrorBoundary; lazy-load fallbacks; storage warning. | Add per-panel boundaries and a “copy diagnostics” action. |
@@ -389,10 +389,10 @@ The focused test file covers: default Full, Standard per-tool, Restricted every-
 | Check | Result |
 |---|---|
 | `npx tsc --noEmit` | clean after the final wiring pass |
-| `npm test` | 794/794 passed |
+| `npm test` | 811/811 passed |
 | `npm run test:worker` | 14/14 passed |
-| `npm run build` | passed; main bundle 893.56 kB / 299.96 kB gzip |
+| `npm run build` | passed; main bundle 899.14 kB / 301.82 kB gzip; Settings 201.59 kB plus a lazy 65.41 kB stats chunk |
 | Approval policy tests | 9/9 passed |
-| Browser checks | composer lock menu and Settings access card verified in the running app; approval policy and queue behavior covered by tests; a full visual pass of every tool card and the device-tool dialog is still worth doing before release |
+| Browser checks | composer lock menu, Settings access card, archive/restore row flow, Shift icon swap, and the archived-retention control verified in the running app; approval policy and queue behavior covered by tests; a full visual pass of every tool card and the device-tool dialog is still worth doing before release |
 
 The final release checklist is deliberately explicit: a clean typecheck and unit suite do not prove every polished surface looks right, and the build must be rerun after every UI edit.
