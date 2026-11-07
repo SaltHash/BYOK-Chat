@@ -2016,6 +2016,9 @@ function Look() {
         })}
       </div>
       </Anchor>
+      {s.prefs.bgImageOn === true && !s.prefs.reduceTransparency && (
+        <p className="text-xs text-mu">Wallpaper theme is on: the photo's accent replaces the theme accent on glass, menus and panels until you switch the image off.</p>
+      )}
       {((s.themeMode === 'light' ? s.themeLight : s.themeDark) === 'custom') && (() => {
         const mode = s.themeMode === 'light' ? 'light' : 'dark'
         const custom = s.themeMode === 'light' ? s.customLightTheme : s.customDarkTheme
@@ -2087,7 +2090,7 @@ function Look() {
       {row('seasonal', 'seasonal', 'Seasonal touches', 'Show a festive greeting on holidays. Turn off to keep the greeting plain.')}
       {row('completion-cues', 'cues', 'Completion cues', 'A soft chime and a little confetti when deep research or a workspace update finishes.')}
       </Section>
-      <Section title="Background" desc="An optional image behind the app, with its own tone controls.">
+      <Section title="Background" desc="An optional photo that brings its own accent, glass and tinted surfaces.">
       <Anchor id="background-image">
       <Card icon={ImageIcon} title="Image background" sub={bgOn ? `On · ${bgName}` : `Off · ${bgName} ready`} muted={!bgOn} open0={bgOn} right={<Toggle on={bgOn} set={(bgImageOn) => setBg({ bgImageOn })} label="Image background" />}>
         <div className="space-y-2">
@@ -2104,6 +2107,7 @@ function Look() {
               return (
                 <button key={wallpaper.src} type="button" aria-pressed={active} aria-label={`Use ${wallpaper.label} wallpaper`} title={wallpaper.label} onClick={() => chooseBg(wallpaper.src)} className={cx('group relative aspect-video overflow-hidden rounded-lg border bg-bg text-left transition-colors', active ? 'border-ac ring-2 ring-ac' : 'border-bor hover:border-mu/60')}>
                   <img src={wallpaperThumb(wallpaper.src)} alt="" loading="lazy" decoding="async" draggable={false} className="h-full w-full object-cover" />
+                  <span aria-hidden="true" title={`Accent ${wallpaper.accent}`} className="absolute left-1.5 top-1.5 size-4 rounded-full border border-white/60 shadow-sm ring-1 ring-black/20" style={{ background: wallpaper.accent }} />
                   <span className="absolute inset-x-0 bottom-0 truncate bg-black/65 px-1.5 py-1 text-[10px] text-white">{wallpaper.label}</span>
                   {active && <span className="absolute right-1.5 top-1.5 grid size-5 place-items-center rounded-full bg-ac text-acx shadow"><Check size={12} /></span>}
                 </button>
@@ -2115,7 +2119,7 @@ function Look() {
         <p className="text-xs text-mu">Click a photo to apply it instantly. Uploads stay on this device; the full image sits behind the app.</p>
         {s.prefs.reduceTransparency === true && <p className="text-xs text-c3">Reduce transparency is on, so the image stays hidden behind opaque surfaces. Turn that setting off to see the background.</p>}
         {bgError && <p role="alert" className="rounded-lg bg-er/10 px-3 py-2 text-xs text-er">{bgError}</p>}
-        <p className="text-xs text-mu">Blur and saturation change the photo; tint adds the interface color and dim darkens it. The conversation stays crisp.</p>
+        <p className="text-xs text-mu">The photo supplies the accent for glass, menus and tinted panels. Blur and saturation change the photo; tint adds an accent wash and strengthens the panel tint; dim darkens it.</p>
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <Anchor id="background-blur">
             <Field label={`Blur · ${bgBlur}px`}><RangeSlider label="Image background blur" min={0} max={100} step={1} value={bgBlur} set={(v) => setBg({ bgImageBlur: Math.round(v) })} className="w-full" /></Field>

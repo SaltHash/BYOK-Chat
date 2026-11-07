@@ -52,19 +52,25 @@ export default function App() {
     if (window.location.hash !== hash) window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}${hash}`)
   }, [cfg, shareId])
   const resize = usePanelResize()
-  // Reduced transparency removes the modal blur entirely rather than dimming
-  // it, so the overlay switch (below) is the single source of the flat look.
-  useThemeCss({ themeMode, themeDark, themeLight, customDarkColors, customLightColors, modalBlur: prefs.reduceTransparency ? 0 : prefs.modalBlur ?? 12 })
   useFontCss(prefs.fontBody, prefs.fontHeader, prefs.fontMono)
   useStyleCss(prefs.stylePreset, prefs.density, prefs.uiSpacing)
   useVisualPrefs(prefs.textScale, prefs.codeWrap, prefs.reduceTransparency, prefs.highContrast)
   // The image is hidden in flat mode, where the shell is deliberately opaque.
   const bgOn = prefs.bgImageOn === true && prefs.reduceTransparency !== true && !shareId
-  const bgSrc = useBackgroundImage({ enabled: bgOn, image: prefs.bgImage })
+  const { src: bgSrc, accent: bgAccent } = useBackgroundImage({ enabled: bgOn, image: prefs.bgImage })
   const bgBlur = normBgBlur(prefs.bgImageBlur)
   const bgDim = normBgDim(prefs.bgImageDim)
   const bgSaturation = normBgSaturation(prefs.bgImageSaturation)
   const bgTint = normBgTint(prefs.bgImageTint)
+  // Reduced transparency removes the modal blur entirely rather than dimming
+  // it, so the overlay switch (below) is the single source of the flat look.
+  // With a photo on, its accent replaces the active theme's accent and all
+  // surfaces are rebuilt from that palette as one wallpaper theme.
+  useThemeCss({
+    themeMode, themeDark, themeLight, customDarkColors, customLightColors,
+    modalBlur: prefs.reduceTransparency ? 0 : prefs.modalBlur ?? 12,
+    ...(bgOn ? { wallpaperAccent: bgAccent, wallpaperTint: bgTint } : {}),
+  })
   useEffect(() => {
     if (!canUseDOM()) return
     const purge = () => {

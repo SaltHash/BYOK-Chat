@@ -9,22 +9,27 @@
 
 import { blobDel, blobGet, blobPut } from './storage/durable'
 
-export type Wallpaper = { src: string; label: string }
+/** A wallpaper is a complete appearance, not just a picture: its accent is
+ * curated to sit between the photo's loudest and quietest colours. */
+export type Wallpaper = { src: string; label: string; accent: string }
 
 export const WALLPAPERS: Wallpaper[] = [
-  { src: '/wallpapers/ales-krivec-x4Jc4HKEHKg-unsplash.jpg', label: 'Ales Krivec' },
-  { src: '/wallpapers/brendan-beale-YJsw2TfZ_F4-unsplash.jpg', label: 'Brendan Beale' },
-  { src: '/wallpapers/clay-banks-u27Rrbs9Dwc-unsplash.jpg', label: 'Clay Banks' },
-  { src: '/wallpapers/john-towner-JgOeRuGD_Y4-unsplash.jpg', label: 'John Towner' },
-  { src: '/wallpapers/jr-korpa-9XngoIpxcEo-unsplash.jpg', label: 'JR Korpa' },
-  { src: '/wallpapers/milad-fakurian-E8Ufcyxz514-unsplash.jpg', label: 'Milad Fakurian' },
-  { src: '/wallpapers/nathan-anderson-iYO-EGosrCo-unsplash.jpg', label: 'Nathan Anderson' },
-  { src: '/wallpapers/national-gallery-of-art-nyhZogmvelI-unsplash.jpg', label: 'National Gallery of Art' },
-  { src: '/wallpapers/pawel-czerwinski-ERcQ81KaX9g-unsplash.jpg', label: 'Paweł Czerwinski' },
-  { src: '/wallpapers/richard-horvath-_nWaeTF6qo0-unsplash.jpg', label: 'Richard Horváth' },
-  { src: '/wallpapers/the-metropolitan-museum-of-art-9XpO8WsYNdI-unsplash.jpg', label: 'The Metropolitan Museum of Art' },
-  { src: '/wallpapers/tomas-hudolin-qd9SE8we9Yo-unsplash.jpg', label: 'Tomáš Hudolín' },
+  { src: '/wallpapers/ales-krivec-x4Jc4HKEHKg-unsplash.jpg', label: 'Ales Krivec', accent: '#b99acb' },
+  { src: '/wallpapers/brendan-beale-YJsw2TfZ_F4-unsplash.jpg', label: 'Brendan Beale', accent: '#c2a070' },
+  { src: '/wallpapers/clay-banks-u27Rrbs9Dwc-unsplash.jpg', label: 'Clay Banks', accent: '#8db9b0' },
+  { src: '/wallpapers/john-towner-JgOeRuGD_Y4-unsplash.jpg', label: 'John Towner', accent: '#c57d85' },
+  { src: '/wallpapers/jr-korpa-9XngoIpxcEo-unsplash.jpg', label: 'JR Korpa', accent: '#c475c7' },
+  { src: '/wallpapers/milad-fakurian-E8Ufcyxz514-unsplash.jpg', label: 'Milad Fakurian', accent: '#9c83d8' },
+  { src: '/wallpapers/nathan-anderson-iYO-EGosrCo-unsplash.jpg', label: 'Nathan Anderson', accent: '#7e9ec8' },
+  { src: '/wallpapers/national-gallery-of-art-nyhZogmvelI-unsplash.jpg', label: 'National Gallery of Art', accent: '#a9bf88' },
+  { src: '/wallpapers/pawel-czerwinski-ERcQ81KaX9g-unsplash.jpg', label: 'Paweł Czerwinski', accent: '#85b7b4' },
+  { src: '/wallpapers/richard-horvath-_nWaeTF6qo0-unsplash.jpg', label: 'Richard Horváth', accent: '#7e8dcd' },
+  { src: '/wallpapers/the-metropolitan-museum-of-art-9XpO8WsYNdI-unsplash.jpg', label: 'The Metropolitan Museum of Art', accent: '#c7ad75' },
+  { src: '/wallpapers/tomas-hudolin-qd9SE8we9Yo-unsplash.jpg', label: 'Tomáš Hudolín', accent: '#91a4b6' },
 ]
+
+/** Used when an uploaded photo has no usable colour to sample. */
+export const DEFAULT_BG_ACCENT = '#c7ad75'
 
 export const DEFAULT_BG_IMAGE = '/wallpapers/clay-banks-u27Rrbs9Dwc-unsplash.jpg'
 const LEGACY_DEFAULT_BG_IMAGE = '/clay-banks-u27Rrbs9Dwc-unsplash.jpg'
@@ -48,6 +53,11 @@ export const wallpaperThumb = (src: string): string => {
 export const wallpaperLabel = (value: unknown): string =>
   WALLPAPERS.find((wallpaper) => wallpaper.src === value)?.label
   ?? (isCustomBg(value) ? 'Custom image' : 'Clay Banks')
+
+/** The curated accent for a bundled photo; uploads use their sampled accent. */
+export const wallpaperAccent = (value: unknown): string =>
+  WALLPAPERS.find((wallpaper) => wallpaper.src === value)?.accent
+  ?? (isCustomBg(value) ? DEFAULT_BG_ACCENT : WALLPAPERS.find((wallpaper) => wallpaper.src === DEFAULT_BG_IMAGE)?.accent ?? DEFAULT_BG_ACCENT)
 
 /** Blur is a whole number of pixels from 0 to 100. */
 export const normBgBlur = (value: unknown): number =>

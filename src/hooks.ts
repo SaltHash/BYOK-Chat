@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
-import { THEME_COLOR_KEYS, themeKeyOf, themeCustomOf } from './store'
-import { DEFAULT_BG_IMAGE, resolveBgImage } from './background'
+import { THEME_COLORS, THEME_COLOR_KEYS, themeKeyOf, themeCustomOf } from './store'
+import { DEFAULT_BG_IMAGE, isCustomBg, resolveBgImage, wallpaperAccent } from './background'
+import { accentFromImage, wallpaperPalette } from './backgroundTheme'
 import { clampSidebarWidth, clampWidgetWidth, roundFrac } from './layout'
 import { normDensity, normStylePreset, spacingVars, type SpacingOverrides } from './style'
 import { createFrameThrottle } from './throttle'
@@ -37,6 +38,9 @@ export function useThemeCss(opts: {
   customDarkColors: Parameters<typeof themeCustomOf>[0]['customDarkColors']
   customLightColors: Parameters<typeof themeCustomOf>[0]['customLightColors']
   modalBlur: number
+  /** A wallpaper supplies the accent while image mode is on. */
+  wallpaperAccent?: string
+  wallpaperTint?: number
 }) {
   const theme = themeKeyOf(opts)
   const customColors = themeCustomOf(opts)
@@ -45,29 +49,46 @@ export function useThemeCss(opts: {
     const root = document.documentElement
     root.dataset.t = theme
     root.style.setProperty('--modal-blur', `${opts.modalBlur ?? 12}px`)
+    const baseColors = customColors ?? THEME_COLORS[theme]
+    const colors = opts.wallpaperAccent ? wallpaperPalette(baseColors, opts.wallpaperAccent) : customColors
     for (const key of THEME_COLOR_KEYS) {
-      if (theme === 'custom' && customColors) root.style.setProperty(`--${key}`, customColors[key])
+      if (colors) root.style.setProperty(`--${key}`, colors[key])
       else root.style.removeProperty(`--${key}`)
     }
-    if (theme === 'custom' && customColors) {
-      const hex = customColors.bg.slice(1)
+    if (opts.wallpaperAccent) root.style.setProperty('--wall-tint', `${Math.max(0, Math.min(100, opts.wallpaperTint ?? 0))}%`)
+    else root.style.removeProperty('--wall-tint')
+    if (colors) {
+      const hex = colors.bg.slice(1)
       const luminance = hex.length === 6 ? (parseInt(hex.slice(0, 2), 16) * 0.299 + parseInt(hex.slice(2, 4), 16) * 0.587 + parseInt(hex.slice(4, 6), 16) * 0.114) : 40
       root.style.colorScheme = luminance > 145 ? 'light' : 'dark'
     } else root.style.removeProperty('color-scheme')
-  }, [theme, customColors, opts.modalBlur])
+  }, [theme, customColors, opts.modalBlur, opts.wallpaperAccent, opts.wallpaperTint])
 }
 
-/** Load the optional background source and flag the document while it is on.
- *  The layer itself is rendered by App; this hook only resolves a custom blob
- *  and publishes the switch the CSS uses to soften the main surfaces. */
-export function useBackgroundImage(opts: { enabled: boolean; image?: string }): string {
+/** Load the optional background source, resolve its accent and flag the
+ *  document while it is on. The layer itself is rendered by App. */
+export function useBackgroundImage(opts: { enabled: boolean; image?: string }): { src: string; accent: string } {
   const [src, setSrc] = useState(DEFAULT_BG_IMAGE)
+  const [accent, setAccent] = useState(() => wallpaperAccent(opts.image))
   useEffect(() => {
+    const curated = wallpaperAccent(opts.image)
+    setAccent(curated)
     if (!opts.enabled) return
     let live = true
     void resolveBgImage(opts.image)
-      .then((value) => { if (live) setSrc(value) })
-      .catch(() => { if (live) setSrc(DEFAULT_BG_IMAGE) })
+      .then(async (value) => {
+        if (!live) return
+        setSrc(value)
+        if (isCustomBg(opts.image)) {
+          const sampled = await accentFromImage(value)
+          if (live) setAccent(sampled)
+        }
+      })
+      .catch(() => {
+        if (!live) return
+        setSrc(DEFAULT_BG_IMAGE)
+        setAccent(curated)
+      })
     return () => { live = false }
   }, [opts.enabled, opts.image])
   useEffect(() => {
@@ -76,7 +97,7 @@ export function useBackgroundImage(opts: { enabled: boolean; image?: string }): 
     if (opts.enabled) root.dataset.bgImage = 'on'
     else delete root.dataset.bgImage
   }, [opts.enabled])
-  return src
+  return { src, accent }
 }
 
 /** Applies the style preset (`data-style`), the density (`data-density`) and

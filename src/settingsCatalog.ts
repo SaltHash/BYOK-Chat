@@ -192,7 +192,7 @@ export const SETTING_LINKS: SettingLink[] = [
 
   // Appearance
   { tab: 'look', anchor: 'appearance-mode', title: 'Appearance mode (dark / light)', keywords: 'dark light mode theme' },
-  { tab: 'look', anchor: 'background-image', title: 'Image background', keywords: 'background image photo wallpaper wallpapers thumbnails upload clay banks blur saturation dim custom' },
+  { tab: 'look', anchor: 'background-image', title: 'Image background', keywords: 'background image photo wallpaper wallpapers thumbnails upload clay banks blur saturation dim tint accent glass theme custom' },
   { tab: 'look', anchor: 'background-blur', title: 'Image background blur', keywords: 'background image blur soft focus px' },
   { tab: 'look', anchor: 'background-saturation', title: 'Image background saturation', keywords: 'background image saturation color colour vivid muted grayscale vibrance percent' },
   { tab: 'look', anchor: 'background-tint', title: 'Image background tint', keywords: 'background image tint theme color colour overlay wash percent' },
