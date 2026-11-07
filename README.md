@@ -65,7 +65,7 @@ Direct fetch, Jina Reader, Firecrawl, Exa Contents, TinyFish Fetch, Tavily Extra
 
 - **Chat:** streaming replies, mid-turn questions, a Needs you inbox for chats waiting on you, automatic resume after the tab closes, branching conversation paths, reply bookmarks, temporary chats, folders, search, drafts, queued messages, rich copy, and read-only share links.
 - **Models:** multiple endpoints, favorites, OpenRouter provider pinning, playlists with fallback, model discovery, usage estimates, and named profiles that switch model, prompt, tools and access policy together (optionally bound to a project).
-- **Grounding:** automatic or explicit `@search`, numbered sources, inline citations, page reading, page summaries, and deep research with reviewable plans and cited reports.
+- **Grounding:** automatic or explicit `@search`, numbered sources, inline citations, page reading, page summaries, and deep research with reviewable plans and cited reports. Search snippets stay available for a couple of messages and page summaries for longer; full page reads are not carried forward.
 - **Files and documents:** PDF, DOCX, ODT, RTF, PPTX, XLSX, ZIP, GZ, text, images, audio, and transcript pairing. Optional OCR for scanned images.
 - **Workspaces:** model-created files with code, preview, diff, revisions, templates, downloads, and optional GitHub Gist sharing.
 - **Tools:** calculator, time, date, JSON, Base64, hashing, UUIDs, memory, graphs, image generation, code execution, mid-turn questions (`ask`), MCP servers, skills, and follow-up widgets. The composer lock chooses Full, Standard, Restricted, or Disabled access, and any tool can be marked Require approval for per-call permission.

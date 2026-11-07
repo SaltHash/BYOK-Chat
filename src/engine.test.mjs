@@ -526,7 +526,61 @@ test('runToolLoop forwards live tool deltas to its callback', async () => {
   } finally { globalThis.fetch = originalFetch; globalThis.requestAnimationFrame = originalRaf }
 })
 
-const { estimateHistoryTokens, trimHistory, readAtt, readAtts } = await import('./engine.ts')
+const { estimateHistoryTokens, trimHistory, readAtt, readAtts, formatSearch } = await import('./engine.ts')
+
+test('completed replies keep search snippets for a couple of messages and page summaries for longer, but never raw pages', () => {
+  const searchText = formatSearch({
+    query: 'kyoto hotels',
+    provider: 'test',
+    searchedAt: 'now',
+    results: [{ id: 'S1', title: 'Kyoto guide', url: 'https://example.com/kyoto', snippet: 'Stay near the station.' }],
+  })
+  const summaryText = formatPage(
+    { url: 'https://example.com/summary', title: 'Summary page', text: 'The distilled page.' },
+    { summarized: true, citeId: 'S1' },
+  )
+  const rawText = formatPage(
+    { url: 'https://example.com/raw', title: 'Raw page', text: 'FULL PAGE BODY' },
+    { citeId: 'S2' },
+  )
+  const source = { id: 'a1', r: 'assistant', t: 'The answer.', toolFinal: 'The answer.', toolRounds: [
+    { text: '', calls: [
+      { id: 's1', name: 'search', arguments: JSON.stringify({ query: 'kyoto hotels' }), result: searchText },
+      { id: 'p1', name: 'fetch_page', arguments: JSON.stringify({ url: 'https://example.com/summary' }), result: summaryText },
+      { id: 'p2', name: 'fetch_page', arguments: JSON.stringify({ url: 'https://example.com/raw' }), result: rawText },
+    ] },
+  ] }
+  const conversation = (turns) => [source, ...Array.from({ length: turns }, (_, i) => [
+    { id: `u${i}`, r: 'user', t: `follow ${i}` },
+    { id: `a${i + 2}`, r: 'assistant', t: `answer ${i}` },
+  ]).flat()]
+  const sourceText = (turns) => String(wire(openai, conversation(turns))[0].content)
+
+  const one = sourceText(1)
+  assert.match(one, /Retained tool evidence/)
+  assert.match(one, /Web search results for “kyoto hotels”/)
+  assert.match(one, /Stay near the station/)
+  assert.match(one, /Page summary for https:\/\/example\.com\/summary/)
+  assert.match(one, /The distilled page/)
+  assert.doesNotMatch(one, /FULL PAGE BODY/)
+  assert.doesNotMatch(one, /\[Source S1\]/)
+  assert.doesNotMatch(one, /Cite this page as/)
+
+  // Two follow-up messages (one exchange) still have the search digest; by
+  // the third exchange it is gone, while the page summary remains.
+  const three = sourceText(3)
+  assert.doesNotMatch(three, /Web search results/)
+  assert.match(three, /Page summary for/)
+
+  const six = sourceText(6)
+  assert.doesNotMatch(six, /Page summary for/)
+  assert.match(six, /The answer\./)
+
+  // The context meter and trim budget count the evidence while wire sends it.
+  const withEvidence = estimateHistoryTokens(conversation(1))
+  const withoutEvidence = estimateHistoryTokens([{ ...source, toolRounds: [] }, ...conversation(1).slice(1)])
+  assert.ok(withEvidence > withoutEvidence + 20)
+})
 
 test('search results-per-search defaults to the user max and never exceeds it', () => {
   assert.equal(normSearch({}).maxResults, 8)
