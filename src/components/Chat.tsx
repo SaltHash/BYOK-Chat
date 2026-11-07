@@ -872,7 +872,6 @@ export function Chat({ side, toggle, cfg, pal }: { side: boolean; toggle: () => 
   // Before any message is sent the chat is a blank slate: the composer floats
   // centered, and the welcome content sits just above it.
   const empty = !(c && c.msgs.length)
-  const glowI = Math.max(0, Math.min(2, s.prefs.tempGlow ?? 1))
   const newChatPending = useS((st) => st.newChatPending)
   // Starting a fresh chat moves focus straight into the composer so typing
   // needs no click. Runs for the pending descriptor and again whenever the
@@ -1017,7 +1016,7 @@ export function Chat({ side, toggle, cfg, pal }: { side: boolean; toggle: () => 
   // keep its last message clear of it and fade out just above it.
   const composerRef = useRef<HTMLDivElement>(null)
   const [composerH, setComposerH] = useState(0)
-  useEffect(() => {
+  useLayoutEffect(() => {
     const el = composerRef.current
     if (!el) return
     const f = () => setComposerH(el.offsetHeight)
@@ -1304,7 +1303,7 @@ export function Chat({ side, toggle, cfg, pal }: { side: boolean; toggle: () => 
               </div>
             )}
           </div>
-          <div ref={composerRef} className={cx('absolute inset-x-0 z-10 flex flex-col', empty ? 'top-1/2 -translate-y-1/2' : 'bottom-0')}>
+          <div ref={composerRef} style={empty ? { top: `calc(50% - ${composerH / 2}px)` } : undefined} className={cx('absolute inset-x-0 z-10 flex flex-col', empty ? undefined : 'bottom-0')}>
             {!atEnd && c && c.msgs.length > 0 && (
               <button type="button" onClick={() => { stick.current = true; setAtEnd(true); followBottom.call() }} className="absolute bottom-full left-1/2 z-0 mb-2 inline-flex min-h-8 -translate-x-1/2 items-center gap-1.5 rounded-full border border-bor bg-surf px-3 py-1 text-xs text-tx shadow-md transition-colors hover:bg-hov focus-visible:ring-2 focus-visible:ring-ac">
                 <ChevronDown size={13} className="text-ac" />Jump to latest
@@ -1350,12 +1349,6 @@ export function Chat({ side, toggle, cfg, pal }: { side: boolean; toggle: () => 
       {/* The empty temporary chat already explains itself under the headline;
           once the conversation starts, the standing provider caveat takes over. */}
       {isTemp && !project && !empty && <div className="px-4 pb-2 text-center text-xs text-mu">Some providers may retain temporary chats for safety or model training.</div>}
-      {/* Temporary-chat frame: one soft accent glow hugging the viewport edges.
-         No shine sweep any more: while the chat is still empty the glow just
-         waves in intensity and never actually turns off, then settles to a
-         faint, static rim after the first message — the "this conversation will
-         not stick" tell that stays legible without shouting. */}
-      {isTemp && !project && glowI > 0 && <div aria-hidden="true" className="temp-glow" data-sent={c?.msgs.length ? '' : undefined} style={{ ['--temp-glow-i' as never]: glowI, ['--temp-glow-sent' as never]: Math.max(0, Math.min(2, s.prefs.tempGlowSent ?? 0.5)) }} />}
     </section>
   )
 }

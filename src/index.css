@@ -260,6 +260,14 @@ html[data-bg-image="on"]:not([data-flat]) .side-shell,
 html[data-bg-image="on"]:not([data-flat]) .widgets-shell {
   background-color: color-mix(in srgb, var(--side) 84%, transparent);
 }
+/* The resize corridors sit between panes. Without their own surface the
+ * wallpaper shows through at full strength as a bright stripe beside the
+ * dimmed sidebar and chat, so they share the sidebar's tint and dim. */
+.shell-resizer { background-color: transparent; }
+html[data-bg-image="on"]:not([data-flat]) .shell-resizer {
+  background-color: color-mix(in srgb, var(--side) 84%, transparent);
+}
+.shell-resizer:hover { background-color: color-mix(in srgb, var(--ac) 50%, transparent); }
 
 /* One dropdown surface for every menu: settings, composer, chat actions,
    context, sidebar and the workspace revision picker. `--menu-shadow` is
@@ -548,49 +556,3 @@ html[data-bg-image="on"]:not([data-flat]) .widgets-shell {
   background: color-mix(in srgb, var(--ac) 16%, transparent);
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--ac) 30%, transparent);
 }
-
-/* Temporary-chat edge glow: a single fixed, pointer-transparent overlay that
-   rims the viewport in the accent colour. The halo is built from two inset
-   shadows (a tight rim plus one wide, very faint bloom) so it reads as light
-   falling inward from the frame rather than a drawn border. The Settings →
-   Look intensity slider scales the whole thing through --temp-glow-i (0–2,
-   1 by default; 0 disables the overlay entirely). A second relative slider
-   (--temp-glow-sent, 0.5) scales the constant after-first-message foothold.
-
-   No shine sweep: the overlay only ever varies its own glow intensity. While
-   the chat is still empty it waves around in brightness (see temp-glow-breathe)
-   and never actually turns off. */
-.temp-glow {
-  --i: var(--temp-glow-i, 1);
-  position: fixed;
-  inset: 0;
-  z-index: 40;
-  pointer-events: none;
-  box-shadow:
-    inset 0 0 0 2px color-mix(in srgb, var(--ac) 40%, transparent),
-    inset 0 0 44px -14px color-mix(in srgb, var(--ac) 45%, transparent),
-    inset 0 0 140px -50px color-mix(in srgb, var(--ac) 60%, transparent);
-  opacity: calc(var(--i) * 0.6);
-  transition: opacity 900ms ease;
-}
-/* Once a message is sent the glow keeps a quiet foothold: a fraction of the
- * empty-chat brightness, constant, no motion. The fraction is the relative
- * intensity slider (Settings → Look, 0.5 by default) through
- * --temp-glow-sent, multiplied onto the same base the keyframes use. */
-.temp-glow { --sent: var(--temp-glow-sent, 0.5); }
-.temp-glow[data-sent=""] { opacity: calc(var(--i) * var(--sent) * 0.6); }
-/* While the chat is empty the glow never actually turns off: instead of an
- * on/off cycle it just waves around in intensity, oscillating softly between
- * a dim glow and a full breath. 6s period = one full wave. The extreme values
- * are scaled by --temp-glow-i, like every other opacity in this component. */
-@keyframes temp-glow-breathe {
-  0%, 100% { opacity: calc(var(--i) * 0.5); }
-  50% { opacity: calc(var(--i) * 0.9); }
-}
-@media not (prefers-reduced-motion: reduce) {
-  .temp-glow:not([data-sent]) { animation: temp-glow-breathe 6s ease-in-out infinite; }
-}
-@media (prefers-reduced-motion: reduce) {
-  .temp-glow { transition: none; }
-}
-

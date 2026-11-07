@@ -1,21 +1,51 @@
 /* Optional image background.
  *
- * The default comes from /public so it costs no storage. An uploaded image is
- * written to the durable blob store and only its id is kept in settings, so a
- * multi-megabyte photo never lands in localStorage or a settings sync payload.
- * Anything else (including a URL from an imported config) resolves to the
- * bundled default instead of becoming an arbitrary remote request. */
+ * Bundled wallpapers live in /public/wallpapers and use small thumbnails from
+ * /public/wallpapers/thumbs in the picker. An uploaded image is written to the
+ * durable blob store and only its id is kept in settings, so a multi-megabyte
+ * photo never lands in localStorage or a settings sync payload. Anything else
+ * (including a URL from an imported config) resolves to the bundled default
+ * instead of becoming an arbitrary remote request. */
 
 import { blobDel, blobGet, blobPut } from './storage/durable'
 
-export const DEFAULT_BG_IMAGE = '/clay-banks-u27Rrbs9Dwc-unsplash.jpg'
-export const DEFAULT_BG_BLUR = 16
+export type Wallpaper = { src: string; label: string }
+
+export const WALLPAPERS: Wallpaper[] = [
+  { src: '/wallpapers/ales-krivec-x4Jc4HKEHKg-unsplash.jpg', label: 'Ales Krivec' },
+  { src: '/wallpapers/brendan-beale-YJsw2TfZ_F4-unsplash.jpg', label: 'Brendan Beale' },
+  { src: '/wallpapers/clay-banks-u27Rrbs9Dwc-unsplash.jpg', label: 'Clay Banks' },
+  { src: '/wallpapers/john-towner-JgOeRuGD_Y4-unsplash.jpg', label: 'John Towner' },
+  { src: '/wallpapers/jr-korpa-9XngoIpxcEo-unsplash.jpg', label: 'JR Korpa' },
+  { src: '/wallpapers/milad-fakurian-E8Ufcyxz514-unsplash.jpg', label: 'Milad Fakurian' },
+  { src: '/wallpapers/nathan-anderson-iYO-EGosrCo-unsplash.jpg', label: 'Nathan Anderson' },
+  { src: '/wallpapers/national-gallery-of-art-nyhZogmvelI-unsplash.jpg', label: 'National Gallery of Art' },
+  { src: '/wallpapers/pawel-czerwinski-ERcQ81KaX9g-unsplash.jpg', label: 'Paweł Czerwinski' },
+  { src: '/wallpapers/richard-horvath-_nWaeTF6qo0-unsplash.jpg', label: 'Richard Horváth' },
+  { src: '/wallpapers/the-metropolitan-museum-of-art-9XpO8WsYNdI-unsplash.jpg', label: 'The Metropolitan Museum of Art' },
+  { src: '/wallpapers/tomas-hudolin-qd9SE8we9Yo-unsplash.jpg', label: 'Tomáš Hudolín' },
+]
+
+export const DEFAULT_BG_IMAGE = '/wallpapers/clay-banks-u27Rrbs9Dwc-unsplash.jpg'
+const LEGACY_DEFAULT_BG_IMAGE = '/clay-banks-u27Rrbs9Dwc-unsplash.jpg'
+export const DEFAULT_BG_BLUR = 10
 export const DEFAULT_BG_DIM = 35
 export const BG_IMAGE_MAX_BYTES = 16 * 1024 * 1024
 export const BG_BLOB_PREFIX = 'background:'
 
 export const isCustomBg = (value: unknown): value is string =>
   typeof value === 'string' && value.startsWith(BG_BLOB_PREFIX)
+
+/** The low-resolution companion generated for every bundled wallpaper. */
+export const wallpaperThumb = (src: string): string => {
+  const name = src.split('/').pop() ?? ''
+  return `/wallpapers/thumbs/${name.replace(/\.[^.]+$/, '.jpg')}`
+}
+
+/** Display name for a bundled wallpaper, or a clear custom-image label. */
+export const wallpaperLabel = (value: unknown): string =>
+  WALLPAPERS.find((wallpaper) => wallpaper.src === value)?.label
+  ?? (isCustomBg(value) ? 'Custom image' : 'Clay Banks')
 
 /** Blur is a whole number of pixels from 0 to 100. */
 export const normBgBlur = (value: unknown): number =>
@@ -25,8 +55,9 @@ export const normBgBlur = (value: unknown): number =>
 export const normBgDim = (value: unknown): number =>
   typeof value === 'number' && Number.isFinite(value) ? Math.max(0, Math.min(95, Math.round(value))) : 0
 
-/** Only the bundled asset or a path in this app. `//host` is not a local path. */
+/** Only the bundled assets or a path in this app. `//host` is not a local path. */
 export function safeBgSource(value: unknown): string {
+  if (value === LEGACY_DEFAULT_BG_IMAGE) return DEFAULT_BG_IMAGE
   return typeof value === 'string' && (value === DEFAULT_BG_IMAGE || (value.startsWith('/') && !value.startsWith('//')))
     ? value
     : DEFAULT_BG_IMAGE

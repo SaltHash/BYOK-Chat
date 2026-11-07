@@ -25,7 +25,7 @@ import { normVoice, VOICE_LANGS, speak, stopSpeaking, speechAvailable, dictation
 import { DENSITIES, DENSITY_IDS, SPACING_LIMITS, STYLE_PRESETS, STYLE_PRESET_IDS, hasSpacingOverrides, resolveSpacing } from '../style'
 import { accentOnlyColors } from '../theme'
 import { USAGE_PERIODS } from '../usageStats'
-import { DEFAULT_BG_IMAGE, deleteBackgroundImage, isCustomBg, normBgBlur, normBgDim, resolveBgImage, storeBackgroundFile } from '../background'
+import { DEFAULT_BG_IMAGE, WALLPAPERS, deleteBackgroundImage, isCustomBg, normBgBlur, normBgDim, resolveBgImage, storeBackgroundFile, wallpaperLabel, wallpaperThumb } from '../background'
 import { normCompactAt } from '../compaction'
 import { UsageStats } from './UsageStats'
 
@@ -1956,6 +1956,7 @@ function Look() {
   const bgOn = s.prefs.bgImageOn === true
   const bgBlur = normBgBlur(s.prefs.bgImageBlur)
   const bgDim = normBgDim(s.prefs.bgImageDim)
+  const bgName = isCustomBg(s.prefs.bgImage) ? 'Custom image' : wallpaperLabel(s.prefs.bgImage)
   const [bgPreview, setBgPreview] = useState(DEFAULT_BG_IMAGE)
   const [bgBusy, setBgBusy] = useState(false)
   const [bgError, setBgError] = useState('')
@@ -1978,11 +1979,13 @@ function Look() {
       setBgError(e instanceof Error ? e.message : 'That image could not be loaded.')
     } finally { setBgBusy(false) }
   }
-  const resetBg = () => {
-    const old = useS.getState().prefs.bgImage
-    setBg({ bgImage: DEFAULT_BG_IMAGE })
-    void deleteBackgroundImage(old)
+  const chooseBg = (src: string) => {
+    const before = useS.getState().prefs
+    if (before.bgImage === src) { setBg({ bgImageOn: true }); return }
+    useS.getState().patch({ prefs: { ...before, bgImage: src, bgImageOn: true } })
+    void deleteBackgroundImage(before.bgImage)
   }
+  const resetBg = () => chooseBg(DEFAULT_BG_IMAGE)
   const row = (anchor: string, k: PrefToggle, t: string, d: string) => prefRow(s, anchor, k, t, d)
   return (
     <Panel id="look">
@@ -2088,43 +2091,41 @@ function Look() {
       })()}
       {row('seasonal', 'seasonal', 'Seasonal touches', 'Show a festive greeting on holidays. Turn off to keep the greeting plain.')}
       {row('completion-cues', 'cues', 'Completion cues', 'A soft chime and a little confetti when deep research or a workspace update finishes.')}
-      <Anchor id="temp-glow">
-      <div className="rounded-xl bg-surf p-3 space-y-2">
-        <div className="text-sm font-medium">Temporary chat glow</div>
-        <div className="text-xs text-mu">Edge glow while a temporary chat is still empty; it waves in intensity and never goes dark. 0x turns it off.</div>
-        <div className="flex items-center gap-3">
-          <RangeSlider label="Temporary chat glow intensity" min={0} max={2} step={0.05} value={s.prefs.tempGlow ?? 1} set={(tempGlow) => s.patch({ prefs: { ...s.prefs, tempGlow: Math.round(tempGlow * 100) / 100 } })} className="flex-1" />
-          <span className="w-20 text-right text-sm">{(s.prefs.tempGlow ?? 1) === 0 ? 'Off' : `${(s.prefs.tempGlow ?? 1).toFixed(2)}x`}</span>
-        </div>
-      </div>
-      </Anchor>
-      <Anchor id="temp-glow-sent">
-      <div className="rounded-xl bg-surf p-3 space-y-2">
-        <div className="text-sm font-medium">Glow after a message is sent</div>
-        <div className="text-xs text-mu">How much glow remains once the chat has messages, as a share of the empty-chat glow. 0x turns it off.</div>
-        <div className="flex items-center gap-3">
-          <RangeSlider label="Temporary chat glow sent intensity (relative)" min={0} max={2} step={0.05} value={s.prefs.tempGlowSent ?? 0.5} set={(tempGlowSent) => s.patch({ prefs: { ...s.prefs, tempGlowSent: Math.round(tempGlowSent * 100) / 100 } })} className="flex-1" />
-          <span className="w-20 text-right text-sm">{(s.prefs.tempGlowSent ?? 0.5) === 0 ? 'Off' : `${(s.prefs.tempGlowSent ?? 0.5).toFixed(2)}x`}</span>
-        </div>
-      </div>
-      </Anchor>
       </Section>
       <Section title="Background" desc="An optional image behind the app, with its own blur and dim.">
       <Anchor id="background-image">
-      <Card icon={ImageIcon} title="Image background" sub={bgOn ? `On · ${isCustomBg(s.prefs.bgImage) ? 'custom image' : 'Clay Banks photo'}` : 'Off · default photo ready'} muted={!bgOn} open0={bgOn} right={<Toggle on={bgOn} set={(bgImageOn) => setBg({ bgImageOn })} label="Image background" />}>
+      <Card icon={ImageIcon} title="Image background" sub={bgOn ? `On · ${bgName}` : `Off · ${bgName} ready`} muted={!bgOn} open0={bgOn} right={<Toggle on={bgOn} set={(bgImageOn) => setBg({ bgImageOn })} label="Image background" />}>
         <div className="relative h-32 overflow-hidden rounded-xl border border-bor bg-bg">
           <div className="absolute inset-0" style={{ backgroundImage: `url(${JSON.stringify(bgPreview)})`, backgroundPosition: 'center', backgroundSize: 'cover', filter: `blur(${bgBlur}px)` }} />
           <div className="absolute inset-0 bg-black" style={{ opacity: bgDim / 100 }} />
           <div className="absolute inset-x-0 bottom-0 flex items-center justify-between gap-2 bg-black/55 px-2.5 py-1.5 text-[11px] text-white">
-            <span>{isCustomBg(s.prefs.bgImage) ? 'Custom image' : 'Clay Banks · default'}</span>
+            <span>{bgName}</span>
             <span>{bgBlur}px blur · {bgDim}% dim</span>
           </div>
         </div>
-        <p className="text-xs text-mu">The image sits behind the conversation and sidebar. Upload a PNG, JPEG, WebP, AVIF or GIF (up to 16 MB); uploads stay on this device in the durable blob store. The default photo is bundled with the app.</p>
+        <div className="space-y-2">
+          <div className="flex items-center justify-between gap-2 text-xs font-medium">
+            <span>Bundled wallpapers</span>
+            <span className="text-mu">{WALLPAPERS.length} photos</span>
+          </div>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+            {WALLPAPERS.map((wallpaper) => {
+              const active = s.prefs.bgImage === wallpaper.src
+              return (
+                <button key={wallpaper.src} type="button" aria-pressed={active} aria-label={`Use ${wallpaper.label} wallpaper`} title={wallpaper.label} onClick={() => chooseBg(wallpaper.src)} className={cx('group relative aspect-video overflow-hidden rounded-lg border bg-bg text-left transition-colors', active ? 'border-ac ring-2 ring-ac' : 'border-bor hover:border-mu/60')}>
+                  <img src={wallpaperThumb(wallpaper.src)} alt="" loading="lazy" decoding="async" draggable={false} className="h-full w-full object-cover" />
+                  <span className="absolute inset-x-0 bottom-0 truncate bg-black/65 px-1.5 py-1 text-[10px] text-white">{wallpaper.label}</span>
+                  {active && <span className="absolute right-1.5 top-1.5 grid size-5 place-items-center rounded-full bg-ac text-acx shadow"><Check size={12} /></span>}
+                </button>
+              )
+            })}
+          </div>
+        </div>
+        <p className="text-xs text-mu">Pick a bundled wallpaper or upload a PNG, JPEG, WebP, AVIF or GIF (up to 16 MB). Uploads stay on this device in the durable blob store; the picker uses small thumbnails while the full photo sits behind the app.</p>
         {s.prefs.reduceTransparency === true && <p className="text-xs text-c3">Reduce transparency is on, so the image stays hidden behind opaque surfaces. Turn that setting off to see the background.</p>}
         <div className="flex flex-wrap gap-2">
           <Btn v="soft" icon={Upload} disabled={bgBusy} onClick={() => bgInput.current?.click()}>{bgBusy ? 'Reading image…' : 'Upload image'}</Btn>
-          <Btn v="ghost" icon={RotateCcw} disabled={!isCustomBg(s.prefs.bgImage)} onClick={resetBg}>Use default image</Btn>
+          <Btn v="ghost" icon={RotateCcw} disabled={s.prefs.bgImage === DEFAULT_BG_IMAGE} onClick={resetBg}>Use default image</Btn>
           <input ref={bgInput} type="file" accept="image/png,image/jpeg,image/webp,image/avif,image/gif" className="hidden" onChange={(e) => { const file = e.currentTarget.files?.[0]; e.currentTarget.value = ''; void uploadBg(file) }} />
         </div>
         {bgError && <p role="alert" className="rounded-lg bg-er/10 px-3 py-2 text-xs text-er">{bgError}</p>}
@@ -2546,7 +2547,6 @@ function Chats() {
         <Toggle on={s.prefs.tempShowDone !== false} set={(tempShowDone) => s.patch({ prefs: { ...s.prefs, tempShowDone } })} label="Keep finished temporary chats listed" />
       </div>
       </Anchor>
-      <div className="pt-1"><Btn v="soft" icon={Sparkles} onClick={() => goSetting('look#temp-glow')}>Open glow settings</Btn></div>
       </Section>
       </Anchor>
       <Section title="Behavior" desc="How the app handles sending messages and opening chats.">

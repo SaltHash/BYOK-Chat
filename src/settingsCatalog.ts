@@ -192,7 +192,7 @@ export const SETTING_LINKS: SettingLink[] = [
 
   // Appearance
   { tab: 'look', anchor: 'appearance-mode', title: 'Appearance mode (dark / light)', keywords: 'dark light mode theme' },
-  { tab: 'look', anchor: 'background-image', title: 'Image background', keywords: 'background image photo wallpaper upload clay banks blur dim custom' },
+  { tab: 'look', anchor: 'background-image', title: 'Image background', keywords: 'background image photo wallpaper wallpapers thumbnails upload clay banks blur dim custom' },
   { tab: 'look', anchor: 'background-blur', title: 'Image background blur', keywords: 'background image blur soft focus px' },
   { tab: 'look', anchor: 'background-dim', title: 'Image background dim', keywords: 'background image dim dark overlay percent' },
   { tab: 'look', anchor: 'style-preset', title: 'Style preset', keywords: 'style preset feel modern sharp bubbly floating corners radius rounded shadows elevation' },
@@ -208,8 +208,6 @@ export const SETTING_LINKS: SettingLink[] = [
   { tab: 'look', anchor: 'custom-colors', title: 'Custom theme sliders', keywords: 'custom theme base hue saturation brightness contrast sliders hex colors reset defaults' },
   { tab: 'look', anchor: 'seasonal', title: 'Seasonal touches', keywords: 'seasonal festive greeting holiday plain' },
   { tab: 'look', anchor: 'completion-cues', title: 'Completion cues', keywords: 'completion cues chime confetti deep research workspace finished' },
-  { tab: 'look', anchor: 'temp-glow', title: 'Temporary chat glow', keywords: 'temporary chat glow edge intensity breathe wave rim indicator' },
-  { tab: 'look', anchor: 'temp-glow-sent', title: 'Glow after a message is sent', keywords: 'temporary chat glow sent relative strength after first message steady foothold' },
   { tab: 'chats', anchor: 'show-by', title: 'Show which model answered', keywords: 'show model answered label byline' },
   { tab: 'chats', anchor: 'show-log', title: 'Show model-use details', keywords: 'process log details classifiers failures' },
   { tab: 'chats', anchor: 'show-tps', title: 'Show generation speed', keywords: 'tokens per second speed tps' },
