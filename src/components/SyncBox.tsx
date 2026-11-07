@@ -88,11 +88,7 @@ export function SyncBox() {
 
   return (
     <div className="space-y-3 rounded-xl bg-surf p-4">
-      <div className="flex items-center gap-2 text-sm font-medium"><Link2 size={16} className="text-ac" /> Device sync <span className="text-xs font-normal text-mu">server: {backend}{last ? ` · last sync ${new Date(last).toLocaleTimeString()}` : ''}</span></div>
-      {!shared && (
-        <p className="text-xs text-mu">The sync slot is held in this server&rsquo;s memory, so it is not shared between devices and a restart clears it. Everything else (token, encryption, merge) works as usual.</p>
-      )}
-      <p className="text-xs text-mu">Generate one super-long token on device A, link it on device B. Sync then runs automatically: this device pulls and smart-merges when it opens, when you return to the tab, and every few minutes, and pushes your changes. Only someone with the token can read or change the synced data, so keep it private.</p>
+      <div className="flex items-center gap-2 text-sm font-medium"><Link2 size={16} className="text-ac" /> Device sync <span className="text-xs font-normal text-mu">{last ? `last sync ${new Date(last).toLocaleTimeString()}` : ''}</span><HelpTip text="The sync token is the only credential; keep it private. Sync merges and pushes automatically." label="About device sync" /></div>
       {!token ? (
         <div className="flex flex-wrap gap-2">
           <Btn v="solid" icon={Link2} disabled={busy} onClick={generate}>Generate sync token</Btn>
@@ -100,7 +96,6 @@ export function SyncBox() {
             <Input value={input} set={setInput} placeholder="Paste token from other device (byok1-…)" />
             <Btn v="soft" disabled={busy || !input.trim()} onClick={link}>Link</Btn>
           </div>
-          <p className="basis-full text-xs text-mu">On a first link you choose how to combine the two stores: merge both, keep this device&rsquo;s data, or take the other device&rsquo;s data. Nothing changes on this device until you pick.</p>
         </div>
       ) : (
         <div className="space-y-2">
@@ -126,7 +121,7 @@ export function SyncBox() {
           <section className="w-full max-w-lg space-y-4 rounded-2xl border border-bor bg-bg p-5 shadow-2xl">
             <div>
               <h2 id="merge-title" className="text-lg font-semibold">You are linking a device</h2>
-              <p className="mt-1 text-sm text-mu">Both devices already hold data. How should this device combine them? Chats and workspaces are de-duplicated either way, and projects with the same name become one project.</p>
+              <p className="mt-1 text-sm text-mu">Choose how to combine this device with the other.</p>
             </div>
             <div className="space-y-2">
               <button type="button" disabled={busy} onClick={() => applyMode('merge')} className="flex w-full items-start gap-3 rounded-xl bg-surf p-3 text-left hover:opacity-90 disabled:opacity-40">

@@ -12,7 +12,7 @@ import { combo, fmt, rec as R, testEp } from '../engine'
 import { probeProviderCors, resolveProvider } from '../providerAdapter'
 import { KEYS, TOOLS, DEFAULT_TOOLS } from '../meta'
 import { DEFAULT_TOOL_APPROVAL, normToolApproval, normToolMode } from '../toolApprovals'
-import { Btn, Toggle, Checkbox, Confirm, Modal, Surface, Input, cx, type Ic } from './ui'
+import { Btn, Toggle, Checkbox, Confirm, Modal, Surface, Input, HelpTip, cx, type Ic } from './ui'
 import { Panel, Anchor, Section } from './settingsPrimitives'
 import { detectAvailableCategories, buildExportPayload, chatsInDateRange, mergeImportedSearch } from '../configIO'
 import { getAutoBackup, setAutoBackup, runLocalBackup, listLocalBackups, readLocalBackup, deleteLocalBackup, getLastBackup, type BackupMeta } from '../storage/localBackup'
@@ -61,7 +61,6 @@ export function Tutorial({ cfg }: { cfg: (t: string) => void }) {
         <Btn v="solid" icon={Server} onClick={() => { if (!eps.length) add('eps'); cfg('eps') }}>{eps.length ? 'Open endpoints' : 'Add an endpoint'}</Btn>
         <Btn v="soft" icon={Keyboard} onClick={() => cfg('keys')}>Keyboard shortcuts</Btn>
       </div>
-      <p className="text-xs text-mu">Later: playlists try several models in order, commands (/) wrap a prompt around an input, and tools (@) stay off until you allow them.</p>
     </div>
   )
 }
@@ -316,8 +315,7 @@ function LocalBackups({ onRestore }: { onRestore: (j: Record<string, any>) => vo
   }
   return (
     <div className="space-y-3 rounded-xl bg-surf p-4">
-      <div className="flex flex-wrap items-center gap-2 text-sm font-medium"><DatabaseBackup size={16} className="text-ac" />Local backups <span className="text-xs font-normal text-mu">on this device only{last ? ` · last ${new Date(last).toLocaleString()}` : ''}</span></div>
-      <p className="text-xs text-mu">A rolling snapshot of settings, prompts, projects and chats, written to this browser&rsquo;s IndexedDB. No API keys and no uploaded file bytes are included, and nothing is sent to a remote server. Automatic backups run at most once a day while the app is open.</p>
+      <div className="flex flex-wrap items-center gap-2 text-sm font-medium"><DatabaseBackup size={16} className="text-ac" />Local backups <span className="text-xs font-normal text-mu">{last ? `last ${new Date(last).toLocaleString()}` : 'on this device only'}</span><HelpTip text="A daily on-device snapshot of settings, prompts, projects and chats. API keys and file bytes are excluded." label="About local backups" /></div>
       <div className="flex flex-wrap items-center gap-2">
         <Checkbox checked={auto} set={(v) => { setAuto(v); setAutoBackup(v) }} label="Daily automatic backup" />
         <Btn v="solid" icon={DatabaseBackup} disabled={busy} onClick={() => void make()}>{busy ? 'Backing up…' : 'Back up now'}</Btn>
@@ -588,7 +586,7 @@ export function DataTab() {
         location.reload()
       })() }} />}
       {cf === 3 && <Modal close={() => setCf(0)}><section role="dialog" aria-modal="true" aria-labelledby="export-title" className="w-full max-w-xl space-y-5 rounded-2xl border border-bor bg-bg p-5 shadow-2xl">
-        <div><h2 id="export-title" className="text-lg font-semibold">Export data</h2><p className="mt-1 text-sm text-mu">Choose the data to include in this file.</p></div>
+        <h2 id="export-title" className="text-lg font-semibold">Export data</h2>
         <div className="grid grid-cols-2 gap-2 rounded-xl bg-surf p-3 sm:grid-cols-3">{categories.map(([id, label]) => <Checkbox key={id} checked={exports[id]} set={(checked) => setExports({ ...exports, [id]: checked })} label={label} />)}</div>
         {exports.eps && <div className="rounded-xl bg-surf p-3"><Checkbox checked={withKeys} set={setWithKeys} label="Include API keys" /></div>}
         {exports.chats && (
@@ -599,23 +597,22 @@ export function DataTab() {
               <span className="text-xs text-mu">to</span>
               <input type="date" aria-label="Export chats to date" value={toDate} onChange={(e) => setToDate(e.target.value)} className="min-w-0 flex-1 rounded-md bg-bg px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-ac/40" />
             </div>
-            <p className="text-xs text-mu">A chat is included when any message was sent in the window. Leave both empty to include every chat.</p>
           </div>
         )}
         <div className="space-y-1.5 rounded-xl bg-surf p-3">
           <Input type="password" value={expPw} set={setExpPw} placeholder="Password (optional)" />
-          <p className="text-xs text-mu">Leave empty for a plain JSON file. With a password this export is encrypted (AES-GCM-256) and can only be imported with the same password.</p>
+          <p className="text-xs text-mu">Leave empty for a plain JSON file. A password encrypts the export.</p>
         </div>
         <div className="flex justify-end gap-2"><Btn v="soft" onClick={() => setCf(0)}>Cancel</Btn><Btn v="solid" icon={Download} onClick={() => { void exp(); setCf(0) }}>Export</Btn></div>
       </section></Modal>}
       {pendingEnc && <Modal close={() => setPendingEnc(null)}><section role="dialog" aria-modal="true" aria-labelledby="decrypt-title" className="w-full max-w-sm space-y-4 rounded-2xl border border-bor bg-bg p-5 shadow-2xl">
-        <div><h2 id="decrypt-title" className="text-lg font-semibold">Encrypted file</h2><p className="mt-1 text-sm text-mu">This data file is password-protected. Enter the password used when it was exported.</p></div>
+        <h2 id="decrypt-title" className="text-lg font-semibold">Encrypted file</h2>
         <Input type="password" value={impPw} set={setImpPw} placeholder="File password" />
         {impErr && <p className="text-sm text-er">{impErr}</p>}
         <div className="flex justify-end gap-2"><Btn v="soft" onClick={() => setPendingEnc(null)}>Cancel</Btn><Btn v="solid" disabled={!impPw} onClick={() => void decryptAndLoad()}>Decrypt</Btn></div>
       </section></Modal>}
       {fileData && <Modal close={() => setFileData(null)}><section role="dialog" aria-modal="true" aria-labelledby="import-title" className="w-full max-w-xl space-y-5 rounded-2xl border border-bor bg-bg p-5 shadow-2xl">
-        <div><h2 id="import-title" className="text-lg font-semibold">Import data</h2><p className="mt-1 text-sm text-mu">Choose the parts of this file to import. Sections not included in the file are unavailable.</p></div>
+        <h2 id="import-title" className="text-lg font-semibold">Import data</h2>
         <div className="grid grid-cols-2 gap-2 rounded-xl bg-surf p-3 sm:grid-cols-3">{categories.map(([id, label]) => <Checkbox key={id} checked={imports[id]} disabled={!available[id]} set={(checked) => setImports({ ...imports, [id]: checked })} label={label} />)}</div>
         <div className="rounded-xl bg-surf p-3"><Checkbox checked={merge} set={setMerge} label="Merge with existing data" /></div>
         <div className="flex justify-end gap-2"><Btn v="soft" onClick={() => setFileData(null)}>Cancel</Btn><Btn v="solid" icon={Upload} onClick={imp} disabled={!Object.values(imports).some(Boolean)}>Import</Btn></div>

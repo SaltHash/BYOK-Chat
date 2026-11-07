@@ -397,7 +397,7 @@ export function ResearchTierPicker({ msg }: { msg: Msg }) {
     <section aria-label="Choose research depth" className="max-w-xl space-y-3 rounded-xl border border-bor bg-surf p-4">
       <div>
         <h3 className="text-sm font-medium">Deep research on “{rs.query.slice(0, 120)}”</h3>
-        <p className="mt-1 text-xs text-mu">Pick a depth. The model then scopes the topic, may ask you a few questions, and drafts a plan for you to review. Nothing is searched or read until you start it. Thorough mode simply raises the search and page-read budget.</p>
+        <p className="mt-1 text-xs text-mu">Pick a depth. You&rsquo;ll review a plan before any searching starts.</p>
       </div>
       <div className="grid gap-2 sm:grid-cols-3">
         {RESEARCH_TIERS.map((base) => tierOf(base.id)).map((t) => (

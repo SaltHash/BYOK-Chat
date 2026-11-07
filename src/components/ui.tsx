@@ -128,7 +128,7 @@ export function HelpTip({ text, label = 'Help' }: { text: string; label?: string
         aria-label={label}
         aria-describedby={idRef.current}
         aria-expanded={open}
-        onClick={() => setOpen((v) => !v)}
+        onClick={(e) => { e.stopPropagation(); setOpen((v) => !v) }}
         onBlur={() => setOpen(false)}
         className="rounded-full text-mu hover:text-tx focus-visible:text-tx"
       >

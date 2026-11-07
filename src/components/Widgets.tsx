@@ -146,7 +146,6 @@ const CostWidget = memo(({ handle }: WidgetProps) => {
   return (
     <WidgetCard handle={handle} icon={Coins} t="Cost estimate">
       <p className="text-sm">{'≈ $' + cost.toFixed(wp.costDecimals)} <span className="text-xs text-mu">all-time priced usage</span></p>
-      <p className="text-xs text-mu">Uses the spend reported by the provider when available (e.g. OpenRouter); otherwise uses the per-model rates in Settings → Endpoints. Unpriced usage is excluded.</p>
     </WidgetCard>
   )
 })

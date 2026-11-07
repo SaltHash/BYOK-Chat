@@ -545,7 +545,6 @@ function Overview({ summary, records, range, now, decimals, modelKey, modelLabel
       <Surface className="space-y-3">
         <h3 className="text-sm font-medium">Token mix</h3>
         <TokenMix tokens={summary.tokens} />
-        <p className="text-xs text-mu">Cached tokens are included once; recorded costs already reflect their discounted price.</p>
       </Surface>
 
       <div className="space-y-2">
@@ -737,7 +736,7 @@ function ToolsView({ rows, buckets, unit, ui, setUi }: {
         empty={rows.length ? undefined : 'No tool calls in this period. Tool stats come from the tool rounds still stored on your chats.'} />
       {rows.length > 0 && (
         <>
-          <p className="text-xs text-mu">{fmtInt(calls)} tool call{calls === 1 ? '' : 's'} across {rows.length} tool{rows.length === 1 ? '' : 's'} · {fmtInt(failed)} failed{failed > 0 ? ` (${percentOf(failed, calls)})` : ''}. Average duration uses only calls that reported one.</p>
+          <p className="text-xs text-mu">{fmtInt(calls)} tool call{calls === 1 ? '' : 's'} across {rows.length} tool{rows.length === 1 ? '' : 's'} · {fmtInt(failed)} failed{failed > 0 ? ` (${percentOf(failed, calls)})` : ''}</p>
           <div className="hidden overflow-x-auto rounded-xl bg-surf md:block">
             <table className="w-full min-w-[680px] text-left text-sm">
               <caption className="sr-only">Tool usage for the selected period</caption>
@@ -887,7 +886,7 @@ function TrendsView({ summary, records, range, now, decimals, ui, setUi }: {
         <p className="text-xs text-mu">· {totalLabel}</p>
       </div>
       {metric === 'cost' && !canCost
-        ? <Surface><p className="text-sm text-mu">No provider cost is known for this period, so there is no cost chart. Recorded costs and endpoint price tables both contribute when available.</p></Surface>
+        ? <Surface><p className="text-sm text-mu">No provider cost is known for this period, so there is no cost chart.</p></Surface>
         : <ChartCard title={`${metric === 'cost' ? 'Cost' : 'Token'} breakdown`} subtitle={`${BUCKET_LABEL[unit]} buckets · ${series.length} series`}
           series={series} buckets={buckets} valueOf={valueOf} format={fmt} exact={metric === 'cost' ? moneyExact : fmtInt}
           noun={metric === 'cost' || ui.tokenGroup === 'model' ? 'model' : 'category'}
@@ -931,8 +930,7 @@ function ActivityView({ records, summary, decimals, ui, setUi, onOpenChat }: {
         <label className="min-w-44 flex-1 space-y-1 text-xs text-mu"><span>Model</span><Sel value={ui.activityModel} set={(v) => setUi({ activityModel: v })} opts={modelOptions} /></label>
         <div className="space-y-1 text-xs text-mu"><span>Status</span><Seg label="Activity status" v={ui.activityStatus} set={(v) => setUi({ activityStatus: v })} opts={[['all', 'All'], ['ok', 'Succeeded'], ['fail', 'Failed']]} /></div>
       </div>
-      <p className="text-xs text-mu">Most recent {Math.min(ui.activityLimit, filtered.length)} of {filtered.length} attempts. Failed attempts are listed for diagnosis but excluded from every metric above.</p>
-      {summary.failed > 0 && <p className="text-xs text-mu">{fmtInt(summary.failed)} failed attempt{summary.failed === 1 ? '' : 's'} excluded from totals.</p>}
+      <p className="text-xs text-mu">Most recent {Math.min(ui.activityLimit, filtered.length)} of {filtered.length} attempts.</p>
       {!shown.length ? <Surface><p className="text-sm text-mu">No attempts match these filters.</p></Surface> : [...groups].map(([day, items]) => (
         <section key={day} className="space-y-1.5" aria-label={day}>
           <h4 className="sticky top-24 z-10 bg-bg/95 py-1 text-xs font-semibold uppercase tracking-wide text-mu backdrop-blur">{day}</h4>
@@ -1059,9 +1057,8 @@ function TokenDetail({ summary, records, range, now, decimals, from, onBack, hea
       </div>
       <div className="grid gap-3 sm:grid-cols-2">
         <Surface className="space-y-2"><h4 className="text-sm font-medium">Cache share of prompt tokens</h4><p className="text-2xl font-semibold tabular-nums">{cacheShare}</p><p className="text-xs text-mu">{fmtInt(cacheOf(summary.tokens))} of {fmtInt(prompt)} prompt tokens were read from or written to a cache.</p></Surface>
-        <Surface className="space-y-2"><h4 className="text-sm font-medium">How the total is counted</h4><p className="text-xs leading-5 text-mu">Uncached input, cache read, cache write and output. Cached tokens are included once — cached input is not also counted as uncached input.</p></Surface>
       </div>
-      <Surface className="space-y-3"><h4 className="text-sm font-medium">Token mix</h4><TokenMix tokens={summary.tokens} /><p className="text-xs text-mu">Recorded cost already reflects cached-token discounts.</p></Surface>
+      <Surface className="space-y-3"><h4 className="text-sm font-medium">Token mix</h4><TokenMix tokens={summary.tokens} /></Surface>
       <ChartCard title="Tokens over time" subtitle={`${BUCKET_LABEL[unit]} buckets · by category`} series={COST_CATS.map((c) => ({ key: c.key, label: c.label, color: c.color }))} buckets={buckets}
         valueOf={(b, key) => b.byCategory[key as keyof Bucket['byCategory']] ?? 0} format={fmtInt} exact={fmtInt} noun="category" showTable={showTable} onToggleTable={toggleTable} unitLabel={BUCKET_LABEL[unit]} />
       <Surface className="space-y-2">

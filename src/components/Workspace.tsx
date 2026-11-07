@@ -701,7 +701,7 @@ function GistModal({ workspace, revision, close }: { workspace: Workspace; revis
     <div className="fixed inset-0 z-50 grid place-items-center bg-black/50 p-4" onMouseDown={(e) => { if (e.target === e.currentTarget) close() }}>
       <div role="dialog" aria-modal="true" aria-label="Share workspace via Gist" className="w-full max-w-md space-y-4 rounded-2xl border border-bor bg-bg p-5">
         <div className="flex items-center gap-2 font-semibold"><Share2 size={18} className="text-ac" />Share via GitHub Gist</div>
-        <p className="text-sm text-mu">Optional: shares the {revision.files.length} file{revision.files.length === 1 ? '' : 's'} of “{revision.name}” as a gist. Needs a classic personal access token with the <b>gist</b> scope; it is stored with your settings and encrypted when device sync is on.</p>
+        <p className="text-sm text-mu">Shares the {revision.files.length} file{revision.files.length === 1 ? '' : 's'} of “{revision.name}” as a gist. Requires a classic token with the <b>gist</b> scope.</p>
         <Field label="GitHub token (gist scope)">
           <Input type="password" value={token} set={setToken} placeholder="ghp_…" />
         </Field>
