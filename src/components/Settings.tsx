@@ -1132,7 +1132,7 @@ function CodeRunCard() {
   const secs = c.timeoutMs / 1000
   return (
     <Anchor id="code-execution">
-      <Card icon={Code2} title="Code execution" sub={c.on ? `@run_code · On · JavaScript${c.python ? ' and Python' : ''} · ${secs}s limit` : '@run_code · Off'} help="Runs short snippets in an isolated browser worker and returns the output." muted={!c.on} right={<Toggle on={c.on} set={(on) => set({ on })} label="Allow code execution" />}>
+      <Card icon={Code2} title="Code execution" sub={c.on ? `@run_code · On · JavaScript${c.python ? ' and Python' : ''} · ${secs}s limit` : '@run_code · Off'} help="Runs short snippets locally and returns the output." muted={!c.on} right={<Toggle on={c.on} set={(on) => set({ on })} label="Allow code execution" />}>
         <Anchor id="code-timeout">
           <Field label={`Time limit · ${secs}s`} hint="Wall-clock budget for the snippet once it starts running: the worker is terminated when it runs out. Python runtime startup and package downloads have their own 60 s guard so a slow download does not eat the execution budget.">
             <RangeSlider label="Code time limit" min={CODE_TIMEOUT_MIN / 1000} max={CODE_TIMEOUT_MAX / 1000} step={1} value={secs} valueText={`${secs} second${secs === 1 ? '' : 's'}`} set={(n) => set({ timeoutMs: Math.round(n) * 1000 })} className="w-full" />
