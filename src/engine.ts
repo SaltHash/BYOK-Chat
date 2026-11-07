@@ -1063,54 +1063,74 @@ export async function stream(e: Ep, sys: string, ms: Wire[], on: (t: string) => 
     signal: ac.signal,
     ...(req.redirect ? { redirect: req.redirect } : {}),
   })
-  let res: Response
-  // Bound the wait for headers without replacing the caller's controller:
-  // Stop must remain distinguishable from the timeout, and the fallback and
-  // body reads still use the reply's own signal.
-  const headersFor = o.connectTimeoutMs ?? STREAM_HEADERS_MS
-  const headCtl = new AbortController()
-  const stopFromCaller = () => headCtl.abort()
-  ac.signal.addEventListener('abort', stopFromCaller, { once: true })
-  const headTimer = setTimeout(() => headCtl.abort(), headersFor)
-  try { res = await providerFetch(u, { ...fetchInit(body), signal: headCtl.signal }) }
-  catch (x: any) {
-    if (ac.signal.aborted || x?.name === 'AbortError' && ac.signal.aborted) throw withCode('Stopped', 'stopped')
-    if (headCtl.signal.aborted) throw withCode(`The provider did not send a response within ${Math.round(headersFor / 1000)} seconds.`, 'timeout', { retryable: true })
-    if (x?.name === 'AbortError') throw withCode('Stopped', 'stopped')
-    // The relay itself is missing (static-only deployment): say so plainly.
-    if (x instanceof ProxyUnavailableError) throw withCode(x.message, 'cors')
+  // Shared by the streaming request and its non-stream fallback: a transport
+  // failure on either path must read the same way, whether or not the endpoint
+  // has a known provider preset.
+  const networkError = (x: any) => {
+    if (x instanceof ProxyUnavailableError) return withCode(x.message, 'cors')
     if (provider) {
       const mapped = mapNetworkError(provider, u)
-      throw withCode(mapped.message, mapped.code, { retryable: mapped.retryable })
+      return withCode(mapped.message, mapped.code, { retryable: mapped.retryable })
     }
     // `split('/')[2]` would keep `user:pass@` from endpoint URLs: use the URL
     // host (credentials stripped) instead.
     let host = u
     try { host = new URL(u).host || u } catch { /* keep the raw string */ }
-    throw withCode('Network or CORS error contacting ' + host, 'cors', { retryable: true })
-  } finally {
-    clearTimeout(headTimer)
-    ac.signal.removeEventListener('abort', stopFromCaller)
+    return withCode('Network or CORS error contacting ' + host, 'cors', { retryable: true })
   }
-  if (!res.ok) {
-    const snippet = (await res.text().catch(() => '')).slice(0, 2000) || res.statusText
+  const throwResponseError = async (response: Response): Promise<never> => {
+    const snippet = (await response.text().catch(() => '')).slice(0, 2000) || response.statusText
     // A refusal from this app's relay is not a provider answer: report it as a
     // transport problem instead of mapping e.g. 403 to "check your API key".
-    const relayError = relayErrorMessage(res, snippet)
+    const relayError = relayErrorMessage(response, snippet)
     if (relayError) throw relayError
-    if (provider) throw providerError(provider, res.status, snippet, { hasKey: !!e.key, headers: res.headers, key: e.key })
+    if (provider) throw providerError(provider, response.status, snippet, { hasKey: !!e.key, headers: response.headers, key: e.key })
     // Custom endpoints have no provider preset to map the response, but a
     // nested `{ error: { message } }` envelope is still not useful as raw JSON
     // in the chat. Surface the provider's sentence and keep the status.
-    const msg = `HTTP ${res.status}: ${errorMessageFromBody(snippet)}`
-    if (res.status === 401 || res.status === 403) throw withCode(msg, 'upstream_auth', { status: res.status })
-    if (res.status === 402) throw withCode(msg, 'billing', { status: res.status })
-    if (res.status === 429) throw withCode(msg, 'rate_limited', { status: res.status, retryable: false })
-    if (res.status === 404) throw withCode(msg, 'not_found', { status: res.status })
-    if (res.status === 400 || res.status === 422) throw withCode(msg, 'bad_request', { status: res.status })
-    if (res.status >= 500) throw withCode(msg, 'upstream_unavailable', { status: res.status, retryable: true })
-    throw withCode(msg, 'bad_response', { status: res.status })
+    const msg = `HTTP ${response.status}: ${errorMessageFromBody(snippet)}`
+    if (response.status === 401 || response.status === 403) throw withCode(msg, 'upstream_auth', { status: response.status })
+    if (response.status === 402) throw withCode(msg, 'billing', { status: response.status })
+    if (response.status === 429) throw withCode(msg, 'rate_limited', { status: response.status, retryable: false })
+    if (response.status === 404) throw withCode(msg, 'not_found', { status: response.status })
+    if (response.status === 400 || response.status === 422) throw withCode(msg, 'bad_request', { status: response.status })
+    if (response.status >= 500) throw withCode(msg, 'upstream_unavailable', { status: response.status, retryable: true })
+    throw withCode(msg, 'bad_response', { status: response.status })
   }
+  // Bound the wait for headers without replacing the caller's controller:
+  // Stop must remain distinguishable from the timeout, and body reads still
+  // use the reply's own signal. Both the streaming request and its non-stream
+  // fallback go through this, so a provider that never answers cannot leave
+  // either path spinning forever.
+  const headersFor = o.connectTimeoutMs ?? STREAM_HEADERS_MS
+  const fetchHeaders = async (payload: unknown) => {
+    if (ac.signal.aborted) throw withCode('Stopped', 'stopped')
+    const headCtl = new AbortController()
+    const stopFromCaller = () => headCtl.abort()
+    // An already-aborted listener never fires: abort explicitly so a Stop
+    // pressed before the request starts still takes effect.
+    if (ac.signal.aborted) headCtl.abort()
+    else ac.signal.addEventListener('abort', stopFromCaller, { once: true })
+    const headTimer = setTimeout(() => headCtl.abort(), headersFor)
+    try {
+      return await providerFetch(u, { ...fetchInit(payload), signal: headCtl.signal })
+    } catch (x: any) {
+      if (ac.signal.aborted) throw withCode('Stopped', 'stopped')
+      if (headCtl.signal.aborted) throw withCode(`The provider did not send a response within ${Math.round(headersFor / 1000)} seconds.`, 'timeout', { retryable: true })
+      throw x
+    } finally {
+      clearTimeout(headTimer)
+      ac.signal.removeEventListener('abort', stopFromCaller)
+    }
+  }
+  let res: Response
+  try { res = await fetchHeaders(body) }
+  catch (x: any) {
+    if (x?.code) throw x
+    if (x?.name === 'AbortError') throw withCode('Stopped', 'stopped')
+    throw networkError(x)
+  }
+  if (!res.ok) await throwResponseError(res)
   let all = '', tin = 0, tout = 0, cost = 0, cacheRead = 0, cacheWrite = 0
   /* Provider stop reason of the last chunk: `length` (OpenAI-style) or
      `max_tokens` (Anthropic) means the model was cut off by its output cap
@@ -1228,7 +1248,8 @@ export async function stream(e: Ep, sys: string, ms: Wire[], on: (t: string) => 
   }
   try {
     if ((res.headers.get('content-type') || '').includes('json')) {
-      const j = await res.json()
+      let j: any
+      try { j = await res.json() } catch { throw withCode(`The provider returned invalid JSON (HTTP ${res.status}).`, 'bad_response', { status: res.status, retryable: true }) }
       ev(j)
       if (calls.size) onToolDelta([...calls.values()].map((c) => ({ ...c })))
     } else {
@@ -1244,12 +1265,14 @@ export async function stream(e: Ep, sys: string, ms: Wire[], on: (t: string) => 
           const payload = l.slice(5).replace(/^ /, '')
           if (pendingData != null) {
             const both = pendingData + '\n' + payload
-            try { ev(JSON.parse(both)); pendingData = null; return } catch { /* try standalone */ }
-            try { ev(JSON.parse(payload)); pendingData = null; return } catch { pendingData = both; return }
+            try { ev(JSON.parse(both)); pendingData = null; return } catch (x: any) { if (x?.code) throw x }
+            try { ev(JSON.parse(payload)); pendingData = null; return } catch (x: any) { if (x?.code) throw x; pendingData = both; return }
           }
           const t = payload.trim()
           if (!t || t === '[DONE]') return
-          try { ev(JSON.parse(payload)) } catch { pendingData = payload }
+          // A provider error is a real event, not a parse failure: rethrow it
+          // so the transport fallback and the user see the provider's message.
+          try { ev(JSON.parse(payload)) } catch (x: any) { if (x?.code) throw x; pendingData = payload }
           return
         }
         if (l === '' || l === '\r') {
@@ -1259,7 +1282,7 @@ export async function stream(e: Ep, sys: string, ms: Wire[], on: (t: string) => 
           pendingData = null
           const t = s.trim()
           if (!t || t === '[DONE]') return
-          try { ev(JSON.parse(t)) } catch { /* malformed event: drop */ }
+          try { ev(JSON.parse(t)) } catch (x: any) { if (x?.code) throw x /* malformed event: drop */ }
         }
       }
       for (;;) {
@@ -1286,7 +1309,9 @@ export async function stream(e: Ep, sys: string, ms: Wire[], on: (t: string) => 
      * in non-streaming mode so the message is never lost to a transport bug.
      * A partial reply is always kept and never re-requested. */
     const code = (error as { code?: string })?.code
-    const fallbackable = provider && !an && !all && !calls.size && (code === 'bad_response' || code === 'bad_request' || code === 'empty_response')
+    // Custom endpoints get the same recovery: they are the gateways most
+    // likely to have a streaming-only transport bug.
+    const fallbackable = !an && !all && !calls.size && (code === 'bad_response' || code === 'bad_request' || code === 'empty_response')
     if (!fallbackable) throw error
     const fallbackBody = body && typeof body === 'object'
       ? (() => {
@@ -1297,20 +1322,17 @@ export async function stream(e: Ep, sys: string, ms: Wire[], on: (t: string) => 
         })()
       : body
     let fallback: Response
-    try { fallback = await providerFetch(u, fetchInit(fallbackBody)) }
+    try { fallback = await fetchHeaders(fallbackBody) }
     catch (x: any) {
+      if (x?.code) throw x
       if (x?.name === 'AbortError') throw withCode('Stopped', 'stopped')
-      if (x instanceof ProxyUnavailableError) throw withCode(x.message, 'cors')
-      const mapped = mapNetworkError(provider, u)
-      throw withCode(mapped.message, mapped.code, { retryable: mapped.retryable })
+      throw networkError(x)
     }
-    if (!fallback.ok) {
-      const snippet = (await fallback.text().catch(() => '')).slice(0, 2000) || fallback.statusText
-      const relayError = relayErrorMessage(fallback, snippet)
-      if (relayError) throw relayError
-      throw providerError(provider, fallback.status, snippet, { hasKey: !!e.key, headers: fallback.headers, key: e.key })
+    if (!fallback.ok) await throwResponseError(fallback)
+    let json: any
+    try { json = await fallback.json() } catch {
+      throw withCode(`The provider returned a non-JSON fallback response (HTTP ${fallback.status}).`, 'bad_response', { status: fallback.status, retryable: true })
     }
-    const json = await fallback.json()
     ev(json)
     if (calls.size) onToolDelta([...calls.values()].map((c) => ({ ...c })))
   }

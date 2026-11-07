@@ -970,3 +970,132 @@ test('history estimates use the built prompt once instead of t plus full plus ct
   assert.ok(estimateHistoryTokens([user]) < 25)
   assert.ok(estimateHistoryTokens([withCtx]) < 35)
 })
+
+test('a provider that never sends headers fails with a timeout instead of hanging', async () => {
+  const original = globalThis.fetch
+  globalThis.fetch = (_url, init) => new Promise((_resolve, reject) => {
+    init.signal.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })), { once: true })
+  })
+  try {
+    await assert.rejects(
+      stream(openai, '', [{ role: 'user', content: 'hello' }], () => {}, new AbortController(), { connectTimeoutMs: 25 }),
+      /did not send a response within/,
+    )
+  } finally { globalThis.fetch = original }
+})
+
+test('Stop during the header wait is reported as stopped, not as a timeout', async () => {
+  const original = globalThis.fetch
+  globalThis.fetch = (_url, init) => new Promise((_resolve, reject) => {
+    init.signal.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })), { once: true })
+  })
+  const ac = new AbortController()
+  const stop = setTimeout(() => ac.abort(), 15)
+  try {
+    await assert.rejects(
+      stream(openai, '', [{ role: 'user', content: 'hello' }], () => {}, ac, { connectTimeoutMs: 5000 }),
+      /Stopped/,
+    )
+  } finally { clearTimeout(stop); globalThis.fetch = original }
+})
+
+test('an SSE provider error survives the JSON framing layer', async () => {
+  const original = globalThis.fetch
+  globalThis.fetch = async () => new Response('data: {"error":{"message":"context window exceeded"}}\n\n', {
+    status: 200,
+    headers: { 'content-type': 'text/event-stream' },
+  })
+  try {
+    await assert.rejects(
+      stream(anthropic, '', [{ role: 'user', content: 'hello' }], () => {}, new AbortController()),
+      (error) => {
+        assert.match(error.message, /context window exceeded/)
+        assert.notEqual(error.message, 'Empty response')
+        return true
+      },
+    )
+  } finally { globalThis.fetch = original }
+})
+
+test('the non-stream fallback also fails when its headers never arrive', async () => {
+  const original = globalThis.fetch
+  let calls = 0
+  globalThis.fetch = (_url, init) => {
+    calls++
+    if (calls === 1) {
+      return Promise.resolve(new Response('data: {"error":{"message":"stream unsupported"}}\n\n', {
+        status: 200,
+        headers: { 'content-type': 'text/event-stream' },
+      }))
+    }
+    return new Promise((_resolve, reject) => {
+      init.signal.addEventListener('abort', () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })), { once: true })
+    })
+  }
+  try {
+    await assert.rejects(
+      stream({ ...openai, id: 'openrouter', preset: 'OpenRouter', url: 'https://openrouter.ai/api/v1' }, '', [{ role: 'user', content: 'hello' }], () => {}, new AbortController(), { connectTimeoutMs: 25 }),
+      /did not send a response within/,
+    )
+    assert.equal(calls, 2, 'the streaming failure should trigger one fallback request')
+  } finally { globalThis.fetch = original }
+})
+
+test('a custom gateway gets a non-stream fallback after a broken SSE reply', async () => {
+  const original = globalThis.fetch
+  let calls = 0
+  globalThis.fetch = async (_url, init) => {
+    calls++
+    if (calls === 1) return new Response('data: {"error":{"message":"streaming unavailable"}}\n\n', {
+      status: 200,
+      headers: { 'content-type': 'text/event-stream' },
+    })
+    assert.equal(JSON.parse(String(init.body)).stream, false)
+    return jsonResponse({ choices: [{ message: { content: 'fallback works' }, finish_reason: 'stop' }], usage: { prompt_tokens: 3, completion_tokens: 4 } })
+  }
+  try {
+    const result = await stream(openai, '', [{ role: 'user', content: 'hello' }], () => {}, new AbortController(), { connectTimeoutMs: 1000 })
+    assert.equal(result.text, 'fallback works')
+    assert.equal(result.tin, 3)
+    assert.equal(result.tout, 4)
+    assert.equal(calls, 2)
+  } finally { globalThis.fetch = original }
+})
+
+test('a fallback that answers with HTML reports a transport response, not a JSON parse crash', async () => {
+  const original = globalThis.fetch
+  let calls = 0
+  globalThis.fetch = async () => {
+    calls++
+    if (calls === 1) return new Response('data: {"error":{"message":"streaming unavailable"}}\n\n', {
+      status: 200,
+      headers: { 'content-type': 'text/event-stream' },
+    })
+    return new Response('<html><body>Bad gateway</body></html>', { status: 200, headers: { 'content-type': 'text/html' } })
+  }
+  try {
+    await assert.rejects(
+      stream(openai, '', [{ role: 'user', content: 'hello' }], () => {}, new AbortController()),
+      /non-JSON fallback response/,
+    )
+    assert.equal(calls, 2)
+  } finally { globalThis.fetch = original }
+})
+
+test('a Stop before the request starts is honoured without waiting for the timeout', async () => {
+  const original = globalThis.fetch
+  let called = false
+  globalThis.fetch = () => {
+    called = true
+    return new Promise(() => {})
+  }
+  const ac = new AbortController()
+  ac.abort()
+  try {
+    await assert.rejects(
+      stream(openai, '', [{ role: 'user', content: 'hello' }], () => {}, ac, { connectTimeoutMs: 5000 }),
+      /Stopped/,
+    )
+    assert.equal(called, false, 'an already-stopped reply must not start a request')
+  } finally { globalThis.fetch = original }
+})

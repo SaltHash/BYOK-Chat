@@ -2324,8 +2324,12 @@ export const useS = create<S>()(
           while (queue.length) {
             const e = queue.shift()!
             if (r.stopped) break
-            const attemptNo = (attempts.get(e.id) ?? 0) + 1
-            attempts.set(e.id, attemptNo)
+            // Candidates are endpoint+model pairs: two models on the same
+            // endpoint are independent attempts, so the retry budget must not
+            // be shared by endpoint id alone.
+            const attemptKey = `${e.id}::${e.model}`
+            const attemptNo = (attempts.get(attemptKey) ?? 0) + 1
+            attempts.set(attemptKey, attemptNo)
             let txt = ''
             const t0 = Date.now(), q = get().params
             // Effort is classified once per model: a retry must not re-bill
@@ -2760,6 +2764,8 @@ export const useS = create<S>()(
             undo = { chat: gone, index: before.chats.findIndex((c) => c.id === id), wasOpen: before.chat === id, draft: before.drafts[id] }
             pendingDelete = undo
             deleteTimer = setTimeout(() => { deleteTimer = null; commitPendingDelete() }, DELETE_UNDO_MS)
+            // Do not hold a Node test process (or a background tab timer) open.
+            ;(deleteTimer as { unref?: () => void }).unref?.()
           }
           set((s) => {
             const chats = op === 'del'
