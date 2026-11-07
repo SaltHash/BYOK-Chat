@@ -5,6 +5,7 @@ import { DEFAULT_TOOLS, KEYS, WIDGETS } from './meta'
 import { est, redact, stream, wire, trimHistory, estimateHistoryTokens, estimateTokens, runToolLoop, type ToolCall, type ToolResult, searchWeb, formatSearch, fetchPage, formatPage, can, ocrImage, clearSessionCache, setDynamicTools, DYNAMIC_TOOLS, type ToolSpec, type PageExcerpt } from './engine'
 import { DEFAULT_TOOL_APPROVAL, cancelToolApprovals, needsToolApproval, normToolApproval, normToolMode, requestToolApproval, type ToolMode } from './toolApprovals'
 import { forkAt as forkTree, switchTo as switchTree, type Fork } from './conversationTree'
+import { captureProfile, freshProfileName, normProfiles, profileMatches, profilePatch, type Profile } from './profiles'
 import { withCompaction, shouldCompact, selectCompactionMessages, transcriptFor, compactionSystemPrompt, compactionAsk, compactionOutputTokens, compactionInputChars, compactionAnchor, compactionDetail, isHandoff, type CompactionRecord } from './compaction'
 import { normMcpServers, mcpBindings, callMcpTool, toolParameters, type McpServer, type McpTool } from './mcp'
 import { attachmentAppendix, projectFileBlock, uniqueAttachmentNames, anonymizeAttachmentNames, realPromptNames, promptNameOf } from './attachments'
@@ -75,7 +76,7 @@ export type Chat = { id: string; title: string; pin?: boolean; started?: boolean
 /** An optional context file attached to a project: name and size for display,
  *  plus the extracted text the AI may consult. Text is capped at import time. */
 export type ProjectFile = { id: string; name: string; size: string; mime?: string; text: string }
-export type Project = { id: string; name: string; open: boolean; createdAt?: number; context?: ProjectFile[]; /** When false, workspace files stay per chat; otherwise (default) the project's chats share one workspace. */ shareWorkspaces?: boolean }
+export type Project = { id: string; name: string; open: boolean; createdAt?: number; context?: ProjectFile[]; /** When false, workspace files stay per chat; otherwise (default) the project's chats share one workspace. */ shareWorkspaces?: boolean; /** Profile applied automatically when this project is opened. */ profile?: string }
 export type Folder = Project
 /**
  * The workspace a chat's replies should target, with project sharing applied:
@@ -647,6 +648,11 @@ type S = {
   gistToken: string
   memories: Memory[]; memoryPrefs: MemoryPrefs
   docPrefs: DocPrefs
+  /** Named bundles of model, prompt, tools and access policy. */
+  profiles: Profile[]
+  /** Last applied profile id. The active profile is derived by matching the
+   *  live settings, so a manual edit simply stops matching. */
+  profile: string
   projects: Project[]; price: { in: number; out: number }; todos: { id: string; t: string; done: boolean }[]
   /** Project whose overview fills the main area. Session-scoped: chat view
    *  wins whenever a chat is open, and it resets on every reload. */
@@ -732,6 +738,18 @@ type S = {
   /** Expand + highlight a project and show its overview in the main area. */
   openProject: (id: string) => void
   moveChat: (id: string, project: string) => void
+  /** Save the current model, sampling, prompt, tools and access policy as a
+   *  named profile. Returns the new id. */
+  saveProfile: (name?: string) => string
+  /** Replace a profile with the current setup, keeping its name and creation time. */
+  updateProfile: (id: string) => void
+  renameProfile: (id: string, name: string) => void
+  applyProfile: (id: string) => void
+  delProfile: (id: string) => void
+  /** Bind a profile to a project; opening the project applies it. */
+  bindProjectProfile: (projectId: string, profileId: string) => void
+  /** Stop asking for this tool under Standard access, including the active profile. */
+  alwaysAllowTool: (name: string) => void
   /** Turn a temporary chat permanent (keeps its messages, drops the expiry). */
   promoteChat: (id: string) => void
   /** Split the conversation at `mid`: the path being read is kept and a new
@@ -2695,7 +2713,7 @@ export const useS = create<S>()(
         sel: null, favs: [], pr: 'general', globalPrompt: { on: true, text: GENERAL_PROMPT_TEXT, qualities: [] }, features: { ...DEFAULT_FEATURES }, featureOrder: FEATURES.map(([id]) => id), libraryShow: { ...DEFAULT_LIBRARY_SHOW }, themeMode: 'dark', themeDark: 'plum', themeLight: 'paper', customDarkColors: { ...DEFAULT_CUSTOM_COLORS }, customLightColors: { ...DEFAULT_CUSTOM_LIGHT_COLORS }, customDarkTheme: { ...DEFAULT_CUSTOM_DARK_THEME }, customLightTheme: { ...DEFAULT_CUSTOM_LIGHT_THEME }, setupDone: false, prefs: { ...DEFAULT_PREFS },
         stats: ZERO(), keys: Object.fromEntries(KEYS.map(([k, , d]) => [k, d])), gistToken: '',
         usage: initialLedger.rows, usageTitles: initialLedger.titles,
-        projects: [], activeProject: '', price: { in: 0, out: 0 }, todos: [],
+        profiles: [], profile: '', projects: [], activeProject: '', price: { in: 0, out: 0 }, todos: [],
         routeStats: {}, shares: [], flashMsg: null,
         draft: '', busy: false, busyChats: {}, doneChats: {}, queued: {}, notice: null, undo: null,
         /* Workspace (first-class entity) */
@@ -3291,7 +3309,46 @@ export const useS = create<S>()(
         delProject: (id) => set((s) => ({ projects: s.projects.filter((f) => f.id !== id), chats: s.chats.map((c) => (c.project === id ? { ...c, project: undefined } : c)), ...(s.activeProject === id ? { activeProject: '' } : {}) })),
         setProjectContext: (id, files) => set((s) => ({ projects: s.projects.map((f) => (f.id === id ? { ...f, context: files.length ? files : undefined } : f)) })),
         setProjectShareWorkspaces: (id, on) => set((s) => ({ projects: s.projects.map((f) => (f.id === id ? { ...f, shareWorkspaces: on } : f)) })),
-        openProject: (id) => set((s) => ({ activeProject: id, chat: '', projects: s.projects.map((f) => (f.id === id ? { ...f, open: true } : f)) })),
+        saveProfile: (name) => {
+          const s = get()
+          const p = captureProfile(s, (name ?? '').trim() || freshProfileName(s.profiles), { id: uid() })
+          set({ profiles: [...s.profiles, p], profile: p.id, notice: { t: `Saved “${p.name}” from the current setup.` } })
+          return p.id
+        },
+        updateProfile: (id) => {
+          const s = get(), old = s.profiles.find((x) => x.id === id)
+          if (!old) return
+          const p = captureProfile(s, old.name, { id, createdAt: old.createdAt })
+          set({ profiles: s.profiles.map((x) => (x.id === id ? p : x)), profile: p.id, notice: { t: `Updated “${p.name}”.` } })
+        },
+        renameProfile: (id, name) => set((s) => ({ profiles: s.profiles.map((p) => (p.id === id ? { ...p, name: name.trim().slice(0, 60) || p.name, updatedAt: Date.now() } : p)) })),
+        applyProfile: (id) => {
+          const s = get(), p = s.profiles.find((x) => x.id === id)
+          if (!p) return
+          set({ ...profilePatch(p), profile: p.id, notice: { t: `Applied “${p.name}”.` } })
+        },
+        delProfile: (id) => set((s) => ({
+          profiles: s.profiles.filter((p) => p.id !== id),
+          ...(s.profile === id ? { profile: '' } : {}),
+          projects: s.projects.map((f) => (f.profile === id ? { ...f, profile: undefined } : f)),
+        })),
+        bindProjectProfile: (pid, profileId) => set((s) => ({ projects: s.projects.map((f) => (f.id === pid ? { ...f, profile: profileId || undefined } : f)) })),
+        alwaysAllowTool: (name) => {
+          const s = get()
+          const active = s.profiles.find((p) => profileMatches(s, p))
+          set({
+            toolApproval: { ...s.toolApproval, [name]: false },
+            // Keep the active profile matching: an "always allow" answer is a
+            // policy change, not a drift that should silently detach the profile.
+            ...(active ? { profiles: s.profiles.map((p) => (p.id === active.id ? { ...p, toolApproval: { ...p.toolApproval, [name]: false }, updatedAt: Date.now() } : p)) } : {}),
+          })
+        },
+        openProject: (id) => {
+          set((s) => ({ activeProject: id, chat: '', projects: s.projects.map((f) => (f.id === id ? { ...f, open: true } : f)) }))
+          // Entering a project also enters the way of working bound to it.
+          const bound = get().projects.find((f) => f.id === id)?.profile
+          if (bound) get().applyProfile(bound)
+        },
         moveChat: (id, project) => set((s) => ({ chats: s.chats.map((c) => (c.id === id ? { ...c, project: project || undefined } : c)) })),
         promoteChat: (id) => set((s) => ({ chats: s.chats.map((c) => (c.id === id ? { ...c, temporary: false, expiresAt: undefined } : c)) })),
         /* Branching does not copy the chat. The path being read is kept as an
@@ -3418,6 +3475,11 @@ export const useS = create<S>()(
         // Older builds remembered consent per tool; the prompt is shared now,
         // so any saved "do not ask" answer carries over to the one flag.
         p.toolConsent = p.toolConsent === true || (!!p.toolConsent && typeof p.toolConsent === 'object' && Object.values(p.toolConsent).some((v) => v === true))
+        // Profiles are settings, never credentials: only the fields a profile
+        // owns survive, and a bound project cannot point at a deleted profile.
+        p.profiles = normProfiles(p.profiles)
+        p.profile = p.profiles.some((x: Profile) => x.id === p.profile) ? p.profile : ''
+        if (Array.isArray(p.projects)) p.projects = p.projects.map((f: Project) => (f?.profile && !p.profiles.some((x: Profile) => x.id === f.profile) ? { ...f, profile: undefined } : f))
         p.mcps = normMcpServers(p.mcps)
         p.imageGen = normImageGen(p.imageGen)
         p.codeRun = normCodeRun(p.codeRun)

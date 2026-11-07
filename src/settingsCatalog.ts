@@ -1,7 +1,7 @@
 import {
   SlidersHorizontal, Server, ScrollText, Sparkles, ListMusic, Terminal,
   FolderOpen, Wrench, Brain, PanelRight, Palette as PaletteIcon, Keyboard,
-  TrendingUp, Database, FlaskConical, MessagesSquare, Plug, Volume2,
+  TrendingUp, Database, FlaskConical, MessagesSquare, Plug, Volume2, Layers,
 } from 'lucide-react'
 import type { Ic } from './components/ui'
 import { FEATURE_TABS, featOn, type FeatureId } from './store'
@@ -15,7 +15,7 @@ import { FEATURE_TABS, featOn, type FeatureId } from './store'
 export type SettingsTabId =
   | 'features' | 'eps' | 'prompts' | 'skills' | 'pls' | 'cmds'
   | 'workspace' | 'tools' | 'mcp' | 'memory' | 'widgets' | 'look' | 'chats'
-  | 'voice' | 'keys' | 'stats' | 'data' | 'adv'
+  | 'voice' | 'keys' | 'stats' | 'data' | 'adv' | 'profiles'
 
 /** Tabs hidden while their owning feature is disabled. Lives here (not in
  *  Settings.tsx) so the command palette can filter tabs without pulling the
@@ -30,6 +30,7 @@ export const visibleTabs = (features?: Record<FeatureId, boolean>) => {
 
 export const SETTINGS_TABS: [SettingsTabId, string, Ic][] = [
   ['features', 'Features', SlidersHorizontal],
+  ['profiles', 'Profiles', Layers],
   ['eps', 'Endpoints', Server],
   ['prompts', 'Prompts', ScrollText],
   ['skills', 'Skills', Sparkles],
@@ -51,6 +52,7 @@ export const SETTINGS_TABS: [SettingsTabId, string, Ic][] = [
 
 export const TAB_KEYWORDS: Record<SettingsTabId, string> = {
   features: 'features toggles enable disable library advanced',
+  profiles: 'profiles presets bundles setups ways of working model prompt tools access mode permissions project binding apply update snapshot',
   eps: 'endpoints models providers api keys connections model aliases base url preset credentials pricing test helper classification title effort auto recall aihubmix openrouter requesty portkey litellm bifrost',
   prompts: 'prompts system instructions global',
   skills: 'skills instructions custom builtin extra tasks',
@@ -76,7 +78,7 @@ export const TAB_KEYWORDS: Record<SettingsTabId, string> = {
  *  is the least frequently opened section in normal use. */
 export const SETTINGS_GROUPS: { label: string; tabs: SettingsTabId[] }[] = [
   { label: 'Everyday', tabs: ['chats', 'look', 'tools'] },
-  { label: 'Models & providers', tabs: ['eps', 'pls'] },
+  { label: 'Models & providers', tabs: ['profiles', 'eps', 'pls'] },
   { label: 'Writing & automation', tabs: ['prompts', 'cmds', 'voice', 'keys'] },
   { label: 'Capabilities', tabs: ['skills', 'mcp', 'memory', 'workspace'] },
   { label: 'Usage & app', tabs: ['stats', 'widgets', 'data', 'features', 'adv'] },
@@ -93,6 +95,10 @@ export type SettingLink = {
 /** Every individually addressable setting/section. `cfg("tab#anchor")` opens
  *  the tab and scrolls to the anchor; unknown anchors still open the tab. */
 export const SETTING_LINKS: SettingLink[] = [
+  { tab: 'profiles', anchor: 'profiles', title: 'Profiles', keywords: 'profiles presets bundles setups model prompt tools access apply' },
+  { tab: 'profiles', anchor: 'profiles-save', title: 'Save the current setup as a profile', keywords: 'save profile current setup snapshot capture' },
+  { tab: 'profiles', anchor: 'profiles-list', title: 'Saved profiles', keywords: 'saved profiles apply update rename delete list' },
+  { tab: 'profiles', anchor: 'profiles-projects', title: 'Project profile binding', keywords: 'project profile bind open automatic apply workspace' },
   // Features — one per feature toggle.
   { tab: 'features', anchor: 'feature-prompts', title: 'Feature: Prompts', keywords: 'feature prompts toggle system' },
   { tab: 'features', anchor: 'feature-skills', title: 'Feature: Skills', keywords: 'feature skills toggle' },
