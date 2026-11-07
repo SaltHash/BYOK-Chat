@@ -25,7 +25,7 @@ import { normVoice, VOICE_LANGS, speak, stopSpeaking, speechAvailable, dictation
 import { DENSITIES, DENSITY_IDS, SPACING_LIMITS, STYLE_PRESETS, STYLE_PRESET_IDS, hasSpacingOverrides, resolveSpacing } from '../style'
 import { accentOnlyColors } from '../theme'
 import { USAGE_PERIODS } from '../usageStats'
-import { WALLPAPERS, deleteBackgroundImage, isCustomBg, normBgBlur, normBgDim, normBgSaturation, storeBackgroundFile, wallpaperLabel, wallpaperThumb } from '../background'
+import { WALLPAPERS, deleteBackgroundImage, isCustomBg, normBgBlur, normBgDim, normBgSaturation, normBgTint, storeBackgroundFile, wallpaperLabel, wallpaperThumb } from '../background'
 import { normCompactAt } from '../compaction'
 import { UsageStats } from './UsageStats'
 
@@ -1957,6 +1957,7 @@ function Look() {
   const bgBlur = normBgBlur(s.prefs.bgImageBlur)
   const bgDim = normBgDim(s.prefs.bgImageDim)
   const bgSaturation = normBgSaturation(s.prefs.bgImageSaturation)
+  const bgTint = normBgTint(s.prefs.bgImageTint)
   const bgName = isCustomBg(s.prefs.bgImage) ? 'Custom image' : wallpaperLabel(s.prefs.bgImage)
   const [bgBusy, setBgBusy] = useState(false)
   const [bgError, setBgError] = useState('')
@@ -2114,13 +2115,16 @@ function Look() {
         <p className="text-xs text-mu">Click a photo to apply it instantly. Uploads stay on this device; the full image sits behind the app.</p>
         {s.prefs.reduceTransparency === true && <p className="text-xs text-c3">Reduce transparency is on, so the image stays hidden behind opaque surfaces. Turn that setting off to see the background.</p>}
         {bgError && <p role="alert" className="rounded-lg bg-er/10 px-3 py-2 text-xs text-er">{bgError}</p>}
-        <p className="text-xs text-mu">Blur, saturation and dim affect only the photo; the conversation stays crisp.</p>
-        <div className="grid gap-3 sm:grid-cols-3">
+        <p className="text-xs text-mu">Blur and saturation change the photo; tint adds the interface color and dim darkens it. The conversation stays crisp.</p>
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <Anchor id="background-blur">
             <Field label={`Blur · ${bgBlur}px`}><RangeSlider label="Image background blur" min={0} max={100} step={1} value={bgBlur} set={(v) => setBg({ bgImageBlur: Math.round(v) })} className="w-full" /></Field>
           </Anchor>
           <Anchor id="background-saturation">
             <Field label={`Saturation · ${bgSaturation}%`}><RangeSlider label="Image background saturation" min={0} max={200} step={1} value={bgSaturation} set={(v) => setBg({ bgImageSaturation: Math.round(v) })} className="w-full" /></Field>
+          </Anchor>
+          <Anchor id="background-tint">
+            <Field label={`Tint · ${bgTint}%`}><RangeSlider label="Image background tint" min={0} max={100} step={1} value={bgTint} set={(v) => setBg({ bgImageTint: Math.round(v) })} className="w-full" /></Field>
           </Anchor>
           <Anchor id="background-dim">
             <Field label={`Dim · ${bgDim}%`}><RangeSlider label="Image background dim" min={0} max={95} step={1} value={bgDim} set={(v) => setBg({ bgImageDim: Math.round(v) })} className="w-full" /></Field>

@@ -5,19 +5,22 @@ const {
   DEFAULT_BG_BLUR,
   DEFAULT_BG_IMAGE,
   DEFAULT_BG_SATURATION,
+  DEFAULT_BG_TINT,
   WALLPAPERS,
   isCustomBg,
   normBgBlur,
   normBgDim,
   normBgSaturation,
+  normBgTint,
   safeBgSource,
   wallpaperLabel,
   wallpaperThumb,
 } = await import('./background.ts')
 
-test('background blur, dim and saturation clamp to their supported ranges', () => {
+test('background blur, dim, saturation and tint clamp to their supported ranges', () => {
   assert.equal(DEFAULT_BG_BLUR, 10)
   assert.equal(DEFAULT_BG_SATURATION, 100)
+  assert.equal(DEFAULT_BG_TINT, 0)
   assert.equal(normBgBlur(-10), 0)
   assert.equal(normBgBlur(100.4), 100)
   assert.equal(normBgBlur(45.6), 46)
@@ -30,6 +33,10 @@ test('background blur, dim and saturation clamp to their supported ranges', () =
   assert.equal(normBgSaturation(149.6), 150)
   assert.equal(normBgSaturation(240), 200)
   assert.equal(normBgSaturation(undefined), 100)
+  assert.equal(normBgTint(-1), 0)
+  assert.equal(normBgTint(49.6), 50)
+  assert.equal(normBgTint(120), 100)
+  assert.equal(normBgTint(undefined), 0)
 })
 
 test('only the bundled assets and local paths are valid background sources', () => {

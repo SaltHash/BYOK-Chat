@@ -259,6 +259,7 @@ html[data-bg-image="on"]:not([data-flat]) {
   background-size: cover;
   will-change: filter, transform;
 }
+.app-backdrop-tint { position: absolute; inset: 0; background: var(--bg); }
 .app-backdrop-dim { position: absolute; inset: 0; background: #000; }
 html[data-bg-image="on"] body { background: transparent; }
 html[data-bg-image="on"]:not([data-flat]) .chat-surface {
@@ -282,12 +283,12 @@ html[data-bg-image="on"]:not([data-flat]) :is(.chat-surface, .side-shell, .widge
   background-color: var(--glass-hover);
 }
 
-/* The resize corridors sit between panes. Without their own surface the
- * wallpaper shows through at full strength as a bright stripe beside the
- * dimmed sidebar and chat, so they share the sidebar's tint and dim. */
+/* The resize corridors sit between panes. They carry the chat tint rather
+ * than the sidebar tint, so the sidebar handle reads as part of the main
+ * canvas instead of as a fourth stripe of the sidebar. */
 .shell-resizer { background-color: transparent; }
 html[data-bg-image="on"]:not([data-flat]) .shell-resizer {
-  background-color: var(--glass-side);
+  background-color: var(--glass-chat);
 }
 .shell-resizer:hover { background-color: color-mix(in srgb, var(--ac) 50%, transparent); }
 

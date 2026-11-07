@@ -4,7 +4,7 @@ import { useS, exportChat, featOn } from './store'
 import { combo, rec } from './engine'
 import { clampSidebarWidth, clampWidgetWidth } from './layout'
 import { canUseDOM, focusComposer, useThemeCss, useStyleCss, useVisualPrefs, usePanelResize, useBackgroundImage } from './hooks'
-import { normBgBlur, normBgDim, normBgSaturation } from './background'
+import { normBgBlur, normBgDim, normBgSaturation, normBgTint } from './background'
 import { useFontCss, sanitizeFontName } from './fonts'
 import { nextThemePatch, stepModelSelection, stepPromptSelection } from './selection'
 import { Sidebar } from './components/Sidebar'
@@ -64,6 +64,7 @@ export default function App() {
   const bgBlur = normBgBlur(prefs.bgImageBlur)
   const bgDim = normBgDim(prefs.bgImageDim)
   const bgSaturation = normBgSaturation(prefs.bgImageSaturation)
+  const bgTint = normBgTint(prefs.bgImageTint)
   useEffect(() => {
     if (!canUseDOM()) return
     const purge = () => {
@@ -184,6 +185,7 @@ export default function App() {
       {bgOn && (
         <div className="app-backdrop" aria-hidden="true">
           <div className="app-backdrop-image" style={{ backgroundImage: `url(${JSON.stringify(bgSrc)})`, filter: `blur(${bgBlur}px) saturate(${bgSaturation}%)`, transform: `scale(${1 + bgBlur / 500})` }} />
+          <div className="app-backdrop-tint" style={{ opacity: bgTint / 100 }} />
           <div className="app-backdrop-dim" style={{ opacity: bgDim / 100 }} />
         </div>
       )}
