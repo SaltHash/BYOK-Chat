@@ -63,7 +63,7 @@ Direct fetch, Jina Reader, Firecrawl, Exa Contents, TinyFish Fetch, Tavily Extra
 
 ## Features
 
-- **Chat:** streaming replies, reply bookmarks, temporary chats, folders, search, drafts, queued messages, rich copy, and read-only share links.
+- **Chat:** streaming replies, branching conversation paths, reply bookmarks, temporary chats, folders, search, drafts, queued messages, rich copy, and read-only share links.
 - **Models:** multiple endpoints, favorites, OpenRouter provider pinning, playlists with fallback, model discovery, and usage estimates.
 - **Grounding:** automatic or explicit `@search`, numbered sources, inline citations, page reading, page summaries, and deep research with reviewable plans and cited reports.
 - **Files and documents:** PDF, DOCX, ODT, RTF, PPTX, XLSX, ZIP, GZ, text, images, audio, and transcript pairing. Optional OCR for scanned images.

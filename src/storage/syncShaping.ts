@@ -59,6 +59,13 @@ const shapeMsg = (m: unknown): unknown => {
       return { ...r, text: clip(r.text, 4000), calls: arr(r.calls).map((call) => shapeCall(call, cited)) }
     })
   }
+  // Paths that branch off this message travel the same way the visible
+  // transcript does: text and evidence in, raw request bodies out. Nested
+  // forks are shaped recursively, so a deep tree cannot smuggle a payload.
+  if (x.fork && typeof x.fork === 'object') {
+    const f = obj(x.fork)
+    out.fork = { ai: typeof f.ai === 'number' ? f.ai : 0, paths: arr(f.paths).map((p) => arr(p).map(shapeMsg)) }
+  }
   if (Array.isArray(x.alts)) out.alts = x.alts.map((alt) => {
     const a = obj(alt)
     const { att, toolRounds, log, full: f, sys: s, reasoning: rs, ...keep } = a
@@ -99,7 +106,14 @@ const shapeMsg = (m: unknown): unknown => {
 
 export function shapeChatForSync(c: unknown): unknown {
   const x = obj(c)
-  return { ...x, msgs: arr(x.msgs).map(shapeMsg) }
+  const { fork, ...rest } = x
+  return {
+    ...rest,
+    msgs: arr(x.msgs).map(shapeMsg),
+    ...(fork && typeof fork === 'object'
+      ? { fork: { ai: typeof obj(fork).ai === 'number' ? obj(fork).ai : 0, paths: arr(obj(fork).paths).map((p) => arr(p).map(shapeMsg)) } }
+      : {}),
+  }
 }
 
 /** Workspaces are generated project files, so they are user-facing. Only the

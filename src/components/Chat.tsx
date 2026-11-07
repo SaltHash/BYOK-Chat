@@ -16,6 +16,7 @@ import { Header } from './Header'
 import { MessageActions } from './ReplyActions'
 import { GraphCards, hasPlacedGraphs } from './Graph'
 import { ArtifactList, artifactBlocks } from './Artifact'
+import { PathSwitch } from './PathSwitch'
 import { Tutorial } from './Extra'
 import { Md, UserText } from './Md'
 import { activityLine, flairLine, thinkingLine, TEMPORARY_NOTE } from '../flair'
@@ -814,7 +815,7 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
       )}
       {(m.toolRounds ?? []).length > 0 && <MessageActions calls={(m.toolRounds ?? []).flatMap((round) => round.calls)} />}
       {prefs.showTps && m.tps != null && !m.err && <div className="text-xs text-mu">{m.by} · {m.tps.toLocaleString()} tokens/s</div>}
-      <div className={cx('flex flex-wrap items-center gap-0.5 transition-opacity', prefs.alwaysShowActions || (m.alts && m.alts.length > 1) ? '' : 'opacity-100 md:opacity-0 md:group-hover:opacity-100 md:focus-within:opacity-100')}>
+      <div className={cx('flex flex-wrap items-center gap-0.5 transition-opacity', prefs.alwaysShowActions || (m.alts && m.alts.length > 1) || (m.fork && m.fork.paths.length > 0) ? '' : 'opacity-100 md:opacity-0 md:group-hover:opacity-100 md:focus-within:opacity-100')}>
         {m.alts && m.alts.length > 1 && !busy && (
           <>
             <Btn sm icon={ChevronLeft} title="Previous reply" disabled={(m.ai ?? 0) < 1} onClick={() => useS.getState().variant(m.id, (m.ai ?? 0) - 1)} />
@@ -838,8 +839,11 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
         {voiceOn({ features }) && speechAvailable() && !hideBody && !m.err && !!displayText.trim() && (
           <Btn icon={Volume2} title="Read aloud" onClick={() => speak(displayText, normVoice(useS.getState().voicePrefs))} />
         )}
-        {last && <Btn icon={RefreshCw} title="Regenerate" onClick={() => useS.getState().regen()} />}
-        <Btn icon={GitBranch} title="Branch from here (copy this thread into a new chat)" onClick={() => useS.getState().branch(m.id)} />
+        <PathSwitch anchor={m.id} />
+        {!m.err && (last
+          ? <Btn icon={RefreshCw} title="Regenerate" onClick={() => useS.getState().regen()} />
+          : <Btn icon={RefreshCw} title="Regenerate this reply — the current one stays reachable from the path arrows" onClick={() => useS.getState().regenAt(m.id)} />)}
+        <Btn icon={GitBranch} title="Start a new path from here — this thread stays reachable from the path arrows" onClick={() => useS.getState().branch(m.id)} />
         {confirmDel ? (
           <>
             <span className="px-1 text-xs text-er">Delete?</span>
@@ -1291,6 +1295,7 @@ export function Chat({ side, toggle, cfg, pal }: { side: boolean; toggle: () => 
                     </button>
                   </div>
                 )}
+                <PathSwitch anchor="" className="mx-auto" />
                 {c.msgs.slice(windowFrom).map((m, i) => <M key={m.id} m={m} cfg={cfg} last={windowFrom + i === c.msgs.length - 1} onOpenWorkspace={openWorkspace} onOpenResearch={openResearch} selectedWorkspaceId={workspacePanel?.mid === m.id ? selectedRevId : null} searchQuery={findQ} searchOpen={findOpen} />)}
                 {c.msgs[c.msgs.length - 1]?.r === 'user' && !busy && (
                   <div className="flex justify-center pt-2">

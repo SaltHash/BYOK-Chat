@@ -5,6 +5,7 @@ import { tokenizeMentions, bannerOf, sentBodyText, isPill } from '../mentions'
 import { MentionChip, SentMentionBanner, SentQuoteBanner } from './Mention'
 import { splitQuotedReply } from '../quote'
 import { Btn, cx } from './ui'
+import { PathSwitch } from './PathSwitch'
 import { loadChunk } from '../chunkLoad'
 import type { CiteMap } from './Rich'
 
@@ -84,7 +85,7 @@ export function UserText({ m, searchQuery, searchOpen }: { m: Msg; searchQuery?:
     return (
       <div className="space-y-2">
         <textarea autoFocus rows={3} value={v} onChange={(e) => setV(e.target.value)} className="w-full resize-y rounded-2xl bg-surf px-4 py-2.5 outline-none focus:ring-2 focus:ring-ac/40" />
-        <p className="text-xs text-mu">Saving resends this message and replaces every reply after it. Use Branch from here first to keep the current thread.</p>
+        <p className="text-xs text-mu">Saving resends this message. The wording and replies you have now stay reachable as another path.</p>
         <div className="flex justify-end gap-2">
           <Btn v="soft" onClick={() => { setV(m.t); setEd(false) }}>Cancel</Btn>
           <Btn v="solid" icon={Check} onClick={() => { if (edit(m.id, v)) setEd(false) }}>Save and resend</Btn>
@@ -110,9 +111,10 @@ export function UserText({ m, searchQuery, searchOpen }: { m: Msg; searchQuery?:
           </div>
         )}
       </div>
-      <span className="flex shrink-0 flex-wrap gap-0.5 opacity-100 transition-opacity md:opacity-0 md:group-hover/u:opacity-100 md:focus-within:opacity-100">
+      <span className={cx('flex shrink-0 flex-wrap gap-0.5 transition-opacity md:group-hover/u:opacity-100 md:focus-within:opacity-100', m.fork && m.fork.paths.length > 0 ? 'opacity-100' : 'opacity-100 md:opacity-0')}>
         <Btn sm icon={copied ? Check : Copy} title="Copy" onClick={() => { void navigator.clipboard?.writeText(m.t).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1200) }).catch(() => {}) }} />
-        <Btn sm icon={GitBranch} title="Branch from here (copy this thread into a new chat)" onClick={() => branch(m.id)} />
+        <PathSwitch anchor={m.id} />
+        <Btn sm icon={GitBranch} title="Start a new path from here — this thread stays reachable from the path arrows" onClick={() => branch(m.id)} />
         <Btn sm icon={Pencil} title="Edit message" onClick={() => setEd(true)} />
         <Btn sm icon={Trash2} title="Delete" onClick={() => useS.getState().delMsg(m.id)} />
       </span>

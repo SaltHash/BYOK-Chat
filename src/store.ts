@@ -4,6 +4,7 @@ import { useShallow } from 'zustand/react/shallow'
 import { DEFAULT_TOOLS, KEYS, WIDGETS } from './meta'
 import { est, redact, stream, wire, trimHistory, estimateHistoryTokens, estimateTokens, runToolLoop, type ToolCall, type ToolResult, searchWeb, formatSearch, fetchPage, formatPage, can, ocrImage, clearSessionCache, setDynamicTools, DYNAMIC_TOOLS, type ToolSpec, type PageExcerpt } from './engine'
 import { DEFAULT_TOOL_APPROVAL, cancelToolApprovals, needsToolApproval, normToolApproval, normToolMode, requestToolApproval, type ToolMode } from './toolApprovals'
+import { forkAt as forkTree, switchTo as switchTree, type Fork } from './conversationTree'
 import { withCompaction, shouldCompact, selectCompactionMessages, transcriptFor, compactionSystemPrompt, compactionAsk, compactionOutputTokens, compactionInputChars, compactionAnchor, compactionDetail, isHandoff, type CompactionRecord } from './compaction'
 import { normMcpServers, mcpBindings, callMcpTool, toolParameters, type McpServer, type McpTool } from './mcp'
 import { attachmentAppendix, projectFileBlock, uniqueAttachmentNames, anonymizeAttachmentNames, realPromptNames, promptNameOf } from './attachments'
@@ -67,10 +68,10 @@ export type Attempt = { n: string; m: string; detail?: string; ms?: number; err?
 export type Try = Attempt
 export type Attachment = { name: string; kind: 'img' | 'pdf' | 'txt' | 'media'; size: string; mime?: string; data?: string; text?: string; source?: string; pages?: number; /** Original extracted character count, before the per-file budget. */ chars?: number; /** The text in the prompt is a head/tail excerpt, not the whole file. */ truncated?: boolean; /** Neutral name shown to the model instead of the real file name. */ modelName?: string }
 export type Att = Attachment
-export type Message = { id: string; r: 'user' | 'assistant'; t: string; at?: number; by?: string; tps?: number; log?: Attempt[]; att?: Attachment[]; err?: boolean; trunc?: boolean; capped?: boolean; full?: string; ctx?: string[]; fx?: string; cmd?: string; alts?: Snap[]; ai?: number; historyTokens?: number; explicitTokens?: number; reasoning?: string; toolRounds?: { text: string; calls: ToolResult[] }[]; toolFinal?: string; sys?: string; workspaceIds?: string[]; research?: ResearchState; /** Kept visible under the header and added to the model context (see prefs.pinContext). */ pin?: boolean }
+export type Message = { id: string; r: 'user' | 'assistant'; t: string; at?: number; by?: string; tps?: number; log?: Attempt[]; att?: Attachment[]; err?: boolean; trunc?: boolean; capped?: boolean; full?: string; ctx?: string[]; fx?: string; cmd?: string;  alts?: Snap[]; ai?: number; historyTokens?: number; explicitTokens?: number; reasoning?: string; toolRounds?: { text: string; calls: ToolResult[] }[]; toolFinal?: string; sys?: string; workspaceIds?: string[]; research?: ResearchState; /** Kept visible under the header and added to the model context (see prefs.pinContext). */ pin?: boolean; /** Sibling continuations after this message (see conversationTree). */ fork?: Fork }
 export type Msg = Message
 export type Snap = { t: string; by?: string; tps?: number; log?: Try[]; err?: boolean; toolRounds?: { text: string; calls: ToolResult[] }[]; toolFinal?: string; workspaceIds?: string[] }
-export type Chat = { id: string; title: string; pin?: boolean; started?: boolean; project?: string; msgs: Msg[]; temporary?: boolean; expiresAt?: number; titleAuto?: boolean; /** Hidden from the normal sidebar until the Archived filter is opened. */ archived?: boolean; /** When the chat was archived, used for retention. */ archivedAt?: number; /** Bookmarked message ids, newest first (see bookmarks.ts). */ bookmarks?: string[]; /** Model-written handoff that replaces the messages up to `through` in requests. The stored transcript is untouched. */ compact?: CompactionRecord }
+export type Chat = { id: string; title: string; pin?: boolean; started?: boolean; project?: string; msgs: Msg[]; temporary?: boolean; expiresAt?: number; titleAuto?: boolean; /** Hidden from the normal sidebar until the Archived filter is opened. */ archived?: boolean; /** When the chat was archived, used for retention. */ archivedAt?: number; /** Bookmarked message ids, newest first (see bookmarks.ts). */ bookmarks?: string[]; /** Model-written handoff that replaces the messages up to `through` in requests. The stored transcript is untouched. */ compact?: CompactionRecord; /** Sibling continuations before the first message. */ fork?: Fork }
 /** An optional context file attached to a project: name and size for display,
  *  plus the extracted text the AI may consult. Text is capped at import time. */
 export type ProjectFile = { id: string; name: string; size: string; mime?: string; text: string }
@@ -733,8 +734,15 @@ type S = {
   moveChat: (id: string, project: string) => void
   /** Turn a temporary chat permanent (keeps its messages, drops the expiry). */
   promoteChat: (id: string) => void
+  /** Split the conversation at `mid`: the path being read is kept and a new
+   *  empty path becomes active. */
   branch: (mid: string) => void
   variant: (mid: string, idx: number) => void
+  /** Show another path at a fork. `anchor` is the message id the fork sits on,
+   *  or "" for a fork before the first message. */
+  gotoPath: (anchor: string, ordinal: number) => void
+  /** Regenerate a reply that is not the last one without losing its thread. */
+  regenAt: (mid: string) => void
 }
 
 export { splitEntry }
@@ -3024,6 +3032,28 @@ export const useS = create<S>()(
           }
           void answer(um, prev)
         },
+        /* Regenerating a reply that is not the last one used to be refused,
+         * because resending drops everything after it. The tree makes that
+         * lossless: the old reply and its continuation become another path. */
+        regenAt: (mid) => {
+          const s = get(), c = s.chats.find((x) => x.msgs.some((m) => m.id === mid))
+          if (!c) return
+          if (chatBusy(s, c.id)) { set({ notice: { t: 'A reply is still in progress in this chat. Stop it first, then regenerate.' } }); return }
+          const i = c.msgs.findIndex((m) => m.id === mid)
+          if (i < 0 || c.msgs[i].r !== 'assistant') return
+          let j = i - 1
+          while (j >= 0 && c.msgs[j].r !== 'user') j--
+          if (j < 0) return
+          const um = c.msgs[j]
+          const pre = plan(s, um)
+          if (pre.err) { set({ notice: pre.err }); return }
+          const at = c.compact ? c.msgs.findIndex((m) => m.id === c.compact!.through) : -1
+          const forked = forkTree(c, j, [])
+          set({ chats: s.chats.map((x) => (x.id === c.id ? { ...x, ...(at >= 0 && j <= at ? { compact: undefined } : {}), ...forked } : x)), chat: c.id })
+          const rreq = parseResearchRequest(um.t ?? '')
+          if (rreq && !um.att?.length) { startResearchTierPick(c.id, forked.msgs, rreq.query); return }
+          void answer(um)
+        },
         retryMsg: (id) => {
           const s = get()
           const c = s.chats.find((x) => x.msgs.some((m) => m.id === id))
@@ -3164,19 +3194,22 @@ export const useS = create<S>()(
           const o = c.msgs[i]
           if (!t.trim() && !o.att?.length) return false
           const m = t.match(/^\/(\S+)(?:\s+([\s\S]*))?$/), cmd = m && featOn(s, 'commands') ? s.cmds.find((x) => x.name === m[1]) : (!m && featOn(s, 'commands') ? s.cmds.find((x) => x.id === o.cmd) : undefined)
-          const um: Msg = { ...o, t: t.trim(), cmd: cmd?.id, full: full(body(cmd, m && cmd ? (m[2] ?? '').trim() : t.trim()), o.ctx, o.fx) }
+          // A fresh id keeps the edit distinct from the wording it replaces,
+          // which now lives on as another path at the same point.
+          const um: Msg = { ...o, id: uid(), t: t.trim(), cmd: cmd?.id, full: full(body(cmd, m && cmd ? (m[2] ?? '').trim() : t.trim()), o.ctx, o.fx) }
           { const pre = plan(s, um); if (pre.err) { set({ notice: pre.err }); return false } }
           // A handoff summarizes messages at or before its anchor. Editing one
           // of those makes the memo stale, and keeping it would hide the edit
           // from the model, so drop the handoff and rebuild it next time.
           const anchorAt = c.compact ? c.msgs.findIndex((x) => x.id === c.compact!.through) : -1
           const stale = anchorAt >= 0 && i <= anchorAt
-          set((st) => ({ chats: st.chats.map((x) => (x.id === c.id ? { ...x, ...(stale ? { compact: undefined } : {}), msgs: [...c.msgs.slice(0, i), um] } : x)), stats: featOn(st, 'stats') ? { ...st.stats, sent: st.stats.sent + 1 } : st.stats } ))
+          const forked = forkTree(c, i - 1, [um])
+          set((st) => ({ chats: st.chats.map((x) => (x.id === c.id ? { ...x, ...(stale ? { compact: undefined } : {}), ...forked } : x)), stats: featOn(st, 'stats') ? { ...st.stats, sent: st.stats.sent + 1 } : st.stats } ))
           // Editing a message into a @research request re-enters the research
           // flow (tier pick) instead of a plain reply.
           const rreq = parseResearchRequest(um.t ?? '')
           if (rreq && !o.att?.length) {
-            startResearchTierPick(c.id, [...c.msgs.slice(0, i), um], rreq.query)
+            startResearchTierPick(c.id, forked.msgs, rreq.query)
             return true
           }
           void answer(um)
@@ -3261,12 +3294,29 @@ export const useS = create<S>()(
         openProject: (id) => set((s) => ({ activeProject: id, chat: '', projects: s.projects.map((f) => (f.id === id ? { ...f, open: true } : f)) })),
         moveChat: (id, project) => set((s) => ({ chats: s.chats.map((c) => (c.id === id ? { ...c, project: project || undefined } : c)) })),
         promoteChat: (id) => set((s) => ({ chats: s.chats.map((c) => (c.id === id ? { ...c, temporary: false, expiresAt: undefined } : c)) })),
+        /* Branching does not copy the chat. The path being read is kept as an
+         * inactive continuation on the message it split from, so the old reply
+         * stays reachable from the arrows instead of becoming a second chat. */
         branch: (mid) => set((s) => {
           const c = s.chats.find((x) => x.msgs.some((m) => m.id === mid))
           if (!c) return s
+          if (chatBusy(s, c.id)) return { notice: { t: 'A reply is still in progress. Stop it before branching.' } }
           const i = c.msgs.findIndex((m) => m.id === mid)
-          const n: Chat = { id: uid(), title: (c.title + ' (branch)').slice(0, 80), project: c.project, started: true, msgs: c.msgs.slice(0, i + 1).map((m) => ({ ...m, id: uid() })) }
-          return { chats: [n, ...s.chats], chat: n.id }
+          const at = c.compact ? c.msgs.findIndex((m) => m.id === c.compact!.through) : -1
+          const stale = at >= 0 && i <= at
+          return { chats: s.chats.map((x) => (x.id === c.id ? { ...x, ...(stale ? { compact: undefined } : {}), ...forkTree(c, i, []) } : x)), chat: c.id }
+        }),
+        gotoPath: (anchor, ordinal) => set((s) => {
+          const c = s.chats.find((x) => x.id === s.chat)
+          if (!c) return s
+          if (chatBusy(s, c.id)) return { notice: { t: 'A reply is still in progress. Stop it before switching paths.' } }
+          const i = anchor ? c.msgs.findIndex((m) => m.id === anchor) : -1
+          if (anchor && i < 0) return s
+          const next = switchTree(c, i, ordinal)
+          if (next === c) return s
+          const at = c.compact ? c.msgs.findIndex((m) => m.id === c.compact!.through) : -1
+          const stale = at >= 0 && i <= at
+          return { chats: s.chats.map((x) => (x.id === c.id ? { ...x, ...(stale ? { compact: undefined } : {}), ...next } : x)) }
         }),
         variant: (mid, idx) => set((s) => ({ chats: s.chats.map((c) => {
           const at = c.compact ? c.msgs.findIndex((m) => m.id === c.compact!.through) : -1

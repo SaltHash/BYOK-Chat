@@ -15,7 +15,7 @@
  */
 
 import type { Attempt, Chat, Ep, Message } from './store'
-import { modelNameOf } from './models'
+import { modelNameOf, prettyModelId } from './models'
 import { allAttemptAts, allAttemptLogs, attemptCost, endpointNameOf, usageRange, type UsageGroup } from './usage'
 import { toolLabel } from './toolLabels'
 
@@ -164,7 +164,9 @@ export function buildUsageRecordsFrom(logs: Attempt[][], ats: number[], contexts
         endpointId: ep?.id ?? '',
         endpointName: ep?.name ?? 'Unknown endpoint',
         modelId,
-        modelLabel: ep && modelId ? modelNameOf(ep, modelId) : modelId || 'Unknown model',
+        // A removed endpoint still gets a readable label: the stat is about
+        // the model, and its id is not a display name.
+        modelLabel: ep && modelId ? modelNameOf(ep, modelId) : prettyModelId(modelId) || 'Unknown model',
         failed: !!t.err,
         tokens: tokensOf(t),
         cost: priced.cost,
@@ -373,7 +375,7 @@ export function buildRecordsFromRows(rows: UsageRow[], eps: Ep[], titles: Record
       endpointId: ep?.id ?? '',
       endpointName: ep?.name ?? 'Unknown endpoint',
       modelId: r.model,
-      modelLabel: ep && r.model ? modelNameOf(ep, r.model) : r.model || 'Unknown model',
+      modelLabel: ep && r.model ? modelNameOf(ep, r.model) : prettyModelId(r.model) || 'Unknown model',
       failed: r.failed === true,
       tokens: tokensOf({ n: r.endpoint, m: r.model, tin: r.tin, tout: r.tout, cacheRead: r.cacheRead, cacheWrite: r.cacheWrite }),
       cost: priced.cost,

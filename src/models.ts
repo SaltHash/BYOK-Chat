@@ -52,8 +52,14 @@ export const stripVendorPrefix = (name: string, owners: (string | undefined)[]):
   return vendorPrefixOf(clean, owners) ? clean.replace(/^([^:]+):\s*/, '') : clean
 }
 
+/** A readable label derived from the model id alone, for usage rows whose
+ *  endpoint (or catalog entry) is no longer configured: "openai/gpt-4o-mini"
+ *  reads as "Gpt 4o mini" instead of leaking the raw id into a stat. */
+export const prettyModelId = (model: string) =>
+  model.split('/').pop()!.replace(/-/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
+
 export const modelNameOf = (e: Ep, model: string) => {
   const name = e.modelNames?.[model]
   if (name) return stripVendorPrefix(name, [e.name, e.endpointId, model.split('/')[0]])
-  return model.split('/').pop()!.replace(/-/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
+  return prettyModelId(model)
 }

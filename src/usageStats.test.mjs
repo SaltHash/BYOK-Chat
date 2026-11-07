@@ -160,7 +160,7 @@ test('cost records carry endpoint/model identity and unknown rows survive', () =
   assert.equal(records[1].cost, null)
   assert.equal(records[2].endpointId, '')
   assert.equal(records[2].endpointName, 'Unknown endpoint')
-  assert.equal(records[2].modelLabel, 'ghost')
+  assert.equal(records[2].modelLabel, 'Ghost', 'a removed endpoint still gets a display name, not the id')
   assert.equal(records[3].endpointId, 'e1', 'effort helpers resolve to their endpoint')
   assert.equal(records[3].modelId, 'effort-model')
   assert.doesNotThrow(() => summarize(records))
@@ -258,6 +258,16 @@ test('most-used model is the token leader and is absent for an empty period', ()
   const empty = summarize(recordsInRange(records, statsRange({ period: 'custom', from: '2020-01-01', to: '2020-01-02' })))
   assert.equal(empty.mostUsed, undefined)
   assert.equal(empty.requests, 0)
+})
+
+test('a removed endpoint still labels the most-used model by display name', () => {
+  // The endpoint is gone, so there is no catalog entry to name the model from;
+  // the stat must still show a readable name instead of the raw id.
+  const [row] = buildRecordsFromRows([
+    { at: at(0), chatId: 'c1', messageId: 'm1', endpoint: 'Gone', model: 'vendor/some-model', tin: 400, tout: 100 },
+  ], [])
+  assert.equal(row.modelLabel, 'Some Model')
+  assert.equal(summarize([row]).mostUsed.modelLabel, 'Some Model')
 })
 
 test('model selection handles all, selected, absent and zero-token models', () => {
