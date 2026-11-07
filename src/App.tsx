@@ -19,7 +19,7 @@ const Palette = lazy(() => import('./components/Palette').then((m) => ({ default
 const Widgets = lazy(() => import('./components/Widgets').then((m) => ({ default: m.Widgets })))
 const ShareView = lazy(() => import('./components/ShareView').then((m) => ({ default: m.ShareView })))
 import { shareIdFromHash, shareHash, updateShare } from './share'
-import { chatHash, chatIdFromHash } from './chatRoute'
+import { chatHash, chatIdFromHash, historyAction } from './chatRoute'
 import { getStorageWarning, subscribeStorageWarning } from './persistence'
 import { Btn } from './components/ui'
 import { ErrorBoundary } from './components/ErrorBoundary'
@@ -86,12 +86,9 @@ export default function App() {
     // First paint and deep-link restoration normalize the URL without adding
     // an extra entry. Later chat switches push; tab changes within Settings
     // replace so Back closes Settings instead of walking every tab.
-    if (!routeReady.current) {
-      window.history.replaceState(null, '', url)
-    } else {
-      const push = prevChat.current !== currentChat || prevSettingsOpen.current !== !!cfg
-      window.history[push ? 'pushState' : 'replaceState'](null, '', url)
-    }
+    const action = historyAction({ ready: routeReady.current, sameHash: false, prevChat: prevChat.current, chat: currentChat, prevSettingsOpen: prevSettingsOpen.current, settingsOpen: !!cfg })
+    if (action === 'push') window.history.pushState(null, '', url)
+    else if (action === 'replace') window.history.replaceState(null, '', url)
     routeReady.current = true
     prevChat.current = currentChat
     prevSettingsOpen.current = !!cfg

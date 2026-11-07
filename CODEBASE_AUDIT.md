@@ -329,7 +329,7 @@ Keep the visual track at 20 px if desired, but give the button a 24 px minimum h
 
 **Evidence**
 
-- Main chunk: 902.67 kB / 302.81 kB gzip.
+- Main chunk: 902.82 kB / 302.88 kB gzip.
 - Markdown chunk: 753.11 kB / 209.81 kB gzip.
 - Settings chunk: 201.41 kB / 56.74 kB gzip, plus a separate 65.41 kB stats chunk loaded on demand.
 - `Settings.tsx` statically imports `UsageStats` (`src/components/Settings.tsx:34`), so the 1,454-line stats surface travels with the already-large settings chunk.
@@ -376,7 +376,7 @@ Carve `Settings` tabs into folder-level modules and move store slices into domai
 
 **Evidence**
 
-- 73 test files and 813 tests pass, but there is no React DOM test dependency, no Playwright/Cypress setup, and no checked-in `.github/workflows` directory.
+- 73 test files and 814 tests pass, but there is no React DOM test dependency, no Playwright/Cypress setup, and no checked-in `.github/workflows` directory.
 - `package.json` has no `lint` script (`package.json:5-15`).
 - The mobile drawer, unnamed switches, unnamed dialogs, and Seg state all passed the logic suite.
 
@@ -682,9 +682,9 @@ All six are fixed in `f0821ef` and `9b2f7c5`, with focused regressions in `src/e
 | Check | Result |
 |---|---|
 | `npx tsc --noEmit` | clean |
-| `npm test` | 813/813 passed |
+| `npm test` | 814/814 passed |
 | `npm run test:worker` | 14/14 passed |
-| `npm run build` | passed; main 902.67 kB / 302.81 kB gzip, Settings 201.41 kB, lazy stats 65.41 kB |
+| `npm run build` | passed; main 902.82 kB / 302.88 kB gzip, Settings 201.41 kB, lazy stats 65.41 kB |
 | Browser checks | Settings opens on the requested deep link, grouped navigation and Recent render, search ranks results, keyboard ArrowDown reaches the first result, and the mobile/archive flows were exercised. |
 
 ### Still open / deliberately deferred
