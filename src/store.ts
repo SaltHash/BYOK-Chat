@@ -244,6 +244,11 @@ export const normCustomTheme = (v: unknown, fallback: CustomTheme, colors?: Part
   const o = (v && typeof v === 'object' ? v : {}) as Partial<CustomTheme> & { hue?: number; sat?: number; bright?: number }
   const base = (BASE_THEMES as readonly string[]).includes(o.base as string) ? (o.base as BaseTheme) : fallback.base
   const legacy = !isHexColor(o.accent) && !isHexColor(o.text) && !isHexColor(o.background)
+  // The old custom-theme editor drove the palette with hue, saturation and
+  // brightness sliders and a 1–2 contrast slider. New themes encode their
+  // three primary colours directly, so only old-shaped themes should have
+  // their 1–2 contrast values rescaled; 1 and 2 are real percentages now.
+  const legacyContrast = legacy || o.hue !== undefined || o.sat !== undefined || o.bright !== undefined
   const pick = (value: unknown, key: keyof ThemeColors, fallbackValue: string) =>
     isHexColor(value) ? normalizeHex(value, fallbackValue) : colors && isHexColor(colors[key]) ? normalizeHex(colors[key], fallbackValue) : fallbackValue
   const accent = pick(o.accent, 'ac', fallback.accent)
@@ -251,8 +256,8 @@ export const normCustomTheme = (v: unknown, fallback: CustomTheme, colors?: Part
   const background = pick(o.background, 'bg', fallback.background)
   let contrast = 50
   if (typeof o.contrast === 'number' && Number.isFinite(o.contrast)) {
-    // The old slider used 1–2; the new control uses 0–100.
-    contrast = o.contrast >= 1 && o.contrast <= 2 ? Math.round(50 + (o.contrast - 1) * 50) : Math.round(Math.min(100, Math.max(0, o.contrast)))
+    const value = Math.min(100, Math.max(0, o.contrast))
+    contrast = legacyContrast && value >= 1 && value <= 2 ? Math.round(50 + (value - 1) * 50) : Math.round(value)
   }
   const overrides: Partial<ThemeColors> = {}
   if (o.overrides && typeof o.overrides === 'object') {
