@@ -192,11 +192,6 @@ export const SETTING_LINKS: SettingLink[] = [
 
   // Appearance
   { tab: 'look', anchor: 'appearance-mode', title: 'Appearance mode (dark / light)', keywords: 'dark light mode theme' },
-  { tab: 'look', anchor: 'background-image', title: 'Image background', keywords: 'background image photo wallpaper wallpapers thumbnails upload clay banks blur saturation dim tint accent glass theme custom' },
-  { tab: 'look', anchor: 'background-blur', title: 'Image background blur', keywords: 'background image blur soft focus px' },
-  { tab: 'look', anchor: 'background-saturation', title: 'Image background saturation', keywords: 'background image saturation color colour vivid muted grayscale vibrance percent' },
-  { tab: 'look', anchor: 'background-tint', title: 'Image background tint', keywords: 'background image tint theme color colour overlay wash percent' },
-  { tab: 'look', anchor: 'background-dim', title: 'Image background dim', keywords: 'background image dim dark black overlay percent' },
   { tab: 'look', anchor: 'style-preset', title: 'Style preset', keywords: 'style preset feel modern sharp bubbly floating corners radius rounded shadows elevation' },
   { tab: 'look', anchor: 'density', title: 'Density', keywords: 'density compact comfortable spacious spacing layout' },
   { tab: 'look', anchor: 'density-advanced', title: 'Advanced spacing overrides', keywords: 'advanced spacing overrides header padding vertical chat margins message gap sidebar composer panel code blocks pixels fine tune' },
@@ -207,7 +202,7 @@ export const SETTING_LINKS: SettingLink[] = [
   { tab: 'widgets', anchor: 'context-compact', title: 'Auto-compact context', keywords: 'context compaction compact summarize handoff threshold percent auto' },
   { tab: 'look', anchor: 'context-limit', title: 'Context meter limit', keywords: 'context limit estimated meter tokens' },
   { tab: 'look', anchor: 'theme-picker', title: 'Theme picker', keywords: 'theme plum claude obsidian graphite paper sage frost sunset custom' },
-  { tab: 'look', anchor: 'custom-colors', title: 'Custom theme sliders', keywords: 'custom theme base hue saturation brightness contrast sliders hex colors reset defaults' },
+  { tab: 'look', anchor: 'custom-colors', title: 'Custom theme colors', keywords: 'custom theme accent text background contrast picker syntax error colors reset advanced' },
   { tab: 'look', anchor: 'seasonal', title: 'Seasonal touches', keywords: 'seasonal festive greeting holiday plain' },
   { tab: 'look', anchor: 'completion-cues', title: 'Completion cues', keywords: 'completion cues chime confetti deep research workspace finished' },
   { tab: 'chats', anchor: 'show-by', title: 'Show which model answered', keywords: 'show model answered label byline' },

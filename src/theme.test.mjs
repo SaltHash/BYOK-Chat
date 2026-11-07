@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { hexToHsl, hslToHex, accentHue, adjustThemeColors, SYNTAX_COLOR_KEYS, TEXT_COLOR_KEYS, UNADJUSTED_KEYS } from './theme'
+import { hexToHsl, hslToHex, accentHue, adjustThemeColors, customPalette, CUSTOM_PALETTE_KEYS, isHexColor, SYNTAX_COLOR_KEYS, TEXT_COLOR_KEYS, UNADJUSTED_KEYS } from './theme'
 
 test('hexToHsl reads the accent hues the sliders snap to', () => {
   assert.equal(Math.round(hexToHsl('#dc8ad8').h), 303) // plum accent
@@ -60,4 +60,34 @@ test('normCustomTheme-style clamping keeps extreme slider values in range', () =
   const max = adjustThemeColors(colors, { baseHue: 303, hue: 303, sat: 2, bright: 3 })
   assert.ok(hexToHsl(max.ac).s <= 1)
   assert.ok(hexToHsl(max.bg).l <= 1)
+})
+
+test('a custom palette is generated from accent, text and background', () => {
+  const palette = customPalette({ accent: '#7c9cff', text: '#f8f8f8', background: '#141416', contrast: 55 })
+  assert.deepEqual(Object.keys(palette).sort(), [...CUSTOM_PALETTE_KEYS].sort())
+  assert.equal(palette.ac, '#7c9cff')
+  assert.equal(palette.tx, '#f8f8f8')
+  assert.equal(palette.bg, '#141416')
+  for (const key of CUSTOM_PALETTE_KEYS) assert.ok(isHexColor(palette[key]), `${key} is a hex colour`)
+  assert.ok(palette.er !== palette.c2, 'error and syntax colours are distinct')
+})
+
+test('contrast strengthens the generated separation without changing primaries', () => {
+  const low = customPalette({ accent: '#7c9cff', text: '#f8f8f8', background: '#141416', contrast: 0 })
+  const high = customPalette({ accent: '#7c9cff', text: '#f8f8f8', background: '#141416', contrast: 100 })
+  assert.equal(low.ac, high.ac)
+  assert.equal(low.tx, high.tx)
+  assert.equal(low.bg, high.bg)
+  assert.ok(hexToHsl(high.surf).l > hexToHsl(low.surf).l, 'higher contrast lifts dark surfaces')
+  assert.ok(Math.abs(hexToHsl(high.mu).l - hexToHsl(high.tx).l) < Math.abs(hexToHsl(low.mu).l - hexToHsl(low.tx).l), 'muted text moves toward the text colour')
+})
+
+test('advanced overrides win only when they are valid colours', () => {
+  const palette = customPalette({
+    accent: '#7c9cff', text: '#f8f8f8', background: '#141416', contrast: 50,
+    overrides: { c2: '#00ff99', er: '#ff3355', tx: 'not-a-colour' },
+  })
+  assert.equal(palette.c2, '#00ff99')
+  assert.equal(palette.er, '#ff3355')
+  assert.equal(palette.tx, '#f8f8f8')
 })

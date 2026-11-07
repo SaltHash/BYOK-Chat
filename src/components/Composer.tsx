@@ -875,10 +875,8 @@ export function Composer({ cfg, quote, onClearQuote }: { cfg: (t: string) => voi
         </div>
       </div>
       </div>
-      {/* The strip keeps the composer clear of the viewport edge. With an
-          image background it must stay transparent, otherwise its solid fill
-          draws a horizontal bar across the bottom of the conversation. */}
-      <div className={cx('composer-bottom-fill px-4 pb-4', s.prefs.bgImageOn === true && s.prefs.reduceTransparency !== true ? 'bg-transparent' : 'bg-bg')} />
+      {/* The strip keeps the composer clear of the viewport edge. */}
+      <div className="composer-bottom-fill bg-bg px-4 pb-4" />
     </div>
   )
 }

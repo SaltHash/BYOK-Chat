@@ -444,6 +444,31 @@ test('the report spec is shared and the citation repair asks exist', () => {
   assert.match(r.citationUncitedAsk(['S1']), /add an inline \[S1\], \[S2\], etc\. citation/)
 })
 
+test('the report pass carries source evidence and rejects a non-repair', () => {
+  const sources = [
+    { citeId: 'S1', title: 'Pricing', url: 'https://a.test', snippet: 'The plan costs $5 per month.' },
+    { citeId: 'S2', title: 'Limits', url: 'https://b.test', snippet: 'The quota is 100 requests per day.' },
+  ]
+  const block = r.reportEvidenceBlock(sources)
+  assert.match(block, /\[Source S1\]/)
+  assert.match(block, /Title: Pricing/)
+  assert.match(block, /URL: https:\/\/a\.test/)
+  assert.match(block, /Snippet: The plan costs \$5 per month\./)
+  assert.match(block, /untrusted reference data/)
+  assert.equal(r.reportEvidenceBlock([]), '')
+  assert.equal(r.withReportEvidence('Write it', []), 'Write it')
+  assert.ok(r.withReportEvidence('Write it', sources).indexOf('<report_evidence>') < r.withReportEvidence('Write it', sources).indexOf('Write it'))
+  const limited = r.reportEvidenceBlock(sources, 250)
+  assert.match(limited, /additional sources omitted/)
+
+  const before = `## Summary\nA claim. [S9]\n${'x'.repeat(400)}`
+  const repaired = `## Summary\nA claim. [S1]\n${'x'.repeat(400)}`
+  assert.equal(r.citationRepairAccepted(before, repaired, sources), true)
+  const refusal = `## Summary\nI cannot write this without the evidence.\n${'x'.repeat(400)}`
+  assert.equal(r.citationRepairAccepted(before, refusal, sources), false)
+  assert.equal(r.citationRepairAccepted(before, '## Summary\n[S1]', sources), false, 'a truncated reply is not a repair')
+})
+
 test('the evidence floor nudges a run with too few searches', () => {
   assert.equal(r.RESEARCH_MIN_SEARCHES, 2)
   const ask = r.researchMinAsk(1, 2)

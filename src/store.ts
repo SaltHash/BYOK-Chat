@@ -10,10 +10,9 @@ import { generateImages, normImageGen, BLANK_IMAGE_GEN, imageSummary, type Image
 import { runCode, formatCodeResult, normCodeRun, BLANK_CODE_RUN, type CodeRunPrefs, type CodeLang } from './codesandbox'
 import type { EndpointAuth } from './endpointAuth'
 import { blobPut } from './storage/durable'
-import { DEFAULT_BG_BLUR, DEFAULT_BG_DIM, DEFAULT_BG_IMAGE, DEFAULT_BG_SATURATION, DEFAULT_BG_TINT, normBgBlur, normBgDim, normBgSaturation, normBgTint, safeBgSource } from './background'
 import { normVoice, BLANK_VOICE, type VoicePrefs } from './voice'
 import { DEFAULT_SKILL_STATE, normSkills, enabledSkills, getSkillInstructions, composeSystemPrompt, SKILL_TOOL_NAME, type SkillState, type ResolvedSkill } from './skills'
-import { AGENT_FOLLOW_UP_READS, AGENT_FOLLOW_UP_SEARCHES, AGENT_FOLLOW_UPS_MAX, PLAN_SCOPE_MAX, PLAN_SCOPE_SYSTEM, RESEARCH_ABSTRACT_ASK, RESEARCH_AGENT_ROUNDS_DEFAULT, RESEARCH_AGENT_ROUNDS_MIN, RESEARCH_AGENT_ROUNDS_MAX, RESEARCH_MIN_SEARCHES, RESEARCH_REASONING_CHARS, RESEARCH_REPORT_ASK, RESEARCH_TIERS, agentAsk, agentEvidenceDigest, agentEvidenceSearches, agentFollowUpNote, agentResultNote, agentRoundsUsed, agentSources, agentSystemNote, citationRepairAsk, citationUncitedAsk, compactResearchRounds, countedSteps, estimateResearchUsage, fallbackPlan, planNeedsRepair, looksLikeReport, normResearchAgentRounds, parseResearchPlan, planPreview, parseResearchRequest, normResearchDepth, planNote, planRepairAsk, planUserAsk, reportSample, researchAbstract, researchDelegationAsk, researchMinAsk, researchSteerNote, researchSystemNote, sanitizeCitations, setStep, tierOf, withStepLead, type ResearchAgent, type ResearchAnswer, type ResearchPlan, type ResearchState, type ResearchTask, type ResearchTierId } from './research'
+import { AGENT_FOLLOW_UP_READS, AGENT_FOLLOW_UP_SEARCHES, AGENT_FOLLOW_UPS_MAX, PLAN_SCOPE_MAX, PLAN_SCOPE_SYSTEM, RESEARCH_ABSTRACT_ASK, RESEARCH_AGENT_ROUNDS_DEFAULT, RESEARCH_AGENT_ROUNDS_MIN, RESEARCH_AGENT_ROUNDS_MAX, RESEARCH_MIN_SEARCHES, RESEARCH_REASONING_CHARS, RESEARCH_REPORT_ASK, RESEARCH_TIERS, agentAsk, agentEvidenceDigest, agentEvidenceSearches, agentFollowUpNote, agentResultNote, agentRoundsUsed, agentSources, agentSystemNote, citationRepairAsk, citationRepairAccepted, citationUncitedAsk, compactResearchRounds, countedSteps, estimateResearchUsage, fallbackPlan, planNeedsRepair, looksLikeReport, normResearchAgentRounds, parseResearchPlan, planPreview, parseResearchRequest, normResearchDepth, planNote, planRepairAsk, planUserAsk, reportSample, researchAbstract, researchDelegationAsk, researchMinAsk, researchSteerNote, researchSystemNote, sanitizeCitations, setStep, tierOf, withReportEvidence, withStepLead, type ResearchAgent, type ResearchAnswer, type ResearchPlan, type ResearchState, type ResearchTask, type ResearchTierId } from './research'
 export { tierOf, RESEARCH_TIERS, RESEARCH_AGENT_ROUNDS_DEFAULT, RESEARCH_AGENT_ROUNDS_MIN, RESEARCH_AGENT_ROUNDS_MAX, normResearchAgentRounds }
 export type { ResearchState, ResearchTierId, ResearchPlan, ResearchPlanStep, ResearchAgent, ResearchQuestion, ResearchAnswer } from './research'
 import { collectMessageSources, citationCoverage, citationRule, createCiteIds, mergeSources } from './citations'
@@ -38,7 +37,7 @@ import { QUOTA_FLAG, prunePersisted, storageUsage, persistStorage, createPersist
 import { appendUsageRows, usageRowOf, usageRowsFromChats, usageTitlesFromChats, type UsageRow } from './usageStats'
 import { readUsageLedger, usageLedgerExists, writeUsageLedger } from './storage/usageLedger'
 import { providerPresetEntries } from './providerRegistry'
-import { accentHue, adjustThemeColors, type ThemeAdjustment } from './theme'
+import { accentHue, adjustThemeColors, customPalette, isHexColor, normalizeHex } from './theme'
 import { normDensity, normSpacing, normStylePreset, type Density, type SpacingOverrides, type StylePreset } from './style'
 export { accentHue, adjustThemeColors } from './theme'
 import type { ShareRecord } from './share'
@@ -159,8 +158,17 @@ export const LIGHT_THEMES = ['paper', 'sage', 'frost', 'sunset'] as const
 /** Built-in themes that can back a custom palette. */
 export const BASE_THEMES = ['plum', 'claude', 'obsidian', 'graphite', 'paper', 'sage', 'frost', 'sunset'] as const
 export type BaseTheme = typeof BASE_THEMES[number]
-/** A custom palette is a base theme plus three live adjustments. */
-export type CustomTheme = ThemeAdjustment & { base: BaseTheme }
+/** A custom palette is built from three primary colours plus a contrast knob.
+ *  `overrides` are advanced per-token choices layered over the generated set. */
+export type CustomTheme = {
+  base: BaseTheme
+  accent: string
+  text: string
+  background: string
+  /** 0–100: higher separates surfaces and text more strongly. */
+  contrast: number
+  overrides: Partial<ThemeColors>
+}
 /** Migration map for theme keys removed from the palette. */
 export const LEGACY_THEME_MAP: Record<string, string> = { nord: 'claude', amoled: 'obsidian', sepia: 'sunset', porcelain: 'frost', sand: 'sunset' }
 /** Normalize a stored theme key: remap removed themes, keep 'custom', discard anything unknown. */
@@ -202,8 +210,6 @@ export const THEME_COLOR_KEYS = ['bg', 'side', 'surf', 'hov', 'tx', 'mu', 'ac', 
 export type ThemeColorKey = typeof THEME_COLOR_KEYS[number]
 export type ThemeColors = Record<ThemeColorKey, string>
 export const THEME_COLOR_LABELS: Record<ThemeColorKey, string> = { bg: 'Main background', side: 'Sidebar', surf: 'Panel surface', hov: 'Hover and selection', tx: 'Main text', mu: 'Muted text', ac: 'Accent', acx: 'Text on accent', er: 'Error', code: 'Code block', codeh: 'Code block header', c2: 'Syntax: strings', c3: 'Syntax: numbers', c4: 'Syntax: titles', c5: 'Syntax: types' }
-export const DEFAULT_CUSTOM_COLORS: ThemeColors = { bg: '#17101c', side: '#120c16', surf: '#211828', hov: '#2c2036', tx: '#f3eaf7', mu: '#a893b4', ac: '#dc8ad8', acx: '#1b1020', er: '#f95353', code: '#100b15', codeh: '#2f2040', c2: '#9fe3c5', c3: '#f2b98b', c4: '#8fb9ff', c5: '#c7a6ff' }
-export const DEFAULT_CUSTOM_LIGHT_COLORS: ThemeColors = { bg: '#fbfbf9', side: '#f1f1ec', surf: '#efefe9', hov: '#e4e4dc', tx: '#1d1d1b', mu: '#6f6f66', ac: '#3b5bdb', acx: '#ffffff', er: '#c92a2a', code: '#e6e5dd', codeh: '#d3d2c6', c2: '#2b8a3e', c3: '#d9480f', c4: '#7048e8', c5: '#0b7285' }
 export const THEME_COLORS: Record<string, ThemeColors> = {
   plum: { bg: '#17101c', side: '#120c16', surf: '#211828', hov: '#2c2036', tx: '#f3eaf7', mu: '#a893b4', ac: '#dc8ad8', acx: '#1b1020', er: '#f95353', code: '#100b15', codeh: '#2f2040', c2: '#9fe3c5', c3: '#f2b98b', c4: '#8fb9ff', c5: '#c7a6ff' },
   claude: { bg: '#181817', side: '#121211', surf: '#20201f', hov: '#2c2b2a', tx: '#ece7db', mu: '#a09891', ac: '#d97757', acx: '#121211', er: '#f95353', code: '#111110', codeh: '#121211', c2: '#7ec699', c3: '#f4a58a', c4: '#7cace8', c5: '#e8c47c' },
@@ -214,27 +220,51 @@ export const THEME_COLORS: Record<string, ThemeColors> = {
   frost: { bg: '#f8fafc', side: '#eef2f6', surf: '#ffffff', hov: '#e2e8f0', tx: '#0f172a', mu: '#64748b', ac: '#2563eb', acx: '#ffffff', er: '#e11d48', code: '#f1f5f9', codeh: '#e2e8f0', c2: '#16a34a', c3: '#ea580c', c4: '#0369a1', c5: '#9333ea' },
   sunset: { bg: '#faf5f0', side: '#efe6dd', surf: '#ffffff', hov: '#e4d5c7', tx: '#3b2c24', mu: '#8c7769', ac: '#ea580c', acx: '#ffffff', er: '#dc2626', code: '#f3eae1', codeh: '#e7dad0', c2: '#3f6212', c3: '#b45309', c4: '#1d4ed8', c5: '#a21caf' },
 }
-/** A fresh custom palette: the base theme's own hue, saturation and brightness. */
-export const defaultCustomTheme = (base: BaseTheme): CustomTheme => ({ base, hue: accentHue(THEME_COLORS[base]), sat: 1, bright: 1, contrast: 1 })
-/** Resolve a custom palette's sliders into the actual theme colours. */
-export const customThemeColors = (custom: CustomTheme): ThemeColors => {
-  const base = THEME_COLORS[custom.base] ?? THEME_COLORS.plum
-  return adjustThemeColors(base, { baseHue: accentHue(base), hue: custom.hue, sat: custom.sat, bright: custom.bright, contrast: custom.contrast }) as ThemeColors
+/** A fresh custom palette starts from a built-in theme's three primary colours. */
+export const defaultCustomTheme = (base: BaseTheme): CustomTheme => {
+  const colors = THEME_COLORS[base] ?? THEME_COLORS.plum
+  return { base, accent: colors.ac, text: colors.tx, background: colors.bg, contrast: 50, overrides: {} }
 }
+/** Resolve the primary colours and contrast into the actual theme colours. */
+export const customThemeColors = (custom: CustomTheme): ThemeColors => customPalette({
+  accent: custom.accent,
+  text: custom.text,
+  background: custom.background,
+  contrast: custom.contrast,
+  overrides: custom.overrides,
+}) as ThemeColors
 export const DEFAULT_CUSTOM_DARK_THEME = defaultCustomTheme('plum')
 export const DEFAULT_CUSTOM_LIGHT_THEME = defaultCustomTheme('paper')
-/** Keep a persisted custom palette valid and in range. */
-export const normCustomTheme = (v: unknown, fallback: CustomTheme): CustomTheme => {
-  const o = (v && typeof v === 'object' ? v : {}) as Partial<CustomTheme>
+export const DEFAULT_CUSTOM_COLORS: ThemeColors = customThemeColors(DEFAULT_CUSTOM_DARK_THEME)
+export const DEFAULT_CUSTOM_LIGHT_COLORS: ThemeColors = customThemeColors(DEFAULT_CUSTOM_LIGHT_THEME)
+/** Keep a persisted custom palette valid and in range. Old slider-based themes
+ *  are migrated by taking their three primary colours; their hand-tuned
+ *  advanced tokens carry over as overrides. */
+export const normCustomTheme = (v: unknown, fallback: CustomTheme, colors?: Partial<ThemeColors>): CustomTheme => {
+  const o = (v && typeof v === 'object' ? v : {}) as Partial<CustomTheme> & { hue?: number; sat?: number; bright?: number }
   const base = (BASE_THEMES as readonly string[]).includes(o.base as string) ? (o.base as BaseTheme) : fallback.base
-  const num = (n: unknown, min: number, max: number, d: number) => typeof n === 'number' && Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : d
-  return {
-    base,
-    hue: Math.round(num(o.hue, 0, 360, accentHue(THEME_COLORS[base]))),
-    sat: Math.round(num(o.sat, 0, 2, 1) * 100) / 100,
-    bright: Math.round(num(o.bright, 0, 3, 1) * 100) / 100,
-    contrast: Math.round(num(o.contrast, 1, 2, 1) * 100) / 100,
+  const legacy = !isHexColor(o.accent) && !isHexColor(o.text) && !isHexColor(o.background)
+  const pick = (value: unknown, key: keyof ThemeColors, fallbackValue: string) =>
+    isHexColor(value) ? normalizeHex(value, fallbackValue) : colors && isHexColor(colors[key]) ? normalizeHex(colors[key], fallbackValue) : fallbackValue
+  const accent = pick(o.accent, 'ac', fallback.accent)
+  const text = pick(o.text, 'tx', fallback.text)
+  const background = pick(o.background, 'bg', fallback.background)
+  let contrast = 50
+  if (typeof o.contrast === 'number' && Number.isFinite(o.contrast)) {
+    // The old slider used 1–2; the new control uses 0–100.
+    contrast = o.contrast >= 1 && o.contrast <= 2 ? Math.round(50 + (o.contrast - 1) * 50) : Math.round(Math.min(100, Math.max(0, o.contrast)))
   }
+  const overrides: Partial<ThemeColors> = {}
+  if (o.overrides && typeof o.overrides === 'object') {
+    for (const [key, value] of Object.entries(o.overrides)) {
+      if ((THEME_COLOR_KEYS as readonly string[]).includes(key) && isHexColor(value)) overrides[key as ThemeColorKey] = normalizeHex(value, background)
+    }
+  } else if (legacy && colors) {
+    for (const key of THEME_COLOR_KEYS) {
+      if (key !== 'ac' && key !== 'tx' && key !== 'bg' && isHexColor(colors[key])) overrides[key] = normalizeHex(colors[key], background)
+    }
+  }
+  return { base, accent, text, background, contrast, overrides }
 }
 /* Inference-router presets come from the provider registry, so adding a
  * provider there makes it selectable here without touching the UI. */
@@ -444,7 +474,7 @@ export const normPromptRecall = (v: unknown): PromptRecallMode =>
 export type LogDetail = 'compact' | 'standard' | 'verbose'
 export const normLogDetail = (v: unknown): LogDetail => v === 'compact' || v === 'verbose' ? v : 'standard'
 
-export const DEFAULT_PREFS: S['prefs'] = { showBy: true, showLog: true, showTps: false, enterSends: true, sendWhileBusy: 'queue', autoTitle: true, temporaryByDefault: false, seasonal: true, cues: false, showModelPricing: false, showContextMeter: true, customSearch: true, stylePreset: 'modern', density: 'comfortable', uiSpacing: {}, showTimestamps: false, alwaysShowActions: false, titleEp: '', titleModel: '', effortEp: '', effortModel: '', recallEp: '', recallModel: '', tempHours: 3, startup: 'recent', tempShow: 2, tempShowStreaming: true, tempShowDone: true, draftSurvive: 'both', fontBody: 'system', fontMono: 'system', fontHeader: 'system', modelPrimary: 'name', modelSecondary: 'none', paletteMax: 320, chatWidth: 'standard', settingsWidth: 1024, settingsHeight: 780, modelPickerHeight: 480, favoritesSection: true, hideFavoritesInProviders: true, collapsedProviders: [], sidebarWidth: 288, widgetWidth: 320, workspaceWidth: 0.4, workspaceSplit: 0.2,  modalBlur: 12, settingsOpacity: 55, streamFade: 0.3, streamMd: true, remoteImages: false, glassComposer: true, glassBlur: 14, glassOpacity: 80, bgImageOn: false, bgImage: DEFAULT_BG_IMAGE, bgImageBlur: DEFAULT_BG_BLUR, bgImageDim: DEFAULT_BG_DIM, bgImageSaturation: DEFAULT_BG_SATURATION, bgImageTint: DEFAULT_BG_TINT, showDisabledFeatures: false, proxyMode: 'auto', textScale: 100, codeWrap: false, reduceTransparency: false, promptRecall: 'empty', highContrast: false, hideFavoriteProvider: false, logDetail: 'standard', logTiming: true, logModels: true, codeLines: false, codeMaxHeight: 0, pinContext: true, pinContextPercent: 50, keepUsageHistory: true, compactAuto: true, compactAt: 80 }
+export const DEFAULT_PREFS: S['prefs'] = { showBy: true, showLog: true, showTps: false, enterSends: true, sendWhileBusy: 'queue', autoTitle: true, temporaryByDefault: false, seasonal: true, cues: false, showModelPricing: false, showContextMeter: true, customSearch: true, stylePreset: 'modern', density: 'comfortable', uiSpacing: {}, showTimestamps: false, alwaysShowActions: false, titleEp: '', titleModel: '', effortEp: '', effortModel: '', recallEp: '', recallModel: '', tempHours: 3, startup: 'recent', tempShow: 2, tempShowStreaming: true, tempShowDone: true, draftSurvive: 'both', fontBody: 'system', fontMono: 'system', fontHeader: 'system', modelPrimary: 'name', modelSecondary: 'none', paletteMax: 320, chatWidth: 'standard', settingsWidth: 1024, settingsHeight: 780, modelPickerHeight: 480, favoritesSection: true, hideFavoritesInProviders: true, collapsedProviders: [], sidebarWidth: 288, widgetWidth: 320, workspaceWidth: 0.4, workspaceSplit: 0.2,  modalBlur: 12, settingsOpacity: 55, streamFade: 0.3, streamMd: true, remoteImages: false, glassComposer: true, glassBlur: 14, glassOpacity: 80, showDisabledFeatures: false, proxyMode: 'auto', textScale: 100, codeWrap: false, reduceTransparency: false, promptRecall: 'empty', highContrast: false, hideFavoriteProvider: false, logDetail: 'standard', logTiming: true, logModels: true, codeLines: false, codeMaxHeight: 0, pinContext: true, pinContextPercent: 50, keepUsageHistory: true, compactAuto: true, compactAt: 80 }
 export const DEFAULT_PARAMS: S['params'] = { def: true, temp: 0.7, topp: 1, max: 4096, maxToolRounds: 8, highToolsUnlocked: false }
 export const DEFAULT_WIDGET_PREFS: S['widgetPrefs'] = { usageGroup: 'endpoint', usageMode: 'success', usageFormat: '{in}/{out}', usageTotal: false, usagePeriod: 'all', lastSpeed: true, timeUnit: 'auto', widgetOrder: WIDGETS.map(([k]) => k), shortcuts: KEYS.map(([k]) => k), contextLimit: 128000, showDisabledEndpoints: true, scratchRows: 6, snippetLimit: 20, costDecimals: 4, activePromptsOnly: false, charsPerToken: 4, hideDoneTodos: false }
 const SEARCH_VALID_PROVIDERS: SearchProvider[] = SEARCH_PROVIDERS.map(([id]) => id)
@@ -584,7 +614,7 @@ type S = {
   customDarkTheme: CustomTheme
   customLightTheme: CustomTheme
   setupDone: boolean
-  prefs: { bgImageOn?: boolean; bgImage?: string; bgImageBlur?: number; bgImageDim?: number; bgImageSaturation?: number; bgImageTint?: number; showBy: boolean; showLog: boolean; showTps: boolean; enterSends: boolean; autoTitle: boolean; temporaryByDefault: boolean; seasonal?: boolean; cues?: boolean; showModelPricing: boolean; showContextMeter: boolean; customSearch?: boolean; /** Hide the provider name beside starred models in the picker's Favorites section. */ hideFavoriteProvider?: boolean; /** How much detail the Process-to-answer panel shows per step. */ logDetail?: LogDetail; /** Show each step's duration in the process log. */ logTiming?: boolean; /** Show the model beside each step in the process log. */ logModels?: boolean; /** Show line numbers in code blocks. */ codeLines?: boolean; /** Max code-block height in pixels before scrolling (0 = no cap). */ codeMaxHeight?: number; /** Include the pinned reply in the model context. */ pinContext?: boolean; /** Maximum slice of the context window the pinned reply may use (5–50%). */ pinContextPercent?: number; /** Replace older turns with a model-written handoff when the context nears the limit. */ compactAuto?: boolean; /** Context share at which auto-compaction starts (5–100, in 5% steps). */ compactAt?: number; /** Queue a message sent while the same chat is replying, or require a stop first. */ sendWhileBusy?: 'queue' | 'stop'; titleEp: string; titleModel?: string; effortEp: string; effortModel?: string; recallEp: string; recallModel?: string; tempHours: number; startup?: StartupMode; tempShow?: number; /** Keep temporary chats that are still replying listed past the temporary-chats-shown limit. */ tempShowStreaming?: boolean; /** Keep temporary chats whose reply finished in the background listed until they are opened. */ tempShowDone?: boolean; draftSurvive?: 'off' | 'new' | 'chats' | 'both'; fontBody: string; fontMono: string; fontHeader: string; modelPrimary: 'id' | 'name'; modelSecondary: 'none' | 'provider' | 'id' | 'name'; modelDisplay?: 'none' | 'name' | 'provider' | 'both'; paletteMax: number; chatWidth: 'narrow' | 'standard' | 'wide'; settingsWidth: number; settingsHeight: number; modelPickerHeight: number; /** Show a Favorites section at the top of the model picker. */ favoritesSection?: boolean; /** Hide starred models from their normal provider groups. */ hideFavoritesInProviders?: boolean; /** Endpoint ids whose provider groups are collapsed in the picker. */ collapsedProviders?: string[]; sidebarWidth?: number; widgetWidth?: number; workspaceWidth?: number; workspaceSplit?: number; modalBlur: number; settingsOpacity: number; routingMode?: RoutingMode; streamFade: number; streamMd: boolean; remoteImages?: boolean; glassComposer?: boolean; /** Composer glass backdrop blur in pixels (0–40). */ glassBlur?: number; /** Composer glass surface opacity percent (0–100). */ glassOpacity?: number; /** Keep settings for disabled features visible, marked off, instead of hiding them. */ showDisabledFeatures?: boolean; proxyMode?: 'auto' | 'always' | 'off';  stylePreset: StylePreset; density: Density; uiSpacing?: SpacingOverrides; showTimestamps?: boolean; alwaysShowActions?: boolean; /** Root font-size percent (50–200, 100 = unchanged). */ textScale?: number; /** Soft-wrap long lines inside code blocks instead of scrolling sideways. */ codeWrap?: boolean; /** Disable glass, blur and dropped shadows (flat, opaque surfaces). */ reduceTransparency?: boolean; /** When ↑/↓ recall sent prompts; 'off' also stops recording them. */ promptRecall?: PromptRecallMode; /** Raise muted-text and border contrast beyond the theme's values. */ highContrast?: boolean; /** Keep every attempt in a permanent ledger so usage survives deleting, archiving or expiring its chat. Off keeps only the attempts still on saved chats. */ keepUsageHistory?: boolean }
+  prefs: { showBy: boolean; showLog: boolean; showTps: boolean; enterSends: boolean; autoTitle: boolean; temporaryByDefault: boolean; seasonal?: boolean; cues?: boolean; showModelPricing: boolean; showContextMeter: boolean; customSearch?: boolean; /** Hide the provider name beside starred models in the picker's Favorites section. */ hideFavoriteProvider?: boolean; /** How much detail the Process-to-answer panel shows per step. */ logDetail?: LogDetail; /** Show each step's duration in the process log. */ logTiming?: boolean; /** Show the model beside each step in the process log. */ logModels?: boolean; /** Show line numbers in code blocks. */ codeLines?: boolean; /** Max code-block height in pixels before scrolling (0 = no cap). */ codeMaxHeight?: number; /** Include the pinned reply in the model context. */ pinContext?: boolean; /** Maximum slice of the context window the pinned reply may use (5–50%). */ pinContextPercent?: number; /** Replace older turns with a model-written handoff when the context nears the limit. */ compactAuto?: boolean; /** Context share at which auto-compaction starts (5–100, in 5% steps). */ compactAt?: number; /** Queue a message sent while the same chat is replying, or require a stop first. */ sendWhileBusy?: 'queue' | 'stop'; titleEp: string; titleModel?: string; effortEp: string; effortModel?: string; recallEp: string; recallModel?: string; tempHours: number; startup?: StartupMode; tempShow?: number; /** Keep temporary chats that are still replying listed past the temporary-chats-shown limit. */ tempShowStreaming?: boolean; /** Keep temporary chats whose reply finished in the background listed until they are opened. */ tempShowDone?: boolean; draftSurvive?: 'off' | 'new' | 'chats' | 'both'; fontBody: string; fontMono: string; fontHeader: string; modelPrimary: 'id' | 'name'; modelSecondary: 'none' | 'provider' | 'id' | 'name'; modelDisplay?: 'none' | 'name' | 'provider' | 'both'; paletteMax: number; chatWidth: 'narrow' | 'standard' | 'wide'; settingsWidth: number; settingsHeight: number; modelPickerHeight: number; /** Show a Favorites section at the top of the model picker. */ favoritesSection?: boolean; /** Hide starred models from their normal provider groups. */ hideFavoritesInProviders?: boolean; /** Endpoint ids whose provider groups are collapsed in the picker. */ collapsedProviders?: string[]; sidebarWidth?: number; widgetWidth?: number; workspaceWidth?: number; workspaceSplit?: number; modalBlur: number; settingsOpacity: number; routingMode?: RoutingMode; streamFade: number; streamMd: boolean; remoteImages?: boolean; glassComposer?: boolean; /** Composer glass backdrop blur in pixels (0–40). */ glassBlur?: number; /** Composer glass surface opacity percent (0–100). */ glassOpacity?: number; /** Keep settings for disabled features visible, marked off, instead of hiding them. */ showDisabledFeatures?: boolean; proxyMode?: 'auto' | 'always' | 'off';  stylePreset: StylePreset; density: Density; uiSpacing?: SpacingOverrides; showTimestamps?: boolean; alwaysShowActions?: boolean; /** Root font-size percent (50–200, 100 = unchanged). */ textScale?: number; /** Soft-wrap long lines inside code blocks instead of scrolling sideways. */ codeWrap?: boolean; /** Disable glass, blur and dropped shadows (flat, opaque surfaces). */ reduceTransparency?: boolean; /** When ↑/↓ recall sent prompts; 'off' also stops recording them. */ promptRecall?: PromptRecallMode; /** Raise muted-text and border contrast beyond the theme's values. */ highContrast?: boolean; /** Keep every attempt in a permanent ledger so usage survives deleting, archiving or expiring its chat. Off keeps only the attempts still on saved chats. */ keepUsageHistory?: boolean }
   widgets: Record<string, boolean>; widgetPrefs: { usageGroup: 'endpoint' | 'model'; usageMode: 'success' | 'tokens'; usageFormat: string; usageTotal: boolean; usagePeriod: 'session' | 'day' | 'week' | 'month' | 'custom' | 'all'; usageFrom?: string; usageTo?: string; lastSpeed: boolean; timeUnit: 'ms' | 's' | 'auto'; widgetOrder: string[]; shortcuts: string[]; contextLimit: number; showDisabledEndpoints: boolean; scratchRows: number; snippetLimit: number; costDecimals: number; activePromptsOnly: boolean; charsPerToken: number; hideDoneTodos: boolean }; rail: boolean; pad: string; snips: string[]
   params: { def: boolean; temp: number; topp: number; max: number; maxToolRounds: number; highToolsUnlocked: boolean }; effort: Record<string, string>
   workspacePrefs: WorkspacePrefs
@@ -1937,6 +1967,12 @@ export const useS = create<S>()(
             const ready = looksLikeReport(closing)
             patchRs(chatId, mid, (rs) => ({ ...rs, note: '', status: 'writing', summary: ready ? reportSample(closing) : closing }))
             set({ researchPanel: { mid } })
+            // `wire` drops results from settled tool rounds. The report pass
+            // therefore gets its own evidence block, built from the same
+            // deduped sources used to validate citations.
+            const srcList = mergeSources(collectMessageSources(liveRounds), agentSources(agentsNow()))
+            const validIds = srcList.map((s) => s.citeId)
+            const reportAsk = (ask: string) => withReportEvidence(ask, srcList)
             // Write the report, falling back to the other candidate endpoints
             // if the chosen one dies at the report pass: the evidence is
             // already gathered, so the run's value is never lost to one drop.
@@ -1975,27 +2011,42 @@ export const useS = create<S>()(
               report = closing
               edit(chatId, mid, (m) => ({ ...m, t: report, toolFinal: report }))
             } else {
-              await writeReport(RESEARCH_REPORT_ASK, closing)
+              await writeReport(reportAsk(RESEARCH_REPORT_ASK), closing)
             }
             let txtCandidate = report.trim()
             if (!txtCandidate) throw Error('The model returned no report text.')
             // Citation integrity: repair ids the model invented, then drop any
             // that still do not match a real source so the report never links
-            // to nothing. Both passes are best-effort and never fail the run.
-            const srcList = mergeSources(collectMessageSources(liveRounds), agentSources(agentsNow()))
-            const validIds = srcList.map((s) => s.citeId)
+            // to nothing. A refusal is not a repair: keep the original report
+            // unless the rewrite improves its citations. Both passes are
+            // best-effort and never fail the run.
             try {
               let cov = citationCoverage(txtCandidate, srcList)
               if (cov.unknown.length && !r.stopped) {
-                await writeReport(citationRepairAsk(cov.unknown, validIds), txtCandidate)
-                if (report.trim()) { txtCandidate = report.trim(); cov = citationCoverage(txtCandidate, srcList) }
+                const before = txtCandidate
+                await writeReport(reportAsk(citationRepairAsk(cov.unknown, validIds)), before)
+                const repaired = report.trim()
+                if (repaired && citationRepairAccepted(before, repaired, srcList)) {
+                  txtCandidate = repaired
+                  cov = citationCoverage(txtCandidate, srcList)
+                } else if (repaired) {
+                  log.push({ n: 'Citations', m: '', detail: 'Kept the original report: the citation repair did not improve its sources.', ms: 0, at: Date.now() })
+                  edit(chatId, mid, (m) => ({ ...m, t: before, toolFinal: before }))
+                }
               }
               // A report that makes claims but cites nothing is repaired too, so
               // the sources the run paid for actually reach the reader.
               if (cov.uncited && validIds.length && !r.stopped) {
-                await writeReport(citationUncitedAsk(validIds), txtCandidate)
-                if (report.trim()) txtCandidate = report.trim()
-                log.push({ n: 'Citations', m: '', detail: `Repaired a report that cited no sources (${validIds.length} available).`, ms: 0, at: Date.now() })
+                const before = txtCandidate
+                await writeReport(reportAsk(citationUncitedAsk(validIds)), before)
+                const repaired = report.trim()
+                if (repaired && citationRepairAccepted(before, repaired, srcList)) {
+                  txtCandidate = repaired
+                  log.push({ n: 'Citations', m: '', detail: `Repaired a report that cited no sources (${validIds.length} available).`, ms: 0, at: Date.now() })
+                } else if (repaired) {
+                  log.push({ n: 'Citations', m: '', detail: 'Kept the original report: the citation repair did not add usable sources.', ms: 0, at: Date.now() })
+                  edit(chatId, mid, (m) => ({ ...m, t: before, toolFinal: before }))
+                }
               }
             } catch { /* repair is best-effort */ }
             const sane = sanitizeCitations(txtCandidate, validIds)
@@ -3157,8 +3208,8 @@ export const useS = create<S>()(
         delete p.activeProject
         p.customDarkColors = { ...DEFAULT_CUSTOM_COLORS, ...(p.customDarkColors ?? {}) }
         p.customLightColors = { ...DEFAULT_CUSTOM_LIGHT_COLORS, ...(p.customLightColors ?? {}) }
-        p.customDarkTheme = normCustomTheme(p.customDarkTheme, DEFAULT_CUSTOM_DARK_THEME)
-        p.customLightTheme = normCustomTheme(p.customLightTheme, DEFAULT_CUSTOM_LIGHT_THEME)
+        p.customDarkTheme = normCustomTheme(p.customDarkTheme, DEFAULT_CUSTOM_DARK_THEME, p.customDarkColors)
+        p.customLightTheme = normCustomTheme(p.customLightTheme, DEFAULT_CUSTOM_LIGHT_THEME, p.customLightColors)
         p.researchRounds = normResearchAgentRounds(p.researchRounds)
         p.eps = (p.eps ?? []).map((e: Ep) => {
           const oldGoogle = e.preset === 'Gemini' || (/generativelanguage\.googleapis\.com/i.test(e.url) && e.name === 'Gemini')
@@ -3187,14 +3238,15 @@ export const useS = create<S>()(
         p.prefs = { ...p.prefs, hideFavoriteProvider: p.prefs?.hideFavoriteProvider === true, logDetail: normLogDetail(p.prefs?.logDetail), logTiming: p.prefs?.logTiming !== false, logModels: p.prefs?.logModels !== false, codeLines: p.prefs?.codeLines === true, codeMaxHeight: typeof p.prefs?.codeMaxHeight === 'number' && Number.isFinite(p.prefs.codeMaxHeight) ? Math.max(0, Math.min(1200, Math.round(p.prefs.codeMaxHeight))) : 0, pinContext: p.prefs?.pinContext !== false, pinContextPercent: typeof p.prefs?.pinContextPercent === 'number' && Number.isFinite(p.prefs.pinContextPercent) ? Math.max(5, Math.min(50, Math.round(p.prefs.pinContextPercent))) : 50, tempHours: p.prefs?.tempHours ?? 3, startup: normStartup(p.prefs?.startup), tempShow: Number.isInteger(p.prefs?.tempShow) ? Math.max(0, Math.min(6, p.prefs.tempShow)) : 2, tempShowStreaming: p.prefs?.tempShowStreaming !== false, tempShowDone: p.prefs?.tempShowDone !== false, draftSurvive: ['off', 'new', 'chats', 'both'].includes(p.prefs?.draftSurvive) ? p.prefs.draftSurvive : 'both', fontBody: p.prefs?.fontBody ?? 'system', fontMono: p.prefs?.fontMono ?? 'system', fontHeader: p.prefs?.fontHeader ?? 'system', modelPrimary: p.prefs?.modelPrimary ?? ({ none: 'id', name: 'name', provider: 'id', both: 'name' } as const)[(p.prefs?.modelDisplay as string) ?? 'both'] ?? 'name', modelSecondary: p.prefs?.modelSecondary ?? ({ none: 'none', name: 'none', provider: 'provider', both: 'provider' } as const)[(p.prefs?.modelDisplay as string) ?? 'both'] ?? 'none', paletteMax: p.prefs?.paletteMax ?? 320, chatWidth: p.prefs?.chatWidth ?? 'standard', settingsWidth: p.prefs?.settingsWidth ?? 1024, settingsHeight: p.prefs?.settingsHeight ?? 780, modelPickerHeight: p.prefs?.modelPickerHeight ?? 480, showModelPricing: p.prefs?.showModelPricing ?? false, showContextMeter: p.prefs?.showContextMeter ?? true, titleEp: p.prefs?.titleEp ?? '', titleModel: p.prefs?.titleModel ?? '', effortEp: p.prefs?.effortEp ?? '', effortModel: p.prefs?.effortModel ?? '', recallEp: p.prefs?.recallEp ?? '', recallModel: p.prefs?.recallModel ?? '', routingMode: ['ordered', 'fastest', 'cheapest'].includes(p.prefs?.routingMode) ? p.prefs.routingMode : 'ordered', sidebarWidth: p.prefs?.sidebarWidth ?? 288, widgetWidth: p.prefs?.widgetWidth ?? 320, workspaceWidth: typeof p.prefs?.workspaceWidth === 'number' && p.prefs.workspaceWidth <= 1 ? p.prefs.workspaceWidth : 0.4, workspaceSplit: typeof p.prefs?.workspaceSplit === 'number' ? p.prefs.workspaceSplit : 0.2, modalBlur: p.prefs?.modalBlur ?? 12, settingsOpacity: p.prefs?.settingsOpacity ?? 55, temporaryByDefault: p.prefs?.temporaryByDefault ?? false, streamFade: typeof p.prefs?.streamFade === 'number' && p.prefs.streamFade >= 0 && p.prefs.streamFade <= 1 ? p.prefs.streamFade : 0.3, streamMd: p.prefs?.streamMd ?? true, proxyMode: p.prefs?.proxyMode === 'always' || p.prefs?.proxyMode === 'off' ? p.prefs.proxyMode : 'auto', glassComposer: p.prefs?.glassComposer ?? true, glassBlur: typeof p.prefs?.glassBlur === 'number' && Number.isFinite(p.prefs.glassBlur) ? Math.max(0, Math.min(40, Math.round(p.prefs.glassBlur))) : 14, glassOpacity: typeof p.prefs?.glassOpacity === 'number' && Number.isFinite(p.prefs.glassOpacity) ? Math.max(0, Math.min(100, Math.round(p.prefs.glassOpacity))) : 80, showDisabledFeatures: p.prefs?.showDisabledFeatures === true, stylePreset: normStylePreset(p.prefs?.stylePreset), density: normDensity(p.prefs?.density), uiSpacing: normSpacing(p.prefs?.uiSpacing), showTimestamps: p.prefs?.showTimestamps === true, alwaysShowActions: p.prefs?.alwaysShowActions === true, textScale: typeof p.prefs?.textScale === 'number' && Number.isFinite(p.prefs.textScale) ? Math.round(Math.min(200, Math.max(50, p.prefs.textScale))) : 100, codeWrap: p.prefs?.codeWrap === true, reduceTransparency: p.prefs?.reduceTransparency === true, promptRecall: normPromptRecall(p.prefs?.promptRecall), highContrast: p.prefs?.highContrast === true }
         p.favs = Array.isArray(p.favs) ? [...new Set(p.favs.filter((x: unknown) => typeof x === 'string' && x.includes('::')))] : []
         p.prefs = { ...p.prefs, favoritesSection: p.prefs?.favoritesSection !== false, hideFavoritesInProviders: p.prefs?.hideFavoritesInProviders !== false, collapsedProviders: Array.isArray(p.prefs?.collapsedProviders) ? p.prefs.collapsedProviders.filter((x: unknown) => typeof x === 'string') : [] }
-        p.prefs = {
-          ...p.prefs,
-          bgImageOn: p.prefs?.bgImageOn === true,
-          bgImage: typeof p.prefs?.bgImage === 'string' && p.prefs.bgImage ? safeBgSource(p.prefs.bgImage) : DEFAULT_BG_IMAGE,
-          bgImageBlur: p.prefs?.bgImageBlur === undefined ? DEFAULT_BG_BLUR : normBgBlur(p.prefs.bgImageBlur),
-          bgImageDim: p.prefs?.bgImageDim === undefined ? DEFAULT_BG_DIM : normBgDim(p.prefs.bgImageDim),
-          bgImageSaturation: p.prefs?.bgImageSaturation === undefined ? DEFAULT_BG_SATURATION : normBgSaturation(p.prefs.bgImageSaturation),
-          bgImageTint: p.prefs?.bgImageTint === undefined ? DEFAULT_BG_TINT : normBgTint(p.prefs.bgImageTint),
+        // Image backgrounds were removed; drop their persisted settings.
+        if (p.prefs && typeof p.prefs === 'object') {
+          const legacy = p.prefs as Record<string, unknown>
+          delete legacy.bgImageOn
+          delete legacy.bgImage
+          delete legacy.bgImageBlur
+          delete legacy.bgImageDim
+          delete legacy.bgImageSaturation
+          delete legacy.bgImageTint
         }
         // The temporary-chat edge glow was removed; drop its old settings so
         // imported and persisted configs do not keep dead controls alive.
@@ -3315,8 +3367,8 @@ export const useS = create<S>()(
         const lk = normThemeKeyOf(p.themeLight, false)
         if (dk) p.themeDark = dk as any
         if (lk) p.themeLight = lk as any
-        p.customDarkTheme = normCustomTheme(p.customDarkTheme, DEFAULT_CUSTOM_DARK_THEME)
-        p.customLightTheme = normCustomTheme(p.customLightTheme, DEFAULT_CUSTOM_LIGHT_THEME)
+        p.customDarkTheme = normCustomTheme(p.customDarkTheme, DEFAULT_CUSTOM_DARK_THEME, p.customDarkColors)
+        p.customLightTheme = normCustomTheme(p.customLightTheme, DEFAULT_CUSTOM_LIGHT_THEME, p.customLightColors)
         p.researchRounds = normResearchAgentRounds(p.researchRounds)
         // The word fade-in feature was removed: drop its stale persisted
         // settings and per-message events so they never carry forward.

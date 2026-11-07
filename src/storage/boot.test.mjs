@@ -66,28 +66,94 @@ test('missing local shards recover only indexed chats, not deleted durable chats
   } finally { await durableEraseAll(); globalThis.localStorage = originalStorage }
 })
 
-test('missing local shards block boot when no durable copy exists', async () => {
+test('missing local shards boot with the remaining rows when no durable copy exists', async () => {
   globalThis.localStorage = memoryStorage()
   try {
     await durableEraseAll()
-    putSharded([chat('missing')])
+    putSharded([chat('kept'), chat('missing')])
     localStorage.removeItem('byok.v1:chat:missing')
     await durableSetMeta({ migratedAt: 1 })
-    await assert.rejects(hydrateDurable(() => {}), /missing/)
+    let patch = {}
+    await hydrateDurable(p => { patch = { ...patch, ...p } })
+    assert.deepEqual(patch.chats.map(c => c.id), ['kept'])
   } finally { await durableEraseAll(); globalThis.localStorage = originalStorage }
 })
 
-test('corrupt local snapshots stop recovery without replacing durable history', async () => {
+test('corrupt local snapshots recover durable history without deleting the corrupt copy', async () => {
   globalThis.localStorage = memoryStorage()
   try {
     await durableEraseAll()
     await durablePutChats([chat('recover')])
     for (const raw of ['{broken', 'null', '{"state":null}', '{"state":{"__byokSharded":true,"__byokChatIds":"bad"}}']) {
       localStorage.setItem('byok.v1', raw)
-      await assert.rejects(hydrateDurable(() => assert.fail('must not patch')))
+      let patch = {}
+      await hydrateDurable(p => { patch = { ...patch, ...p } })
+      assert.deepEqual(patch.chats.map(c => c.id), ['recover'])
       assert.deepEqual((await durableGetChats()).map(c => c.id), ['recover'])
       assert.equal(localStorage.getItem('byok.v1'), raw)
     }
+  } finally { await durableEraseAll(); globalThis.localStorage = originalStorage }
+})
+
+test('a corrupt chat index is rebuilt from valid rows without durable storage', async () => {
+  globalThis.localStorage = memoryStorage()
+  try {
+    await durableEraseAll()
+    putSharded([chat('a'), chat('b')])
+    const main = JSON.parse(localStorage.getItem('byok.v1'))
+    main.state.__byokChatIds = 'bad-index'
+    localStorage.setItem('byok.v1', JSON.stringify(main))
+    let patch = {}
+    await hydrateDurable(p => { patch = { ...patch, ...p } })
+    assert.deepEqual(patch.chats.map(c => c.id), ['a', 'b'])
+  } finally { await durableEraseAll(); globalThis.localStorage = originalStorage }
+})
+
+test('missing main snapshot is rebuilt from chat rows', async () => {
+  globalThis.localStorage = memoryStorage()
+  try {
+    await durableEraseAll()
+    putSharded([chat('a'), chat('b')])
+    localStorage.removeItem('byok.v1')
+    let patch = {}
+    await hydrateDurable(p => { patch = { ...patch, ...p } })
+    assert.deepEqual(patch.chats.map(c => c.id), ['a', 'b'])
+  } finally { await durableEraseAll(); globalThis.localStorage = originalStorage }
+})
+
+test('one corrupt row is skipped while the rest of an indexed store boots', async () => {
+  globalThis.localStorage = memoryStorage()
+  try {
+    await durableEraseAll()
+    putSharded([chat('a'), chat('b')])
+    localStorage.setItem('byok.v1:chat:b', '{broken')
+    let patch = {}
+    await hydrateDurable(p => { patch = { ...patch, ...p } })
+    assert.deepEqual(patch.chats.map(c => c.id), ['a'])
+  } finally { await durableEraseAll(); globalThis.localStorage = originalStorage }
+})
+
+test('orphaned rows are ignored when the chat index is healthy', async () => {
+  globalThis.localStorage = memoryStorage()
+  try {
+    await durableEraseAll()
+    putSharded([chat('kept')])
+    localStorage.setItem('byok.v1:chat:orphan', JSON.stringify(chat('orphan')))
+    let patch = {}
+    await hydrateDurable(p => { patch = { ...patch, ...p } })
+    assert.equal(patch.chats, undefined)
+  } finally { await durableEraseAll(); globalThis.localStorage = originalStorage }
+})
+
+test('an unreadable snapshot with no recoverable rows still boots', async () => {
+  globalThis.localStorage = memoryStorage()
+  try {
+    await durableEraseAll()
+    localStorage.setItem('byok.v1', '{broken')
+    let patch = {}
+    await hydrateDurable(p => { patch = { ...patch, ...p } })
+    assert.deepEqual(patch.chats, [])
+    assert.equal(localStorage.getItem('byok.v1'), '{broken')
   } finally { await durableEraseAll(); globalThis.localStorage = originalStorage }
 })
 

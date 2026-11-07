@@ -3,7 +3,6 @@ import { useShallow } from 'zustand/react/shallow'
 import { Plus, Clock, Search, PanelLeftClose, Pin, Pencil, Trash2, MessageSquare, Server, ListMusic, ScrollText, Terminal, Wrench, Settings, Palette, PanelRight, Folder, FolderPlus, FolderMinus, ChevronRight, Bookmark, Download, Archive, ArchiveRestore, MoreVertical, Check } from 'lucide-react'
 import { useS, chatMd, dl, THEMES, DARK_THEMES, LIGHT_THEMES, THEME_COLORS, themeKeyOf, DEFAULT_LIBRARY_SHOW, featOn, type Chat, type FeatureId } from '../store'
 import { searchChats } from '../recall'
-import { wallpaperLabel } from '../background'
 import { clampSidebarWidth } from '../layout'
 import { focusComposer } from '../hooks'
 import { Btn, Confirm, cx } from './ui'
@@ -625,7 +624,7 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
       )}
       <div className="flex items-center gap-1">
         <Btn icon={Settings} className="flex-1 justify-start" onClick={() => cfg('eps')}>Settings</Btn>
-        <Btn icon={Palette} title={`${s.prefs.bgImageOn === true && !s.prefs.reduceTransparency ? `Wallpaper: ${wallpaperLabel(s.prefs.bgImage)}` : `Theme: ${THEMES[themeKeyOf(s)]}`} · Shift-click to cycle`} aria-haspopup="menu" aria-expanded={!!themeMenu} onClick={(e) => {
+        <Btn icon={Palette} title={`Theme: ${THEMES[themeKeyOf(s)]} · Shift-click to cycle`} aria-haspopup="menu" aria-expanded={!!themeMenu} onClick={(e) => {
           // Shift-click keeps the old gesture: cycle to the next theme.
           if (e.shiftKey) { s.patch(s.themeMode === 'light' ? { themeLight: thNext as typeof s.themeLight } : { themeDark: thNext as typeof s.themeDark }); return }
           const r = e.currentTarget.getBoundingClientRect()

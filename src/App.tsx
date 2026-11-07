@@ -3,8 +3,7 @@ import { useShallow } from 'zustand/react/shallow'
 import { useS, exportChat, featOn } from './store'
 import { combo, rec } from './engine'
 import { clampSidebarWidth, clampWidgetWidth } from './layout'
-import { canUseDOM, focusComposer, useThemeCss, useStyleCss, useVisualPrefs, usePanelResize, useBackgroundImage } from './hooks'
-import { normBgBlur, normBgDim, normBgSaturation, normBgTint } from './background'
+import { canUseDOM, focusComposer, useThemeCss, useStyleCss, useVisualPrefs, usePanelResize } from './hooks'
 import { useFontCss, sanitizeFontName } from './fonts'
 import { nextThemePatch, stepModelSelection, stepPromptSelection } from './selection'
 import { Sidebar } from './components/Sidebar'
@@ -55,21 +54,11 @@ export default function App() {
   useFontCss(prefs.fontBody, prefs.fontHeader, prefs.fontMono)
   useStyleCss(prefs.stylePreset, prefs.density, prefs.uiSpacing)
   useVisualPrefs(prefs.textScale, prefs.codeWrap, prefs.reduceTransparency, prefs.highContrast)
-  // The image is hidden in flat mode, where the shell is deliberately opaque.
-  const bgOn = prefs.bgImageOn === true && prefs.reduceTransparency !== true && !shareId
-  const { src: bgSrc, accent: bgAccent } = useBackgroundImage({ enabled: bgOn, image: prefs.bgImage })
-  const bgBlur = normBgBlur(prefs.bgImageBlur)
-  const bgDim = normBgDim(prefs.bgImageDim)
-  const bgSaturation = normBgSaturation(prefs.bgImageSaturation)
-  const bgTint = normBgTint(prefs.bgImageTint)
   // Reduced transparency removes the modal blur entirely rather than dimming
-  // it, so the overlay switch (below) is the single source of the flat look.
-  // With a photo on, its accent replaces the active theme's accent and all
-  // surfaces are rebuilt from that palette as one wallpaper theme.
+  // it, so the overlay switch is the single source of the flat look.
   useThemeCss({
     themeMode, themeDark, themeLight, customDarkColors, customLightColors,
     modalBlur: prefs.reduceTransparency ? 0 : prefs.modalBlur ?? 12,
-    ...(bgOn ? { wallpaperAccent: bgAccent, wallpaperTint: bgTint } : {}),
   })
   useEffect(() => {
     if (!canUseDOM()) return
@@ -188,13 +177,6 @@ export default function App() {
   if (shareId) return <ShareView id={shareId} />
   return (
     <>
-      {bgOn && (
-        <div className="app-backdrop" aria-hidden="true">
-          <div className="app-backdrop-image" style={{ backgroundImage: `url(${JSON.stringify(bgSrc)})`, filter: `blur(${bgBlur}px) saturate(${bgSaturation}%)`, transform: `scale(${1 + bgBlur / 500})` }} />
-          <div className="app-backdrop-tint" style={{ opacity: bgTint / 100 }} />
-          <div className="app-backdrop-dim" style={{ opacity: bgDim / 100 }} />
-        </div>
-      )}
       <div className="relative z-10 flex h-dvh overflow-hidden">
       {storageWarning && <div role="alert" className="fixed inset-x-3 top-3 z-50 flex flex-wrap items-center gap-2 rounded-xl border border-er bg-bg p-3 text-sm shadow-lg">
         <span className="min-w-0 flex-1">{storageWarning}</span>

@@ -5,9 +5,12 @@
  *   IndexedDB/OPFS (debounced). localStorage keeps the pruned copy.
  * - On boot, if durable holds chats/workspaces, they win when localStorage
  *   was quota-pruned (smaller/fewer messages). Attachment bytes are restored
- *   from blob storage. Settings are never overwritten by durable. */
+ *   from blob storage. Settings are never overwritten by durable.
+ * - The main localStorage value is only an index/settings row. Chat rows are
+ *   validated independently and the index is rebuilt when it is damaged, so a
+ *   bad record or interrupted write cannot block the whole app. */
 import { durableGetChats, durableGetWorkspaces, durablePutChats, durablePutWorkspaces, durableSetMeta, durableGetMeta, blobDel, blobPut, blobGet, splitPersistedForDurable, compactChatsForDurable } from './durable'
-import { joinPersistShards, missingPersistShards, QUOTA_FLAG, reportStorageFailure, STORE_VERSION, withoutExpiredTemps } from '../persistence'
+import { CHAT_SHARD_PREFIX, QUOTA_FLAG, reportStorageFailure, reportStorageRecovery, STORE_VERSION, withoutExpiredTemps } from '../persistence'
 
 const CHATS_DEBOUNCE_MS = 1200
 let timer: ReturnType<typeof setTimeout> | null = null
@@ -58,19 +61,116 @@ export async function restoreAttachmentBytes(chats: Array<{ msgs: Array<{ id: st
   return restored
 }
 
-function readLocal(): { state: Record<string, unknown>; version: number; missing: string[] } | null {
+type LocalSnapshot = { state: Record<string, unknown>; version: number; missing: string[]; repaired: boolean }
+type StoredChat = { id: string; msgs: unknown[] }
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  !!value && typeof value === 'object' && !Array.isArray(value)
+
+const isStoredChat = (value: unknown, id: string): value is StoredChat =>
+  isRecord(value) && value.id === id && Array.isArray(value.msgs)
+
+const isLiveChat = (value: unknown): boolean =>
+  isRecord(value) && Array.isArray(value.msgs) && value.msgs.length > 0
+
+/** Merge record sets by primary key. The index and the rows can disagree after
+ *  an interrupted write; keep the first copy of each id instead of replacing a
+ *  whole chat with a partial one. Records without an id are appended once. */
+function mergeChats(...groups: unknown[]): unknown[] {
+  const out: unknown[] = []
+  const seen = new Set<string>()
+  for (const group of groups) {
+    if (!Array.isArray(group)) continue
+    for (const chat of group) {
+      const id = isRecord(chat) && typeof chat.id === 'string' ? chat.id : ''
+      if (id) {
+        if (seen.has(id)) continue
+        seen.add(id)
+      }
+      out.push(chat)
+    }
+  }
+  return out
+}
+
+/** Every chat is a row under its own localStorage key. Read them by prefix,
+ *  validating each row independently, so one bad row cannot hide the rest. */
+function scanChatShards(): { chats: StoredChat[]; ids: Set<string> } {
+  const keys: string[] = []
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i)
+    if (key) keys.push(key)
+  }
+  const chats: StoredChat[] = []
+  const ids = new Set<string>()
+  for (const key of keys) {
+    if (!key.startsWith(CHAT_SHARD_PREFIX)) continue
+    const id = key.slice(CHAT_SHARD_PREFIX.length)
+    if (!id || ids.has(id)) continue
+    const raw = localStorage.getItem(key)
+    if (raw == null) continue
+    try {
+      const chat: unknown = JSON.parse(raw)
+      if (isStoredChat(chat, id)) {
+        chats.push(chat)
+        ids.add(id)
+      }
+    } catch { /* a bad row is reported as missing if the index names it */ }
+  }
+  return { chats, ids }
+}
+
+/** Read the small main record plus every chat row. The main record is only an
+ *  index/settings row: if it is damaged, valid chat rows are still recovered.
+ *  Throws only when localStorage itself is inaccessible, not when data is bad. */
+function readLocal(): LocalSnapshot | null {
   const raw = localStorage.getItem('byok.v1')
-  if (raw === null) return null
-  let parsed: unknown
-  try { parsed = JSON.parse(raw) } catch { throw Error('The local snapshot is corrupt.') }
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw Error('The local snapshot is invalid.')
-  const original = parsed as Record<string, unknown>
-  if ('state' in original && (!original.state || typeof original.state !== 'object' || Array.isArray(original.state))) throw Error('The local snapshot is invalid.')
-  const state = ('state' in original ? original.state : original) as Record<string, unknown>
-  if (state.__byokSharded === true && (!Array.isArray(state.__byokChatIds) || state.__byokChatIds.some(id => typeof id !== 'string' || !id))) throw Error('The local chat index is corrupt.')
-  const v = JSON.parse(joinPersistShards(raw, (key) => localStorage.getItem(key)) ?? raw)
-  const version = Number(original.version)
-  return { state: (v.state ?? v) as Record<string, unknown>, version: Number.isFinite(version) && version > 0 ? version : STORE_VERSION, missing: missingPersistShards(raw, key => localStorage.getItem(key)) }
+  const shards = scanChatShards()
+  if (raw === null && !shards.chats.length) return null
+
+  let state: Record<string, unknown> = {}
+  let version = STORE_VERSION
+  let mainValid = false
+  let indexIds: string[] | null = null
+  let indexCorrupt = false
+
+  if (raw !== null) {
+    try {
+      const parsed: unknown = JSON.parse(raw)
+      if (isRecord(parsed)) {
+        const candidate = 'state' in parsed ? parsed.state : parsed
+        if (isRecord(candidate)) {
+          state = candidate
+          mainValid = true
+          const parsedVersion = Number(parsed.version)
+          if (Number.isFinite(parsedVersion) && parsedVersion > 0) version = parsedVersion
+          if (state.__byokSharded === true) {
+            const ids = state.__byokChatIds
+            if (Array.isArray(ids) && ids.every((id) => typeof id === 'string' && !!id)) {
+              indexIds = [...new Set(ids as string[])]
+            } else {
+              indexCorrupt = true
+            }
+          }
+        }
+      }
+    } catch { /* fall through to the row scan below */ }
+  }
+
+  // With a healthy index, its rows are authoritative; orphaned keys may be
+  // leftovers from a delete and must not resurrect chats. Without one, every
+  // valid row is a recovery candidate.
+  const useAllRows = !mainValid || indexCorrupt
+  const rows = indexIds ? shards.chats.filter((chat) => indexIds!.includes(chat.id)) : useAllRows ? shards.chats : []
+  const embedded = Array.isArray(state.chats) ? state.chats : []
+  const chats = mergeChats(embedded, rows)
+  const missing = indexIds ? indexIds.filter((id) => !shards.ids.has(id)) : []
+  return {
+    state: { ...state, chats },
+    version,
+    missing,
+    repaired: !mainValid || indexCorrupt || missing.length > 0 || (raw === null && shards.chats.length > 0),
+  }
 }
 
 /* Automatic in-place migration: local shards are authoritative for ordinary
@@ -81,7 +181,16 @@ export async function hydrateDurable(patch: (p: Record<string, unknown>) => void
   // Snapshot local state and the quota marker before any asynchronous read.
   const saved = readLocal()
   const quota = (() => { try { return !!localStorage.getItem(QUOTA_FLAG) } catch { return false } })()
-  const local = saved && initial ? { ...saved, state: initial } : saved
+  const local = saved ? (() => {
+    const state = { ...saved.state, ...(initial ?? {}) }
+    const initialChats = Array.isArray(initial?.chats) ? initial.chats : []
+    const recoveredChats = Array.isArray(saved.state.chats) ? saved.state.chats : []
+    state.chats = mergeChats(initialChats, recoveredChats)
+    if (saved.state.workspaces && (!isRecord(state.workspaces) || !Object.keys(state.workspaces).length)) {
+      state.workspaces = saved.state.workspaces
+    }
+    return { ...saved, state }
+  })() : saved
   try {
     const meta = await durableGetMeta()
     let [dChats, dWs] = await Promise.all([durableGetChats<unknown[]>(), durableGetWorkspaces<Record<string, unknown>>()])
@@ -94,31 +203,32 @@ export async function hydrateDurable(patch: (p: Record<string, unknown>) => void
       await durableSetMeta({ migratedAt: Date.now(), storeVersion: local.version })
       migrated = true
     }
-    // An indexed shard may be missing or truncated after interruption. Restore
-    // only those IDs from durable, never unrelated chats deleted locally.
+    // An indexed row may be missing or truncated after interruption. Restore
+    // those IDs from durable, never unrelated chats deleted locally. A row that
+    // cannot be found anywhere is skipped instead of aborting the whole boot.
     if (local?.missing.length) {
       const recovered = new Map((Array.isArray(dChats) ? dChats : []).filter((c): c is { id: string; msgs: unknown[] } => !!c && typeof c === 'object' && typeof (c as { id?: unknown }).id === 'string' && Array.isArray((c as { msgs?: unknown }).msgs)).map(c => [c.id, c]))
-      if (local.missing.some(id => !recovered.has(id))) throw Error('A saved chat is missing and its durable copy could not be restored.')
-      const chats = Array.isArray(local.state.chats) ? [...local.state.chats] : []
-      chats.push(...local.missing.map(id => recovered.get(id)))
+      const found = local.missing.map(id => recovered.get(id)).filter((c): c is { id: string; msgs: unknown[] } => !!c)
+      const chats = mergeChats(local.state.chats, found)
       local.state = { ...local.state, chats }
       patch({ chats })
-      reportStorageFailure()
     }
     const localMsgs = Array.isArray(local?.state.chats) ? (local!.state.chats as Array<{ msgs?: unknown[] }>).reduce((a, c) => a + (c.msgs?.length ?? 0), 0) : 0
     const durableMsgs = Array.isArray(dChats) ? (dChats as Array<{ msgs: unknown[] }>).reduce((a, c) => a + (c.msgs?.length ?? 0), 0) : 0
     let restoredBlobs = 0
     // A larger old mirror is not proof of a quota prune: a user may have
-    // deliberately deleted messages or chats since it was written.
-    const useDurableChats = Array.isArray(dChats) && (!local || (quota && durableMsgs > localMsgs))
+    // deliberately deleted messages or chats since it was written. It is only
+    // safe to take the whole mirror when local storage has no readable chats.
+    const useAllDurable = Array.isArray(dChats) && (!local || (!!saved?.repaired && localMsgs === 0 && durableMsgs > 0))
+    const useDurableChats = Array.isArray(dChats) && (useAllDurable || (quota && durableMsgs > localMsgs))
     if (useDurableChats && dChats) {
       // With a local index, recover richer content only for IDs that still
       // exist locally. A stale mirror must not resurrect deleted chats.
-      const selected = local ? (local.state.chats as Array<{ id?: unknown }>).map(c => {
+      const selected = useAllDurable ? dChats : (local!.state.chats as Array<{ id?: unknown }>).map(c => {
         const durable = dChats.find(d => (d as { id?: unknown })?.id === c.id) as { msgs?: unknown[] } | undefined
         const current = c as { msgs?: unknown[] }
         return durable && (durable.msgs?.length ?? 0) > (current.msgs?.length ?? 0) ? durable : c
-      }) : dChats
+      })
       restoredBlobs = await restoreAttachmentBytes(selected as Parameters<typeof restoreAttachmentBytes>[0]).catch(() => 0)
       const p: Record<string, unknown> = {}
       // Empty chats are not store entries anymore: strip leftovers from both
@@ -131,15 +241,34 @@ export async function hydrateDurable(patch: (p: Record<string, unknown>) => void
     } else if (Array.isArray(local?.state.chats)) {
       const chats = (local.state.chats as Parameters<typeof restoreAttachmentBytes>[0]).map(c => ({ ...c, msgs: c.msgs.map(m => ({ ...m, ...(m.att ? { att: m.att.map(a => ({ ...a })) } : {}) })) }))
       restoredBlobs = await restoreAttachmentBytes(chats).catch(() => 0)
-      if (restoredBlobs) patch({ chats })
+      if (restoredBlobs) {
+        local.state = { ...local.state, chats }
+        patch({ chats })
+      }
+    }
+    // Repairing the index is a normal boot, not a fatal error: publish the
+    // recovered rows to the live store and tell the user to keep a backup.
+    if (saved?.repaired) {
+      reportStorageRecovery()
+      if (!useDurableChats) {
+        const chats = withoutExpiredTemps((Array.isArray(local?.state.chats) ? local.state.chats : []).filter(isLiveChat) as Array<{ temporary?: boolean; expiresAt?: number }>)
+        patch({ chats })
+      }
     }
     const { durableUsage } = await import('./durable')
     const u = await durableUsage().catch(() => null)
     return { migrated, restoredBlobs, backend: u?.backend ?? 'memory' }
-  } catch (error) {
-    // A corrupt local snapshot can fall back to durable storage, but an
-    // unexpected recovery failure must not silently mirror an empty store.
-    if (!saved || quota || saved.missing.length) throw error
+  } catch {
+    // Durable storage can be blocked or unavailable. The validated local rows
+    // are still usable, so boot them instead of replacing the whole app with an
+    // error page. localStorage itself being inaccessible is thrown by readLocal
+    // before this try and remains a hard failure.
+    if (saved?.repaired && local) {
+      const chats = withoutExpiredTemps((Array.isArray(local.state.chats) ? local.state.chats : []).filter(isLiveChat) as Array<{ temporary?: boolean; expiresAt?: number }>)
+      patch({ chats })
+      reportStorageRecovery()
+      return { migrated, restoredBlobs: 0, backend: 'memory' }
+    }
     reportStorageFailure()
     return { migrated, restoredBlobs: 0, backend: 'memory' }
   }

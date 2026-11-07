@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { X, Plus, Trash2, ArrowUp, ArrowDown, CornerDownRight, ChevronDown, ChevronRight, Eye, EyeOff, Play, ShieldCheck, Shield, Download, Upload, Check, CircleCheck, CircleX, Cpu, Route, GripVertical, Server, ListMusic, ScrollText, Terminal, Wrench, Palette, FolderOpen, PanelRight, TrendingUp, Keyboard, Search, Brain, Pencil, Sparkles, RotateCcw, SlidersHorizontal, FlaskConical, Library, Database, Lock, LockOpen, LayoutTemplate, Share2, Plug, Image as ImageIcon, Volume2, AudioLines, Code2, Star } from 'lucide-react'
+import { X, Plus, Trash2, ArrowUp, ArrowDown, CornerDownRight, ChevronDown, ChevronRight, Eye, EyeOff, Play, ShieldCheck, Shield, Download, Check, CircleCheck, CircleX, Cpu, Route, GripVertical, Server, ListMusic, ScrollText, Terminal, Wrench, Palette, FolderOpen, PanelRight, TrendingUp, Keyboard, Search, Brain, Pencil, Sparkles, RotateCcw, SlidersHorizontal, FlaskConical, Library, Database, Lock, LockOpen, LayoutTemplate, Share2, Plug, Image as ImageIcon, Volume2, AudioLines, Code2, Star } from 'lucide-react'
 import { modelListEdit } from '../models'
-import { useS, useSConfig, PRE, BLANK, THEMES, DARK_THEMES, LIGHT_THEMES, BASE_THEMES, THEME_COLOR_KEYS, THEME_COLOR_LABELS, THEME_COLORS, defaultCustomTheme, customThemeColors, normCustomTheme, accentHue, SEARCH_PROVIDERS, READER_PROVIDERS, FEATURES, LIBRARY_ITEMS, FEATURE_TABS, FEATURE_WIDGETS, DEFAULT_LIBRARY_SHOW, DEFAULT_ADVANCED, featOn, normSearch, normAdvanced, normLogDetail, normDocs, usable, modelsOf, modelNameOf, helperRef, splitHelperRef, favRef, toggleFavRef, effortClassifierOf, TOOL_ROUNDS_DEFAULT, TOOL_ROUNDS_MIN, TOOL_ROUNDS_BASE_MAX, TOOL_ROUNDS_MAX, toolRoundLimitOf, isToolRoundsUnlimited, GENERAL_PROMPT_TEXT, STARTUP_MODES, normStartup, PROMPT_RECALL_MODES, normPromptRecall, type PromptRecallMode, type Kind, type FeatureId, type DocPrefs, type ModelPrice } from '../store'
+import { useS, useSConfig, PRE, BLANK, THEMES, DARK_THEMES, LIGHT_THEMES, THEME_COLOR_KEYS, THEME_COLOR_LABELS, THEME_COLORS, defaultCustomTheme, customThemeColors, normCustomTheme, SEARCH_PROVIDERS, READER_PROVIDERS, FEATURES, LIBRARY_ITEMS, FEATURE_TABS, FEATURE_WIDGETS, DEFAULT_LIBRARY_SHOW, DEFAULT_ADVANCED, featOn, normSearch, normAdvanced, normLogDetail, normDocs, usable, modelsOf, modelNameOf, helperRef, splitHelperRef, favRef, toggleFavRef, effortClassifierOf, TOOL_ROUNDS_DEFAULT, TOOL_ROUNDS_MIN, TOOL_ROUNDS_BASE_MAX, TOOL_ROUNDS_MAX, toolRoundLimitOf, isToolRoundsUnlimited, GENERAL_PROMPT_TEXT, STARTUP_MODES, normStartup, PROMPT_RECALL_MODES, normPromptRecall, type PromptRecallMode, type Kind, type FeatureId, type DocPrefs, type ModelPrice } from '../store'
 import { normSkills, resolveSkill, validateCustomSkill, enabledSkills, BUILTIN_SKILLS, SKILL_TOOL_NAME, type SkillState } from '../skills'
 import { findDuplicatePairs, mergeMemory } from '../recall'
 import { TOOL_REGISTRY, can, stream } from '../engine'
@@ -23,10 +23,9 @@ import { BLANK_IMAGE_GEN, IMAGE_SIZES, normImageGen } from '../imagegen'
 import { BLANK_CODE_RUN, CODE_OUTPUT_MAX, CODE_TIMEOUT_MAX, CODE_TIMEOUT_MIN, normCodeRun, PYODIDE_DEFAULT_URL } from '../codesandbox'
 import { normVoice, VOICE_LANGS, speak, stopSpeaking, speechAvailable, dictationAvailable } from '../voice'
 import { DENSITIES, DENSITY_IDS, SPACING_LIMITS, STYLE_PRESETS, STYLE_PRESET_IDS, hasSpacingOverrides, resolveSpacing } from '../style'
-import { accentOnlyColors } from '../theme'
 import { USAGE_PERIODS } from '../usageStats'
-import { WALLPAPERS, deleteBackgroundImage, isCustomBg, normBgBlur, normBgDim, normBgSaturation, normBgTint, storeBackgroundFile, wallpaperLabel, wallpaperThumb } from '../background'
 import { normCompactAt } from '../compaction'
+import { ColorPicker } from './ColorPicker'
 import { UsageStats } from './UsageStats'
 
 const TABS = SETTINGS_TABS
@@ -256,6 +255,10 @@ function Acts({ k, id }: { k: Kind; id: string }) {
   )
 }
 
+function ProviderStat({ icon: I, title, children }: { icon: Ic; title: string; children: ReactNode }) {
+  return <span title={title} className="inline-flex min-w-0 items-center gap-1 rounded-md border border-bor bg-surf px-1.5 py-1 text-[11px] text-mu"><I size={11} className="shrink-0" aria-hidden="true" /><span className="truncate">{children}</span></span>
+}
+
 /** Per-model inference provider picker (OpenRouter only). Kept behind one
  *  low-key button under a model row so it stays out of the way for the many
  *  users who never care which provider serves a model. */
@@ -311,7 +314,14 @@ function ProviderPicker({ e, model, openRouter, update }: { e: any; model: strin
               <span className={cx('mt-0.5 grid size-4 shrink-0 place-items-center self-start rounded-full border', on ? 'border-ac' : 'border-mu/60')}>{on && <span className="size-2 rounded-full bg-ac" />}</span>
               <span className="min-w-0 flex-1">
                 <span className="block truncate">{p.name}</span>
-                <span className="block truncate text-xs text-mu">{[p.context ? `${contextLabel(p.context)} context` : '', p.throughput ? `${Math.round(p.throughput)} tok/s` : '', p.inputPrice !== undefined ? `$${p.inputPrice.toFixed(2)}/M in` : '', p.outputPrice !== undefined ? `$${p.outputPrice.toFixed(2)}/M out` : '', p.cacheReadPrice !== undefined ? `$${p.cacheReadPrice.toFixed(2)}/M cache read` : '', p.quantization].filter(Boolean).join(' · ')}</span>
+                <span className="mt-1 flex flex-wrap gap-1 text-[11px] text-mu">
+                  {p.throughput !== undefined && <ProviderStat icon={TrendingUp} title="Measured output speed over the last 30 minutes">{Math.round(p.throughput)} tok/s</ProviderStat>}
+                  {p.context !== undefined && <ProviderStat icon={Database} title="Maximum context window">{contextLabel(p.context)} ctx</ProviderStat>}
+                  {p.inputPrice !== undefined && <ProviderStat icon={ArrowDown} title={`$${p.inputPrice.toFixed(2)} per million input tokens`}>${p.inputPrice.toFixed(2)}/M in</ProviderStat>}
+                  {p.outputPrice !== undefined && <ProviderStat icon={ArrowUp} title={`$${p.outputPrice.toFixed(2)} per million output tokens`}>${p.outputPrice.toFixed(2)}/M out</ProviderStat>}
+                  {p.cacheReadPrice !== undefined && <ProviderStat icon={Route} title={`$${p.cacheReadPrice.toFixed(2)} per million cached input tokens`}>${p.cacheReadPrice.toFixed(2)}/M cache</ProviderStat>}
+                  {p.quantization && <ProviderStat icon={Cpu} title="Quantization">{p.quantization}</ProviderStat>}
+                </span>
               </span>
             </button>
           })}
@@ -1952,35 +1962,6 @@ function Look() {
   const settingsWidth = s.prefs.settingsWidth ?? 1024
   const settingsHeight = s.prefs.settingsHeight ?? 780
   const modelPickerHeight = s.prefs.modelPickerHeight ?? 480
-  const [colorPicker, setColorPicker] = useState<string | null>(null)
-  const bgOn = s.prefs.bgImageOn === true
-  const bgBlur = normBgBlur(s.prefs.bgImageBlur)
-  const bgDim = normBgDim(s.prefs.bgImageDim)
-  const bgSaturation = normBgSaturation(s.prefs.bgImageSaturation)
-  const bgTint = normBgTint(s.prefs.bgImageTint)
-  const bgName = isCustomBg(s.prefs.bgImage) ? 'Custom image' : wallpaperLabel(s.prefs.bgImage)
-  const [bgBusy, setBgBusy] = useState(false)
-  const [bgError, setBgError] = useState('')
-  const bgInput = useRef<HTMLInputElement>(null)
-  const setBg = (patch: Partial<typeof s.prefs>) => s.patch({ prefs: { ...s.prefs, ...patch } })
-  const uploadBg = async (file?: File) => {
-    if (!file) return
-    setBgBusy(true); setBgError('')
-    try {
-      const id = await storeBackgroundFile(file)
-      const before = useS.getState().prefs
-      useS.getState().patch({ prefs: { ...before, bgImage: id, bgImageOn: true } })
-      void deleteBackgroundImage(before.bgImage)
-    } catch (e) {
-      setBgError(e instanceof Error ? e.message : 'That image could not be loaded.')
-    } finally { setBgBusy(false) }
-  }
-  const chooseBg = (src: string) => {
-    const before = useS.getState().prefs
-    if (before.bgImage === src) { setBg({ bgImageOn: true }); return }
-    useS.getState().patch({ prefs: { ...before, bgImage: src, bgImageOn: true } })
-    void deleteBackgroundImage(before.bgImage)
-  }
   const row = (anchor: string, k: PrefToggle, t: string, d: string) => prefRow(s, anchor, k, t, d)
   return (
     <Panel id="look">
@@ -2003,8 +1984,13 @@ function Look() {
             const before = s.themeMode === 'light' ? s.themeLight : s.themeDark
             // Entering custom adopts the theme you were just on as its base,
             // so the palette starts from where you left off instead of plum.
-            if (k === 'custom' && before !== 'custom') s.patch(s.themeMode === 'light' ? { themeLight: 'custom' as const, customLightTheme: { ...(s.themeMode === 'light' ? s.customLightTheme : s.customDarkTheme), base: before as typeof s.customDarkTheme.base, hue: accentHue(THEME_COLORS[before]) } } : { themeDark: 'custom' as const, customDarkTheme: { ...(s.themeMode === 'dark' ? s.customDarkTheme : s.customLightTheme), base: before as typeof s.customDarkTheme.base, hue: accentHue(THEME_COLORS[before]) } })
-            else s.patch(s.themeMode === 'light' ? { themeLight: k as typeof s.themeLight } : { themeDark: k as typeof s.themeDark })
+            if (k === 'custom' && before !== 'custom') {
+              const source = THEME_COLORS[before]
+              const seed = s.themeMode === 'light' ? s.customLightTheme : s.customDarkTheme
+              const next = normCustomTheme({ ...seed, accent: source.ac, text: source.tx, background: source.bg, overrides: {} }, defaultCustomTheme(before as typeof seed.base))
+              const nextColors = customThemeColors(next)
+              s.patch(s.themeMode === 'light' ? { themeLight: 'custom' as const, customLightTheme: next, customLightColors: nextColors } : { themeDark: 'custom' as const, customDarkTheme: next, customDarkColors: nextColors })
+            } else s.patch(s.themeMode === 'light' ? { themeLight: k as typeof s.themeLight } : { themeDark: k as typeof s.themeDark })
           }} className={cx('space-y-2 rounded-xl bg-surf p-2 text-left text-sm', active && 'ring-2 ring-ac')}>
             <div className="flex h-16 overflow-hidden rounded-lg">
               <div className="w-1/4" style={{ background: k === 'custom' ? custom.side : THEME_COLORS[k].side }} />
@@ -2016,126 +2002,68 @@ function Look() {
         })}
       </div>
       </Anchor>
-      {s.prefs.bgImageOn === true && !s.prefs.reduceTransparency && (
-        <p className="text-xs text-mu">Wallpaper theme is on: the photo's accent replaces the theme accent on glass, menus and panels until you switch the image off.</p>
-      )}
       {((s.themeMode === 'light' ? s.themeLight : s.themeDark) === 'custom') && (() => {
         const mode = s.themeMode === 'light' ? 'light' : 'dark'
         const custom = s.themeMode === 'light' ? s.customLightTheme : s.customDarkTheme
-        const colors = s.themeMode === 'light' ? s.customLightColors : s.customDarkColors
+        const colors = customThemeColors(custom)
+        const advancedKeys = THEME_COLOR_KEYS.filter((key) => key !== 'ac' && key !== 'tx' && key !== 'bg')
         const setCustomTheme = (next: typeof custom) => {
           const norm = normCustomTheme(next, defaultCustomTheme(custom.base))
           const setColors = customThemeColors(norm)
           s.patch(mode === 'light' ? { customLightTheme: norm, customLightColors: setColors } : { customDarkTheme: norm, customDarkColors: setColors })
         }
-        const base = custom.base
-        const isDarkBase = (DARK_THEMES as readonly string[]).includes(base)
-        const hue = custom.hue
-        const sat = custom.sat
-        const bright = custom.bright
-        const contrast = custom.contrast
+        const setOverride = (key: typeof advancedKeys[number], value: string | null) => {
+          const overrides = { ...custom.overrides }
+          if (value) overrides[key] = value
+          else delete overrides[key]
+          setCustomTheme({ ...custom, overrides })
+        }
         return <Anchor id="custom-colors"><div className="rounded-xl bg-surf p-3 space-y-4">
-        <div><div className="text-sm font-medium">Custom theme</div><div className="text-xs text-mu">Pick a base theme, then fine-tune hue, saturation, brightness, and contrast. Syntax colours, the error colour, and text are always left alone.</div></div>
-        <div className="space-y-2">
-          <div className="text-xs text-mu">Base theme</div>
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-            {BASE_THEMES.map((k) => {
-              const active = k === base
-              return (
-                <button key={k} type="button" onClick={() => setCustomTheme({ ...custom, base: k, hue: accentHue(THEME_COLORS[k]) })} className={cx('flex items-center gap-2 rounded-lg bg-bg p-2 text-left text-sm', active && 'ring-2 ring-ac')}>
-                  <span className="size-6 rounded-md border border-bor" style={{ background: THEME_COLORS[k].ac }} />
-                  <span className="flex-1">{THEMES[k as keyof typeof THEMES]}</span>
-                  {active && <Check size={14} className="text-ac" />}
-                </button>
-              )
-            })}
-          </div>
-          <div className="text-[11px] text-mu">{isDarkBase ? 'Dark base' : 'Light base'} · Base accent hue {Math.round(accentHue(THEME_COLORS[base]))}°</div>
+        <div><div className="text-sm font-medium">Custom theme</div><div className="text-xs text-mu">Choose the accent, text and background. Every other surface, muted colour, syntax colour and the error colour is generated from those three plus the contrast slider.</div></div>
+        <div className="grid gap-3 sm:grid-cols-2">
+          {([
+            ['accent', 'Accent', 'Buttons, links, selection and focus.'],
+            ['text', 'Text', 'The main reading colour.'],
+            ['background', 'Background', 'The canvas behind every surface.'],
+          ] as const).map(([key, title, hint]) => (
+            <div key={key} className="space-y-2 rounded-lg bg-bg p-2.5">
+              <div><div className="text-sm font-medium">{title}</div><div className="text-[11px] text-mu">{hint}</div></div>
+              <ColorPicker
+                value={custom[key]}
+                onChange={(color) => setCustomTheme(key === 'accent' ? { ...custom, accent: color } : key === 'text' ? { ...custom, text: color } : { ...custom, background: color })}
+                label={`${title} color`}
+              />
+            </div>
+          ))}
         </div>
-        <div className="space-y-2 rounded-lg bg-bg p-2.5">
-          <div className="text-sm font-medium">Accent-only palette</div>
-          <div className="text-xs text-mu">Pick one colour and build the whole palette around it: surfaces get a restrained tint, the accent is used exactly as picked, and text on the accent flips for contrast. Replaces the sliders above until you adjust them.</div>
-          <div className="flex items-center gap-2">
-            <input type="color" aria-label="Accent colour" value={/^#[0-9a-f]{6}$/i.test(colors.ac) ? colors.ac : '#888888'} onChange={(e) => {
-              const next = accentOnlyColors(THEME_COLORS[base], e.target.value) as typeof colors
-              s.patch(mode === 'light' ? { customLightColors: next } : { customDarkColors: next })
-            }} className="h-9 w-12 cursor-pointer rounded-md border border-bor bg-transparent p-1" />
-            <span className="font-mono text-xs uppercase text-mu">{colors.ac}</span>
-            <Btn v="ghost" className="ml-auto px-2 py-1" onClick={() => setCustomTheme({ ...custom, hue: accentHue(THEME_COLORS[base]) })}>Rebuild from base accent</Btn>
-          </div>
-        </div>
-        <div className="space-y-3">
-          <Field label={`Hue · ${hue}°`} hint="Rotates colours except syntax highlighting. Starts at the base accent hue."><RangeSlider label="Hue" min={0} max={360} step={1} value={hue} set={(v) => setCustomTheme({ ...custom, hue: Math.round(v) })} className="w-full" /></Field>
-          <Field label={`Saturation · ${sat.toFixed(2)}x`} hint="Scales colour intensity across everything except syntax highlighting and the error colour."><RangeSlider label="Saturation" min={0} max={2} step={0.01} value={sat} set={(v) => setCustomTheme({ ...custom, sat: Math.round(v * 100) / 100 })} className="w-full" /></Field>
-          <Field label={`Brightness · ${bright.toFixed(2)}x`} hint="Scales brightness across everything except syntax highlighting, the error colour, and text."><RangeSlider label="Brightness" min={0} max={3} step={0.01} value={bright} set={(v) => setCustomTheme({ ...custom, bright: Math.round(v * 100) / 100 })} className="w-full" /></Field>
-          <Field label={`Contrast · ${contrast.toFixed(2)}x`} hint="Increases the brightness contrast: lights get brighter and darks get darker around mid-brightness. Never touches syntax, error or text colours."><RangeSlider label="Contrast" min={1} max={2} step={0.01} value={contrast} set={(v) => setCustomTheme({ ...custom, contrast: Math.round(v * 100) / 100 })} className="w-full" /></Field>
-          <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-mu">
-            <span>Syntax colours and the error colour never change. Text colours are never dimmed by brightness.</span>
-            <Btn v="ghost" className="px-2 py-1" onClick={() => setCustomTheme(defaultCustomTheme(base))}>Reset to base defaults</Btn>
-          </div>
+        <Field label={`Contrast · ${custom.contrast}%`} hint="Pushes surfaces, borders and muted text further from the main text and background. Higher contrast also strengthens the syntax palette."><RangeSlider label="Custom theme contrast" min={0} max={100} step={1} value={custom.contrast} set={(v) => setCustomTheme({ ...custom, contrast: Math.round(v) })} className="w-full" /></Field>
+        <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-mu">
+          <span>Accent, text and background drive the palette. Advanced overrides below are optional.</span>
+          <Btn v="ghost" className="px-2 py-1" onClick={() => setCustomTheme(defaultCustomTheme(custom.base))}>Reset to defaults</Btn>
         </div>
         <div className="space-y-2"><div className="text-sm font-medium">Live preview</div><div className="flex h-14 overflow-hidden rounded-lg border border-bor"><div className="w-1/4" style={{ background: colors.side }} /><div className="flex-1 flex items-center gap-2 p-2" style={{ background: colors.bg }}><div className="h-2 w-10 rounded-sm" style={{ background: colors.ac }} /><span className="text-xs" style={{ color: colors.tx }}>Text</span><span className="text-xs" style={{ color: colors.mu }}>Muted</span></div><div className="w-1/4" style={{ background: colors.surf }} /></div></div>
-        <details className="rounded-lg bg-bg p-2"><summary className="cursor-pointer text-xs text-mu">Advanced: edit hex colours directly</summary>
-        <p className="mt-1 text-[11px] text-mu">Hand-tuned here stays until a slider or base theme is changed — those rebuild the palette from the base theme.</p>
-        <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">{THEME_COLOR_KEYS.map((key) => <div key={key} className="relative flex items-center gap-2 rounded-lg bg-surf p-2 text-sm">
-          <button type="button" aria-label={`Choose ${THEME_COLOR_LABELS[key]} color`} aria-expanded={colorPicker === key} onClick={() => setColorPicker(colorPicker === key ? null : key)} className="size-9 shrink-0 rounded-lg border border-white/30 shadow-sm" style={{ backgroundColor: colors[key] }} />
-          <span className="min-w-0 flex-1 leading-tight">{THEME_COLOR_LABELS[key]}</span>
-          <input aria-label={`${THEME_COLOR_LABELS[key]} hex color`} value={colors[key]} onChange={(e) => { const value = e.target.value; if (/^#[\da-f]{0,6}$/i.test(value)) { const next = { ...colors, [key]: value }; s.patch(mode === 'light' ? { customLightColors: next } : { customDarkColors: next }) } }} onBlur={() => { if (!/^#[\da-f]{6}$/i.test(colors[key])) { const next = { ...colors, [key]: '#000000' }; s.patch(mode === 'light' ? { customLightColors: next } : { customDarkColors: next }) } }} className="w-20 rounded-md border border-white/20 bg-transparent px-1.5 py-1 font-mono text-xs uppercase" />
-          {colorPicker === key && <div className="menu-surface absolute left-2 top-full z-30 mt-1 w-56 rounded-xl bg-bg p-3"><label className="flex items-center justify-between gap-3 text-xs text-mu">Choose color<input type="color" aria-label={`Choose ${THEME_COLOR_LABELS[key]} color`} value={colors[key]} onChange={(e) => { const next = { ...colors, [key]: e.target.value }; s.patch(mode === 'light' ? { customLightColors: next } : { customDarkColors: next }) }} className="h-9 w-12 cursor-pointer rounded-md border border-bor bg-transparent p-1" /></label></div>}
-        </div>)}</div>
+        <details className="rounded-lg bg-bg p-2">
+          <summary className="cursor-pointer text-xs text-mu">Advanced colors</summary>
+          <p className="mt-1 text-[11px] text-mu">Each palette token is generated automatically. Change one here to pin it as an override; Reset returns it to the generated value. Accent, Text and Background stay controlled by the primary pickers above.</p>
+          <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+            {advancedKeys.map((key) => {
+              const overridden = Object.prototype.hasOwnProperty.call(custom.overrides, key)
+              return <div key={key} className="space-y-1.5 rounded-lg bg-surf p-2">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs font-medium">{THEME_COLOR_LABELS[key]}</span>
+                  <button type="button" disabled={!overridden} onClick={() => setOverride(key, null)} className={cx('rounded px-1.5 py-0.5 text-[10px] uppercase tracking-wide', overridden ? 'bg-ac/15 text-ac hover:bg-ac/25' : 'text-mu/60')}>{overridden ? 'Reset' : 'Auto'}</button>
+                </div>
+                <ColorPicker value={colors[key]} onChange={(color) => setOverride(key, color)} label={`${THEME_COLOR_LABELS[key]} color`} />
+              </div>
+            })}
+          </div>
+          <div className="mt-2 flex justify-end"><Btn v="ghost" className="px-2 py-1" disabled={!Object.keys(custom.overrides).length} onClick={() => setCustomTheme({ ...custom, overrides: {} })}>Reset all advanced colors</Btn></div>
         </details>
       </div>
       </Anchor>
       })()}
       {row('seasonal', 'seasonal', 'Seasonal touches', 'Show a festive greeting on holidays. Turn off to keep the greeting plain.')}
       {row('completion-cues', 'cues', 'Completion cues', 'A soft chime and a little confetti when deep research or a workspace update finishes.')}
-      </Section>
-      <Section title="Background" desc="An optional photo that brings its own accent, glass and tinted surfaces.">
-      <Anchor id="background-image">
-      <Card icon={ImageIcon} title="Image background" sub={bgOn ? `On · ${bgName}` : `Off · ${bgName} ready`} muted={!bgOn} open0={bgOn} right={<Toggle on={bgOn} set={(bgImageOn) => setBg({ bgImageOn })} label="Image background" />}>
-        <div className="space-y-2">
-          <div className="flex items-center justify-between gap-2">
-            <span className="text-xs font-medium">Wallpaper</span>
-            <div className="flex min-w-0 items-center gap-2">
-              <span className="truncate text-xs text-mu">{bgName}</span>
-              <Btn v="soft" sm icon={Upload} disabled={bgBusy} onClick={() => bgInput.current?.click()}>{bgBusy ? 'Reading…' : 'Upload'}</Btn>
-            </div>
-          </div>
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-            {WALLPAPERS.map((wallpaper) => {
-              const active = s.prefs.bgImage === wallpaper.src
-              return (
-                <button key={wallpaper.src} type="button" aria-pressed={active} aria-label={`Use ${wallpaper.label} wallpaper`} title={wallpaper.label} onClick={() => chooseBg(wallpaper.src)} className={cx('group relative aspect-video overflow-hidden rounded-lg border bg-bg text-left transition-colors', active ? 'border-ac ring-2 ring-ac' : 'border-bor hover:border-mu/60')}>
-                  <img src={wallpaperThumb(wallpaper.src)} alt="" loading="lazy" decoding="async" draggable={false} className="h-full w-full object-cover" />
-                  <span aria-hidden="true" title={`Accent ${wallpaper.accent}`} className="absolute left-1.5 top-1.5 size-4 rounded-full border border-white/60 shadow-sm ring-1 ring-black/20" style={{ background: wallpaper.accent }} />
-                  <span className="absolute inset-x-0 bottom-0 truncate bg-black/65 px-1.5 py-1 text-[10px] text-white">{wallpaper.label}</span>
-                  {active && <span className="absolute right-1.5 top-1.5 grid size-5 place-items-center rounded-full bg-ac text-acx shadow"><Check size={12} /></span>}
-                </button>
-              )
-            })}
-          </div>
-        </div>
-        <input ref={bgInput} type="file" accept="image/png,image/jpeg,image/webp,image/avif,image/gif" className="hidden" onChange={(e) => { const file = e.currentTarget.files?.[0]; e.currentTarget.value = ''; void uploadBg(file) }} />
-        <p className="text-xs text-mu">Click a photo to apply it instantly. Uploads stay on this device; the full image sits behind the app.</p>
-        {s.prefs.reduceTransparency === true && <p className="text-xs text-c3">Reduce transparency is on, so the image stays hidden behind opaque surfaces. Turn that setting off to see the background.</p>}
-        {bgError && <p role="alert" className="rounded-lg bg-er/10 px-3 py-2 text-xs text-er">{bgError}</p>}
-        <p className="text-xs text-mu">The photo supplies the accent for glass, menus and tinted panels. Blur and saturation change the photo; tint adds an accent wash and strengthens the panel tint; dim darkens it.</p>
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <Anchor id="background-blur">
-            <Field label={`Blur · ${bgBlur}px`}><RangeSlider label="Image background blur" min={0} max={100} step={1} value={bgBlur} set={(v) => setBg({ bgImageBlur: Math.round(v) })} className="w-full" /></Field>
-          </Anchor>
-          <Anchor id="background-saturation">
-            <Field label={`Saturation · ${bgSaturation}%`}><RangeSlider label="Image background saturation" min={0} max={200} step={1} value={bgSaturation} set={(v) => setBg({ bgImageSaturation: Math.round(v) })} className="w-full" /></Field>
-          </Anchor>
-          <Anchor id="background-tint">
-            <Field label={`Tint · ${bgTint}%`}><RangeSlider label="Image background tint" min={0} max={100} step={1} value={bgTint} set={(v) => setBg({ bgImageTint: Math.round(v) })} className="w-full" /></Field>
-          </Anchor>
-          <Anchor id="background-dim">
-            <Field label={`Dim · ${bgDim}%`}><RangeSlider label="Image background dim" min={0} max={95} step={1} value={bgDim} set={(v) => setBg({ bgImageDim: Math.round(v) })} className="w-full" /></Field>
-          </Anchor>
-        </div>
-      </Card>
-      </Anchor>
       </Section>
       <Section title="Style" desc="The shape of surfaces and how much room the chat breathes.">
       <Anchor id="style-preset">

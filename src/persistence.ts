@@ -8,10 +8,18 @@ export const QUOTA_FLAG = 'byok.v1:quota-full'
 // that an earlier failure in another tier was repaired.
 let storageWarning = ''
 export const getStorageWarning = () => storageWarning
-export function reportStorageFailure(): void {
+function reportWarning(message: string): void {
   if (storageWarning) return
-  storageWarning = 'Browser storage could not save all data. Export a backup now, free space or check browser storage permissions, then reload.'
+  storageWarning = message
   if (typeof window !== 'undefined') window.dispatchEvent(new Event('byok:storage-failure'))
+}
+export function reportStorageFailure(): void {
+  reportWarning('Browser storage could not save all data. Export a backup now, free space or check browser storage permissions, then reload.')
+}
+/** A corrupt index or missing row was repaired from the remaining records. The
+ *  app can continue, but the user should review the result and keep a copy. */
+export function reportStorageRecovery(): void {
+  reportWarning('Some saved data was repaired from local recovery records. Review your chats and export a backup now.')
 }
 export function subscribeStorageWarning(callback: () => void): () => void {
   if (typeof window === 'undefined') return () => {}

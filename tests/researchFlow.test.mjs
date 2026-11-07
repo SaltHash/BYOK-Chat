@@ -389,14 +389,26 @@ test('evidence gathered before an endpoint failure survives the failover', async
 })
 
 test('a report that cites nothing is repaired with the run\u2019s sources', async () => {
+  let reportSawEvidence = false
+  let repairSawEvidence = false
+  const hasEvidence = (text) => typeof text === 'string'
+    && text.includes('<report_evidence>')
+    && /Title: Source \d/.test(text)
+    && /URL: https:\/\/s\d+\.test\/p/.test(text)
   globalThis.fetch = async (url, init) => {
     if (String(url).includes('/chat/completions')) {
       const body = JSON.parse(init.body)
       const sys = body.messages[0]?.content ?? ''
       const lastUser = [...body.messages].reverse().find((m) => m.role === 'user' && typeof m.content === 'string')
       if (sys.includes('You draft a deep-research plan')) return openai({ content: PLAN })
-      if (typeof lastUser?.content === 'string' && lastUser.content.includes('cites no sources')) return openai({ content: '## Summary\nNow cited [S1].' })
-      if (typeof lastUser?.content === 'string' && lastUser.content.includes('Now write the final report')) return openai({ content: '## Summary\nFusion is real but uncited.' })
+      if (typeof lastUser?.content === 'string' && lastUser.content.includes('cites no sources')) {
+        repairSawEvidence = hasEvidence(lastUser.content)
+        return openai({ content: '## Summary\nNow cited [S1].' })
+      }
+      if (typeof lastUser?.content === 'string' && lastUser.content.includes('Now write the final report')) {
+        reportSawEvidence = hasEvidence(lastUser.content)
+        return openai({ content: '## Summary\nFusion is real but uncited.' })
+      }
       if (!body.messages.some((m) => m.role === 'tool')) return openai({ content: 'searching', tool_calls: [{ id: 'c1', type: 'function', function: { name: 'search', arguments: JSON.stringify({ query: 'fusion' }) } }] })
       return openai({ content: 'Abstract done.' })
     }
@@ -413,6 +425,8 @@ test('a report that cites nothing is repaired with the run\u2019s sources', asyn
   const done = msgById(pick.id)
   assert.match(done.t, /\[S1\]/, 'the repaired citation is present')
   assert.ok((done.log ?? []).some((l) => /cited no sources/.test(l.detail ?? '')), 'the uncited repair is logged')
+  assert.equal(reportSawEvidence, true, 'the report prompt carries source titles and URLs')
+  assert.equal(repairSawEvidence, true, 'the citation repair prompt carries source titles and URLs')
 })
 
 test('a run that closes after a single search is nudged to keep researching', async () => {

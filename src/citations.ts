@@ -431,7 +431,7 @@ export function sourcesToLinkList(sources: ExportSource[]): string {
 
 /* Coverage check for the strict-citations setting: which cited ids are
  * unknown, and whether evidence exists with zero citations. */
-export function citationCoverage(text: string, sources: CiteSource[]): { cited: string[]; unknown: string[]; uncited: boolean } {
+export function citationCoverage(text: string, sources: { citeId: string }[]): { cited: string[]; unknown: string[]; uncited: boolean } {
   const cited = extractCitedIds(text)
   const known = new Set(sources.map((s) => s.citeId.toUpperCase()))
   return { cited, unknown: cited.filter((id) => !known.has(id)), uncited: sources.length > 0 && cited.length === 0 }
