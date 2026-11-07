@@ -90,7 +90,9 @@ export async function handleShareUpdate(id, req, backend) {
   }
   const payload = body?.chat === undefined ? row.payload : sanitizeSharedChat(body.chat)
   if (!payload) throw badRequest('There is nothing to share in this chat yet.', 'empty', 400)
-  const isPrivate = body?.private === true
+  // Updating content must never widen access by accident: an omitted flag
+  // preserves the current visibility. Only an explicit boolean changes it.
+  const isPrivate = typeof body?.private === 'boolean' ? body.private : row.private === true
   await backend.put(clean, payload, { private: isPrivate, tokenHash: row.tokenHash })
   return { ok: true, id: clean, url: `/api/share/${clean}`, createdAt: Date.now(), messages: payload.msgs.length, private: isPrivate }
 }

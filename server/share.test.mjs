@@ -97,6 +97,16 @@ test('updates require the owner token and can flip privacy and content', async (
   assert.equal(publicAgain.private, false)
 })
 
+test('an update that omits privacy keeps a private share private', async () => {
+  const backend = memStore()
+  const created = await handleShareCreate(req({ chat: { msgs: [{ r: 'user', t: 'secret' }] }, private: true }), backend, () => 'abcDEF123_-x')
+  const updated = await handleShareUpdate(created.id, req({ token: created.token, chat: { msgs: [{ r: 'user', t: 'secret v2' }] } }), backend)
+  assert.equal(updated.private, true)
+  await assert.rejects(() => handleShareGet(created.id, backend), (e) => e.code === 'private')
+  const got = await handleShareGet(created.id, backend, created.token)
+  assert.equal(got.msgs[0].t, 'secret v2')
+})
+
 test('empty chats and oversized bodies are rejected with stable codes', async () => {
   const backend = memStore()
   await assert.rejects(() => handleShareCreate(req({ chat: { msgs: [] } }), backend, () => 'abcDEF123_-x'), (e) => e.code === 'empty' && e.status === 400)
