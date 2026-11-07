@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { PanelLeft, PanelRight, Download, Command, Share2, MoreVertical, Bookmark, Hourglass, Settings2, ListCollapse, Archive, ArchiveRestore, Trash2 } from 'lucide-react'
 import { useShallow } from 'zustand/react/shallow'
 import { useS, exportChat, featOn, DEFAULT_ADVANCED } from '../store'
-import { Btn, Confirm, Pop, Toggle, RangeSlider, Item, cx } from './ui'
+import { Btn, Pop, Toggle, RangeSlider, Item, cx } from './ui'
 import { ContextMeter } from './ContextMeter'
 import { ShareDialog } from './ShareDialog'
 import { collapseAllProcessLogs } from '../uiSignals'
@@ -21,7 +21,7 @@ type Params = { def: boolean; temp: number; topp: number; max: number }
 function ParamsBody({ p, set }: { p: Params; set: (x: Partial<Params>) => void }) {
   return (
     <>
-      <div className="flex items-center justify-between text-sm"><span>Use model defaults</span><Toggle on={p.def} set={(v) => set({ def: v })} /></div>
+      <div className="flex items-center justify-between text-sm"><span>Use model defaults</span><Toggle on={p.def} set={(v) => set({ def: v })} label="Use model defaults" /></div>
       <Slider l="Temperature" v={p.temp} min={0} max={2} step={0.1} set={(n) => set({ temp: n })} off={p.def} />
       <Slider l="Top p" v={p.topp} min={0} max={1} step={0.05} set={(n) => set({ topp: n })} off={p.def} />
       <Slider l="Max tokens" v={p.max} min={256} max={32768} step={256} set={(n) => set({ max: n })} off={p.def} />
@@ -67,7 +67,6 @@ export function Header({ side, toggle, cfg, pal, title }: { side: boolean; toggl
   const tempHours = useS((s) => s.prefs.tempHours)
   const archived = useS((s) => s.chats.find((c) => c.id === s.chat)?.archived === true)
   const [shareChat, setShareChat] = useState<string | null>(null)
-  const [delChat, setDelChat] = useState(false)
   const openShare = () => {
     const st = useS.getState()
     if (!st.chats.some((c) => c.id === st.chat)) { st.patch({ notice: { t: 'Open or start a chat first, then share it.' } }); return }
@@ -102,7 +101,7 @@ export function Header({ side, toggle, cfg, pal, title }: { side: boolean; toggl
               {showLog && <Item icon={ListCollapse} onClick={() => { close(); collapseAllProcessLogs() }}>Collapse process logs</Item>}
               <Item icon={Bookmark} off={!curTemporary} onClick={() => { close(); keepPermanent() }}>Save as permanent chat</Item>
               <Item icon={archived ? ArchiveRestore : Archive} off={!hasChat} onClick={() => { close(); const st = useS.getState(); if (st.chat) st.chatOp(st.chat, 'archive') }}>{archived ? 'Restore from archive' : 'Archive chat'}</Item>
-              <Item icon={Trash2} off={!hasChat} onClick={() => { close(); setDelChat(true) }}>Delete chat</Item>
+              <Item icon={Trash2} off={!hasChat} onClick={() => { close(); const st = useS.getState(); if (st.chat) st.chatOp(st.chat, 'del') }}>Delete permanently</Item>
               {featOn({ features }, 'widgets') && <Item icon={PanelRight} on={anyW && rail} onClick={() => { close(); anyW ? patch({ rail: !rail }) : cfg('widgets') }}>Widgets panel</Item>}
               {paramsOn && (
                 <div className="mt-1 space-y-4 border-t border-bor px-2 pb-1 pt-3">
@@ -115,7 +114,6 @@ export function Header({ side, toggle, cfg, pal, title }: { side: boolean; toggl
         </Pop>
       </span>
       {shareChat && <ShareDialog chatId={shareChat} close={() => setShareChat(null)} />}
-      {delChat && <Confirm title="Delete this chat?" text="This chat and its messages will be permanently removed." ok="Delete" close={() => setDelChat(false)} run={() => { const st = useS.getState(); if (st.chat) st.chatOp(st.chat, 'del') }} />}
     </header>
   )
 }

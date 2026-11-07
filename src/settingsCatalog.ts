@@ -248,6 +248,7 @@ export const SETTING_LINKS: SettingLink[] = [
   { tab: 'chats', anchor: 'pinned-context', title: 'Pinned reply context', keywords: 'pin pinned reply context window share percent truncate model guidance' },
   { tab: 'chats', anchor: 'remote-images', title: 'Load remote images', keywords: 'images remote click to load privacy third party beacon' },
   { tab: 'chats', anchor: 'temp-retention', title: 'Temporary chat retention', keywords: 'temporary retention hours immediate expires' },
+  { tab: 'chats', anchor: 'archive-retention', title: 'Archived chat retention', keywords: 'archive archived retention delete days never 60 180' },
   { tab: 'chats', anchor: 'draft-survival', title: 'Drafts across reloads', keywords: 'draft unsent typed survive reload persistence new chat existing both never' },
   { tab: 'look', anchor: 'fonts', title: 'Fonts', keywords: 'body heading monospace font google' },
   { tab: 'look', anchor: 'text-size', title: 'Text size', keywords: 'text size scale root font larger smaller zoom percent accessibility' },
@@ -302,17 +303,43 @@ export const SETTING_LINKS: SettingLink[] = [
 
 export type SettingsSearchResult = { target: string; title: string; section: string }
 
-/** Search both sections and their addressable settings; tab ids remain stable. */
+/* Fuzzy score for one result. A contiguous phrase beats scattered words, and
+ * a title match beats a match that only appears in keywords; the `every word`
+ * branch keeps multi-word queries such as "api key" working across fields. */
+function searchScore(query: string, title: string, keywords: string): number {
+  const q = query.toLowerCase(), t = title.toLowerCase()
+  const text = `${t} ${keywords.toLowerCase()}`
+  if (t === q) return 1000
+  if (t.startsWith(q)) return 850
+  if (new RegExp(`(^|\\s)${q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`).test(t)) return 700
+  if (t.includes(q)) return 620
+  if (text.includes(q)) return 520
+  const words = q.split(/\s+/).filter(Boolean)
+  if (words.every(word => text.includes(word))) return 420
+  // Letters of the query appearing in order in the title: catches "aprnc" for
+  // Appearance and misspelled/abbreviated searches without a fuzzy library.
+  let at = 0
+  for (const ch of t) if (ch === q[at]) at++
+  return at === q.length ? 200 : 0
+}
+
+/** Search both sections and their addressable settings; tab ids remain stable.
+ *  Results are ranked so an exact/prefix section stays first, then individual
+ *  settings, and capped so the navigation list stays scannable. */
 export function searchSettings(query: string): SettingsSearchResult[] {
-  const words = query.trim().toLowerCase().split(/\s+/).filter(Boolean)
-  if (!words.length) return []
-  const matches = (text: string) => words.every(word => text.toLowerCase().includes(word))
+  const q = query.trim().toLowerCase()
+  if (!q) return []
   const tabs = new Map(SETTINGS_TABS.map(([id, label]) => [id, label]))
-  const sections = SETTINGS_TABS.filter(([id, label]) => matches(`${label} ${TAB_KEYWORDS[id]}`))
-    .map(([id, title]) => ({ target: id, title, section: 'Section' }))
-  const settings = SETTING_LINKS.filter(link => matches(`${link.title} ${link.keywords} ${tabs.get(link.tab) ?? ''}`))
-    .map(link => ({ target: `${link.tab}#${link.anchor}`, title: link.title, section: tabs.get(link.tab) ?? link.tab }))
+  const sections = SETTINGS_TABS
+    .map(([id, title]) => ({ target: id, title, section: 'Section', score: searchScore(q, title, TAB_KEYWORDS[id]) }))
+    .filter(result => result.score > 0)
+  const settings = SETTING_LINKS
+    .map(link => ({ target: `${link.tab}#${link.anchor}`, title: link.title, section: tabs.get(link.tab) ?? link.tab, score: searchScore(q, link.title, `${link.keywords} ${tabs.get(link.tab) ?? ''}`) }))
+    .filter(result => result.score > 0)
   return [...sections, ...settings]
+    .sort((a, b) => b.score - a.score || a.title.localeCompare(b.title))
+    .slice(0, 80)
+    .map(({ score, ...result }) => { void score; return result })
 }
 
 /** Split a `cfg()` target like `"tools#search-mode"` into tab + anchor. */

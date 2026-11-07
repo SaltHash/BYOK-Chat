@@ -53,9 +53,9 @@ export function ProjectModal({ close, project }: { close: () => void; project?: 
     close()
   }
   return (
-    <Modal close={close}>
+    <Modal close={close} labelledBy="project-modal-title">
       <div className="modal-panel flex w-full max-w-md flex-col gap-4 rounded-2xl bg-bg p-5">
-        <div className="flex items-center gap-2 font-semibold"><Folder size={18} className="text-ac" />{editing ? 'Edit project' : 'New project'}</div>
+        <div id="project-modal-title" className="flex items-center gap-2 font-semibold"><Folder size={18} className="text-ac" />{editing ? 'Edit project' : 'New project'}</div>
         <label className="block text-sm">
           <span className="mb-1 block text-xs font-medium text-mu">Name</span>
           <input autoFocus value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') save() }}

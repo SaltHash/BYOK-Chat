@@ -222,7 +222,7 @@ function ModelMenu({ close, cfg }: { close: () => void; cfg: (t: string) => void
   const toggleProvider = (id: string) => s.patch({ prefs: { ...s.prefs, collapsedProviders: collapsed.includes(id) ? collapsed.filter((x) => x !== id) : [...collapsed, id] } })
   return (
     <div className="flex flex-col" style={{ maxHeight: `min(${s.prefs.modelPickerHeight ?? 480}px, 85dvh)` }}>
-      {plsOn && <Seg v={t} set={setT} opts={[['ep', 'Models', Cpu], ['pl', 'Playlists', ListMusic]]} />}
+      {plsOn && <Seg label="Model source" v={t} set={setT} opts={[['ep', 'Models', Cpu], ['pl', 'Playlists', ListMusic]]} />}
       <div className="relative my-2">
         <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-mu" />
         <input aria-label="Search models and playlists" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search" className="h-9 w-full rounded-lg bg-surf pl-9 pr-3 text-sm outline-none" />

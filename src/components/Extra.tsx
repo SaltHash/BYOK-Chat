@@ -22,14 +22,15 @@ import { SyncBox } from './SyncBox'
 import { DEVICE_SYNC_ENABLED } from '../storage/syncRuntime'
 
 export function Notice({ cfg }: { cfg: (t: string) => void }) {
-  const n = useS((s) => s.notice), patch = useS((s) => s.patch)
+  const n = useS((s) => s.notice), patch = useS((s) => s.patch), undoDelete = useS((s) => s.undoDelete)
   if (!n) return null
   return (
-    <div role="status" aria-live="polite" className="mb-2 flex flex-wrap items-start gap-2 rounded-xl bg-surf p-3 text-sm max-sm:flex-col">
+    <div role={n.undo ? 'alert' : 'status'} aria-live={n.undo ? 'assertive' : 'polite'} className="mb-2 flex flex-wrap items-start gap-2 rounded-xl bg-surf p-3 text-sm max-sm:flex-col">
       <Info size={18} className="mt-0.5 shrink-0 text-ac" />
       <p className="min-w-0 flex-1 break-words leading-6">{n.t}</p>
       {n.href && <a href={n.href} target="_blank" rel="noreferrer" className="inline-flex h-9 shrink-0 items-center rounded-lg bg-hov px-3 text-sm font-medium hover:opacity-80">{n.label ?? 'Open link'}</a>}
       {n.tab && <Btn v="soft" onClick={() => { patch({ notice: null }); cfg(n.tab!) }}>{n.label ?? 'Open settings'}</Btn>}
+      {n.undo && <Btn v="soft" onClick={() => undoDelete()}>Undo</Btn>}
       <Btn sm icon={X} title="Dismiss" onClick={() => patch({ notice: null })} />
     </div>
   )
@@ -259,9 +260,7 @@ function LargestChats({ kb }: { kb: (n: number) => string }) {
   }, [])
   const [top, setTop] = useState(sizes)
   const del = (id: string) => {
-    const st = useS.getState()
-    const remaining = st.chats.filter((c) => c.id !== id)
-    st.patch({ chats: remaining, chat: st.chat === id ? remaining[0]?.id ?? '' : st.chat })
+    useS.getState().chatOp(id, 'del')
     setTop(sizes())
   }
   return (
@@ -275,7 +274,7 @@ function LargestChats({ kb }: { kb: (n: number) => string }) {
             <div key={c.id} className="flex items-center gap-2 rounded-lg bg-bg px-2 py-1 text-xs">
               <span className="min-w-0 flex-1 truncate text-tx" title={c.title}>{c.title}</span>
               <span className="shrink-0 text-mu">~{kb(c.chars)}</span>
-              <button onClick={() => del(c.id)} title="Delete this chat" aria-label={`Delete ${c.title}`} className="grid size-5 shrink-0 place-items-center rounded-sm text-mu hover:text-er"><Trash2 size={12} /></button>
+              <button onClick={() => del(c.id)} title="Delete chat permanently" aria-label={`Permanently delete ${c.title}`} className="grid size-5 shrink-0 place-items-center rounded-sm text-mu hover:text-er"><Trash2 size={12} /></button>
             </div>
           )) : <span className="text-xs text-mu">No chats stored.</span>}
         </div>

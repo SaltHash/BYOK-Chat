@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { THEME_COLORS, THEME_COLOR_KEYS, themeKeyOf, themeCustomOf } from './store'
 import { clampSidebarWidth, clampWidgetWidth, roundFrac } from './layout'
 import { normDensity, normStylePreset, spacingVars, type SpacingOverrides } from './style'
@@ -26,6 +26,22 @@ export function focusComposer(): void {
     if (++frames < 3) requestAnimationFrame(step)
   }
   requestAnimationFrame(step)
+}
+
+/** Tracks Shift across window focus changes, for controls that swap their
+ *  destructive action while the key is held. */
+export function useShiftHeld(): boolean {
+  const [held, setHeld] = useState(false)
+  useEffect(() => {
+    const down = (e: KeyboardEvent) => { if (e.key === 'Shift') setHeld(true) }
+    const up = (e: KeyboardEvent) => { if (e.key === 'Shift') setHeld(false) }
+    const blur = () => setHeld(false)
+    window.addEventListener('keydown', down)
+    window.addEventListener('keyup', up)
+    window.addEventListener('blur', blur)
+    return () => { window.removeEventListener('keydown', down); window.removeEventListener('keyup', up); window.removeEventListener('blur', blur) }
+  }, [])
+  return held
 }
 
 /** Applies `data-t`, custom colors, luminance color-scheme and modal blur. */

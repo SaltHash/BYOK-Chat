@@ -1,12 +1,12 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { X, Plus, Trash2, ArrowUp, ArrowDown, CornerDownRight, ChevronDown, ChevronRight, Eye, EyeOff, Play, ShieldCheck, Shield, Download, Check, CircleCheck, CircleX, Cpu, Route, GripVertical, Server, ListMusic, ScrollText, Terminal, Wrench, Palette, FolderOpen, PanelRight, TrendingUp, Keyboard, Search, Brain, Pencil, Sparkles, RotateCcw, SlidersHorizontal, FlaskConical, Library, Database, Lock, LockOpen, LayoutTemplate, Share2, Plug, Image as ImageIcon, Volume2, AudioLines, Code2, Star } from 'lucide-react'
+import { X, Plus, Trash2, ArrowUp, ArrowDown, CornerDownRight, ChevronDown, ChevronRight, Eye, EyeOff, Play, ShieldCheck, Shield, Download, Check, CircleCheck, CircleX, Cpu, Route, GripVertical, Server, ListMusic, ScrollText, Terminal, Wrench, Palette, FolderOpen, PanelRight, TrendingUp, Keyboard, Search, Brain, Pencil, Sparkles, RotateCcw, SlidersHorizontal, FlaskConical, Library, Database, Lock, LockOpen, LayoutTemplate, Share2, Plug, Image as ImageIcon, Volume2, AudioLines, Code2, Star, History } from 'lucide-react'
 import { modelListEdit } from '../models'
 import { useS, useSConfig, PRE, BLANK, THEMES, DARK_THEMES, LIGHT_THEMES, THEME_COLOR_KEYS, THEME_COLOR_LABELS, THEME_COLORS, defaultCustomTheme, customThemeColors, normCustomTheme, SEARCH_PROVIDERS, READER_PROVIDERS, FEATURES, LIBRARY_ITEMS, FEATURE_TABS, FEATURE_WIDGETS, DEFAULT_LIBRARY_SHOW, DEFAULT_ADVANCED, featOn, normSearch, normAdvanced, normLogDetail, normDocs, usable, modelsOf, modelNameOf, helperRef, splitHelperRef, favRef, toggleFavRef, effortClassifierOf, TOOL_ROUNDS_DEFAULT, TOOL_ROUNDS_MIN, TOOL_ROUNDS_BASE_MAX, TOOL_ROUNDS_MAX, toolRoundLimitOf, isToolRoundsUnlimited, GENERAL_PROMPT_TEXT, STARTUP_MODES, normStartup, PROMPT_RECALL_MODES, normPromptRecall, type PromptRecallMode, type Kind, type FeatureId, type DocPrefs, type ModelPrice } from '../store'
 import { normSkills, resolveSkill, validateCustomSkill, enabledSkills, BUILTIN_SKILLS, SKILL_TOOL_NAME, type SkillState } from '../skills'
 import { findDuplicatePairs, mergeMemory } from '../recall'
 import { TOOL_REGISTRY, can, stream } from '../engine'
 import { CI, TOOLS, WIDGETS, KEYS, orderTools } from '../meta'
-import { SETTINGS_TABS, SETTINGS_GROUPS, visibleTabs, searchSettings, splitSettingTarget, settingDomId } from '../settingsCatalog'
+import { SETTINGS_TABS, SETTINGS_GROUPS, visibleTabs, searchSettings, splitSettingTarget, settingDomId, type SettingsTabId } from '../settingsCatalog'
 import { PROMPT_QUALITIES, type GlobalPrompt } from '../flair'
 import { PROMPT_VARS } from '../promptVars'
 import { DataTab, KeysTab, TestRow, TestAllEndpoints } from './Extra'
@@ -27,6 +27,7 @@ import { normVoice, VOICE_LANGS, speak, stopSpeaking, speechAvailable, dictation
 import { DENSITIES, DENSITY_IDS, SPACING_LIMITS, STYLE_PRESETS, STYLE_PRESET_IDS, hasSpacingOverrides, resolveSpacing } from '../style'
 import { USAGE_PERIODS } from '../usageStats'
 import { normCompactAt } from '../compaction'
+import { ARCHIVE_RETENTION_NEVER, archiveRetentionLabel, normArchiveDays } from '../archive'
 import { ColorPicker } from './ColorPicker'
 import { UsageStats } from './UsageStats'
 
@@ -435,7 +436,7 @@ function FeaturesTab() {
   const byId = (id: FeatureId) => FEATURES.find(([f]) => f === id)!
   return (
     <Panel id="features">
-      <Section title="Features" desc="Turn whole features on or off. A disabled feature is hidden everywhere.">
+      <Section title="Feature switches" desc="Turn whole features on or off. A disabled feature is hidden everywhere.">
       <Anchor id="show-disabled-features">
       <div className="flex items-center justify-between gap-3 rounded-xl bg-surf p-3">
         <div className="min-w-0">
@@ -449,7 +450,7 @@ function FeaturesTab() {
         const [, label, desc] = byId(id)
         return (
         <Anchor key={id} id={`feature-${id}`}>
-        <Card icon={iconFor(id)} title={label} sub={F[id] ? 'On' : 'Off'} muted={!F[id]} right={<span className="flex items-center gap-1"><Btn sm icon={ArrowUp} title={`Move ${label} up`} disabled={order.indexOf(id) === 0} onClick={() => move(id, -1)} /><Btn sm icon={ArrowDown} title={`Move ${label} down`} disabled={order.indexOf(id) === order.length - 1} onClick={() => move(id, 1)} /><Toggle on={!!F[id]} set={(on) => toggle(id, on)} /></span>}>
+        <Card icon={iconFor(id)} title={label} sub={F[id] ? 'On' : 'Off'} muted={!F[id]} right={<span className="flex items-center gap-1"><Btn sm icon={ArrowUp} title={`Move ${label} up`} disabled={order.indexOf(id) === 0} onClick={() => move(id, -1)} /><Btn sm icon={ArrowDown} title={`Move ${label} down`} disabled={order.indexOf(id) === order.length - 1} onClick={() => move(id, 1)} /><Toggle on={!!F[id]} set={(on) => toggle(id, on)} label={`Enable ${label}`} /></span>}>
           <p className="text-sm text-mu">{desc}</p>
           {id === 'library' && !!F[id] && (
             <Anchor id="library-entries">
@@ -762,13 +763,13 @@ function Eps() {
               </section></Anchor>
               <Anchor id="advanced-connection"><details open={advanced.includes(e.id)} onToggle={(ev) => { const isOpen = ev.currentTarget.open; setAdvanced(current => isOpen ? [...new Set([...current, e.id])] : current.filter(id => id !== e.id)) }} className="rounded-xl bg-bg px-3"><summary className="flex cursor-pointer list-none items-center gap-2 py-3 text-sm font-medium text-mu"><span>Advanced connection settings</span><ChevronRight size={16} aria-hidden="true" className={cx('transition-transform', advanced.includes(e.id) && 'rotate-90')} /></summary><div className="space-y-3 pb-3">
                 <Field label="Base URL" hint="The app adds the API path to this URL automatically."><Input value={e.url} set={(v) => { const match = presetForUrl(v); u({ url: v, ...(match ? { preset: match[0], endpointId: match[1][2], endpointFilter: match[1][3] } : { preset: '', endpointId: '', endpointFilter: 'author' }) }) }} placeholder="https://…/v1" /></Field>
-                <Field label="API format"><Seg v={e.type} set={(v) => u({ type: v })} opts={[[ 'openai', 'OpenAI-compatible'], ['anthropic', 'Anthropic Messages']]} /></Field>
+                <Field label="API format"><Seg label="API format" v={e.type} set={(v) => u({ type: v })} opts={[[ 'openai', 'OpenAI-compatible'], ['anthropic', 'Anthropic Messages']]} /></Field>
                 <Field label="Endpoint ID" hint="Used to limit OpenRouter catalog suggestions to this brand or hosting provider."><Input value={e.endpointId ?? presetForUrl(e.url)?.[1][2] ?? ''} set={(endpointId) => u({ endpointId, endpointFilter: catalogPrefs(endpointId) })} placeholder="e.g. anthropic" /></Field>
                 {provider?.accountScoped && <Field label="Account ID" hint="Cloudflare account-scoped APIs put this in the base URL. Find it in the Cloudflare dashboard; it is stored in this browser with the key."><Input value={e.accountId ?? ''} set={(accountId) => u({ accountId })} placeholder="Cloudflare account ID" /></Field>}
                 {provider?.gatewayHeader && <Field label={provider.gatewayHeader.label} hint={`Sent as the ${provider.gatewayHeader.header} header. Workers AI models (${provider.gatewayHeader.modelPrefix ?? '@cf/'}) require an AI Gateway.`}><Input value={e.gatewayId ?? ''} set={(gatewayId) => u({ gatewayId })} placeholder="Optional AI Gateway id" /></Field>}
                 {provider && <p className="text-xs text-mu">Browser access to {provider.name}: <span className={provider.cors === 'blocked' ? 'text-er' : provider.cors === 'confirmed' ? 'text-ac' : 'text-mu'}>{provider.cors}</span>. {provider.corsNote} Providers that block browser requests still work through the relay below.</p>}
                 <Field label="Request routing" hint="Auto tries the provider directly and relays through this app's server only when the browser blocks it (CORS). Always relay sends every provider request through this server — it works for any provider, but the server sees the key in transit (it is never stored or logged). Direct only never relays.">
-                  <Seg v={(s.prefs.proxyMode ?? 'auto') as 'auto' | 'always' | 'off'} set={(v) => s.patch({ prefs: { ...s.prefs, proxyMode: v } })} opts={[['auto', 'Auto'], ['always', 'Always relay'], ['off', 'Direct only']]} />
+                  <Seg label="Request routing" v={(s.prefs.proxyMode ?? 'auto') as 'auto' | 'always' | 'off'} set={(v) => s.patch({ prefs: { ...s.prefs, proxyMode: v } })} opts={[['auto', 'Auto'], ['always', 'Always relay'], ['off', 'Direct only']]} />
                 </Field>
               </div></details></Anchor>
             </div>
@@ -830,7 +831,7 @@ function Eps() {
       <HelperModels />
       <Anchor id="model-pricing-toggle">
       <div className="rounded-xl bg-surf p-3 space-y-2">
-        <label className="flex items-center justify-between gap-3 text-sm">Show model pricing controls<Toggle on={s.prefs.showModelPricing} set={(showModelPricing) => s.patch({ prefs: { ...s.prefs, showModelPricing } })} /></label>
+        <label className="flex items-center justify-between gap-3 text-sm">Show model pricing controls<Toggle on={s.prefs.showModelPricing} set={(showModelPricing) => s.patch({ prefs: { ...s.prefs, showModelPricing } })} label="Show model pricing controls" /></label>
         <div className="text-xs text-mu">Adds per-model pricing fields to each endpoint. Off by default.</div>
       </div>
       </Anchor>
@@ -855,7 +856,7 @@ function Prompts() {
     <Panel id="prompts" k="prompts" n={prompts.length} add="Add prompt">
       <Section title="Global prompt" desc="Applied to every message in every chat.">
       <Anchor id="global-prompt"><Card icon={ScrollText} title="Global system prompt" sub={g.on ? (g.text.trim() || qualities.length ? 'On · applies to every message in every chat' : 'On · no text yet') : 'Off'} muted={!g.on}>
-        <div className="flex items-center justify-between gap-3"><div><div className="text-sm font-medium">Apply to every message</div><div className="text-xs text-mu">Added before everything else in every chat, alongside the per-chat prompt.</div></div><Toggle on={g.on} set={(on) => setG({ on })} /></div>
+        <div className="flex items-center justify-between gap-3"><div><div className="text-sm font-medium">Apply to every message</div><div className="text-xs text-mu">Added before everything else in every chat, alongside the per-chat prompt.</div></div><Toggle on={g.on} set={(on) => setG({ on })} label="Apply global prompt to every message" /></div>
         <Field label="Or pick an existing prompt" hint="Copies its text into the global box.">
           <Sel value="" set={(v) => { const p = prompts.find((x) => x.id === v); if (p) setG({ text: p.text }) }} opts={[['', 'Choose a prompt…'], ...prompts.map((p) => [p.id, p.name] as [string, string])]} />
         </Field>
@@ -993,7 +994,7 @@ function Cmds() {
         const u = (x: object) => upd('cmds', c.id, x)
         return (
           <Anchor key={cid} id={`command-${c.id}`}>
-          <Card handle={handle} icon={CI[c.in]} title={'/' + c.name} sub={c.desc || c.in} muted={!c.on} right={<Toggle on={c.on} set={(v) => u({ on: v })} />}>
+          <Card handle={handle} icon={CI[c.in]} title={'/' + c.name} sub={c.desc || c.in} muted={!c.on} right={<Toggle on={c.on} set={(v) => u({ on: v })} label={`Enable /${c.name}`} />}>
             <div className="grid gap-4 sm:grid-cols-3">
               <Field label="Name" hint="Typed after /"><Input value={c.name} set={(v) => u({ name: v.replace(/[^\w-]/g, '') })} /></Field>
               <Field label="Description"><Input value={c.desc} set={(v) => u({ desc: v })} /></Field>
@@ -1070,9 +1071,9 @@ function DocumentsSettings() {
   return (
     <Anchor id="documents">
     <div className="space-y-4">
-      <div className="flex items-center justify-between gap-3"><div><div className="text-sm font-medium">Extract PDF text</div><div className="text-xs text-mu">Read the text layer of PDFs so every endpoint (not just Anthropic) can use them. Scanned pages still need OCR or a vision endpoint.</div></div><Toggle on={d.pdfText} set={(pdfText) => set({ pdfText })} /></div>
-      <div className="flex items-center justify-between gap-3"><div><div className="text-sm font-medium">Read Office documents</div><div className="text-xs text-mu">Extract text from .docx, .odt, .rtf, .pptx and every .xlsx sheet locally. Legacy .doc/.xls/.ppt still need conversion.</div></div><Toggle on={d.office} set={(office) => set({ office })} /></div>
-      <div className="flex items-center justify-between gap-3"><div><div className="text-sm font-medium">Unpack archives</div><div className="text-xs text-mu">Expand .zip and .gz attachments into individual files (up to 25 entries). Pair .vtt/.srt transcripts with matching audio/video automatically.</div></div><Toggle on={d.archives} set={(archives) => set({ archives })} /></div>
+      <div className="flex items-center justify-between gap-3"><div><div className="text-sm font-medium">Extract PDF text</div><div className="text-xs text-mu">Read the text layer of PDFs so every endpoint (not just Anthropic) can use them. Scanned pages still need OCR or a vision endpoint.</div></div><Toggle on={d.pdfText} set={(pdfText) => set({ pdfText })} label="Extract PDF text" /></div>
+      <div className="flex items-center justify-between gap-3"><div><div className="text-sm font-medium">Read Office documents</div><div className="text-xs text-mu">Extract text from .docx, .odt, .rtf, .pptx and every .xlsx sheet locally. Legacy .doc/.xls/.ppt still need conversion.</div></div><Toggle on={d.office} set={(office) => set({ office })} label="Read Office documents" /></div>
+      <div className="flex items-center justify-between gap-3"><div><div className="text-sm font-medium">Unpack archives</div><div className="text-xs text-mu">Expand .zip and .gz attachments into individual files (up to 25 entries). Pair .vtt/.srt transcripts with matching audio/video automatically.</div></div><Toggle on={d.archives} set={(archives) => set({ archives })} label="Unpack archives" /></div>
       <Field label="Image text extraction (OCR)" hint="Auto transcribes images only when the answering model can't read images itself. Always transcribes every image. Uses the vision endpoint below.">
         <Seg v={d.ocr} set={(ocr) => set({ ocr })} opts={[['off', 'Off'], ['auto', 'Auto'], ['always', 'Always']]} />
       </Field>
@@ -1095,7 +1096,7 @@ function DocumentsSettings() {
         <Sel value={String(d.totalChars)} set={(v) => set({ totalChars: Number(v) })} opts={[['100000', '100k characters'], ['250000', '250k characters'], ['500000', '500k characters (default)'], ['750000', '750k characters'], ['1000000', '1M characters']]} />
       </Field>
       </Anchor>
-      <div className="flex items-center justify-between gap-3"><div><div className="text-sm font-medium">Private file names</div><div className="text-xs text-mu">The model sees neutral names like file-1.pdf, so a private client, date, or address in a file name never leaves the device. Turn this off when you refer to files by their real names in your request; duplicates still get distinct names.</div></div><Toggle on={d.privateNames} set={(privateNames) => set({ privateNames })} /></div>
+      <div className="flex items-center justify-between gap-3"><div><div className="text-sm font-medium">Private file names</div><div className="text-xs text-mu">The model sees neutral names like file-1.pdf, so a private client, date, or address in a file name never leaves the device. Turn this off when you refer to files by their real names in your request; duplicates still get distinct names.</div></div><Toggle on={d.privateNames} set={(privateNames) => set({ privateNames })} label="Private file names" /></div>
     </div>
     </Anchor>
   )
@@ -1326,7 +1327,7 @@ function Tools() {
         <Card icon={I} title={n} sub={u} muted={!s.tools[k]} right={
           <>
             <span className="hidden items-center gap-1.5 text-xs text-mu sm:flex">{s.tools[k] ? <ShieldCheck size={14} className="text-ac" /> : <Shield size={14} />}{s.tools[k] ? 'Allowed' : 'Off'}</span>
-            <Toggle on={!!s.tools[k]} set={(v) => toggleTool(k, v)} />
+            <Toggle on={!!s.tools[k]} set={(v) => toggleTool(k, v)} label={`Enable ${n} tool`} />
           </>
         }>
           <p className="text-sm">{d}</p>
@@ -1337,8 +1338,8 @@ function Tools() {
           </div>
           {k === 'workspace_upsert' && <Anchor id="workspace-view"><div className="space-y-3 rounded-xl bg-bg p-3">
             <div className="flex items-center justify-between gap-3"><div><div className="text-sm font-medium">Default view for workspace tiles</div><div className="text-xs text-mu">Pinned shows the revision created by each message. Latest shows the most recent revision with a dropdown to go back.</div></div><Seg v={s.workspacePrefs?.defaultView ?? 'pinned'} set={(defaultView) => s.patch({ workspacePrefs: { ...s.workspacePrefs, defaultView } })} opts={[['pinned', 'Pinned'], ['latest', 'Latest']]} /></div>
-            <div className="flex items-center justify-between gap-3"><div><div className="text-sm font-medium">Auto-open workspace panel</div><div className="text-xs text-mu">Automatically open the side panel when the AI starts writing files.</div></div><Toggle on={s.workspacePrefs?.autoOpen ?? true} set={(autoOpen) => s.patch({ workspacePrefs: { ...s.workspacePrefs, autoOpen } })} /></div>
-            <div className="flex items-center justify-between gap-3"><div><div className="text-sm font-medium">Auto-follow active file</div><div className="text-xs text-mu">When the AI switches to writing a different file, automatically select it in the panel.</div></div><Toggle on={s.workspacePrefs?.autoFollow ?? true} set={(autoFollow) => s.patch({ workspacePrefs: { ...s.workspacePrefs, autoFollow } })} /></div>
+            <div className="flex items-center justify-between gap-3"><div><div className="text-sm font-medium">Auto-open workspace panel</div><div className="text-xs text-mu">Automatically open the side panel when the AI starts writing files.</div></div><Toggle on={s.workspacePrefs?.autoOpen ?? true} set={(autoOpen) => s.patch({ workspacePrefs: { ...s.workspacePrefs, autoOpen } })} label="Auto-open workspace panel" /></div>
+            <div className="flex items-center justify-between gap-3"><div><div className="text-sm font-medium">Auto-follow active file</div><div className="text-xs text-mu">When the AI switches to writing a different file, automatically select it in the panel.</div></div><Toggle on={s.workspacePrefs?.autoFollow ?? true} set={(autoFollow) => s.patch({ workspacePrefs: { ...s.workspacePrefs, autoFollow } })} label="Auto-follow active file" /></div>
           </div></Anchor>}
           {k === 'search' && <div className="space-y-3 rounded-xl bg-bg p-3">
             <Anchor id="search-provider">
@@ -1388,14 +1389,14 @@ function Tools() {
               <Field label="Inline citations" hint="Off hides [S1] markers in replies (Sources list stays below the reply). Pills jump to the Sources list below the reply (description first, Open button inside). Links render as plain markdown links.">
                 <Seg v={search.citeStyle} set={(citeStyle) => setSearch({ citeStyle })} opts={[['off', 'Off'], ['pills', 'Pills'], ['links', 'Links']]} />
               </Field>
-              <div className="flex items-center justify-between gap-3"><div><div className="text-sm font-medium">Expand Sources by default</div><div className="text-xs text-mu">Show the source list open on every grounded reply instead of behind the Sources button.</div></div><Toggle on={search.sourcesOpen} set={(sourcesOpen) => setSearch({ sourcesOpen })} /></div>
-              <div className="flex items-center justify-between gap-3"><div><div className="text-sm font-medium">Strict citation warnings</div><div className="text-xs text-mu">Flag grounded replies that cite nothing, or cite sources they weren't given.</div></div><Toggle on={search.strictCitations} set={(strictCitations) => setSearch({ strictCitations })} /></div>
+              <div className="flex items-center justify-between gap-3"><div><div className="text-sm font-medium">Expand Sources by default</div><div className="text-xs text-mu">Show the source list open on every grounded reply instead of behind the Sources button.</div></div><Toggle on={search.sourcesOpen} set={(sourcesOpen) => setSearch({ sourcesOpen })} label="Expand Sources by default" /></div>
+              <div className="flex items-center justify-between gap-3"><div><div className="text-sm font-medium">Strict citation warnings</div><div className="text-xs text-mu">Flag grounded replies that cite nothing, or cite sources they weren't given.</div></div><Toggle on={search.strictCitations} set={(strictCitations) => setSearch({ strictCitations })} label="Strict citation warnings" /></div>
             </div>
             </Anchor>
           </div>}
           {k === 'fetch_page' && <div className="space-y-3 rounded-xl bg-bg p-3">
             <Anchor id="page-reader">
-            <div className="flex items-center justify-between gap-3"><div><div className="text-sm font-medium">Page reader</div><div className="text-xs text-mu">Let the model open a search result to read the full page. Turn off to keep grounding to snippets.</div></div><Toggle on={search.reader} set={(reader) => setSearch({ reader })} /></div>
+            <div className="flex items-center justify-between gap-3"><div><div className="text-sm font-medium">Page reader</div><div className="text-xs text-mu">Let the model open a search result to read the full page. Turn off to keep grounding to snippets.</div></div><Toggle on={search.reader} set={(reader) => setSearch({ reader })} label="Page reader" /></div>
             </Anchor>
             <Anchor id="reader-api">
             <Field label="Page reader API" hint="Which service reads a page when the model opens a search result. Every provider that supports page extraction is a first-class choice; direct fetch needs no key. Pick a different service than your search API to use a separate provider and key.">
@@ -1418,10 +1419,10 @@ function Tools() {
                 <Input value={search.readerUrl} set={(v) => setSearch({ readerUrl: v })} placeholder="https://example.com/read?url={url}" />
               </Field>
               </Anchor>}
-              <div className="flex items-center justify-between gap-3"><div><div className="text-sm font-medium">Fall back to direct page fetch</div><div className="text-xs text-mu">If the reader API fails or has no key, fetch the page directly instead of failing the read.</div></div><Toggle on={search.readerFallback} set={(readerFallback) => setSearch({ readerFallback })} /></div>
+              <div className="flex items-center justify-between gap-3"><div><div className="text-sm font-medium">Fall back to direct page fetch</div><div className="text-xs text-mu">If the reader API fails or has no key, fetch the page directly instead of failing the read.</div></div><Toggle on={search.readerFallback} set={(readerFallback) => setSearch({ readerFallback })} label="Fall back to direct page fetch" /></div>
             </>}
             <Anchor id="reader-summary">
-            <div className="flex items-center justify-between gap-3"><div><div className="text-sm font-medium">Summarize pages with another model</div><div className="text-xs text-mu">Send the page to a second model that returns a clean summary. The main model then gets the summary instead of the whole page, which keeps long articles from filling up the context.</div></div><Toggle on={search.readerSummary} set={(readerSummary) => setSearch({ readerSummary })} /></div>
+            <div className="flex items-center justify-between gap-3"><div><div className="text-sm font-medium">Summarize pages with another model</div><div className="text-xs text-mu">Send the page to a second model that returns a clean summary. The main model then gets the summary instead of the whole page, which keeps long articles from filling up the context.</div></div><Toggle on={search.readerSummary} set={(readerSummary) => setSearch({ readerSummary })} label="Summarize pages with another model" /></div>
             </Anchor>
             {search.readerSummary && <>
               <Anchor id="reader-summary-mode">
@@ -1558,7 +1559,7 @@ function SkillsTab() {
         const builtin = BUILTIN_SKILLS.some((b) => b.id === st.id)
         return (
           <Anchor key={st.id} id={`skill-${st.id}`}>
-          <Card icon={Sparkles} title={def.name} sub={`${st.enabled ? 'On' : 'Off'} · id: ${st.id}`} muted={!st.enabled} right={<Toggle on={st.enabled} set={(enabled) => upd(st.id, { enabled })} />}>
+          <Card icon={Sparkles} title={def.name} sub={`${st.enabled ? 'On' : 'Off'} · id: ${st.id}`} muted={!st.enabled} right={<Toggle on={st.enabled} set={(enabled) => upd(st.id, { enabled })} label={`Enable skill ${def.name}`} />}>
             <p className="text-xs text-mu">Skill id: <span className="font-mono">{st.id}</span></p>
             {def.source && <p className="text-xs text-mu">Source: {def.source}{def.license ? ` · ${def.license}` : ''}</p>}
             <Field label="When to use" hint="Short description of when this skill applies."><Input value={st.description ?? def.description} set={(description) => upd(st.id, { description })} placeholder="When this skill applies." /></Field>
@@ -1744,7 +1745,7 @@ function MemoryTab() {
     <Section title="Memory tool" desc="How the model stores and recalls things about you.">
     <Anchor id="memory-tool">
     <div className="rounded-xl bg-surf p-4 space-y-3">
-      <div className="flex items-center justify-between gap-3"><div><div className="font-medium">Memory tool</div><div className="text-sm text-mu">Disabled by default. Memories stay in this browser and are sent to your selected model when recalled.</div></div><Toggle on={mp.enabled} set={(enabled) => setPrefs({ enabled })} /></div>
+      <div className="flex items-center justify-between gap-3"><div><div className="font-medium">Memory tool</div><div className="text-sm text-mu">Disabled by default. Memories stay in this browser and are sent to your selected model when recalled.</div></div><Toggle on={mp.enabled} set={(enabled) => setPrefs({ enabled })} label="Memory tool" /></div>
       <div className="flex items-center justify-between gap-3 border-t border-bor pt-3">
         <div className="min-w-0"><div className="text-sm font-medium">Require approval</div><div className="text-xs text-mu">In Standard access, pause before the model stores a memory.</div></div>
         <Toggle on={!!s.toolApproval.memory} set={(v) => s.patch({ toolApproval: { ...s.toolApproval, memory: v } })} label="Require approval for memory writes" />
@@ -1824,7 +1825,7 @@ function WidgetsTab() {
       <Section title="Context meter" desc="The token ring in the chat header.">
       <Anchor id="context-meter">
       <div className="rounded-xl bg-surf p-3 space-y-3">
-        <label className="flex items-center justify-between gap-3 text-sm">Show context meter<Toggle on={s.prefs.showContextMeter ?? true} set={(showContextMeter) => s.patch({ prefs: { ...s.prefs, showContextMeter } })} /></label>
+        <label className="flex items-center justify-between gap-3 text-sm">Show context meter<Toggle on={s.prefs.showContextMeter ?? true} set={(showContextMeter) => s.patch({ prefs: { ...s.prefs, showContextMeter } })} label="Show context meter" /></label>
         <div className="text-xs text-mu">A ring in the chat header showing estimated tokens in the open chat. Click it for the reported input, output, and cache-token breakdown.</div>
         <Anchor id="context-limit"><Field label="Manual context limit" hint="Fallback scale when the model has no published context size. This does not change the model's actual context window."><Input type="number" min="1000" step="1000" value={s.widgetPrefs.contextLimit} set={(v) => s.patch({ widgetPrefs: { ...s.widgetPrefs, contextLimit: Math.max(1000, Number(v) || 1000) } })} /></Field></Anchor>
         <Field label="Characters per estimated token" hint="A rough estimate; 4 is a common default for English text."><Input type="number" min="1" max="10" value={s.widgetPrefs.charsPerToken} set={(v) => s.patch({ widgetPrefs: { ...s.widgetPrefs, charsPerToken: Math.min(10, Math.max(1, Number(v) || 4)) } })} /></Field>
@@ -1852,7 +1853,7 @@ function WidgetsTab() {
         <Anchor key={k} id={`widget-${k}`}>
         <Card icon={I} title={n} sub={blocked ? `Needs the ${blocked} feature` : d} muted={!!blocked || !s.widgets[k]} right={blocked
           ? <span className="shrink-0 rounded-md bg-hov px-2 py-1 text-xs text-mu">Off</span>
-          : <Toggle on={!!s.widgets[k]} set={(v) => s.patch({ widgets: { ...s.widgets, [k]: v }, rail: v || s.rail })} />}>
+          : <Toggle on={!!s.widgets[k]} set={(v) => s.patch({ widgets: { ...s.widgets, [k]: v }, rail: v || s.rail })} label={`Enable ${n} widget`} />}>
           <div className={blocked ? 'pointer-events-none opacity-50' : ''}>
           <p className="text-sm text-mu">Shown in the panel at the right of the chat. Open or close that panel with the panel button in the chat header.</p>
           {k === 'usage' && <Anchor id="usage-settings"><div className="space-y-3 rounded-xl bg-bg p-3">
@@ -2263,7 +2264,7 @@ function AdvancedTab() {
     <Anchor id={anchor}>
     <div className="flex items-center gap-3 rounded-xl bg-surf p-3">
       <div className="flex flex-1 items-center gap-2 text-sm font-medium">{t}<HelpTip text={d} label={`Help: ${t}`} /></div>
-      <Toggle on={a[k]} set={(v) => setA({ [k]: v })} />
+      <Toggle on={a[k]} set={(v) => setA({ [k]: v })} label={t} />
     </div>
     </Anchor>
   )
@@ -2294,8 +2295,8 @@ function WorkspaceTab() {
       <Section title="Panel" desc="How the workspace side panel behaves.">
       <div className="space-y-3">
         <Anchor id="default-view"><Field label="Default view"><Seg v={wp.defaultView ?? 'pinned'} set={(defaultView) => set({ defaultView: defaultView as typeof wp.defaultView })} opts={[['pinned', 'Pinned'], ['latest', 'Latest']]} /></Field></Anchor>
-        <Anchor id="auto-open"><div className="flex items-center justify-between gap-3"><div><div className="text-sm font-medium">Auto-open panel</div><div className="text-xs text-mu">Open the side panel when the AI starts writing files.</div></div><Toggle on={wp.autoOpen ?? true} set={(autoOpen) => set({ autoOpen })} /></div></Anchor>
-        <Anchor id="auto-follow"><div className="flex items-center justify-between gap-3"><div><div className="text-sm font-medium">Auto-follow file</div><div className="text-xs text-mu">Select the file the AI is writing automatically.</div></div><Toggle on={wp.autoFollow ?? true} set={(autoFollow) => set({ autoFollow })} /></div></Anchor>
+        <Anchor id="auto-open"><div className="flex items-center justify-between gap-3"><div><div className="text-sm font-medium">Auto-open panel</div><div className="text-xs text-mu">Open the side panel when the AI starts writing files.</div></div><Toggle on={wp.autoOpen ?? true} set={(autoOpen) => set({ autoOpen })} label="Auto-open panel" /></div></Anchor>
+        <Anchor id="auto-follow"><div className="flex items-center justify-between gap-3"><div><div className="text-sm font-medium">Auto-follow file</div><div className="text-xs text-mu">Select the file the AI is writing automatically.</div></div><Toggle on={wp.autoFollow ?? true} set={(autoFollow) => set({ autoFollow })} label="Auto-follow file" /></div></Anchor>
       </div>
       </Section>
       <Section title="Project templates" desc="Starter file sets the model can scaffold.">
@@ -2441,6 +2442,20 @@ function Chats() {
       </Anchor>
       </Section>
       </Anchor>
+      <Anchor id="archived-chats">
+      <Section title="Archived chats" desc="Chats you archive are kept out of the main list and removed automatically after a while.">
+      <Anchor id="archive-retention">
+      <div className="rounded-xl bg-surf p-3 space-y-2">
+        <div className="text-sm font-medium">Archived chat retention</div>
+        <div className="text-xs text-mu">Archived chats are permanently deleted after this many days. The last tick shows Never and keeps them indefinitely.</div>
+        <div className="flex items-center gap-3">
+          <RangeSlider label="Archived chat retention" min={1} max={ARCHIVE_RETENTION_NEVER} step={1} value={normArchiveDays(s.prefs.archiveDays)} valueText={archiveRetentionLabel(s.prefs.archiveDays)} set={(n) => s.patch({ prefs: { ...s.prefs, archiveDays: normArchiveDays(n) } })} className="flex-1" />
+          <span className="w-24 text-right text-sm">{archiveRetentionLabel(s.prefs.archiveDays)}</span>
+        </div>
+      </div>
+      </Anchor>
+      </Section>
+      </Anchor>
       <Section title="Behavior" desc="How the app handles sending messages and opening chats.">
       {row('enter-sends', 'enterSends', 'Enter sends the message', 'Turn off to send with the button and use Enter for new lines.')}
       <Anchor id="send-while-busy">
@@ -2483,6 +2498,17 @@ function Chats() {
 
 const VIEWS: Record<string, () => ReactNode> = { features: FeaturesTab, eps: Eps, prompts: Prompts, skills: SkillsTab, pls: Pls, cmds: Cmds, workspace: WorkspaceTab, tools: Tools, mcp: McpTab, memory: MemoryTab, widgets: WidgetsTab, look: Look, chats: Chats, voice: VoiceTab, keys: KeysTab, data: DataTab, adv: AdvancedTab }
 
+/* Recently opened sections are device-local navigation state, not settings:
+ * they never sync, never touch the persisted store and never change the tab a
+ * deep link opens. */
+const RECENT_KEY = 'byok.settings.recent'
+const readRecent = (): SettingsTabId[] => {
+  try {
+    const raw = JSON.parse(localStorage.getItem(RECENT_KEY) || '[]')
+    return Array.isArray(raw) ? raw.filter((x): x is SettingsTabId => SETTINGS_TABS.some(([k]) => k === x)).slice(0, 4) : []
+  } catch { return [] }
+}
+
 export function Settings({ tab, setTab }: { tab: string; setTab: (t: string) => void }) {
   const features = useS((s) => s.features)
   const showOff = useS((s) => s.prefs.showDisabledFeatures === true)
@@ -2494,8 +2520,28 @@ export function Settings({ tab, setTab }: { tab: string; setTab: (t: string) => 
     .filter((g) => g.tabs.length)
   const [query, setQuery] = useState('')
   const results = useMemo(() => searchSettings(query), [query])
+  const [recent, setRecent] = useState<SettingsTabId[]>(readRecent)
+  const searchRef = useRef<HTMLInputElement>(null)
+  const resultsRef = useRef<HTMLDivElement>(null)
   const { tab: rawTab, anchor } = splitSettingTarget(tab)
   const active = SETTINGS_TABS.some(([k]) => k === rawTab) ? rawTab : 'features'
+  // Remember where the reader has been, so the next visit starts with the
+  // four most useful shortcuts instead of a wall of every section.
+  useEffect(() => {
+    if (!SETTINGS_TABS.some(([k]) => k === rawTab)) return
+    setRecent((prev) => {
+      const next: SettingsTabId[] = [rawTab as SettingsTabId, ...prev.filter((x) => x !== rawTab)].slice(0, 4)
+      if (next.join('|') === prev.join('|')) return prev
+      try { localStorage.setItem(RECENT_KEY, JSON.stringify(next)) } catch { /* private mode */ }
+      return next
+    })
+  }, [rawTab])
+  const focusResult = (delta: number) => {
+    const buttons = Array.from(resultsRef.current?.querySelectorAll<HTMLButtonElement>('button') ?? [])
+    if (!buttons.length) return
+    const at = buttons.indexOf(document.activeElement as HTMLButtonElement)
+    buttons[(at + delta + buttons.length) % buttons.length]?.focus()
+  }
   const disabledFeature = Object.entries(FEATURE_TABS).find(([f, ids]) => (ids as string[]).includes(active) && !featOn({ features }, f as FeatureId))?.[0] as FeatureId | undefined
   const featureLabel = FEATURES.find(([id]) => id === disabledFeature)?.[1] ?? 'This feature'
   const openResult = (target: string) => { setQuery(''); setTab(target) }
@@ -2524,12 +2570,61 @@ export function Settings({ tab, setTab }: { tab: string; setTab: (t: string) => 
     <Modal close={() => setTab('')} blur={false} opacity={settingsOpacity} labelledBy="settings-title">
       <div style={{ width: `min(${settingsWidth}px, 100%)`, height: `min(${settingsHeight}px, 92dvh)` }} className="settings-root modal-panel flex overflow-hidden rounded-2xl bg-bg">
         <span id="settings-title" className="sr-only">Settings</span>
-        <nav aria-label="Settings sections" className="hidden w-56 shrink-0 flex-col border-r border-bor bg-side p-3 sm:flex">
-          <h2 className="px-3 pb-3 text-lg font-semibold">Settings</h2>
-          <input aria-label="Search settings" value={query} onChange={e => setQuery(e.target.value)} placeholder="Search settings" className="mb-3 w-full rounded-lg bg-surf px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ac/40" />
-          <div className="min-h-0 flex-1 space-y-3 overflow-y-auto">
-            {query.trim() ? results.map(result => <button key={result.target} onClick={() => openResult(result.target)} className="block w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-surf"><span className="block">{result.title}</span><span className="block text-xs text-mu">{result.section}</span></button>) : navGroups.map(group => <div key={group.label}><h3 className="px-3 pb-1 text-xs font-medium text-mu">{group.label}</h3>{group.tabs.map(id => { const entry = SETTINGS_TABS.find(([k]) => k === id)!; const [k, l, I] = entry; const off = !tabs.some(([visible]) => visible === k); return <button key={k} onClick={() => setTab(k)} aria-current={active === k ? 'page' : undefined} className={cx('flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm', active === k ? 'bg-hov' : 'text-mu hover:bg-surf hover:text-tx')}><I size={16} /><span className="min-w-0 flex-1">{l}</span>{off && <span className="text-xs">Off</span>}</button> })}</div>)}
-            {query.trim() && !results.length && <p className="px-3 py-2 text-sm text-mu">No settings found.</p>}
+        <nav aria-label="Settings sections" className="hidden w-60 shrink-0 flex-col border-r border-bor bg-side p-3 sm:flex">
+          <h2 className="px-2 pb-3 text-lg font-semibold tracking-tight">Settings</h2>
+          <div className="relative mb-3">
+            <Search size={15} aria-hidden="true" className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-mu" />
+            <input
+              ref={searchRef} aria-label="Search settings" value={query}
+              onChange={e => setQuery(e.target.value)} placeholder="Search settings"
+              onKeyDown={(e) => {
+                if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); focusResult(e.key === 'ArrowDown' ? 1 : -1) }
+                else if (e.key === 'Enter' && results[0]) { e.preventDefault(); openResult(results[0].target) }
+                else if (e.key === 'Escape' && query) { e.preventDefault(); e.stopPropagation(); setQuery(''); searchRef.current?.focus() }
+              }}
+              className="w-full rounded-lg bg-surf py-2 pl-9 pr-3 text-sm outline-none focus:ring-2 focus:ring-ac/40"
+            />
+          </div>
+          <div
+            ref={resultsRef} className="min-h-0 flex-1 space-y-4 overflow-y-auto"
+            onKeyDown={(e) => {
+              if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); focusResult(e.key === 'ArrowDown' ? 1 : -1) }
+              else if (e.key === 'Home' || e.key === 'End') { e.preventDefault(); const buttons = Array.from(resultsRef.current?.querySelectorAll<HTMLButtonElement>('button') ?? []); buttons[e.key === 'Home' ? 0 : buttons.length - 1]?.focus() }
+              else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); setQuery(''); searchRef.current?.focus() }
+            }}
+          >
+            {query.trim() ? (
+              <>
+                <h3 className="px-2 text-[11px] font-semibold uppercase tracking-wider text-mu">{results.length} result{results.length === 1 ? '' : 's'}</h3>
+                <div className="space-y-0.5">{results.map(result => {
+                  const Icon = SETTINGS_TABS.find(([k]) => k === result.target.split('#')[0])?.[2] ?? Search
+                  return <button key={result.target} onClick={() => openResult(result.target)} className="flex w-full items-start gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm hover:bg-surf focus-visible:bg-surf focus-visible:outline-none"><Icon size={15} className="mt-0.5 shrink-0 text-mu" /><span className="min-w-0"><span className="block truncate">{result.title}</span><span className="mt-0.5 block truncate text-[11px] text-mu">{result.section}</span></span></button>
+                })}</div>
+              </>
+            ) : (
+              <>
+                {recent.length > 0 && (
+                  <div>
+                    <h3 className="flex items-center gap-1.5 px-2 pb-1 text-[11px] font-semibold uppercase tracking-wider text-mu"><History size={11} />Recent</h3>
+                    {recent.map(id => {
+                      const [, label, I] = SETTINGS_TABS.find(([k]) => k === id)!
+                      return <button key={id} onClick={() => setTab(id)} aria-current={active === id ? 'page' : undefined} className={cx('flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-sm', active === id ? 'bg-ac/15 text-tx' : 'text-mu hover:bg-surf hover:text-tx')}><I size={15} /><span className="min-w-0 flex-1 truncate">{label}</span></button>
+                    })}
+                  </div>
+                )}
+                {navGroups.map(group => (
+                  <div key={group.label}>
+                    <h3 className="px-2 pb-1 text-[11px] font-semibold uppercase tracking-wider text-mu">{group.label}</h3>
+                    {group.tabs.map(id => {
+                      const [, l, I] = SETTINGS_TABS.find(([k]) => k === id)!
+                      const off = !tabs.some(([visible]) => visible === id)
+                      return <button key={id} onClick={() => setTab(id)} aria-current={active === id ? 'page' : undefined} className={cx('relative flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm', active === id ? 'bg-ac/15 font-medium text-tx before:absolute before:inset-y-1.5 before:left-0 before:w-0.5 before:rounded-full before:bg-ac' : 'text-mu hover:bg-surf hover:text-tx')}><I size={16} className={active === id ? 'text-ac' : undefined} /><span className="min-w-0 flex-1 truncate">{l}</span>{off && <span className="text-[10px] uppercase tracking-wide">Off</span>}</button>
+                    })}
+                  </div>
+                ))}
+              </>
+            )}
+            {query.trim() && !results.length && <p className="px-2 py-2 text-sm text-mu">No settings found. Try a shorter word.</p>}
           </div>
         </nav>
         <div className="relative min-w-0 flex-1">

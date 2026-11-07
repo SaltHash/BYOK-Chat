@@ -1,6 +1,7 @@
 import { lazy, Suspense, useEffect, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import { useS, exportChat, featOn } from './store'
+import { isArchivedChatExpired } from './archive'
 import { combo, rec } from './engine'
 import { clampSidebarWidth, clampWidgetWidth } from './layout'
 import { canUseDOM, focusComposer, useThemeCss, useStyleCss, useVisualPrefs, usePanelResize } from './hooks'
@@ -68,7 +69,9 @@ export default function App() {
     if (!canUseDOM()) return
     const purge = () => {
       const s = useS.getState(), now = Date.now()
-      const expired = s.chats.filter(c => c.temporary && ((s.prefs.tempHours === 0 && c.id !== s.chat) || (c.expiresAt != null && c.expiresAt <= now)))
+      const expired = s.chats.filter(c =>
+        (c.temporary && ((s.prefs.tempHours === 0 && c.id !== s.chat) || (c.expiresAt != null && c.expiresAt <= now)))
+        || (c.archived === true && isArchivedChatExpired(c.archivedAt, s.prefs.archiveDays, now)))
       if (expired.length) {
         const ids = new Set(expired.map(c => c.id)), chats = s.chats.filter(c => !ids.has(c.id))
         s.patch({ chats, chat: ids.has(s.chat) ? chats[0]?.id ?? '' : s.chat })

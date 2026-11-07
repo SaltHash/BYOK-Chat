@@ -1,7 +1,8 @@
 import { useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
-import { Folder, Plus, Pencil, FileText, MessageSquare, Trash2, X, CalendarDays, Files } from 'lucide-react'
+import { Folder, Plus, Pencil, FileText, MessageSquare, Archive, Trash2, X, CalendarDays, Files } from 'lucide-react'
 import { useS, type Project, type ProjectFile } from '../store'
+import { useShiftHeld } from '../hooks'
 import { Btn, Confirm, cx } from './ui'
 import { Composer } from './Composer'
 import { ProjectModal } from './ProjectModal'
@@ -26,8 +27,8 @@ export function ProjectOverview({ project, cfg }: { project: Project; cfg: (t: s
   const chats = useS(useShallow((st) => st.chats.filter((c) => c.project === project.id)))
   const shareOn = project.shareWorkspaces !== false
   const [editModal, setEditModal] = useState(false)
-  const [delId, setDelId] = useState('')
   const [confirmFile, setConfirmFile] = useState<ProjectFile | null>(null)
+  const shift = useShiftHeld()
   // Newest activity first: "Recent chats" is an activity list, not the store's
   // insertion order. Archived chats stay in their own sidebar view.
   const recent = chats
@@ -78,7 +79,7 @@ export function ProjectOverview({ project, cfg }: { project: Project; cfg: (t: s
                     <span className="min-w-0 flex-1 truncate">{c.title}</span>
                     <span className="shrink-0 text-xs text-mu">{c.msgs.length} msg{c.msgs.length === 1 ? '' : 's'}</span>
                   </button>
-                  <button title="Delete chat (hold Shift to skip confirmation)" onClick={(e) => { if (e.shiftKey) useS.getState().chatOp(c.id, 'del'); else setDelId(c.id) }} className="mr-1 grid size-7 shrink-0 place-items-center rounded-md text-mu hover:text-er"><Trash2 size={14} /></button>
+                  <button aria-label={shift ? `Permanently delete ${c.title}` : `Archive ${c.title}`} title={shift ? 'Delete chat permanently' : 'Archive chat (hold Shift to delete permanently)'} onClick={(e) => useS.getState().chatOp(c.id, e.shiftKey ? 'del' : 'archive')} className={cx('mr-1 grid size-7 shrink-0 place-items-center rounded-md text-mu', shift ? 'hover:text-er' : 'hover:text-tx')}>{shift ? <Trash2 size={14} /> : <Archive size={14} />}</button>
                 </div>
               ))}
               {!chats.length && <p className="px-2.5 py-2 text-sm text-mu">No chats in this project yet. Send a message below to start one.</p>}
@@ -106,7 +107,6 @@ export function ProjectOverview({ project, cfg }: { project: Project; cfg: (t: s
         <div className="w-full px-4"><Composer cfg={cfg} /></div>
       </div>
       {editModal && <ProjectModal close={() => setEditModal(false)} project={project} />}
-      {delId && <Confirm title="Delete this chat?" text="This chat and its messages will be permanently removed." ok="Delete" close={() => setDelId('')} run={() => useS.getState().chatOp(delId, 'del')} />}
       {confirmFile && (
         <Confirm title={`Remove ${confirmFile.name}?`} text="The file is removed from this project's context. Chats are not affected." ok="Remove" close={() => setConfirmFile(null)} run={() => useS.getState().setProjectContext(project.id, (project.context ?? []).filter((x) => x.id !== confirmFile.id))} />
       )}

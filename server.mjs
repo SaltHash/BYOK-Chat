@@ -64,6 +64,12 @@ function sendStatic(req, res, reqPath, target, data, info) {
   const headers = {
     'content-type': type,
     'x-content-type-options': 'nosniff',
+    'referrer-policy': 'strict-origin-when-cross-origin',
+    // Defence in depth only: these directives do not constrain any feature the
+    // app uses (no plugins, no base-tag rewrites, no cross-origin form posts),
+    // so they cannot break provider calls, inline themes or the sandboxed
+    // artifact document. Script/style sources are intentionally left alone.
+    'content-security-policy': "base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'",
     'cache-control': target.endsWith('index.html') ? 'no-cache'
       : reqPath.startsWith('/assets/') ? 'public, max-age=31536000, immutable'
       : 'public, max-age=3600',

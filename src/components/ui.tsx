@@ -25,8 +25,12 @@ export const Chip = ({ icon: I, children }: { icon?: Ic; children: ReactNode }) 
   <span className="inline-flex items-center gap-1.5 rounded-md bg-hov px-2 py-1 text-xs">{I && <I size={12} />}{children}</span>
 )
 
-export const Toggle = ({ on, set, label }: { on: boolean; set: (v: boolean) => void; label?: string }) => (
-  <button role="switch" aria-checked={on} aria-label={label} onClick={() => set(!on)} className={cx('h-5 w-9 shrink-0 rounded-full p-0.5 transition-colors', on ? 'bg-ac' : 'bg-hov')}>
+/* Every switch is named: a `role="switch"` without an accessible name is
+ * announced as just "switch, on" by a screen reader. The visual track stays
+ * 20px tall; a pseudo-element widens the hit area to 32x28 for touch and
+ * motor-impaired users without changing the row rhythm. */
+export const Toggle = ({ on, set, label, disabled = false }: { on: boolean; set: (v: boolean) => void; label: string; disabled?: boolean }) => (
+  <button type="button" role="switch" aria-checked={on} aria-label={label} disabled={disabled} onClick={() => set(!on)} className={cx('relative h-5 w-9 shrink-0 rounded-full p-0.5 transition-colors before:absolute before:-inset-x-1.5 before:-inset-y-1 before:content-[""] disabled:opacity-40', on ? 'bg-ac' : 'bg-hov')}>
     <span className={cx('block size-4 rounded-full transition-transform', on ? 'translate-x-4 bg-acx' : 'bg-mu')} />
   </button>
 )
@@ -107,11 +111,33 @@ export function HelpTip({ text, label = 'Help' }: { text: string; label?: string
   )
 }
 
-export function Seg<T extends string>({ v, set, opts }: { v: T; set: (v: T) => void; opts: [T, string, Ic?][] }) {
+/* Mutually exclusive choices. Exposed as a radiogroup so assistive technology
+ * hears which option is selected, with the arrow-key roving focus the radio
+ * pattern promises (only the checked option is in the Tab order). */
+export function Seg<T extends string>({ v, set, opts, label }: { v: T; set: (v: T) => void; opts: [T, string, Ic?][]; /** Group name. Falls back to the option names when a call site has its own visible heading. */ label?: string }) {
+  const ref = useRef<HTMLDivElement>(null)
+  const hasValue = opts.some(([k]) => k === v)
+  const move = (delta: number) => {
+    const at = Math.max(0, opts.findIndex(([k]) => k === v))
+    const next = opts[(at + delta + opts.length) % opts.length]
+    if (!next) return
+    set(next[0])
+    requestAnimationFrame(() => ref.current?.querySelectorAll<HTMLButtonElement>('[role="radio"]')[opts.indexOf(next)]?.focus())
+  }
   return (
-    <div className="inline-flex flex-wrap gap-1 rounded-lg bg-bg p-1">
-      {opts.map(([k, l, I]) => (
-        <button key={k} onClick={() => set(k)} className={cx('inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm transition-colors', v === k ? 'bg-hov text-tx' : 'text-mu hover:text-tx')}>
+    <div ref={ref} role="radiogroup" aria-label={label ?? opts.map(([, l]) => l).join(' or ')} className="inline-flex flex-wrap gap-1 rounded-lg bg-bg p-1">
+      {opts.map(([k, l, I], i) => (
+        <button
+          key={k} type="button" role="radio" aria-checked={v === k} tabIndex={v === k || (!hasValue && i === 0) ? 0 : -1}
+          onClick={() => set(k)}
+          onKeyDown={(e) => {
+            if (e.key === 'ArrowRight' || e.key === 'ArrowDown') { e.preventDefault(); move(1) }
+            else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') { e.preventDefault(); move(-1) }
+            else if (e.key === 'Home') { e.preventDefault(); set(opts[0][0]); requestAnimationFrame(() => ref.current?.querySelector<HTMLButtonElement>('[role="radio"]')?.focus()) }
+            else if (e.key === 'End') { e.preventDefault(); const last = opts[opts.length - 1]; set(last[0]); requestAnimationFrame(() => ref.current?.querySelectorAll<HTMLButtonElement>('[role="radio"]')[opts.length - 1]?.focus()) }
+          }}
+          className={cx('inline-flex min-h-7 items-center gap-1.5 rounded-md px-3 py-1.5 text-sm transition-colors focus-visible:ring-2 focus-visible:ring-ac/40', v === k ? 'bg-hov text-tx' : 'text-mu hover:text-tx')}
+        >
           {I && <I size={14} />}{l}
         </button>
       ))}
@@ -209,7 +235,7 @@ export const Item = ({ icon: I, children, sub, on, off, star, toggle, className,
 /* Focusable elements eligible for the modal tab cycle. */
 const FOCUSABLE = 'a[href],button:not([disabled]),textarea:not([disabled]),input:not([disabled]),select:not([disabled]),[tabindex]:not([tabindex="-1"])'
 
-export function Modal({ children, close, blur = true, opacity = 55, keyboard = true, labelledBy }: { children: ReactNode; close: () => void; blur?: boolean; opacity?: number; keyboard?: boolean; labelledBy?: string }) {
+export function Modal({ children, close, blur = true, opacity = 55, keyboard = true, labelledBy, label }: { children: ReactNode; close: () => void; blur?: boolean; opacity?: number; keyboard?: boolean; labelledBy?: string; /** Accessible name when the dialog has no heading to point at. */ label?: string }) {
   useEscapeClose(close, keyboard)
   const root = useRef<HTMLDivElement>(null)
   /* Keyboard users must land inside the dialog, Tab must cycle within it, and
@@ -233,7 +259,7 @@ export function Modal({ children, close, blur = true, opacity = 55, keyboard = t
     if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus() }
     else if (e.shiftKey && (document.activeElement === first || document.activeElement === node)) { e.preventDefault(); last.focus() }
   }
-  return <div ref={root} role="dialog" aria-modal="true" aria-labelledby={labelledBy} tabIndex={-1} onKeyDown={onKeyDown} style={{ backgroundColor: `rgb(0 0 0 / ${Math.max(0, Math.min(100, opacity))}%)`, backdropFilter: blur ? 'blur(var(--modal-blur, 12px))' : undefined }} className="fixed inset-0 z-50 grid place-items-center overflow-y-auto overscroll-contain p-4 outline-none" onMouseDown={(e) => e.target === e.currentTarget && close()}>{children}</div>
+  return <div ref={root} role="dialog" aria-modal="true" aria-labelledby={labelledBy} aria-label={labelledBy ? undefined : label} tabIndex={-1} onKeyDown={onKeyDown} style={{ backgroundColor: `rgb(0 0 0 / ${Math.max(0, Math.min(100, opacity))}%)`, backdropFilter: blur ? 'blur(var(--modal-blur, 12px))' : undefined }} className="fixed inset-0 z-50 grid place-items-center overflow-y-auto overscroll-contain p-4 outline-none" onMouseDown={(e) => e.target === e.currentTarget && close()}>{children}</div>
 }
 
 /** Full-screen image viewer. Clicking the backdrop, the close button, or
@@ -245,7 +271,7 @@ export function Modal({ children, close, blur = true, opacity = 55, keyboard = t
  *  caged inside the composer instead of covering the window. */
 export function ImageLightbox({ src, alt, close }: { src: string; alt?: string; close: () => void }) {
   return createPortal(
-    <Modal close={close} blur={false} opacity={82}>
+    <Modal close={close} blur={false} opacity={82} label={alt ? `Image: ${alt}` : 'Image preview'}>
       <figure className="relative m-0 flex max-h-[94vh] w-full max-w-[min(96vw,1400px)] items-center justify-center">
         <img src={src} alt={alt ?? ''} className="max-h-[94vh] w-auto max-w-full rounded-lg object-contain shadow-2xl" />
         <Btn sm icon={X} title="Close full screen" onClick={close} className="absolute right-2 top-2 bg-black/60 text-white hover:bg-black/80" />

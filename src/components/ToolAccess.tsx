@@ -147,7 +147,7 @@ export function ToolAccessCard() {
         </div>
         <p className="text-sm">{info.description}</p>
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-          <Seg v={mode} set={(toolMode) => { s.patch({ toolMode, ...(toolMode === 'off' ? {} : { features: { ...s.features, tools: true } }) }); if (toolMode === 'off' || toolMode === 'full') settleToolApprovals(chatId, toolMode === 'full') }} opts={TOOL_MODES.map((m) => [m.id, m.short] as [ToolMode, string])} />
+          <Seg label="Tool access mode" v={mode} set={(toolMode) => { s.patch({ toolMode, ...(toolMode === 'off' ? {} : { features: { ...s.features, tools: true } }) }); if (toolMode === 'off' || toolMode === 'full') settleToolApprovals(chatId, toolMode === 'full') }} opts={TOOL_MODES.map((m) => [m.id, m.short] as [ToolMode, string])} />
           <span className="text-xs text-mu">Same control as the lock in the composer.</span>
         </div>
         <p className="text-sm text-mu">

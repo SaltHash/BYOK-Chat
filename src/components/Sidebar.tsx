@@ -5,7 +5,7 @@ import { useS, chatMd, dl, THEMES, DARK_THEMES, LIGHT_THEMES, THEME_COLORS, them
 import { searchChats } from '../recall'
 import { bookmarkEntries } from '../bookmarks'
 import { clampSidebarWidth } from '../layout'
-import { focusComposer } from '../hooks'
+import { focusComposer, useShiftHeld } from '../hooks'
 import { Btn, Confirm, cx } from './ui'
 import { ProjectModal } from './ProjectModal'
 import { DndPlaceholder, DndLiveRegion, showDragOverlay, moveDragOverlay, hideDragOverlay, measureBox, DND_ACTIVATION_PX, useFlipAnimate, restDocTop, pointerDocY, edgeScroll } from './dnd'
@@ -26,9 +26,9 @@ function Name({ v, save, done }: { v: string; save: (t: string) => void; done: (
 }
 
 type RowDnd = { register: (id: string) => (el: HTMLDivElement | null) => void; handle: (chat: Chat, container: string, index: number) => { className: string; tabIndex: number; role: string; 'aria-label': string; 'aria-pressed': boolean; onPointerDown: (e: React.PointerEvent) => void; onKeyDown: (e: React.KeyboardEvent) => void }; activeId: string | null }
-type RowProps = { c: Chat; mv: (id: string, x: number, y: number) => void; del: (id: string, shift: boolean) => void; dnd: RowDnd | null; container: string; index: number; /** Extra trailing label (temporary chats show the time they have left). */ time?: string }
+type RowProps = { c: Chat; mv: (id: string, x: number, y: number) => void; del: (id: string, shift: boolean) => void; dnd: RowDnd | null; container: string; index: number; /** Whether Shift is currently held, which swaps archive for permanent delete. */ shift: boolean; /** Close the drawer after navigation on narrow screens. */ onNavigate: () => void; /** Extra trailing label (temporary chats show the time they have left). */ time?: string }
 
-function RowBody({ c, mv, del, dnd, container, index, time }: RowProps) {
+function RowBody({ c, mv, del, dnd, container, index, shift, onNavigate, time }: RowProps) {
   // The only store fields a row renders are whether it is the open chat and
   // whether it is still replying; the actions are stable and read on demand, so
   // a streamed chunk or a keystroke in the composer does not re-render the list.
@@ -70,7 +70,7 @@ function RowBody({ c, mv, del, dnd, container, index, time }: RowProps) {
     <div ref={dnd ? dnd.register(c.id) : undefined} data-chat-row={c.id} title={dnd ? 'Drag to move to a project' : undefined}
       className={cx('group flex items-center rounded-lg pr-1 text-sm', dnd && 'dnd-handle cursor-grab', selected ? 'bg-hov' : 'hover:bg-surf', dragging && 'opacity-25')}>
       {ed ? <Name v={c.title} save={(t) => useS.getState().rename(c.id, t)} done={() => setEd(false)} /> : (
-        <button {...dragProps} onDoubleClick={() => setEd(true)} onClick={() => useS.getState().patch({ chat: c.id, activeProject: '' })} aria-current={selected ? 'page' : undefined} className="side-item flex min-w-0 flex-1 items-center gap-2.5 px-2.5 text-left">
+        <button {...dragProps} onDoubleClick={() => setEd(true)} onClick={() => { useS.getState().patch({ chat: c.id, activeProject: '' }); onNavigate() }} aria-current={selected ? 'page' : undefined} className="side-item flex min-w-0 flex-1 items-center gap-2.5 px-2.5 text-left">
           {c.pin ? <Pin size={15} className="shrink-0 text-ac" /> : c.temporary ? <Clock size={15} className="shrink-0 text-mu" /> : <MessageSquare size={15} className="shrink-0 text-mu" />}
           <span className="flex min-w-0 flex-1 items-center gap-1.5">
             <span className="truncate">{c.title}{c.temporary && container !== 'temporary' ? ' · temporary' : ''}</span>
@@ -82,7 +82,7 @@ function RowBody({ c, mv, del, dnd, container, index, time }: RowProps) {
       )}
       {time && <span title={c.expiresAt ? `Deletes in ${time}` : 'Deletes when you leave'} className="shrink-0 text-xs text-mu">{time}</span>}
       <span className="dnd-actions hidden shrink-0 max-md:flex md:group-hover:flex md:group-focus-within:flex">
-        <button aria-label={`Delete ${c.title}`} title="Delete chat (hold Shift to skip confirmation)" onClick={(e) => del(c.id, e.shiftKey)} className={cx(act, 'hover:text-er')}><Trash2 size={14} /></button>
+        <button aria-label={shift ? `Permanently delete ${c.title}` : c.archived ? `Restore ${c.title} from archive` : `Archive ${c.title}`} title={shift ? 'Delete chat permanently' : c.archived ? 'Restore from archive' : 'Archive chat (hold Shift to delete permanently)'} onClick={(e) => del(c.id, e.shiftKey)} className={cx(act, shift ? 'hover:text-er' : 'hover:text-tx')}>{shift ? <Trash2 size={14} /> : c.archived ? <ArchiveRestore size={14} /> : <Archive size={14} />}</button>
         <button aria-label={`More actions for ${c.title}`} title="More actions" aria-haspopup="menu" aria-expanded={!!menu} onClick={(e) => { e.stopPropagation(); const r = e.currentTarget.getBoundingClientRect(); setMenu({ x: r.right, y: r.bottom + 4 }) }} className={act}><MoreVertical size={14} /></button>
       </span>
       {menu && (
@@ -95,7 +95,7 @@ function RowBody({ c, mv, del, dnd, container, index, time }: RowProps) {
           <button role="menuitem" onClick={() => { useS.getState().chatOp(c.id, 'pin'); setMenu(null) }} className={rowMenuItem}><Pin size={16} className="text-mu" />{c.pin ? 'Unpin' : 'Pin'}</button>
           <button role="menuitem" title={c.archived ? 'Restore from archive' : 'Archive chat (kept, hidden from the main list)'} onClick={() => { useS.getState().chatOp(c.id, 'archive'); setMenu(null) }} className={rowMenuItem}>{c.archived ? <ArchiveRestore size={16} className="text-mu" /> : <Archive size={16} className="text-mu" />}{c.archived ? 'Restore from archive' : 'Archive'}</button>
           {c.temporary && <button role="menuitem" onClick={() => { useS.getState().promoteChat(c.id); setMenu(null) }} className={rowMenuItem}><Bookmark size={16} className="text-mu" />Save as permanent chat</button>}
-          <button role="menuitem" onClick={(e) => { del(c.id, e.shiftKey); setMenu(null) }} className={cx(rowMenuItem, 'hover:text-er')}><Trash2 size={16} />Delete</button>
+          <button role="menuitem" onClick={() => { useS.getState().chatOp(c.id, 'del'); setMenu(null) }} className={cx(rowMenuItem, 'hover:text-er')}><Trash2 size={16} />Delete permanently</button>
         </div>
       )}
     </div>
@@ -103,8 +103,8 @@ function RowBody({ c, mv, del, dnd, container, index, time }: RowProps) {
 }
 
 const Row = memo(RowBody, (a, b) =>
-  a.container === b.container && a.index === b.index && a.dnd === b.dnd && a.mv === b.mv && a.del === b.del && a.time === b.time
-  && a.c.id === b.c.id && a.c.title === b.c.title && a.c.pin === b.c.pin && a.c.temporary === b.c.temporary && a.c.archived === b.c.archived)
+  a.container === b.container && a.index === b.index && a.dnd === b.dnd && a.mv === b.mv && a.del === b.del && a.onNavigate === b.onNavigate && a.time === b.time
+  && a.shift === b.shift && a.c.id === b.c.id && a.c.title === b.c.title && a.c.pin === b.c.pin && a.c.temporary === b.c.temporary && a.c.archived === b.c.archived)
 
 export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; toggle: () => void; cfg: (t: string) => void; width?: number }) {
   /* Narrow slice: the sidebar shows chat metadata, project names and library
@@ -125,8 +125,8 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
   const [fe, setFe] = useState('')
   const [menu, setMenu] = useState<{ id: string; x: number; y: number } | null>(null)
   const [themeMenu, setThemeMenu] = useState<{ x: number; y: number } | null>(null)
-  const [deleteId, setDeleteId] = useState('')
   const [projectId, setProjectId] = useState('')
+  const shiftHeld = useShiftHeld()
   const [newModal, setNewModal] = useState(false)
   // The temporary section shows only `prefs.tempShow` chats by default and is
   // capped at a fraction of the sidebar's height, past which it scrolls.
@@ -208,8 +208,7 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
   // Jump-to-message sets flashMsg, which Chat highlights and scrolls to.
   const hits = useMemo(() => (k ? searchChats(s.chats.filter((c) => (showArchived ? c.archived === true : c.archived !== true)), q, 30) : []), [s.chats, q, k, showArchived])
   const jump = (chatId: string, msgId: string | null) => {
-    s.patch({ chat: chatId, flashMsg: msgId, activeProject: '' })
-    if (typeof window !== 'undefined' && window.innerWidth < 768) toggle()
+    s.patch({ chat: chatId, flashMsg: msgId, activeProject: '' }); onNavigate()
   }
   const th = s.themeMode === 'light' ? [...LIGHT_THEMES, 'custom'] : [...DARK_THEMES, 'custom']
   const thCur = s.themeMode === 'light' ? s.themeLight : s.themeDark
@@ -463,10 +462,14 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
     },
   }), [endDrag, liveMembers])
 
-  const del = useCallback((id: string, shift: boolean) => {
-    if (shift) useS.getState().chatOp(id, 'del')
-    else setDeleteId(id)
+  const del = useCallback((id: string, permanent: boolean) => {
+    useS.getState().chatOp(id, permanent ? 'del' : 'archive')
   }, [])
+  /** A narrow-screen drawer must get out of the way after navigation; on
+   *  desktop the sidebar stays exactly where it is. */
+  const onNavigate = useCallback(() => {
+    if (typeof window !== 'undefined' && window.innerWidth < 768) toggle()
+  }, [toggle])
   const dnd = useMemo(() => ({ register: registerRow, handle: rowHandle, activeId: dragId }), [registerRow, rowHandle, dragId])
 
   const rows = (l: Chat[], container: string) => {
@@ -481,7 +484,7 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
     const items: ReactNode[] = []
     shown.forEach(({ c, index }, i) => {
       if (i === drop) items.push(<DndPlaceholder key="__drop" height={box?.h ?? 40} radius={box?.radius} />)
-      items.push(<Row key={c.id} c={c} mv={mv} del={del} dnd={dnd} container={container} index={index} />)
+      items.push(<Row key={c.id} c={c} mv={mv} del={del} dnd={dnd} container={container} index={index} shift={shiftHeld} onNavigate={onNavigate} />)
     })
     if (drop === shown.length) items.push(<DndPlaceholder key="__drop" height={box?.h ?? 40} radius={box?.radius} />)
     return items
@@ -518,8 +521,8 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
   return (
     <aside ref={asideRef} aria-label="Chats and projects" style={{ width: safeWidth, maxWidth: '90vw', padding: 'var(--ui-side-pad)', gap: 'var(--ui-side-gap)' }} className="side-shell z-20 flex min-w-0 shrink-0 flex-col border-r border-bor bg-side max-md:fixed max-md:inset-y-0 max-md:left-0">
       <div className="flex gap-2">
-        <Btn v="solid" icon={s.prefs.temporaryByDefault ? Clock : Plus} title={s.prefs.temporaryByDefault ? 'New temporary chat' : 'New chat'} className="flex-1" onClick={() => { s.newChat(); focusComposer() }}>{s.prefs.temporaryByDefault ? 'Temporary chat' : 'New chat'}</Btn>
-        <Btn icon={s.prefs.temporaryByDefault ? Plus : Clock} title={s.prefs.temporaryByDefault ? 'New regular chat' : 'New temporary chat'} onClick={() => { s.newChat(!s.prefs.temporaryByDefault); focusComposer() }} />
+        <Btn v="solid" icon={s.prefs.temporaryByDefault ? Clock : Plus} title={s.prefs.temporaryByDefault ? 'New temporary chat' : 'New chat'} className="flex-1" onClick={() => { s.newChat(); focusComposer(); onNavigate() }}>{s.prefs.temporaryByDefault ? 'Temporary chat' : 'New chat'}</Btn>
+        <Btn icon={s.prefs.temporaryByDefault ? Plus : Clock} title={s.prefs.temporaryByDefault ? 'New regular chat' : 'New temporary chat'} onClick={() => { s.newChat(!s.prefs.temporaryByDefault); focusComposer(); onNavigate() }} />
         <Btn icon={PanelLeftClose} title="Hide sidebar" onClick={toggle} />
       </div>
       <div className="relative">
@@ -593,7 +596,7 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
         <div className="flex flex-col rounded-lg" style={{ maxHeight: tempMaxH }}>
           <div className="shrink-0 px-2.5 pb-1 text-xs font-medium text-mu">Temporary chats</div>
           <div className="side-rows min-h-0 overflow-y-auto">
-            {tempVisible.map((c) => <Row key={c.id} c={c} mv={mv} del={del} dnd={null} container="temporary" index={0} time={timeLeft(c)} />)}
+            {tempVisible.map((c) => <Row key={c.id} c={c} mv={mv} del={del} dnd={null} container="temporary" index={0} shift={shiftHeld} onNavigate={onNavigate} time={timeLeft(c)} />)}
             {!temporary.length && <p className="px-2.5 py-1 text-sm text-mu">Nothing here yet.</p>}
           </div>
           {(tempMore > 0 || tempOpen) && (
@@ -618,7 +621,7 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
             <div key={f.id} ref={registerZone(f.id)} className="rounded-lg">
               <div className={cx('group flex items-center rounded-lg pr-1 text-sm hover:bg-surf', active && 'bg-hov')}>
                 {fe === f.id ? <Name v={f.name} save={(t) => s.renameProject(f.id, t)} done={() => setFe('')} /> : (
-                  <button onClick={() => s.openProject(f.id)} onDoubleClick={() => setFe(f.id)}
+                  <button onClick={() => { s.openProject(f.id); onNavigate() }} onDoubleClick={() => setFe(f.id)}
                     title="Open the project overview"
                     aria-expanded={o} className="side-item flex min-w-0 flex-1 items-center gap-2 px-2.5 text-left">
                     <span className="relative grid shrink-0 place-items-center" aria-hidden="true">
@@ -693,7 +696,6 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
           {!s.projects.length && <p className="px-2.5 py-2 text-xs text-mu">Create a project first with the project button.</p>}
         </div>
       )}
-      {deleteId && <Confirm title="Delete this chat?" text="This chat and its messages will be permanently removed." ok="Delete" close={() => setDeleteId('')} run={() => useS.getState().chatOp(deleteId, 'del')} />}
       {projectId && <Confirm title="Delete this project?" text="The project is removed; its chats are kept and move back to Recent." ok="Delete project" close={() => setProjectId('')} run={() => s.delProject(projectId)} />}
       {newModal && <ProjectModal close={() => setNewModal(false)} />}
       <DndLiveRegion message={dndMsg} />

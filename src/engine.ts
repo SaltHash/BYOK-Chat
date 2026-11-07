@@ -1013,12 +1013,18 @@ export function wire(e: Ep, msgs: Msg[]): Wire[] {
 function findLastIndex<T>(a: T[], f: (x: T) => boolean): number { for (let i = a.length - 1; i >= 0; i--) if (f(a[i])) return i; return -1 }
 function parseArgs(raw: string) { try { const v = JSON.parse(raw || '{}'); return v && typeof v === 'object' && !Array.isArray(v) ? v : {} } catch { return {} } }
 
-type O = { cap?: number; max?: number; temp?: number; topp?: number; effort?: string }
+type O = { cap?: number; max?: number; temp?: number; topp?: number; effort?: string; /** How long to wait for response headers before failing the attempt. */ connectTimeoutMs?: number }
 
 /* A provider that stops sending bytes mid-reply (hung edge, dropped socket
  * with no error) must not leave the UI "thinking" forever: every read is
  * wrapped in an idle watchdog that fails the attempt after this long. */
 const STREAM_IDLE_MS = 90_000
+
+/* The idle watchdog above only starts once a response exists. A provider (or a
+ * dead route to one) can accept the connection and never send headers, which
+ * used to leave the reply spinning with no error and no stop condition. This
+ * bounds the wait for headers; the user's Stop still aborts immediately. */
+export const STREAM_HEADERS_MS = 60_000
 
 const idleRead = <T>(r: ReadableStreamDefaultReader<T>) => new Promise<ReadableStreamReadResult<T>>((resolve, reject) => {
   const timer = setTimeout(() => {
@@ -1058,8 +1064,18 @@ export async function stream(e: Ep, sys: string, ms: Wire[], on: (t: string) => 
     ...(req.redirect ? { redirect: req.redirect } : {}),
   })
   let res: Response
-  try { res = await providerFetch(u, fetchInit(body)) }
+  // Bound the wait for headers without replacing the caller's controller:
+  // Stop must remain distinguishable from the timeout, and the fallback and
+  // body reads still use the reply's own signal.
+  const headersFor = o.connectTimeoutMs ?? STREAM_HEADERS_MS
+  const headCtl = new AbortController()
+  const stopFromCaller = () => headCtl.abort()
+  ac.signal.addEventListener('abort', stopFromCaller, { once: true })
+  const headTimer = setTimeout(() => headCtl.abort(), headersFor)
+  try { res = await providerFetch(u, { ...fetchInit(body), signal: headCtl.signal }) }
   catch (x: any) {
+    if (ac.signal.aborted || x?.name === 'AbortError' && ac.signal.aborted) throw withCode('Stopped', 'stopped')
+    if (headCtl.signal.aborted) throw withCode(`The provider did not send a response within ${Math.round(headersFor / 1000)} seconds.`, 'timeout', { retryable: true })
     if (x?.name === 'AbortError') throw withCode('Stopped', 'stopped')
     // The relay itself is missing (static-only deployment): say so plainly.
     if (x instanceof ProxyUnavailableError) throw withCode(x.message, 'cors')
@@ -1072,6 +1088,9 @@ export async function stream(e: Ep, sys: string, ms: Wire[], on: (t: string) => 
     let host = u
     try { host = new URL(u).host || u } catch { /* keep the raw string */ }
     throw withCode('Network or CORS error contacting ' + host, 'cors', { retryable: true })
+  } finally {
+    clearTimeout(headTimer)
+    ac.signal.removeEventListener('abort', stopFromCaller)
   }
   if (!res.ok) {
     const snippet = (await res.text().catch(() => '')).slice(0, 2000) || res.statusText

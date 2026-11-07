@@ -397,7 +397,7 @@ function PeriodBar({ period, from, to, range, records, now, setPeriod, setDates 
       <div className="space-y-2">
         <div>
           <div className="mb-1 text-xs font-medium text-mu">Period</div>
-          <div className="hidden sm:block"><Seg v={period} set={setPeriod} opts={USAGE_PERIODS} /></div>
+          <div className="hidden sm:block"><Seg label="Usage period" v={period} set={setPeriod} opts={USAGE_PERIODS} /></div>
           <div className="sm:hidden"><Sel value={period} set={(v) => setPeriod(v as UsagePeriod)} opts={USAGE_PERIODS.map(([k, l]) => [k, l])} /></div>
         </div>
         {period === 'custom' && (
@@ -820,9 +820,9 @@ function BreakdownView({ summary, records, tools, range, now, unit, decimals, ui
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-2">
-        <Seg v={ui.mode} set={(v) => setUi({ mode: v })} opts={[['models', 'Models'], ['tools', 'Tools']]} />
+        <Seg label="Usage breakdown" v={ui.mode} set={(v) => setUi({ mode: v })} opts={[['models', 'Models'], ['tools', 'Tools']]} />
         {ui.mode === 'models'
-          ? <Seg v={ui.metric} set={(v) => setUi({ metric: v })} opts={[['cost', 'Cost'], ['tokens', 'Tokens']]} />
+          ? <Seg label="Usage metric" v={ui.metric} set={(v) => setUi({ metric: v })} opts={[['cost', 'Cost'], ['tokens', 'Tokens']]} />
           : <span className="text-xs text-mu">{fmtInt(scoped.length)} call{scoped.length === 1 ? '' : 's'} across {toolRows.length} tool{toolRows.length === 1 ? '' : 's'}</span>}
       </div>
       {ui.mode === 'models'
@@ -878,8 +878,8 @@ function TrendsView({ summary, records, range, now, decimals, ui, setUi }: {
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-2">
-        <Seg v={metric} set={(v) => setUi({ metric: v })} opts={[['cost', 'Cost'], ['tokens', 'Tokens']]} />
-        {metric === 'tokens' && <Seg v={ui.tokenGroup} set={(v) => setUi({ tokenGroup: v })} opts={[['category', 'By category'], ['model', 'By model']]} />}
+        <Seg label="Usage metric" v={metric} set={(v) => setUi({ metric: v })} opts={[['cost', 'Cost'], ['tokens', 'Tokens']]} />
+        {metric === 'tokens' && <Seg label="Token grouping" v={ui.tokenGroup} set={(v) => setUi({ tokenGroup: v })} opts={[['category', 'By category'], ['model', 'By model']]} />}
       </div>
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
         <h3 className="text-sm font-medium">{metric === 'cost' ? 'Cost' : 'Tokens'} over time</h3>
@@ -929,7 +929,7 @@ function ActivityView({ records, summary, decimals, ui, setUi, onOpenChat }: {
     <div className="space-y-3">
       <div className="flex flex-wrap items-end gap-2">
         <label className="min-w-44 flex-1 space-y-1 text-xs text-mu"><span>Model</span><Sel value={ui.activityModel} set={(v) => setUi({ activityModel: v })} opts={modelOptions} /></label>
-        <div className="space-y-1 text-xs text-mu"><span>Status</span><Seg v={ui.activityStatus} set={(v) => setUi({ activityStatus: v })} opts={[['all', 'All'], ['ok', 'Succeeded'], ['fail', 'Failed']]} /></div>
+        <div className="space-y-1 text-xs text-mu"><span>Status</span><Seg label="Activity status" v={ui.activityStatus} set={(v) => setUi({ activityStatus: v })} opts={[['all', 'All'], ['ok', 'Succeeded'], ['fail', 'Failed']]} /></div>
       </div>
       <p className="text-xs text-mu">Most recent {Math.min(ui.activityLimit, filtered.length)} of {filtered.length} attempts. Failed attempts are listed for diagnosis but excluded from every metric above.</p>
       {summary.failed > 0 && <p className="text-xs text-mu">{fmtInt(summary.failed)} failed attempt{summary.failed === 1 ? '' : 's'} excluded from totals.</p>}

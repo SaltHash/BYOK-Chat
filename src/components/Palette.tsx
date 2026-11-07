@@ -107,12 +107,13 @@ export function Palette({ close, cfg, toggleSide }: { close: () => void; cfg: (t
   const m = Math.max(L.length, 1)
   useEffect(() => { refs.current[i]?.scrollIntoView({ block: 'nearest' }) }, [i, L.length])
   return (
-    <Modal close={close}>
+    <Modal close={close} labelledBy="palette-title">
       <div className="modal-panel mt-[10vh] w-full max-w-lg self-start overflow-hidden rounded-2xl bg-surf">
+        <h2 id="palette-title" className="sr-only">Command palette</h2>
         <div className="flex items-center gap-3 px-4 py-3">
           <Search size={18} className="text-mu" />
           <input
-            autoFocus value={q} placeholder="Search chats, commands, settings"
+            autoFocus value={q} aria-label="Search chats, commands, and settings" placeholder="Search chats, commands, settings"
             onChange={(e) => { setQ(e.target.value); setI(0) }}
             onKeyDown={(e) => {
               if (e.key === 'ArrowDown') { e.preventDefault(); setI((i + 1) % m) }

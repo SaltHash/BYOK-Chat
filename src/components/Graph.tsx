@@ -829,8 +829,9 @@ export function GraphView({ spec, dark, width = 760, height = 430, expanded = fa
       )}
 
       {full && (
-        <Modal close={() => setFull(false)}>
+        <Modal close={() => setFull(false)} labelledBy="graph-full-title">
           <div className="modal-panel relative w-[min(96vw,1120px)] rounded-2xl border border-bor bg-bg p-4">
+            <h2 id="graph-full-title" className="sr-only">Full-screen graph</h2>
             <button
               type="button"
               aria-label="Close graph"

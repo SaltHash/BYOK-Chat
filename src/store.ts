@@ -36,6 +36,7 @@ import { rankMemories, mergeMemory, RouteCache, orderEndpoints, recordRoute, typ
 import { DEFAULT_MEMORY_PREFS, normMemoryPrefs, memoryEnabledFor, memoryPolicyText, searchMemories, formatMemoryResults, type MemoryPrefs } from './memory'
 export type { RouteStat, RoutingMode }
 import { QUOTA_FLAG, prunePersisted, storageUsage, persistStorage, createPersistMapper, STORE_VERSION, withoutExpiredTemps } from './persistence'
+import { normArchiveDays } from './archive'
 import { appendUsageRows, usageRowOf, usageRowsFromChats, usageTitlesFromChats, type UsageRow } from './usageStats'
 import { readUsageLedger, usageLedgerExists, writeUsageLedger } from './storage/usageLedger'
 import { providerPresetEntries } from './providerRegistry'
@@ -69,7 +70,7 @@ export type Att = Attachment
 export type Message = { id: string; r: 'user' | 'assistant'; t: string; at?: number; by?: string; tps?: number; log?: Attempt[]; att?: Attachment[]; err?: boolean; trunc?: boolean; capped?: boolean; full?: string; ctx?: string[]; fx?: string; cmd?: string; alts?: Snap[]; ai?: number; historyTokens?: number; explicitTokens?: number; reasoning?: string; toolRounds?: { text: string; calls: ToolResult[] }[]; toolFinal?: string; sys?: string; workspaceIds?: string[]; research?: ResearchState; /** Kept visible under the header and added to the model context (see prefs.pinContext). */ pin?: boolean }
 export type Msg = Message
 export type Snap = { t: string; by?: string; tps?: number; log?: Try[]; err?: boolean; toolRounds?: { text: string; calls: ToolResult[] }[]; toolFinal?: string; workspaceIds?: string[] }
-export type Chat = { id: string; title: string; pin?: boolean; started?: boolean; project?: string; msgs: Msg[]; temporary?: boolean; expiresAt?: number; titleAuto?: boolean; /** Hidden from the normal sidebar until the Archived filter is opened. */ archived?: boolean; /** Bookmarked message ids, newest first (see bookmarks.ts). */ bookmarks?: string[]; /** Model-written handoff that replaces the messages up to `through` in requests. The stored transcript is untouched. */ compact?: CompactionRecord }
+export type Chat = { id: string; title: string; pin?: boolean; started?: boolean; project?: string; msgs: Msg[]; temporary?: boolean; expiresAt?: number; titleAuto?: boolean; /** Hidden from the normal sidebar until the Archived filter is opened. */ archived?: boolean; /** When the chat was archived, used for retention. */ archivedAt?: number; /** Bookmarked message ids, newest first (see bookmarks.ts). */ bookmarks?: string[]; /** Model-written handoff that replaces the messages up to `through` in requests. The stored transcript is untouched. */ compact?: CompactionRecord }
 /** An optional context file attached to a project: name and size for display,
  *  plus the extracted text the AI may consult. Text is capped at import time. */
 export type ProjectFile = { id: string; name: string; size: string; mime?: string; text: string }
@@ -92,7 +93,7 @@ export function activeWorkspaceForChat(s: { chats: Chat[]; projects: Project[] }
   const id = activeWorkspaceId(siblings.flatMap((c) => c.msgs))
   return id ? { id, shared: true } : {}
 }
-export type Notice = { t: string; tab?: string; label?: string; href?: string } | null
+export type Notice = { t: string; tab?: string; label?: string; href?: string; /** Offer Undo for a just-deleted chat. */ undo?: boolean } | null
 export type Stats = { tin: number; tout: number; historyIn: number; explicitIn: number; sent: number; chats: number; since: number; cost: number }
 export type Memory = { id: string; text: string; category: string; createdAt: number; updatedAt: number }
 /* Per-chat system prompt preset ({ id, name, text }; see BLANK.prompts). */
@@ -481,7 +482,7 @@ export const normPromptRecall = (v: unknown): PromptRecallMode =>
 export type LogDetail = 'compact' | 'standard' | 'verbose'
 export const normLogDetail = (v: unknown): LogDetail => v === 'compact' || v === 'verbose' ? v : 'standard'
 
-export const DEFAULT_PREFS: S['prefs'] = { showBy: true, showLog: true, showTps: false, enterSends: true, sendWhileBusy: 'queue', autoTitle: true, temporaryByDefault: false, seasonal: true, cues: false, showModelPricing: false, showContextMeter: true, customSearch: true, stylePreset: 'modern', density: 'comfortable', uiSpacing: {}, showTimestamps: false, alwaysShowActions: false, titleEp: '', titleModel: '', effortEp: '', effortModel: '', recallEp: '', recallModel: '', tempHours: 3, startup: 'recent', tempShow: 2, tempShowStreaming: true, tempShowDone: true, draftSurvive: 'both', fontBody: 'system', fontMono: 'system', fontHeader: 'system', modelPrimary: 'name', modelSecondary: 'none', paletteMax: 320, chatWidth: 'standard', settingsWidth: 1024, settingsHeight: 780, modelPickerHeight: 480, favoritesSection: true, hideFavoritesInProviders: true, collapsedProviders: [], sidebarWidth: 288, widgetWidth: 320, workspaceWidth: 0.4, workspaceSplit: 0.2,  modalBlur: 12, settingsOpacity: 55, streamFade: 0.3, streamMd: true, remoteImages: false, glassComposer: true, glassBlur: 14, glassOpacity: 80, showDisabledFeatures: false, proxyMode: 'auto', textScale: 100, codeWrap: false, reduceTransparency: false, promptRecall: 'empty', highContrast: false, hideFavoriteProvider: false, logDetail: 'standard', logTiming: true, logModels: true, codeLines: false, codeMaxHeight: 0, pinContext: true, pinContextPercent: 50, keepUsageHistory: true, compactAuto: true, compactAt: 80 }
+export const DEFAULT_PREFS: S['prefs'] = { showBy: true, showLog: true, showTps: false, enterSends: true, sendWhileBusy: 'queue', autoTitle: true, temporaryByDefault: false, seasonal: true, cues: false, showModelPricing: false, showContextMeter: true, customSearch: true, stylePreset: 'modern', density: 'comfortable', uiSpacing: {}, showTimestamps: false, alwaysShowActions: false, titleEp: '', titleModel: '', effortEp: '', effortModel: '', recallEp: '', recallModel: '', tempHours: 3, archiveDays: 60, startup: 'recent', tempShow: 2, tempShowStreaming: true, tempShowDone: true, draftSurvive: 'both', fontBody: 'system', fontMono: 'system', fontHeader: 'system', modelPrimary: 'name', modelSecondary: 'none', paletteMax: 320, chatWidth: 'standard', settingsWidth: 1024, settingsHeight: 780, modelPickerHeight: 480, favoritesSection: true, hideFavoritesInProviders: true, collapsedProviders: [], sidebarWidth: 288, widgetWidth: 320, workspaceWidth: 0.4, workspaceSplit: 0.2,  modalBlur: 12, settingsOpacity: 55, streamFade: 0.3, streamMd: true, remoteImages: false, glassComposer: true, glassBlur: 14, glassOpacity: 80, showDisabledFeatures: false, proxyMode: 'auto', textScale: 100, codeWrap: false, reduceTransparency: false, promptRecall: 'empty', highContrast: false, hideFavoriteProvider: false, logDetail: 'standard', logTiming: true, logModels: true, codeLines: false, codeMaxHeight: 0, pinContext: true, pinContextPercent: 50, keepUsageHistory: true, compactAuto: true, compactAt: 80 }
 export const DEFAULT_PARAMS: S['params'] = { def: true, temp: 0.7, topp: 1, max: 4096, maxToolRounds: 8, highToolsUnlocked: false }
 export const DEFAULT_WIDGET_PREFS: S['widgetPrefs'] = { usageGroup: 'endpoint', usageMode: 'success', usageFormat: '{in}/{out}', usageTotal: false, usagePeriod: 'all', lastSpeed: true, timeUnit: 'auto', widgetOrder: WIDGETS.map(([k]) => k), shortcuts: KEYS.map(([k]) => k), contextLimit: 128000, showDisabledEndpoints: true, scratchRows: 6, snippetLimit: 20, costDecimals: 4, activePromptsOnly: false, charsPerToken: 4, hideDoneTodos: false }
 const SEARCH_VALID_PROVIDERS: SearchProvider[] = SEARCH_PROVIDERS.map(([id]) => id)
@@ -625,7 +626,7 @@ type S = {
   customDarkTheme: CustomTheme
   customLightTheme: CustomTheme
   setupDone: boolean
-  prefs: { showBy: boolean; showLog: boolean; showTps: boolean; enterSends: boolean; autoTitle: boolean; temporaryByDefault: boolean; seasonal?: boolean; cues?: boolean; showModelPricing: boolean; showContextMeter: boolean; customSearch?: boolean; /** Hide the provider name beside starred models in the picker's Favorites section. */ hideFavoriteProvider?: boolean; /** How much detail the Process-to-answer panel shows per step. */ logDetail?: LogDetail; /** Show each step's duration in the process log. */ logTiming?: boolean; /** Show the model beside each step in the process log. */ logModels?: boolean; /** Show line numbers in code blocks. */ codeLines?: boolean; /** Max code-block height in pixels before scrolling (0 = no cap). */ codeMaxHeight?: number; /** Include the pinned reply in the model context. */ pinContext?: boolean; /** Maximum slice of the context window the pinned reply may use (5–50%). */ pinContextPercent?: number; /** Replace older turns with a model-written handoff when the context nears the limit. */ compactAuto?: boolean; /** Context share at which auto-compaction starts (5–100, in 5% steps). */ compactAt?: number; /** Queue a message sent while the same chat is replying, or require a stop first. */ sendWhileBusy?: 'queue' | 'stop'; titleEp: string; titleModel?: string; effortEp: string; effortModel?: string; recallEp: string; recallModel?: string; tempHours: number; startup?: StartupMode; tempShow?: number; /** Keep temporary chats that are still replying listed past the temporary-chats-shown limit. */ tempShowStreaming?: boolean; /** Keep temporary chats whose reply finished in the background listed until they are opened. */ tempShowDone?: boolean; draftSurvive?: 'off' | 'new' | 'chats' | 'both'; fontBody: string; fontMono: string; fontHeader: string; modelPrimary: 'id' | 'name'; modelSecondary: 'none' | 'provider' | 'id' | 'name'; modelDisplay?: 'none' | 'name' | 'provider' | 'both'; paletteMax: number; chatWidth: 'narrow' | 'standard' | 'wide'; settingsWidth: number; settingsHeight: number; modelPickerHeight: number; /** Show a Favorites section at the top of the model picker. */ favoritesSection?: boolean; /** Hide starred models from their normal provider groups. */ hideFavoritesInProviders?: boolean; /** Endpoint ids whose provider groups are collapsed in the picker. */ collapsedProviders?: string[]; sidebarWidth?: number; widgetWidth?: number; workspaceWidth?: number; workspaceSplit?: number; modalBlur: number; settingsOpacity: number; routingMode?: RoutingMode; streamFade: number; streamMd: boolean; remoteImages?: boolean; glassComposer?: boolean; /** Composer glass backdrop blur in pixels (0–40). */ glassBlur?: number; /** Composer glass surface opacity percent (0–100). */ glassOpacity?: number; /** Keep settings for disabled features visible, marked off, instead of hiding them. */ showDisabledFeatures?: boolean; proxyMode?: 'auto' | 'always' | 'off';  stylePreset: StylePreset; density: Density; uiSpacing?: SpacingOverrides; showTimestamps?: boolean; alwaysShowActions?: boolean; /** Root font-size percent (50–200, 100 = unchanged). */ textScale?: number; /** Soft-wrap long lines inside code blocks instead of scrolling sideways. */ codeWrap?: boolean; /** Disable glass, blur and dropped shadows (flat, opaque surfaces). */ reduceTransparency?: boolean; /** When ↑/↓ recall sent prompts; 'off' also stops recording them. */ promptRecall?: PromptRecallMode; /** Raise muted-text and border contrast beyond the theme's values. */ highContrast?: boolean; /** Keep every attempt in a permanent ledger so usage survives deleting, archiving or expiring its chat. Off keeps only the attempts still on saved chats. */ keepUsageHistory?: boolean }
+  prefs: { showBy: boolean; showLog: boolean; showTps: boolean; enterSends: boolean; autoTitle: boolean; temporaryByDefault: boolean; seasonal?: boolean; cues?: boolean; showModelPricing: boolean; showContextMeter: boolean; customSearch?: boolean; /** Hide the provider name beside starred models in the picker's Favorites section. */ hideFavoriteProvider?: boolean; /** How much detail the Process-to-answer panel shows per step. */ logDetail?: LogDetail; /** Show each step's duration in the process log. */ logTiming?: boolean; /** Show the model beside each step in the process log. */ logModels?: boolean; /** Show line numbers in code blocks. */ codeLines?: boolean; /** Max code-block height in pixels before scrolling (0 = no cap). */ codeMaxHeight?: number; /** Include the pinned reply in the model context. */ pinContext?: boolean; /** Maximum slice of the context window the pinned reply may use (5–50%). */ pinContextPercent?: number; /** Replace older turns with a model-written handoff when the context nears the limit. */ compactAuto?: boolean; /** Context share at which auto-compaction starts (5–100, in 5% steps). */ compactAt?: number; /** Queue a message sent while the same chat is replying, or require a stop first. */ sendWhileBusy?: 'queue' | 'stop'; titleEp: string; titleModel?: string; effortEp: string; effortModel?: string; recallEp: string; recallModel?: string; tempHours: number; /** Days before an archived chat is deleted; the top slider value means never. */ archiveDays?: number; startup?: StartupMode; tempShow?: number; /** Keep temporary chats that are still replying listed past the temporary-chats-shown limit. */ tempShowStreaming?: boolean; /** Keep temporary chats whose reply finished in the background listed until they are opened. */ tempShowDone?: boolean; draftSurvive?: 'off' | 'new' | 'chats' | 'both'; fontBody: string; fontMono: string; fontHeader: string; modelPrimary: 'id' | 'name'; modelSecondary: 'none' | 'provider' | 'id' | 'name'; modelDisplay?: 'none' | 'name' | 'provider' | 'both'; paletteMax: number; chatWidth: 'narrow' | 'standard' | 'wide'; settingsWidth: number; settingsHeight: number; modelPickerHeight: number; /** Show a Favorites section at the top of the model picker. */ favoritesSection?: boolean; /** Hide starred models from their normal provider groups. */ hideFavoritesInProviders?: boolean; /** Endpoint ids whose provider groups are collapsed in the picker. */ collapsedProviders?: string[]; sidebarWidth?: number; widgetWidth?: number; workspaceWidth?: number; workspaceSplit?: number; modalBlur: number; settingsOpacity: number; routingMode?: RoutingMode; streamFade: number; streamMd: boolean; remoteImages?: boolean; glassComposer?: boolean; /** Composer glass backdrop blur in pixels (0–40). */ glassBlur?: number; /** Composer glass surface opacity percent (0–100). */ glassOpacity?: number; /** Keep settings for disabled features visible, marked off, instead of hiding them. */ showDisabledFeatures?: boolean; proxyMode?: 'auto' | 'always' | 'off';  stylePreset: StylePreset; density: Density; uiSpacing?: SpacingOverrides; showTimestamps?: boolean; alwaysShowActions?: boolean; /** Root font-size percent (50–200, 100 = unchanged). */ textScale?: number; /** Soft-wrap long lines inside code blocks instead of scrolling sideways. */ codeWrap?: boolean; /** Disable glass, blur and dropped shadows (flat, opaque surfaces). */ reduceTransparency?: boolean; /** When ↑/↓ recall sent prompts; 'off' also stops recording them. */ promptRecall?: PromptRecallMode; /** Raise muted-text and border contrast beyond the theme's values. */ highContrast?: boolean; /** Keep every attempt in a permanent ledger so usage survives deleting, archiving or expiring its chat. Off keeps only the attempts still on saved chats. */ keepUsageHistory?: boolean }
   widgets: Record<string, boolean>; widgetPrefs: { usageGroup: 'endpoint' | 'model'; usageMode: 'success' | 'tokens'; usageFormat: string; usageTotal: boolean; usagePeriod: 'session' | 'day' | 'week' | 'month' | 'custom' | 'all'; usageFrom?: string; usageTo?: string; lastSpeed: boolean; timeUnit: 'ms' | 's' | 'auto'; widgetOrder: string[]; shortcuts: string[]; contextLimit: number; showDisabledEndpoints: boolean; scratchRows: number; snippetLimit: number; costDecimals: number; activePromptsOnly: boolean; charsPerToken: number; hideDoneTodos: boolean }; rail: boolean; pad: string; snips: string[]
   params: { def: boolean; temp: number; topp: number; max: number; maxToolRounds: number; highToolsUnlocked: boolean }; effort: Record<string, string>
   workspacePrefs: WorkspacePrefs
@@ -653,6 +654,9 @@ type S = {
   shares: ShareRecord[]
   flashMsg: string | null
   draft: string; drafts: Record<string, string>; busy: boolean; notice: Notice
+  /** The last permanently deleted chat, retained briefly so Undo is possible.
+   *  Session-scoped: it is never persisted and expires with its timer. */
+  undo: { chat: Chat; index: number; wasOpen: boolean; draft?: string } | null
   /** Chat ids streaming a reply right now. `busy` is true while any of them
    *  runs, so per-chat controls read this map instead of the global flag. */
   busyChats: Record<string, true>
@@ -676,6 +680,8 @@ type S = {
   move: (k: Kind, id: string, d: number) => void
   newChat: (temporary?: boolean) => void
   chatOp: (id: string, op: 'pin' | 'del' | 'archive') => void
+  /** Restore the chat removed by the last permanent delete. */
+  undoDelete: () => void
   /** Pin an assistant reply (one per chat) and keep it in the model context. */
   pinMsg: (id: string) => void
   /** Toggle a reply bookmark; bookmarks are stored on the chat so they persist, sync and die with it. */
@@ -910,6 +916,24 @@ type Run = { stopped: boolean; ctl: AbortController | null }
  * reply in one neither blocks nor cancels another, and Stop only cancels the
  * chat it was pressed in. Keyed by chat id. */
 const runs = new Map<string, Run>()
+
+/* Permanent deletion is undoable for a short window. The chat (including its
+ * draft) stays in memory until the timer expires; only then are its attachment
+ * bytes dropped. Starting another delete commits the previous one first, so at
+ * most one snapshot is ever retained. */
+export const DELETE_UNDO_MS = 8000
+let pendingDelete: { chat: Chat; index: number; wasOpen: boolean; draft?: string } | null = null
+let deleteTimer: ReturnType<typeof setTimeout> | null = null
+
+const commitPendingDelete = () => {
+  const gone = pendingDelete
+  pendingDelete = null
+  if (!gone) return
+  if (gone.chat.msgs.length) {
+    void import('./storage/boot').then(({ dropAttachmentBytes }) => dropAttachmentBytes(gone.chat.msgs).catch(() => {})).catch(() => {})
+  }
+  useS.setState((s) => (s.undo?.chat.id === gone.chat.id ? { undo: null, ...(s.notice?.undo ? { notice: null } : {}) } : {}))
+}
 
 /** Whether this chat has a reply streaming right now. */
 export const chatBusy = (s: { busyChats?: Record<string, true> }, chatId: string | null | undefined) =>
@@ -2661,7 +2685,7 @@ export const useS = create<S>()(
         usage: initialLedger.rows, usageTitles: initialLedger.titles,
         projects: [], activeProject: '', price: { in: 0, out: 0 }, todos: [],
         routeStats: {}, shares: [], flashMsg: null,
-        draft: '', busy: false, busyChats: {}, doneChats: {}, queued: {}, notice: null,
+        draft: '', busy: false, busyChats: {}, doneChats: {}, queued: {}, notice: null, undo: null,
         /* Workspace (first-class entity) */
         workspaces: {}, selectedRevision: {},            researchPanel: null,
 
@@ -2721,19 +2745,31 @@ export const useS = create<S>()(
           return { chats: s.chats.filter((x) => !(x.temporary && s.prefs.tempHours === 0)), chat: '', newChatPending: mode, notice: null, activeProject: '' }
         }),
         chatOp: (id, op) => {
+          let undo: S['undo'] = null
           if (op === 'del') {
-            const gone = get().chats.find((c) => c.id === id)
-            if (gone?.msgs.length) void import('./storage/boot').then(({ dropAttachmentBytes }) => dropAttachmentBytes(gone.msgs).catch(() => {})).catch(() => {})
+            const before = get()
+            const gone = before.chats.find((c) => c.id === id)
+            if (!gone) return
             // A deleted chat cannot stream any more, and must not keep the app
             // looking busy.
             const far = runs.get(id)
             if (far) { far.stopped = true; far.ctl?.abort(); runs.delete(id) }
             cancelToolApprovals(id)
+            if (deleteTimer) { clearTimeout(deleteTimer); deleteTimer = null }
+            commitPendingDelete()
+            undo = { chat: gone, index: before.chats.findIndex((c) => c.id === id), wasOpen: before.chat === id, draft: before.drafts[id] }
+            pendingDelete = undo
+            deleteTimer = setTimeout(() => { deleteTimer = null; commitPendingDelete() }, DELETE_UNDO_MS)
           }
           set((s) => {
             const chats = op === 'del'
               ? s.chats.filter((c) => c.id !== id)
-              : s.chats.map((c) => (c.id === id ? (op === 'pin' ? { ...c, pin: !c.pin } : { ...c, archived: !c.archived, ...(c.archived ? {} : { pin: false }) }) : c))
+              : s.chats.map((c) => {
+                        if (c.id !== id) return c
+                        if (op === 'pin') return { ...c, pin: !c.pin }
+                        const archived = !c.archived
+                        return { ...c, archived, archivedAt: archived ? Date.now() : undefined, ...(archived ? { pin: false } : {}) }
+                      })
             // Drop the deleted chat's stashed draft along with the chat.
             const drafts = { ...s.drafts }
             if (op === 'del') delete drafts[id]
@@ -2741,7 +2777,30 @@ export const useS = create<S>()(
             const doneChats = { ...(s.doneChats ?? {}) }
             const queued = { ...(s.queued ?? {}) }
             if (op === 'del') { delete busyChats[id]; delete doneChats[id]; delete queued[id] }
-            return { chats, chat: s.chat === id && op === 'del' ? chats[0]?.id ?? '' : s.chat, drafts, ...(op === 'del' ? { busyChats, busy: Object.keys(busyChats).length > 0, doneChats, queued } : {}) }
+            return {
+              chats, chat: s.chat === id && op === 'del' ? chats[0]?.id ?? '' : s.chat, drafts,
+              ...(op === 'del' ? { busyChats, busy: Object.keys(busyChats).length > 0, doneChats, queued, undo, notice: { t: `Deleted “${pendingDelete?.chat.title ?? 'chat'}”.`, undo: true } } : {}),
+            }
+          })
+        },
+        undoDelete: () => {
+          if (deleteTimer) { clearTimeout(deleteTimer); deleteTimer = null }
+          const saved = pendingDelete
+          pendingDelete = null
+          if (!saved) { set({ undo: null }); return }
+          set((s) => {
+            const chats = s.chats.some((c) => c.id === saved.chat.id) ? s.chats : (() => {
+              const next = [...s.chats]
+              next.splice(Math.max(0, Math.min(saved.index, next.length)), 0, saved.chat)
+              return next
+            })()
+            return {
+              chats,
+              chat: saved.wasOpen ? saved.chat.id : s.chat,
+              drafts: saved.draft ? { ...s.drafts, [saved.chat.id]: saved.draft } : s.drafts,
+              undo: null,
+              notice: null,
+            }
           })
         },
         pinMsg: (id) => set((s) => {
@@ -3279,7 +3338,7 @@ export const useS = create<S>()(
           p.prefs.titleEp = ''
         }
         if (p.prefs && p.prefs.showTps === undefined) p.prefs.showTps = false
-        p.prefs = { ...p.prefs, hideFavoriteProvider: p.prefs?.hideFavoriteProvider === true, logDetail: normLogDetail(p.prefs?.logDetail), logTiming: p.prefs?.logTiming !== false, logModels: p.prefs?.logModels !== false, codeLines: p.prefs?.codeLines === true, codeMaxHeight: typeof p.prefs?.codeMaxHeight === 'number' && Number.isFinite(p.prefs.codeMaxHeight) ? Math.max(0, Math.min(1200, Math.round(p.prefs.codeMaxHeight))) : 0, pinContext: p.prefs?.pinContext !== false, pinContextPercent: typeof p.prefs?.pinContextPercent === 'number' && Number.isFinite(p.prefs.pinContextPercent) ? Math.max(5, Math.min(50, Math.round(p.prefs.pinContextPercent))) : 50, tempHours: p.prefs?.tempHours ?? 3, startup: normStartup(p.prefs?.startup), tempShow: Number.isInteger(p.prefs?.tempShow) ? Math.max(0, Math.min(6, p.prefs.tempShow)) : 2, tempShowStreaming: p.prefs?.tempShowStreaming !== false, tempShowDone: p.prefs?.tempShowDone !== false, draftSurvive: ['off', 'new', 'chats', 'both'].includes(p.prefs?.draftSurvive) ? p.prefs.draftSurvive : 'both', fontBody: p.prefs?.fontBody ?? 'system', fontMono: p.prefs?.fontMono ?? 'system', fontHeader: p.prefs?.fontHeader ?? 'system', modelPrimary: p.prefs?.modelPrimary ?? ({ none: 'id', name: 'name', provider: 'id', both: 'name' } as const)[(p.prefs?.modelDisplay as string) ?? 'both'] ?? 'name', modelSecondary: p.prefs?.modelSecondary ?? ({ none: 'none', name: 'none', provider: 'provider', both: 'provider' } as const)[(p.prefs?.modelDisplay as string) ?? 'both'] ?? 'none', paletteMax: p.prefs?.paletteMax ?? 320, chatWidth: p.prefs?.chatWidth ?? 'standard', settingsWidth: p.prefs?.settingsWidth ?? 1024, settingsHeight: p.prefs?.settingsHeight ?? 780, modelPickerHeight: p.prefs?.modelPickerHeight ?? 480, showModelPricing: p.prefs?.showModelPricing ?? false, showContextMeter: p.prefs?.showContextMeter ?? true, titleEp: p.prefs?.titleEp ?? '', titleModel: p.prefs?.titleModel ?? '', effortEp: p.prefs?.effortEp ?? '', effortModel: p.prefs?.effortModel ?? '', recallEp: p.prefs?.recallEp ?? '', recallModel: p.prefs?.recallModel ?? '', routingMode: ['ordered', 'fastest', 'cheapest'].includes(p.prefs?.routingMode) ? p.prefs.routingMode : 'ordered', sidebarWidth: p.prefs?.sidebarWidth ?? 288, widgetWidth: p.prefs?.widgetWidth ?? 320, workspaceWidth: typeof p.prefs?.workspaceWidth === 'number' && p.prefs.workspaceWidth <= 1 ? p.prefs.workspaceWidth : 0.4, workspaceSplit: typeof p.prefs?.workspaceSplit === 'number' ? p.prefs.workspaceSplit : 0.2, modalBlur: p.prefs?.modalBlur ?? 12, settingsOpacity: p.prefs?.settingsOpacity ?? 55, temporaryByDefault: p.prefs?.temporaryByDefault ?? false, streamFade: typeof p.prefs?.streamFade === 'number' && p.prefs.streamFade >= 0 && p.prefs.streamFade <= 1 ? p.prefs.streamFade : 0.3, streamMd: p.prefs?.streamMd ?? true, proxyMode: p.prefs?.proxyMode === 'always' || p.prefs?.proxyMode === 'off' ? p.prefs.proxyMode : 'auto', glassComposer: p.prefs?.glassComposer ?? true, glassBlur: typeof p.prefs?.glassBlur === 'number' && Number.isFinite(p.prefs.glassBlur) ? Math.max(0, Math.min(40, Math.round(p.prefs.glassBlur))) : 14, glassOpacity: typeof p.prefs?.glassOpacity === 'number' && Number.isFinite(p.prefs.glassOpacity) ? Math.max(0, Math.min(100, Math.round(p.prefs.glassOpacity))) : 80, showDisabledFeatures: p.prefs?.showDisabledFeatures === true, stylePreset: normStylePreset(p.prefs?.stylePreset), density: normDensity(p.prefs?.density), uiSpacing: normSpacing(p.prefs?.uiSpacing), showTimestamps: p.prefs?.showTimestamps === true, alwaysShowActions: p.prefs?.alwaysShowActions === true, textScale: typeof p.prefs?.textScale === 'number' && Number.isFinite(p.prefs.textScale) ? Math.round(Math.min(200, Math.max(50, p.prefs.textScale))) : 100, codeWrap: p.prefs?.codeWrap === true, reduceTransparency: p.prefs?.reduceTransparency === true, promptRecall: normPromptRecall(p.prefs?.promptRecall), highContrast: p.prefs?.highContrast === true }
+        p.prefs = { ...p.prefs, hideFavoriteProvider: p.prefs?.hideFavoriteProvider === true, logDetail: normLogDetail(p.prefs?.logDetail), logTiming: p.prefs?.logTiming !== false, logModels: p.prefs?.logModels !== false, codeLines: p.prefs?.codeLines === true, codeMaxHeight: typeof p.prefs?.codeMaxHeight === 'number' && Number.isFinite(p.prefs.codeMaxHeight) ? Math.max(0, Math.min(1200, Math.round(p.prefs.codeMaxHeight))) : 0, pinContext: p.prefs?.pinContext !== false, pinContextPercent: typeof p.prefs?.pinContextPercent === 'number' && Number.isFinite(p.prefs.pinContextPercent) ? Math.max(5, Math.min(50, Math.round(p.prefs.pinContextPercent))) : 50, tempHours: p.prefs?.tempHours ?? 3, archiveDays: normArchiveDays(p.prefs?.archiveDays), startup: normStartup(p.prefs?.startup), tempShow: Number.isInteger(p.prefs?.tempShow) ? Math.max(0, Math.min(6, p.prefs.tempShow)) : 2, tempShowStreaming: p.prefs?.tempShowStreaming !== false, tempShowDone: p.prefs?.tempShowDone !== false, draftSurvive: ['off', 'new', 'chats', 'both'].includes(p.prefs?.draftSurvive) ? p.prefs.draftSurvive : 'both', fontBody: p.prefs?.fontBody ?? 'system', fontMono: p.prefs?.fontMono ?? 'system', fontHeader: p.prefs?.fontHeader ?? 'system', modelPrimary: p.prefs?.modelPrimary ?? ({ none: 'id', name: 'name', provider: 'id', both: 'name' } as const)[(p.prefs?.modelDisplay as string) ?? 'both'] ?? 'name', modelSecondary: p.prefs?.modelSecondary ?? ({ none: 'none', name: 'none', provider: 'provider', both: 'provider' } as const)[(p.prefs?.modelDisplay as string) ?? 'both'] ?? 'none', paletteMax: p.prefs?.paletteMax ?? 320, chatWidth: p.prefs?.chatWidth ?? 'standard', settingsWidth: p.prefs?.settingsWidth ?? 1024, settingsHeight: p.prefs?.settingsHeight ?? 780, modelPickerHeight: p.prefs?.modelPickerHeight ?? 480, showModelPricing: p.prefs?.showModelPricing ?? false, showContextMeter: p.prefs?.showContextMeter ?? true, titleEp: p.prefs?.titleEp ?? '', titleModel: p.prefs?.titleModel ?? '', effortEp: p.prefs?.effortEp ?? '', effortModel: p.prefs?.effortModel ?? '', recallEp: p.prefs?.recallEp ?? '', recallModel: p.prefs?.recallModel ?? '', routingMode: ['ordered', 'fastest', 'cheapest'].includes(p.prefs?.routingMode) ? p.prefs.routingMode : 'ordered', sidebarWidth: p.prefs?.sidebarWidth ?? 288, widgetWidth: p.prefs?.widgetWidth ?? 320, workspaceWidth: typeof p.prefs?.workspaceWidth === 'number' && p.prefs.workspaceWidth <= 1 ? p.prefs.workspaceWidth : 0.4, workspaceSplit: typeof p.prefs?.workspaceSplit === 'number' ? p.prefs.workspaceSplit : 0.2, modalBlur: p.prefs?.modalBlur ?? 12, settingsOpacity: p.prefs?.settingsOpacity ?? 55, temporaryByDefault: p.prefs?.temporaryByDefault ?? false, streamFade: typeof p.prefs?.streamFade === 'number' && p.prefs.streamFade >= 0 && p.prefs.streamFade <= 1 ? p.prefs.streamFade : 0.3, streamMd: p.prefs?.streamMd ?? true, proxyMode: p.prefs?.proxyMode === 'always' || p.prefs?.proxyMode === 'off' ? p.prefs.proxyMode : 'auto', glassComposer: p.prefs?.glassComposer ?? true, glassBlur: typeof p.prefs?.glassBlur === 'number' && Number.isFinite(p.prefs.glassBlur) ? Math.max(0, Math.min(40, Math.round(p.prefs.glassBlur))) : 14, glassOpacity: typeof p.prefs?.glassOpacity === 'number' && Number.isFinite(p.prefs.glassOpacity) ? Math.max(0, Math.min(100, Math.round(p.prefs.glassOpacity))) : 80, showDisabledFeatures: p.prefs?.showDisabledFeatures === true, stylePreset: normStylePreset(p.prefs?.stylePreset), density: normDensity(p.prefs?.density), uiSpacing: normSpacing(p.prefs?.uiSpacing), showTimestamps: p.prefs?.showTimestamps === true, alwaysShowActions: p.prefs?.alwaysShowActions === true, textScale: typeof p.prefs?.textScale === 'number' && Number.isFinite(p.prefs.textScale) ? Math.round(Math.min(200, Math.max(50, p.prefs.textScale))) : 100, codeWrap: p.prefs?.codeWrap === true, reduceTransparency: p.prefs?.reduceTransparency === true, promptRecall: normPromptRecall(p.prefs?.promptRecall), highContrast: p.prefs?.highContrast === true }
         p.favs = Array.isArray(p.favs) ? [...new Set(p.favs.filter((x: unknown) => typeof x === 'string' && x.includes('::')))] : []
         p.prefs = { ...p.prefs, favoritesSection: p.prefs?.favoritesSection !== false, hideFavoritesInProviders: p.prefs?.hideFavoritesInProviders !== false, collapsedProviders: Array.isArray(p.prefs?.collapsedProviders) ? p.prefs.collapsedProviders.filter((x: unknown) => typeof x === 'string') : [] }
         // Image backgrounds were removed; drop their persisted settings.
@@ -3435,6 +3494,7 @@ export const useS = create<S>()(
         if (Array.isArray(p.chats)) p.chats = p.chats.filter((c: any) => Array.isArray(c?.msgs) && c.msgs.length > 0)
         if (Array.isArray(p.chats)) p.chats = p.chats.map((c: any) => Array.isArray(c?.msgs) ? {
           ...c,
+          archivedAt: c.archived === true ? (typeof c.archivedAt === 'number' && Number.isFinite(c.archivedAt) ? c.archivedAt : Date.now()) : undefined,
           msgs: c.msgs.map((m: any) => {
             const st = m?.research?.status
             const next = st === 'running' || st === 'writing' || st === 'planning'
@@ -3464,10 +3524,10 @@ export const useS = create<S>()(
         }
         // The permanent usage ledger has its own storage key (storage/usageLedger.ts):
         // keeping it here would re-serialise the whole history on every save.
-        const { usage, usageTitles, ...rest } = s
-        void usage; void usageTitles
+        const { usage, usageTitles, undo, ...rest } = s
+        void usage; void usageTitles; void undo
         return {
-          ...rest, busy: false, busyChats: {}, doneChats: {}, queued: {}, draft: kept[s.chat ?? ''] ?? '', drafts: kept, notice: null, flashMsg: null, activeProject: '',
+          ...rest, busy: false, busyChats: {}, doneChats: {}, queued: {}, draft: kept[s.chat ?? ''] ?? '', drafts: kept, notice: null, flashMsg: null, activeProject: '', undo: null,
           // Per-chat memoized: only the chat that changed is re-mapped.
           chats: mapPersistChats(withoutExpiredTemps(s.chats)),
         }
@@ -3493,7 +3553,7 @@ useS.subscribe((s, prev) => {
  * chunk, so they are off the streaming render path entirely. Components that
  * need any of these fields must use their own selector. */
 export const useSConfig = () => useS(useShallow((s) => {
-  const { chats, drafts, busy, busyChats, doneChats, queued, draft, notice, flashMsg, usage, usageTitles, ...config } = s
-  void chats; void drafts; void busy; void busyChats; void doneChats; void queued; void draft; void notice; void flashMsg; void usage; void usageTitles
+  const { chats, drafts, busy, busyChats, doneChats, queued, draft, notice, flashMsg, usage, usageTitles, undo, ...config } = s
+  void chats; void drafts; void busy; void busyChats; void doneChats; void queued; void draft; void notice; void flashMsg; void usage; void usageTitles; void undo
   return config
 }))

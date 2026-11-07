@@ -115,9 +115,9 @@ export function ShareDialog({ chatId, close }: { chatId: string; close: () => vo
   const previous = history.filter((x) => x.id !== record?.id)
 
   return (
-    <Modal close={close} blur={false}>
-      <div role="dialog" aria-modal="true" aria-label="Share conversation" className="modal-panel w-full max-w-md space-y-4 rounded-2xl bg-bg p-5">
-        <div className="flex items-center gap-2 font-semibold"><Share2 size={18} className="text-ac" />Share conversation</div>
+    <Modal close={close} blur={false} labelledBy="share-dialog-title">
+      <div className="modal-panel w-full max-w-md space-y-4 rounded-2xl bg-bg p-5">
+        <div id="share-dialog-title" className="flex items-center gap-2 font-semibold"><Share2 size={18} className="text-ac" />Share conversation</div>
 
         {phase === 'loading' && (
           <div className="flex flex-col items-center justify-center gap-3 py-8 text-mu" aria-live="polite">

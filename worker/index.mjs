@@ -22,6 +22,21 @@ function toResponse(result) {
 
 /* Extension of a URL path ("" when none). Mirrors node:path.extname for the
  * static-asset decision below without depending on node:path. */
+/* Same conservative shell headers as the Node host. Asset responses from the
+ * Workers asset layer are immutable once built, so wrapping them here is
+ * cheap and keeps both deployments' security posture identical. */
+const SECURITY_HEADERS = {
+  'x-content-type-options': 'nosniff',
+  'referrer-policy': 'strict-origin-when-cross-origin',
+  'content-security-policy': "base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'",
+}
+
+function secure(response) {
+  const headers = new Headers(response.headers)
+  for (const [name, value] of Object.entries(SECURITY_HEADERS)) headers.set(name, value)
+  return new Response(response.body, { status: response.status, statusText: response.statusText, headers })
+}
+
 function pathExtension(pathname) {
   const i = pathname.lastIndexOf('/')
   const name = i < 0 ? pathname : pathname.slice(i + 1)
@@ -52,7 +67,7 @@ export default {
     // extensionless path still gets the SPA shell.
     if (env?.ASSETS?.fetch) {
       const assetResponse = await env.ASSETS.fetch(request)
-      if (assetResponse.status !== 404) return assetResponse
+      if (assetResponse.status !== 404) return secure(assetResponse)
       const { pathname } = new URL(request.url)
       if (pathExtension(pathname) && pathname !== '/index.html') {
         return toResponse(jsonResult(404, { error: 'Not found' }))
@@ -61,7 +76,7 @@ export default {
       if (shell.status === 404) {
         return toResponse(jsonResult(404, { error: 'Application files not found. Run npm run build first.' }))
       }
-      return shell
+      return secure(shell)
     }
     return toResponse(jsonResult(404, { error: 'Not found' }))
   },
