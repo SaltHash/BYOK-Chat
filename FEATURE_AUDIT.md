@@ -281,7 +281,7 @@ Standard defaults requiring approval: Location, Clipboard, Workspace files, Code
 
 | # | Feature | How it works today | Improvement |
 |---|---|---|---|
-| 14.1 | **Test suite** | 811 unit/integration tests plus 14 worker smoke checks. | Add browser-level tests for the composer, approvals, and settings deep links. |
+| 14.1 | **Test suite** | 813 unit/integration tests plus 14 worker smoke checks. | Add browser-level tests for the composer, approvals, and settings deep links. |
 | 14.2 | **Type safety** | `tsc --noEmit` clean at baseline; shared store/types. | Add `noUncheckedIndexedAccess` incrementally and lint for floating promises. |
 | 14.3 | **Build** | Vite build passes; main bundle ~885 kB / ~297 kB gzip. | Split heavy tool schemas and settings tabs; set and test a bundle budget. |
 | 14.4 | **Error containment** | Top-level ErrorBoundary; lazy-load fallbacks; storage warning. | Add per-panel boundaries and a “copy diagnostics” action. |
@@ -389,9 +389,9 @@ The focused test file covers: default Full, Standard per-tool, Restricted every-
 | Check | Result |
 |---|---|
 | `npx tsc --noEmit` | clean after the final wiring pass |
-| `npm test` | 811/811 passed |
+| `npm test` | 813/813 passed |
 | `npm run test:worker` | 14/14 passed |
-| `npm run build` | passed; main bundle 900.99 kB / 302.30 kB gzip; Settings 201.41 kB plus a lazy 65.41 kB stats chunk |
+| `npm run build` | passed; main bundle 901.95 kB / 302.65 kB gzip; Settings 201.41 kB plus a lazy 65.41 kB stats chunk |
 | Approval policy tests | 9/9 passed |
 | Browser checks | composer lock menu, Settings access card, archive/restore row flow, Shift icon swap, and the archived-retention control verified in the running app; approval policy and queue behavior covered by tests; a full visual pass of every tool card and the device-tool dialog is still worth doing before release |
 

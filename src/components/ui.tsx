@@ -90,15 +90,10 @@ export function useMenuNav(open: boolean, menuRef: RefObject<HTMLElement>, close
   returnRef.current = returnFocus
   useEscapeClose(() => { closeRef.current(); returnRef.current?.() }, open)
   useEffect(() => {
-    if (!open) return
-    const frame = requestAnimationFrame(() => {
-      const menu = menuRef.current
-      if (!menu) return
-      const items = Array.from(menu.querySelectorAll<HTMLElement>('button:not([disabled]), [role="menuitem"]:not([disabled])')).filter((item) => item.getClientRects().length > 0)
-      const selected = items.find((item) => item.getAttribute('aria-checked') === 'true')
-      ;(selected ?? items[0])?.focus()
-    })
-    return () => cancelAnimationFrame(frame)
+    if (!open || !menuRef.current) return
+    const items = Array.from(menuRef.current.querySelectorAll<HTMLElement>('button:not([disabled]), [role="menuitem"]:not([disabled])')).filter((item) => item.getClientRects().length > 0)
+    const selected = items.find((item) => item.getAttribute('aria-checked') === 'true')
+    ;(selected ?? items[0])?.focus()
   }, [open, menuRef])
   return (e: ReactKeyboardEvent<HTMLElement>) => {
     if (e.key === 'Tab') {
@@ -249,8 +244,7 @@ export function Pop({ trigger, children, up, right, w = 'w-72', scroll = true, a
   useEscapeClose(() => { flip(false); triggerRef.current?.querySelector<HTMLElement>('button')?.focus() }, o)
   useEffect(() => {
     if (!o || !autoFocus) return
-    const frame = requestAnimationFrame(() => menuRef.current?.querySelector<HTMLElement>('button:not([disabled])')?.focus())
-    return () => cancelAnimationFrame(frame)
+    menuRef.current?.querySelector<HTMLElement>('button:not([disabled])')?.focus()
   }, [o, autoFocus])
   useEffect(() => {
     if (!o) return

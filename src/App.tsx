@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useState } from 'react'
+import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import { useS, exportChat, featOn } from './store'
 import { isArchivedChatExpired } from './archive'
@@ -19,6 +19,7 @@ const Palette = lazy(() => import('./components/Palette').then((m) => ({ default
 const Widgets = lazy(() => import('./components/Widgets').then((m) => ({ default: m.Widgets })))
 const ShareView = lazy(() => import('./components/ShareView').then((m) => ({ default: m.ShareView })))
 import { shareIdFromHash, shareHash, updateShare } from './share'
+import { chatHash, chatIdFromHash } from './chatRoute'
 import { getStorageWarning, subscribeStorageWarning } from './persistence'
 import { Btn } from './components/ui'
 import { ErrorBoundary } from './components/ErrorBoundary'
@@ -35,6 +36,8 @@ export default function App() {
   const [cfg, setCfg] = useState('')
   const [pal, setPal] = useState(false)
   const [shareId, setShareId] = useState(() => (canUseDOM() ? shareIdFromHash(window.location.hash) : ''))
+  const currentChat = useS((s) => s.chat)
+  const chatRoute = useRef(false)
   useEffect(() => {
     if (!canUseDOM()) return
     const openRoute = () => {
@@ -42,6 +45,18 @@ export default function App() {
       const share = shareIdFromHash(window.location.hash)
       setShareId(share)
       if (share) return
+      const chatId = chatIdFromHash(window.location.hash)
+      if (chatId) {
+        chatRoute.current = true
+        const st = useS.getState()
+        if (st.chats.some((c) => c.id === chatId)) {
+          if (st.chat !== chatId) st.patch({ chat: chatId, activeProject: '' })
+        } else {
+          st.patch({ notice: { t: 'That chat link is not available in this browser. Chat links only open where the chat is stored.' } })
+        }
+        setCfg('')
+        return
+      }
       const route = window.location.hash.replace(/^#\/?/, '')
       if (route === 'chat') { setCfg(''); return }
       const match = route.match(/^settings(?:\/([^#]+))?(?:#(.+))?$/)
@@ -53,9 +68,9 @@ export default function App() {
   }, [])
   useEffect(() => {
     if (!canUseDOM() || shareId) return
-    const hash = cfg ? `#settings/${cfg}` : '#chat'
+    const hash = cfg ? `#settings/${cfg}` : chatHash(currentChat)
     if (window.location.hash !== hash) window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}${hash}`)
-  }, [cfg, shareId])
+  }, [cfg, shareId, currentChat])
   const resize = usePanelResize()
   useFontCss(prefs.fontBody, prefs.fontHeader, prefs.fontMono)
   useStyleCss(prefs.stylePreset, prefs.density, prefs.uiSpacing)
@@ -93,7 +108,7 @@ export default function App() {
   // Durable hydration completes before mounting. Restore this device's last
   // selected chat for the default mode; explicit startup modes still apply.
   useEffect(() => {
-    if (!canUseDOM()) return
+    if (!canUseDOM() || chatRoute.current) return
     const st = useS.getState()
     const mode = st.prefs.startup ?? 'recent'
     if (mode === 'new' || mode === 'temporary') { st.newChat(mode === 'temporary'); return }

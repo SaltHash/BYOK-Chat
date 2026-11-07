@@ -1,7 +1,8 @@
 import { useState } from 'react'
-import { PanelLeft, PanelRight, Download, Command, Share2, MoreVertical, Bookmark, Hourglass, Settings2, ListCollapse, Archive, ArchiveRestore, Trash2 } from 'lucide-react'
+import { PanelLeft, PanelRight, Download, Command, Share2, Link2, MoreVertical, Bookmark, Hourglass, Settings2, ListCollapse, Archive, ArchiveRestore, Trash2 } from 'lucide-react'
 import { useShallow } from 'zustand/react/shallow'
 import { useS, exportChat, featOn, DEFAULT_ADVANCED } from '../store'
+import { chatHash } from '../chatRoute'
 import { Btn, Pop, Toggle, RangeSlider, Item, cx } from './ui'
 import { ContextMeter } from './ContextMeter'
 import { ShareDialog } from './ShareDialog'
@@ -72,6 +73,16 @@ export function Header({ side, toggle, cfg, pal, title }: { side: boolean; toggl
     if (!st.chats.some((c) => c.id === st.chat)) { st.patch({ notice: { t: 'Open or start a chat first, then share it.' } }); return }
     setShareChat(st.chat)
   }
+  const copyChatLink = () => {
+    const st = useS.getState()
+    if (!st.chats.some((c) => c.id === st.chat)) return
+    const url = `${location.origin}${location.pathname}${location.search}${chatHash(st.chat)}`
+    const write = navigator.clipboard?.writeText(url)
+    if (!write) { st.patch({ notice: { t: 'Clipboard access is unavailable in this browser.' } }); return }
+    void write
+      .then(() => st.patch({ notice: { t: 'Chat link copied. It opens in this browser, where the chat is stored.' } }))
+      .catch(() => st.patch({ notice: { t: 'Could not copy the chat link.' } }))
+  }
   const keepPermanent = () => {
     const st = useS.getState()
     const c = st.chats.find((x) => x.id === st.chat)
@@ -97,6 +108,7 @@ export function Header({ side, toggle, cfg, pal, title }: { side: boolean; toggl
             <>
               <Item icon={Command} onClick={() => { close(); pal() }}>Command palette</Item>
               <Item icon={Share2} off={!hasChat} onClick={() => { close(); openShare() }}>Share read-only link</Item>
+              <Item icon={Link2} off={!hasChat} title="Copy a link that reopens this chat in this browser" onClick={() => { close(); copyChatLink() }}>Copy chat link</Item>
               <Item icon={Download} onClick={() => { close(); exportChat() }}>Export chat</Item>
               {showLog && <Item icon={ListCollapse} onClick={() => { close(); collapseAllProcessLogs() }}>Collapse process logs</Item>}
               <Item icon={Bookmark} off={!curTemporary} onClick={() => { close(); keepPermanent() }}>Save as permanent chat</Item>
