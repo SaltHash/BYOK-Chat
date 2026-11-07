@@ -49,11 +49,20 @@ export function useThemeCss(opts: {
       if (colors) root.style.setProperty(`--${key}`, colors[key])
       else root.style.removeProperty(`--${key}`)
     }
+    if (colors?.bor) root.style.setProperty('--bor', colors.bor)
+    else root.style.removeProperty('--bor')
     if (colors) {
       const hex = colors.bg.slice(1)
       const luminance = hex.length === 6 ? (parseInt(hex.slice(0, 2), 16) * 0.299 + parseInt(hex.slice(2, 4), 16) * 0.587 + parseInt(hex.slice(4, 6), 16) * 0.114) : 40
       root.style.colorScheme = luminance > 145 ? 'light' : 'dark'
     } else root.style.removeProperty('color-scheme')
+    // Keep the page canvas and mobile browser chrome in step after a live theme
+    // change; the pre-paint script sets the same values before React mounts.
+    const background = colors?.bg ?? THEME_COLORS[theme]?.bg
+    if (background) {
+      root.style.backgroundColor = background
+      document.querySelector('meta[name="theme-color"]')?.setAttribute('content', background)
+    }
   }, [theme, customColors, opts.modalBlur])
 }
 

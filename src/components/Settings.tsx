@@ -2006,7 +2006,10 @@ function Look() {
         const mode = s.themeMode === 'light' ? 'light' : 'dark'
         const custom = s.themeMode === 'light' ? s.customLightTheme : s.customDarkTheme
         const colors = customThemeColors(custom)
+        const pickerTheme = { accent: custom.accent, text: custom.text, background: custom.background }
         const advancedKeys = THEME_COLOR_KEYS.filter((key) => key !== 'ac' && key !== 'tx' && key !== 'bg')
+        const roleFor = (key: typeof advancedKeys[number]): 'accent' | 'text' | 'background' | 'onAccent' =>
+          key === 'acx' ? 'onAccent' : key === 'mu' ? 'text' : key === 'er' || key.startsWith('c') ? 'accent' : 'background'
         const setCustomTheme = (next: typeof custom) => {
           const norm = normCustomTheme(next, defaultCustomTheme(custom.base))
           const setColors = customThemeColors(norm)
@@ -2032,11 +2035,13 @@ function Look() {
                 value={custom[key]}
                 onChange={(color) => setCustomTheme(key === 'accent' ? { ...custom, accent: color } : key === 'text' ? { ...custom, text: color } : { ...custom, background: color })}
                 label={`${title} color`}
+                role={key}
+                theme={pickerTheme}
               />
             </div>
           ))}
         </div>
-        <Field label={`Contrast · ${custom.contrast}%`} hint="Pushes surfaces, borders and muted text further from the main text and background. Higher contrast also strengthens the syntax palette."><RangeSlider label="Custom theme contrast" min={0} max={100} step={1} value={custom.contrast} set={(v) => setCustomTheme({ ...custom, contrast: Math.round(v) })} className="w-full" /></Field>
+        <Field label={`Contrast · ${custom.contrast}%`} hint="50% is the balanced default. Below that, panels and borders merge into the background; at 0% every surface is the same colour. Higher values separate surfaces and strengthen the syntax palette."><RangeSlider label="Custom theme contrast" min={0} max={100} step={1} value={custom.contrast} set={(v) => setCustomTheme({ ...custom, contrast: Math.round(v) })} className="w-full" /></Field>
         <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-mu">
           <span>Accent, text and background drive the palette. Advanced overrides below are optional.</span>
           <Btn v="ghost" className="px-2 py-1" onClick={() => setCustomTheme(defaultCustomTheme(custom.base))}>Reset to defaults</Btn>
@@ -2053,7 +2058,7 @@ function Look() {
                   <span className="text-xs font-medium">{THEME_COLOR_LABELS[key]}</span>
                   <button type="button" disabled={!overridden} onClick={() => setOverride(key, null)} className={cx('rounded px-1.5 py-0.5 text-[10px] uppercase tracking-wide', overridden ? 'bg-ac/15 text-ac hover:bg-ac/25' : 'text-mu/60')}>{overridden ? 'Reset' : 'Auto'}</button>
                 </div>
-                <ColorPicker value={colors[key]} onChange={(color) => setOverride(key, color)} label={`${THEME_COLOR_LABELS[key]} color`} />
+                <ColorPicker value={colors[key]} onChange={(color) => setOverride(key, color)} label={`${THEME_COLOR_LABELS[key]} color`} role={roleFor(key)} theme={pickerTheme} />
               </div>
             })}
           </div>

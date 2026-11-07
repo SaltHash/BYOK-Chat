@@ -1,16 +1,20 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { hexToHsl, hslToHex, normalizeHex } from '../theme'
+import { colorSuggestions, hexToHsl, hslToHex, normalizeHex, type ColorRole } from '../theme'
 import { cx, useEscapeClose } from './ui'
 
 const clamp = (n: number, min: number, max: number) => Math.min(max, Math.max(min, n))
-const PRESETS = ['#d97757', '#dc8ad8', '#3b5bdb', '#0d9488', '#16a34a', '#eab308', '#ef4444', '#f8fafc', '#111827']
+const FALLBACK_PRESETS = ['#d97757', '#dc8ad8', '#3b5bdb', '#0d9488', '#16a34a', '#eab308', '#ef4444', '#f8fafc', '#111827']
 
 /** An in-app HSL colour picker. Native `<input type="color">` looks different
  *  on every platform and cannot show a labelled swatch, so the theme editor
  *  uses this control instead. */
-export function ColorPicker({ value, onChange, label }: { value: string; onChange: (hex: string) => void; label: string }) {
+export function ColorPicker({ value, onChange, label, role = 'accent', theme }: { value: string; onChange: (hex: string) => void; label: string; role?: ColorRole; theme?: { accent: string; text: string; background: string } }) {
   const safe = normalizeHex(value, '#888888')
+  const suggestions = useMemo(
+    () => theme ? colorSuggestions({ role, ...theme }) : FALLBACK_PRESETS,
+    [role, theme?.accent, theme?.text, theme?.background],
+  )
   const [open, setOpen] = useState(false)
   const [hue, setHue] = useState(() => hexToHsl(safe).h)
   const [text, setText] = useState(safe)
@@ -149,8 +153,8 @@ export function ColorPicker({ value, onChange, label }: { value: string; onChang
             <span aria-hidden="true" className="pointer-events-none absolute top-1/2 size-4 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white bg-transparent shadow-[0_0_0_1px_rgb(0_0_0_/_55%)]" style={{ left: `${hue / 3.6}%` }} />
           </div>
 
-          <div className="flex flex-wrap gap-1.5" aria-label="Suggested colors">
-            {PRESETS.map((color) => (
+          <div className="flex flex-wrap gap-1.5" aria-label={`Suggested ${role} colors`}>
+            {suggestions.map((color) => (
               <button
                 key={color}
                 type="button"

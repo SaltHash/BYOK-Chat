@@ -94,7 +94,88 @@ export function relativeLuminance(hex: string): number {
   return 0.2126 * r + 0.7152 * g + 0.0722 * b
 }
 
-export const inkOn = (hex: string): string => relativeLuminance(hex) > 0.42 ? '#101010' : '#ffffff'
+/** The black/white ink crossover sits near 0.179 in relative luminance. A
+ *  small bias above it keeps genuinely dark accents white while restoring the
+ *  dark ink that mid-tone accents (Claude orange, green, red) need. */
+export const INK_THRESHOLD = 0.185
+export const inkOn = (hex: string): string => relativeLuminance(hex) > INK_THRESHOLD ? '#101010' : '#ffffff'
+
+/** WCAG contrast ratio between two `#rrggbb` colours. */
+export function contrastRatio(a: string, b: string): number {
+  const la = relativeLuminance(a)
+  const lb = relativeLuminance(b)
+  return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05)
+}
+
+export type ColorRole = 'accent' | 'text' | 'background' | 'onAccent'
+
+const ensureContrast = (color: string, against: string, target: number, direction: 1 | -1): string => {
+  const hsl = hexToHsl(color)
+  for (let i = 0; i < 60 && contrastRatio(hslToHex(hsl), against) < target; i++) {
+    hsl.l = clamp(hsl.l + direction * 0.015, 0, 1)
+  }
+  return hslToHex(hsl)
+}
+
+const uniqueColors = (colors: string[]): string[] => {
+  const out: string[] = []
+  for (const color of colors) {
+    const hex = color.toLowerCase()
+    if (!out.includes(hex)) out.push(hex)
+  }
+  return out
+}
+
+/** Theme-aware picks for the three primary custom-theme fields and the text
+ *  that sits on an accent fill. These are deliberately role-specific: an
+ *  accent needs to stand off the canvas, foreground text needs to be readable
+ *  on it, and a background needs to preserve the current text contrast. */
+export function colorSuggestions(opts: { role: ColorRole; accent: string; text: string; background: string }): string[] {
+  const accent = normalizeHex(opts.accent, '#dc8ad8')
+  const text = normalizeHex(opts.text, '#f3eaf7')
+  const background = normalizeHex(opts.background, '#17101c')
+  const hue = hexToHsl(accent).h
+  const backgroundLum = relativeLuminance(background)
+  const accentLum = relativeLuminance(accent)
+  const offsets = [0, 31, 67, 142, 181, 216, 271, 314]
+
+  if (opts.role === 'accent') {
+    const light = backgroundLum < 0.18
+    const direction = light ? 1 : -1
+    return uniqueColors(offsets.map((offset, i) => ensureContrast(hslToHex({
+      h: hue + offset,
+      s: light ? 0.72 : 0.74,
+      l: clamp((light ? 0.68 : 0.4) + ((i % 3) - 1) * 0.035, 0.18, 0.84),
+    }), background, 4.5, direction)))
+  }
+
+  if (opts.role === 'text') {
+    const light = backgroundLum < 0.18
+    const direction = light ? 1 : -1
+    return uniqueColors(offsets.map((offset, i) => ensureContrast(hslToHex({
+      h: hue + offset,
+      s: i === 0 ? 0.05 : 0.22,
+      l: clamp((light ? 0.88 : 0.12) + (light ? -1 : 1) * i * 0.03, 0.04, 0.96),
+    }), background, 4.5, direction)))
+  }
+
+  if (opts.role === 'background') {
+    const lightText = relativeLuminance(text) > 0.18
+    const direction = lightText ? -1 : 1
+    return uniqueColors(offsets.map((offset, i) => ensureContrast(hslToHex({
+      h: hue + offset,
+      s: i === 0 ? 0.10 : 0.22,
+      l: clamp((lightText ? 0.17 : 0.79) + (lightText ? -1 : 1) * i * 0.016, 0.03, 0.97),
+    }), text, 4.5, direction)))
+  }
+
+  const darkInk = accentLum > INK_THRESHOLD
+  const direction = darkInk ? -1 : 1
+  const lightness = darkInk
+    ? [0.08, 0.055, 0.03, 0.105, 0.13, 0.155, 0.18, 0.205]
+    : [0.96, 0.975, 0.99, 0.945, 0.93, 0.915, 0.90, 0.885]
+  return uniqueColors(lightness.map((l) => ensureContrast(hslToHex({ h: hue, s: 0.03, l }), accent, 4.5, direction)))
+}
 
 /** The hue a theme reads as: the accent colour, which carries its identity. */
 export function accentHue(colors: Record<string, string>): number {
@@ -123,27 +204,38 @@ export type CustomPaletteOptions = {
 
 /** Build a complete palette from three primary colours and one contrast knob.
  *  Surfaces, muted text, code blocks and syntax colours are derived so a
- *  custom theme stays coherent without making the user tune every token. */
-export function customPalette(opts: CustomPaletteOptions): Record<CustomPaletteKey, string> {
+ *  custom theme stays coherent without making the user tune every token.
+ *
+ *  The slider is deliberately re-based: 50% is the balanced default and maps
+ *  to the old 0% curve. Below 50%, surfaces collapse toward the background so
+ *  0% is genuinely flat (and the derived border is exactly the background). */
+export function customPalette(opts: CustomPaletteOptions): Record<CustomPaletteKey, string> & { bor: string } {
   const accent = normalizeHex(opts.accent, '#dc8ad8')
   const text = normalizeHex(opts.text, '#f3eaf7')
   const background = normalizeHex(opts.background, '#17101c')
-  const c = clamp(Number.isFinite(opts.contrast) ? opts.contrast : 50, 0, 100) / 100
+  const requested = clamp(Number.isFinite(opts.contrast) ? opts.contrast : 50, 0, 100) / 100
+  const c = requested <= 0.5 ? 0 : (requested - 0.5) * 2
+  const flatten = requested < 0.5 ? 1 - requested / 0.5 : 0
   const bg = hexToHsl(background)
   const light = bg.l > 0.58
 
-  const side = light
+  const baseSide = light
     ? mixHex(background, text, 0.035 + 0.035 * c)
     : mixHex(background, '#000000', 0.20 - 0.06 * c)
-  const surf = light
+  const baseSurf = light
     ? mixHex(background, '#ffffff', 0.72)
     : mixHex(background, '#ffffff', 0.065 + 0.09 * c)
-  const hov = mixHex(surf, text, 0.075 + 0.09 * c)
-  const mu = mixHex(text, background, 0.44 - 0.14 * c)
-  const code = light
+  const baseHov = mixHex(baseSurf, text, 0.075 + 0.09 * c)
+  const baseCode = light
     ? mixHex(background, text, 0.035 + 0.025 * c)
     : mixHex(background, '#000000', 0.26 - 0.08 * c)
-  const codeh = mixHex(code, surf, 0.55)
+  const baseCodeh = mixHex(baseCode, baseSurf, 0.55)
+  const side = flatten ? mixHex(baseSide, background, flatten) : baseSide
+  const surf = flatten ? mixHex(baseSurf, background, flatten) : baseSurf
+  const hov = flatten ? mixHex(baseHov, background, flatten) : baseHov
+  const code = flatten ? mixHex(baseCode, background, flatten) : baseCode
+  const codeh = flatten ? mixHex(baseCodeh, background, flatten) : baseCodeh
+  const mu = mixHex(text, background, 0.44 - 0.14 * c)
   const er = hslToHex({ h: 2, s: light ? 0.62 : 0.68, l: light ? 0.40 : 0.64 })
   const accentHueValue = hexToHsl(accent).h
   // Syntax keeps recognisable semantic families (strings green, numbers warm,
@@ -176,7 +268,10 @@ export function customPalette(opts: CustomPaletteOptions): Record<CustomPaletteK
   for (const [key, value] of Object.entries(opts.overrides ?? {})) {
     if ((CUSTOM_PALETTE_KEYS as readonly string[]).includes(key) && isHexColor(value)) out[key as CustomPaletteKey] = value.toLowerCase()
   }
-  return out
+  // The app's border is normally a mix of hover and muted text. At true zero
+  // it must disappear into the canvas, so it is emitted explicitly.
+  const bor = flatten >= 1 ? out.bg : mixHex(out.hov, out.mu, 0.2)
+  return { ...out, bor }
 }
 
 /** Build a complete palette from one picked accent colour and a base theme.

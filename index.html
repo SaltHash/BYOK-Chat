@@ -1,13 +1,76 @@
 <!doctype html>
-<html lang="en" data-t="plum">
+<html lang="en" data-t="neutral">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
     <meta name="description" content="A customizable, browser-based chat client with your own model endpoints, tools, MCP servers, and local-first storage." />
-    <meta name="theme-color" content="#17101c" />
+    <meta name="theme-color" content="#181818" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-title" content="BYOK" />
+
+    <style>html { background: #181818; }</style>
+    <script data-theme-boot>
+      /* Paint the saved palette before the stylesheet or React can mount. The
+       * app waits for IndexedDB hydration before rendering, so without this the
+       * neutral/plum fallback is visible for the whole boot. If the saved
+       * palette is missing or invalid, stay neutral rather than flashing a
+       * brand theme. Keep these keys in step with THEME_COLOR_KEYS. */
+      (() => {
+        const root = document.documentElement
+        const meta = document.querySelector('meta[name="theme-color"]')
+        const darkThemes = ['plum', 'claude', 'obsidian', 'graphite']
+        const lightThemes = ['paper', 'sage', 'frost', 'sunset']
+        const legacyThemes = { nord: 'claude', amoled: 'obsidian', sepia: 'sunset', porcelain: 'frost', sand: 'sunset' }
+        const themeBackgrounds = {
+          plum: '#17101c', claude: '#181817', obsidian: '#0f141c', graphite: '#0f0f0f',
+          paper: '#fbfbf9', sage: '#f4f7f5', frost: '#f8fafc', sunset: '#faf5f0',
+        }
+        const paletteKeys = ['bg', 'side', 'surf', 'hov', 'tx', 'mu', 'ac', 'acx', 'er', 'code', 'codeh', 'c2', 'c3', 'c4', 'c5']
+        const isHex = (value) => typeof value === 'string' && /^#[0-9a-f]{6}$/i.test(value)
+        const paint = (background) => {
+          root.style.backgroundColor = background
+          meta?.setAttribute('content', background)
+        }
+        const neutral = () => {
+          root.dataset.t = 'neutral'
+          root.style.colorScheme = 'dark'
+          paint('#181818')
+        }
+        try {
+          const parsed = JSON.parse(localStorage.getItem('byok.v1') || 'null')
+          const state = parsed && typeof parsed === 'object' && parsed.state && typeof parsed.state === 'object'
+            ? parsed.state
+            : parsed
+          if (!state || typeof state !== 'object') { neutral(); return }
+          const mode = state.themeMode === 'light' ? 'light' : 'dark'
+          const storedKey = mode === 'light' ? state.themeLight : state.themeDark
+          if (typeof storedKey !== 'string') { neutral(); return }
+          const key = Object.prototype.hasOwnProperty.call(legacyThemes, storedKey) ? legacyThemes[storedKey] : storedKey
+          if (key === 'custom') {
+            const colors = mode === 'light' ? state.customLightColors : state.customDarkColors
+            if (!colors || typeof colors !== 'object' || !paletteKeys.every((name) => isHex(colors[name]))) {
+              neutral()
+              return
+            }
+            root.dataset.t = 'custom'
+            for (const name of paletteKeys) root.style.setProperty(`--${name}`, colors[name].toLowerCase())
+            if (isHex(colors.bor)) root.style.setProperty('--bor', colors.bor.toLowerCase())
+            const background = colors.bg.toLowerCase()
+            const rgb = Number.parseInt(background.slice(1), 16)
+            const luminance = ((rgb >> 16) & 255) * 0.299 + ((rgb >> 8) & 255) * 0.587 + (rgb & 255) * 0.114
+            root.style.colorScheme = luminance > 145 ? 'light' : 'dark'
+            paint(background)
+            return
+          }
+          if (!(mode === 'light' ? lightThemes : darkThemes).includes(key)) { neutral(); return }
+          root.dataset.t = key
+          paint(themeBackgrounds[key])
+        } catch {
+          neutral()
+        }
+      })()
+    </script>
 
     <link rel="icon" type="image/png" href="/favicon.png" />
     <link rel="apple-touch-icon" href="/icon-192.png" />

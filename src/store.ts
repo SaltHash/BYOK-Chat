@@ -208,7 +208,7 @@ export const themePatch = (s: { themeMode: ThemeMode; themeDark: DarkTheme; them
 }
 export const THEME_COLOR_KEYS = ['bg', 'side', 'surf', 'hov', 'tx', 'mu', 'ac', 'acx', 'er', 'code', 'codeh', 'c2', 'c3', 'c4', 'c5'] as const
 export type ThemeColorKey = typeof THEME_COLOR_KEYS[number]
-export type ThemeColors = Record<ThemeColorKey, string>
+export type ThemeColors = Record<ThemeColorKey, string> & { /** Derived border colour, emitted by customThemeColors. */ bor?: string }
 export const THEME_COLOR_LABELS: Record<ThemeColorKey, string> = { bg: 'Main background', side: 'Sidebar', surf: 'Panel surface', hov: 'Hover and selection', tx: 'Main text', mu: 'Muted text', ac: 'Accent', acx: 'Text on accent', er: 'Error', code: 'Code block', codeh: 'Code block header', c2: 'Syntax: strings', c3: 'Syntax: numbers', c4: 'Syntax: titles', c5: 'Syntax: types' }
 export const THEME_COLORS: Record<string, ThemeColors> = {
   plum: { bg: '#17101c', side: '#120c16', surf: '#211828', hov: '#2c2036', tx: '#f3eaf7', mu: '#a893b4', ac: '#dc8ad8', acx: '#1b1020', er: '#f95353', code: '#100b15', codeh: '#2f2040', c2: '#9fe3c5', c3: '#f2b98b', c4: '#8fb9ff', c5: '#c7a6ff' },

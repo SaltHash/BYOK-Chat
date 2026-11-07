@@ -203,6 +203,9 @@ html[data-codewrap] .code-lines .code-line > code { flex: 1 1 auto; min-width: 0
 [data-t=frost] { color-scheme: light; --bg:#f8fafc; --side:#eef2f6; --surf:#ffffff; --hov:#e2e8f0; --tx:#0f172a; --mu:#64748b; --ac:#2563eb; --acx:#ffffff; --er:#c0425d; --code:#f1f5f9; --codeh:#e2e8f0; --c2:#16a34a; --c3:#ea580c; --c4:#0369a1; --c5:#9333ea }
 [data-t=sunset] { color-scheme: light; --bg:#faf5f0; --side:#efe6dd; --surf:#ffffff; --hov:#e4d5c7; --tx:#3b2c24; --mu:#8c7769; --ac:#ea580c; --acx:#ffffff; --er:#c1453b; --code:#f3eae1; --codeh:#e7dad0; --c2:#3f6212; --c3:#b45309; --c4:#1d4ed8; --c5:#a21caf }
 [data-t=custom] { color-scheme: dark; --bg:#17101c; --side:#120c16; --surf:#211828; --hov:#2c2036; --tx:#f3eaf7; --mu:#a893b4; --ac:#dc8ad8; --acx:#1b1020; --er:#f95353; --code:#100b15; --codeh:#2f2040; --c2:#9fe3c5; --c3:#f2b98b; --c4:#8fb9ff; --c5:#c7a6ff }
+/* Pre-paint fallback: a neutral surface, never a branded theme, so a slow boot
+ * cannot flash plum before the saved appearance is applied. */
+[data-t=neutral] { color-scheme: dark; --bg:#181818; --side:#121212; --surf:#202020; --hov:#2b2b2b; --tx:#eaeaea; --mu:#a0a0a0; --ac:#c0c0c0; --acx:#131313; --er:#e46a6a; --code:#111111; --codeh:#1a1a1a; --c2:#9fe3c5; --c3:#f2b98b; --c4:#8fb9ff; --c5:#c7a6ff }
 
 @layer base {
   body { @apply bg-bg font-sans text-tx antialiased; }
