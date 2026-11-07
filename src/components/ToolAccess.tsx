@@ -101,6 +101,7 @@ export function ToolAccessButton({ cfg }: { cfg: (target: string) => void }) {
 /** Rendered above the composer whenever this chat is waiting on a decision. */
 export function ToolApprovalPrompt({ chatId }: { chatId: string }) {
   const pending = useApprovals((s) => s.queue.find((a) => a.chatId === chatId))
+  const mode = normToolMode(useS((s) => s.toolMode))
   if (!pending) return null
   const raw = pending.args.trim()
   let detail = raw || 'No arguments'
@@ -119,6 +120,9 @@ export function ToolApprovalPrompt({ chatId }: { chatId: string }) {
           <pre className="mt-2 max-h-28 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-bg p-2 font-mono text-xs text-tx">{detail}</pre>
           <div className="mt-2.5 flex flex-wrap items-center gap-2">
             <Btn v="solid" icon={Check} onClick={() => decideToolApproval(pending.id, true)}>Allow once</Btn>
+            {mode === 'standard' && (
+              <Btn v="soft" icon={ShieldCheck} onClick={() => { useS.getState().alwaysAllowTool(pending.name); decideToolApproval(pending.id, true) }}>Always allow {toolLabel(pending.name)}</Btn>
+            )}
             <Btn v="soft" icon={X} onClick={() => decideToolApproval(pending.id, false)}>Deny</Btn>
             <span className="text-xs text-mu">Tip: change this in the lock menu or Settings → Tools.</span>
           </div>

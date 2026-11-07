@@ -3,6 +3,7 @@ import { useShallow } from 'zustand/react/shallow'
 import { Plus, Clock, Search, PanelLeftClose, Pin, Pencil, Trash2, MessageSquare, Server, ListMusic, ScrollText, Terminal, Wrench, Settings, Palette, PanelRight, Folder, FolderPlus, FolderMinus, ChevronRight, Bookmark, Download, Archive, ArchiveRestore, MoreVertical, Check, X } from 'lucide-react'
 import { useS, chatMd, dl, THEMES, DARK_THEMES, LIGHT_THEMES, THEME_COLORS, themeKeyOf, DEFAULT_LIBRARY_SHOW, featOn, type Chat, type FeatureId } from '../store'
 import { searchChats } from '../recall'
+import { useApprovals } from '../toolApprovals'
 import { bookmarkEntries } from '../bookmarks'
 import { clampSidebarWidth } from '../layout'
 import { focusComposer, useShiftHeld } from '../hooks'
@@ -38,6 +39,10 @@ function RowBody({ c, mv, del, dnd, container, index, shift, onNavigate, time }:
   // opened. The store clears doneChats on chat switch, so the mark disappears
   // without any extra bookkeeping here.
   const finished = useS((s) => s.chat !== c.id && s.doneChats?.[c.id] === true)
+  // A reply paused on a permission decision is the one state a background chat
+  // cannot signal by itself: without this, the prompt is invisible until the
+  // chat is opened. The badge is the smallest honest marker.
+  const waiting = useApprovals((q) => q.queue.some((a) => a.chatId === c.id))
   const [ed, setEd] = useState(false)
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null)
   const moreRef = useRef<HTMLButtonElement>(null)
@@ -80,6 +85,7 @@ function RowBody({ c, mv, del, dnd, container, index, shift, onNavigate, time }:
             {/* A running reply stays visible from anywhere: a small pulsing dot, no counter. */}
             {busy && <><span aria-hidden="true" title="Replying" className="size-1.5 shrink-0 animate-pulse rounded-full bg-ac motion-reduce:animate-none" /><span className="sr-only">Replying</span></>}
             {!busy && finished && <><span aria-hidden="true" title="Finished while you were away" className="size-1.5 shrink-0 rounded-full bg-ac/70" /><span className="sr-only">Finished while you were away</span></>}
+            {waiting && <><span aria-hidden="true" title="Waiting for your approval" className="size-1.5 shrink-0 rounded-full bg-er" /><span className="sr-only">Waiting for your approval</span></>}
           </span>
         </button>
       )}
