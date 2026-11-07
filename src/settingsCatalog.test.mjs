@@ -8,6 +8,15 @@ test('settings groups contain every existing tab exactly once', () => {
   assert.deepEqual([...ids].sort(), SETTINGS_TABS.map(([id]) => id).sort())
 })
 
+test('settings navigation leads with the everyday sections', () => {
+  assert.equal(SETTINGS_GROUPS[0].label, 'Everyday')
+  assert.deepEqual(SETTINGS_GROUPS[0].tabs, ['chats', 'look', 'tools'])
+})
+
+test('settings search ranks an exact section above its settings', () => {
+  assert.equal(searchSettings('appearance')[0]?.target, 'look')
+})
+
 test('settings search finds sections and individual deep links using keywords', () => {
   assert.deepEqual(searchSettings('   '), [])
   assert.ok(searchSettings('api key').some(result => result.target === 'eps#credentials' && result.section === 'Endpoints'))

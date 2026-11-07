@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { X, Plus, Trash2, ArrowUp, ArrowDown, CornerDownRight, ChevronDown, ChevronRight, Eye, EyeOff, Play, ShieldCheck, Shield, Download, Check, CircleCheck, CircleX, Cpu, Route, GripVertical, Server, ListMusic, ScrollText, Terminal, Wrench, Palette, FolderOpen, PanelRight, TrendingUp, Keyboard, Search, Brain, Pencil, Sparkles, RotateCcw, SlidersHorizontal, FlaskConical, Library, Database, Lock, LockOpen, LayoutTemplate, Share2, Plug, Image as ImageIcon, Volume2, AudioLines, Code2, Star, History } from 'lucide-react'
 import { modelListEdit } from '../models'
 import { useS, useSConfig, PRE, BLANK, THEMES, DARK_THEMES, LIGHT_THEMES, THEME_COLOR_KEYS, THEME_COLOR_LABELS, THEME_COLORS, defaultCustomTheme, customThemeColors, normCustomTheme, SEARCH_PROVIDERS, READER_PROVIDERS, FEATURES, LIBRARY_ITEMS, FEATURE_TABS, FEATURE_WIDGETS, DEFAULT_LIBRARY_SHOW, DEFAULT_ADVANCED, featOn, normSearch, normAdvanced, normLogDetail, normDocs, usable, modelsOf, modelNameOf, helperRef, splitHelperRef, favRef, toggleFavRef, effortClassifierOf, TOOL_ROUNDS_DEFAULT, TOOL_ROUNDS_MIN, TOOL_ROUNDS_BASE_MAX, TOOL_ROUNDS_MAX, toolRoundLimitOf, isToolRoundsUnlimited, GENERAL_PROMPT_TEXT, STARTUP_MODES, normStartup, PROMPT_RECALL_MODES, normPromptRecall, type PromptRecallMode, type Kind, type FeatureId, type DocPrefs, type ModelPrice } from '../store'
@@ -11,7 +11,7 @@ import { PROMPT_QUALITIES, type GlobalPrompt } from '../flair'
 import { PROMPT_VARS } from '../promptVars'
 import { DataTab, KeysTab, TestRow, TestAllEndpoints } from './Extra'
 import { ToolAccessCard } from './ToolAccess'
-import { Btn, Field, Input, Area, Sel, SearchSelect, Toggle, Seg, RangeSlider, Checkbox, HelpTip, Modal, Surface, Chip, Item, cx, useEscapeClose, type Ic } from './ui'
+import { Btn, Field, Input, Area, Sel, SearchSelect, Toggle, Seg, RangeSlider, Checkbox, HelpTip, Modal, Surface, Chip, Item, Confirm, cx, useEscapeClose, type Ic } from './ui'
 import { Anchor, Panel, Section } from './settingsPrimitives'
 import { SortableList, useFlipAnimate, type SortHandleProps, type SortItemApi } from './dnd'
 import { fetchModelCatalogCached, clearCatalogCache, prefetchModelCatalog, fetchModelProviders, filterCatalogByEndpoint, prioritizeProviderRows, discoverEndpointModels, clearModelDiscoveryCache, type CatalogEntry, type CatalogProvider, type CatalogSource } from '../catalog'
@@ -29,10 +29,12 @@ import { USAGE_PERIODS } from '../usageStats'
 import { normCompactAt } from '../compaction'
 import { ARCHIVE_RETENTION_NEVER, archiveRetentionLabel, normArchiveDays } from '../archive'
 import { ColorPicker } from './ColorPicker'
-import { UsageStats } from './UsageStats'
 import { ErrorBoundary } from './ErrorBoundary'
 
 const TABS = SETTINGS_TABS
+// The stats dashboard is a large, self-contained surface. Keep it out of the
+// Settings chunk until its tab is actually opened.
+const UsageStats = lazy(() => import('./UsageStats').then((m) => ({ default: m.UsageStats })))
 /** Briefly highlight a deep-linked section after scrolling to it. */
 export function flashAnchor(anchor: string) {
   try {
@@ -1724,6 +1726,7 @@ function MemoryTab() {
   const [draft, setDraft] = useState('')
   const [category, setCategory] = useState('General')
   const [dupes, setDupes] = useState<{ a: string; b: string; score: number }[] | null>(null)
+  const [clearOpen, setClearOpen] = useState(false)
   const setPrefs = (p: Partial<typeof mp>) => s.patch({ memoryPrefs: { ...mp, ...p } })
   const addMemory = () => {
     const text = draft.trim(); if (!text) return
@@ -1785,8 +1788,9 @@ function MemoryTab() {
       <p className="text-xs text-mu">New memories merge into near-duplicates automatically instead of piling up copies.</p></div>
     </Anchor>
     <Anchor id="stored-memories">
-    <div className="flex items-center justify-between"><div className="text-sm font-medium">Stored memories ({s.memories.length})</div><div className="flex gap-2"><Btn v="soft" disabled={s.memories.length < 2} onClick={() => setDupes(findDuplicatePairs(s.memories))}>Check duplicates</Btn><Btn v="danger" icon={Trash2} disabled={!s.memories.length} onClick={() => { if (window.confirm('Delete all stored memories?')) s.patch({ memories: [] }) }}>Delete all</Btn></div></div>
+    <div className="flex items-center justify-between"><div className="text-sm font-medium">Stored memories ({s.memories.length})</div><div className="flex gap-2"><Btn v="soft" disabled={s.memories.length < 2} onClick={() => setDupes(findDuplicatePairs(s.memories))}>Check duplicates</Btn><Btn v="danger" icon={Trash2} disabled={!s.memories.length} onClick={() => setClearOpen(true)}>Delete all</Btn></div></div>
     </Anchor>
+    {clearOpen && <Confirm title="Delete all stored memories?" text="Every memory stored in this browser is removed. Chats and settings are not affected." ok="Delete all" close={() => setClearOpen(false)} run={() => s.patch({ memories: [] })} />}
     <Anchor id="check-duplicates">
     {dupes && (
       <div className="rounded-xl bg-surf p-4 space-y-2">
@@ -2633,7 +2637,7 @@ export function Settings({ tab, setTab }: { tab: string; setTab: (t: string) => 
           <div className="h-full overflow-y-auto p-4 sm:p-6">
             <div className="mb-4 space-y-2 pr-12 sm:hidden"><h2 id="settings-mobile-title" className="text-lg font-semibold">Settings</h2><input aria-label="Search settings" value={query} onChange={e => setQuery(e.target.value)} placeholder="Search settings" className="w-full rounded-lg bg-surf px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ac/40" />{query.trim() ? <div className="max-h-48 overflow-y-auto rounded-lg bg-surf">{results.map(result => <button key={result.target} onClick={() => openResult(result.target)} className="block w-full px-3 py-2 text-left text-sm hover:bg-hov">{result.title}<span className="ml-2 text-xs text-mu">{result.section}</span></button>)}{!results.length && <p className="p-3 text-sm text-mu">No settings found.</p>}</div> : <SearchSelect ariaLabel="Settings section" value={active} set={setTab} opts={SETTINGS_TABS.filter(([k]) => showOff || tabs.some(([v]) => v === k)).map(([k, l]) => [k, `${l}${tabs.some(([v]) => v === k) ? '' : ' (off)'}`] as [string, string])} />}</div>
             {disabledFeature ? <div className="space-y-3"><h2 className="text-lg font-semibold">{featureLabel} is off</h2><p className="text-sm text-mu">Turn it on in Features to use its settings.</p><Btn v="soft" onClick={() => setTab(`features#feature-${disabledFeature}`)}>Open Features</Btn></div> : active === 'stats'
-              ? <UsageStats onOpenChat={(chatId, messageId) => { useS.getState().patch({ chat: chatId, flashMsg: messageId, activeProject: '' }); setTab('') }} />
+              ? <Suspense fallback={<div role="status" className="py-10 text-center text-sm text-mu">Loading stats…</div>}><UsageStats onOpenChat={(chatId, messageId) => { useS.getState().patch({ chat: chatId, flashMsg: messageId, activeProject: '' }); setTab('') }} /></Suspense>
               : <ErrorBoundary compact title="These settings could not render"><V /></ErrorBoundary>}
           </div>
         </div>

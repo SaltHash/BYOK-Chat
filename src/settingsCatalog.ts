@@ -70,13 +70,16 @@ export const TAB_KEYWORDS: Record<SettingsTabId, string> = {
   adv: 'advanced debugging verbose errors additional capabilities system prompt payloads token counts model parameters temperature top p max tokens',
 }
 
-/** Navigation groups preserve tab ids and deep links while organizing by task. */
+/** Navigation groups preserve tab ids and deep links while organizing by task.
+ *  The order is deliberate: everyday surfaces come first, setup and
+ *  power-user controls later. `Features` used to lead the list even though it
+ *  is the least frequently opened section in normal use. */
 export const SETTINGS_GROUPS: { label: string; tabs: SettingsTabId[] }[] = [
-  { label: 'Chat', tabs: ['chats', 'prompts', 'cmds', 'voice', 'keys'] },
+  { label: 'Everyday', tabs: ['chats', 'look', 'tools'] },
   { label: 'Models & providers', tabs: ['eps', 'pls'] },
-  { label: 'Tools & research', tabs: ['tools', 'skills', 'mcp', 'memory', 'workspace'] },
-  { label: 'Personalize', tabs: ['look', 'widgets', 'features'] },
-  { label: 'Data & advanced', tabs: ['stats', 'data', 'adv'] },
+  { label: 'Writing & automation', tabs: ['prompts', 'cmds', 'voice', 'keys'] },
+  { label: 'Capabilities', tabs: ['skills', 'mcp', 'memory', 'workspace'] },
+  { label: 'Usage & app', tabs: ['stats', 'widgets', 'data', 'features', 'adv'] },
 ]
 
 export type SettingLink = {
