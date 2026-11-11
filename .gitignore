@@ -75,3 +75,6 @@ Desktop.ini
 !.yarn/plugins
 !.yarn/releases
 !.yarn/versions
+
+# Local agent storage
+agents_storage/
