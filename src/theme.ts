@@ -205,46 +205,70 @@ export type CustomPaletteOptions = {
 /** Build a complete palette from three primary colours and one contrast knob.
  *  Surfaces, muted text, code blocks and syntax colours are derived so a
  *  custom theme stays coherent without making the user tune every token.
+ *  Surfaces always sit above the chosen background; the sidebar is the first
+ *  step up, so the main background is darker than it.
  *
- *  The slider is deliberately re-based: 50% is the balanced default and maps
- *  to the old 0% curve. Below 50%, surfaces collapse toward the background so
- *  0% is genuinely flat (and the derived border is exactly the background). */
+ *  One curve drives every derived colour: `reach` is 0 at 0% (every surface
+ *  is the canvas), exactly 1 at the balanced 50% default and 2 at 100%. Each
+ *  half eases into the joint, so its slope is zero on both sides of 50% and
+ *  dragging across the default never reverses direction abruptly. Surface
+ *  amounts scale with diminishing returns toward a per-surface ceiling rather
+ *  than overshooting it, which keeps the hierarchy (canvas < sidebar < panel <
+ *  hover, code block below the canvas) intact at every position and stops
+ *  surfaces from saturating at white or black. */
 export function customPalette(opts: CustomPaletteOptions): Record<CustomPaletteKey, string> & { bor: string } {
   const accent = normalizeHex(opts.accent, '#dc8ad8')
   const text = normalizeHex(opts.text, '#f3eaf7')
   const background = normalizeHex(opts.background, '#17101c')
   const requested = clamp(Number.isFinite(opts.contrast) ? opts.contrast : 50, 0, 100) / 100
-  const c = requested <= 0.5 ? 0 : (requested - 0.5) * 2
-  const flatten = requested < 0.5 ? 1 - requested / 0.5 : 0
   const bg = hexToHsl(background)
   const light = bg.l > 0.58
 
-  const baseSide = light
-    ? mixHex(background, text, 0.035 + 0.035 * c)
-    : mixHex(background, '#000000', 0.20 - 0.06 * c)
-  const baseSurf = light
-    ? mixHex(background, '#ffffff', 0.72)
-    : mixHex(background, '#ffffff', 0.065 + 0.09 * c)
-  const baseHov = mixHex(baseSurf, text, 0.075 + 0.09 * c)
-  const baseCode = light
-    ? mixHex(background, text, 0.035 + 0.025 * c)
-    : mixHex(background, '#000000', 0.26 - 0.08 * c)
-  const baseCodeh = mixHex(baseCode, baseSurf, 0.55)
-  const side = flatten ? mixHex(baseSide, background, flatten) : baseSide
-  const surf = flatten ? mixHex(baseSurf, background, flatten) : baseSurf
-  const hov = flatten ? mixHex(baseHov, background, flatten) : baseHov
-  const code = flatten ? mixHex(baseCode, background, flatten) : baseCode
-  const codeh = flatten ? mixHex(baseCodeh, background, flatten) : baseCodeh
-  const mu = mixHex(text, background, 0.44 - 0.14 * c)
+  // Smoothstep is flat at both ends, so the halves meet at 50% without a kink
+  // and the slider has no dead step exactly at its default.
+  const ease = (x: number) => x * x * (3 - 2 * x)
+  const reach = requested <= 0.5
+    ? ease(requested / 0.5)
+    : 1 + ease((requested - 0.5) / 0.5)
+
+  /* A balanced mix amount scaled by the contrast knob: 0 at 0%, the balanced
+   * amount at 50%, easing toward `ceiling` above it. Nothing overshoots the
+   * ceiling, so a surface never flips past white or black. */
+  const spread = (amount: number, ceiling: number) =>
+    ceiling * (1 - Math.pow(1 - clamp(amount / ceiling, 0, 0.999), reach))
+  const lift = (amount: number, ceiling: number) => mixHex(background, '#ffffff', spread(amount, ceiling))
+
+  // The sidebar is the first step above the canvas and panels the second, so
+  // the main background always reads darker than the sidebar. A user-chosen
+  // sidebar override still wins, applied with the rest below.
+  const side = lift(light ? 0.6 : 0.05, light ? 0.88 : 0.12)
+  const surf = lift(light ? 0.72 : 0.065, light ? 0.94 : 0.16)
+  // Hover and selection are a tint of the panel, so they track the panel's own
+  // lift at this position instead of a fixed colour.
+  const hov = mixHex(surf, text, spread(0.075, 0.18))
+  // Code blocks sink below the canvas (dark themes) or shade away from it
+  // (light themes); the header is the midpoint between the block and the
+  // canvas, so it stays a readable band even when panels sit near white.
+  const code = light
+    ? mixHex(background, text, spread(0.035, 0.12))
+    : mixHex(background, '#000000', spread(0.26, 0.5))
+  const codeh = mixHex(code, background, 0.55)
+  // Muted text keeps its footing below the default; it only starts closing on
+  // the text colour once surfaces separate, never merging into the canvas.
+  const textReach = Math.max(1, reach)
+  const mu = mixHex(text, background, 0.44 - 0.14 * (textReach - 1))
   const er = hslToHex({ h: 2, s: light ? 0.62 : 0.68, l: light ? 0.40 : 0.64 })
   const accentHueValue = hexToHsl(accent).h
   // Syntax keeps recognisable semantic families (strings green, numbers warm,
   // titles blue, types violet) while leaning slightly toward the accent hue.
+  // The ramp is clamped at the default, which is smooth because the curve has
+  // zero slope there; syntax only strengthens above 50%.
+  const syntaxSpread = Math.max(0, reach - 1)
   const semanticHues = [146, 32, 212, 282]
   const syntax = semanticHues.map((hue) => hslToHex({
     h: hue * 0.82 + accentHueValue * 0.18,
-    s: light ? 0.52 + c * 0.22 : 0.55 + c * 0.25,
-    l: light ? 0.40 - c * 0.10 : 0.66 + c * 0.10,
+    s: light ? 0.52 + syntaxSpread * 0.22 : 0.55 + syntaxSpread * 0.25,
+    l: light ? 0.40 - syntaxSpread * 0.10 : 0.66 + syntaxSpread * 0.10,
   }))
 
   const out: Record<CustomPaletteKey, string> = {
@@ -268,9 +292,10 @@ export function customPalette(opts: CustomPaletteOptions): Record<CustomPaletteK
   for (const [key, value] of Object.entries(opts.overrides ?? {})) {
     if ((CUSTOM_PALETTE_KEYS as readonly string[]).includes(key) && isHexColor(value)) out[key as CustomPaletteKey] = value.toLowerCase()
   }
-  // The app's border is normally a mix of hover and muted text. At true zero
-  // it must disappear into the canvas, so it is emitted explicitly.
-  const bor = flatten >= 1 ? out.bg : mixHex(out.hov, out.mu, 0.2)
+  // The app's border is normally a mix of hover and muted text. Its weight
+  // follows the same curve, so it fades out of the canvas continuously instead
+  // of stepping to the background only at the very end of the slider.
+  const bor = mixHex(out.hov, out.mu, spread(0.2, 0.36))
   return { ...out, bor }
 }
 

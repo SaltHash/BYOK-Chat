@@ -48,6 +48,16 @@ test('muted text meets WCAG AA on every built-in surface', () => {
   }
 })
 
+test('the main background sits darker than the sidebar on every built-in theme', () => {
+  for (const [name, value] of themes()) {
+    assert.ok(value.side, `${name} is missing --side`)
+    assert.ok(
+      luminance(value.side) > luminance(value.bg),
+      `${name}: --side ${value.side} should be lighter than --bg ${value.bg}`,
+    )
+  }
+})
+
 test('theme muted colours stay in sync with the runtime palette export', () => {
   const source = readFileSync(new URL('./store.ts', import.meta.url), 'utf8')
   for (const [name, value] of themes()) {

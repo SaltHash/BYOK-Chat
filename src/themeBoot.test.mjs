@@ -32,9 +32,9 @@ function boot(stored) {
 test('pre-paint boot applies the saved light theme', () => {
   const { root, attributes } = boot(JSON.stringify({ state: { themeMode: 'light', themeLight: 'sage' } }))
   assert.equal(root.dataset.t, 'sage')
-  assert.equal(root.style.backgroundColor, '#f4f7f5')
+  assert.equal(root.style.backgroundColor, '#e9ecea')
   assert.equal(root.style.colorScheme, undefined)
-  assert.equal(attributes.content, '#f4f7f5')
+  assert.equal(attributes.content, '#e9ecea')
 })
 
 test('pre-paint boot applies saved custom colors before React mounts', () => {

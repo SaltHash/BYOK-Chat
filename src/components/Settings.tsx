@@ -1973,7 +1973,7 @@ function Look() {
             </div>
           ))}
         </div>
-        <Field label={`Contrast · ${custom.contrast}%`} hint="50% is the balanced default. Below that, panels and borders merge into the background; at 0% every surface is the same colour. Higher values separate surfaces and strengthen the syntax palette."><RangeSlider label="Custom theme contrast" min={0} max={100} step={1} value={custom.contrast} set={(v) => setCustomTheme({ ...custom, contrast: Math.round(v) })} className="w-full" /></Field>
+        <Field label={`Contrast · ${custom.contrast}%`} hint="50% is the balanced default. Below it, surfaces and borders ease back into the background until 0% leaves them all one colour; above it, they separate further toward their limits and the syntax palette strengthens. In-between values blend smoothly, so nothing jumps at the default."><RangeSlider label="Custom theme contrast" min={0} max={100} step={1} value={custom.contrast} set={(v) => setCustomTheme({ ...custom, contrast: Math.round(v) })} className="w-full" /></Field>
         <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-mu">
           <Btn v="ghost" className="px-2 py-1" onClick={() => setCustomTheme(defaultCustomTheme(custom.base))}>Reset to defaults</Btn>
         </div>

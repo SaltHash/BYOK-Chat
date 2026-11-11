@@ -80,11 +80,53 @@ test('contrast 50 is the balanced default, 0 is genuinely flat, and 100 separate
   const high = customPalette({ ...opts, contrast: 100 })
   for (const key of ['side', 'surf', 'hov', 'code', 'codeh']) assert.equal(flat[key], flat.bg, `${key} disappears at 0%`)
   assert.equal(flat.bor, flat.bg, 'the border disappears at 0%')
-  assert.equal(balanced.side, '#101012', '50% keeps the old 0% sidebar')
+  assert.equal(balanced.side, '#202022', '50% keeps the old 0% sidebar step')
+  assert.ok(hexToHsl(balanced.side).l > hexToHsl(balanced.bg).l, 'the sidebar sits above the main background')
   assert.equal(balanced.surf, '#232325', '50% keeps the old 0% surface')
+  assert.ok(hexToHsl(balanced.surf).l > hexToHsl(balanced.side).l, 'panels lift above the sidebar')
   assert.ok(hexToHsl(balanced.surf).l > hexToHsl(flat.surf).l, 'the balanced surface lifts off the background')
+  const light = customPalette({ accent: '#3b5bdb', text: '#1d1d1b', background: '#f0f0ee', contrast: 50 })
+  assert.ok(hexToHsl(light.side).l > hexToHsl(light.bg).l, 'the light sidebar also sits above the main background')
   assert.ok(hexToHsl(high.surf).l > hexToHsl(balanced.surf).l, 'higher contrast separates further')
   assert.ok(Math.abs(hexToHsl(high.mu).l - hexToHsl(high.tx).l) < Math.abs(hexToHsl(balanced.mu).l - hexToHsl(balanced.tx).l), 'muted text moves toward the text colour')
+})
+
+test('the contrast slider is continuous, ordered and ceiling-limited', () => {
+  const opts = { accent: '#7c9cff', text: '#f8f8f8', background: '#141416' }
+  const at = (contrast) => customPalette({ ...opts, contrast })
+
+  // No kink at the 50% default: one step either side stays put.
+  const below = at(49), centre = at(50), above = at(51)
+  for (const key of ['side', 'surf', 'hov', 'code', 'codeh', 'bor']) {
+    const step = Math.abs(hexToHsl(centre[key]).l - hexToHsl(below[key]).l)
+    const next = Math.abs(hexToHsl(above[key]).l - hexToHsl(centre[key]).l)
+    assert.ok(step < 0.01 && next < 0.01, `${key} does not jump across the default`)
+  }
+
+  // Surfaces only ever rise as contrast rises, and the hierarchy holds at
+  // every position, so dragging never makes a panel sink behind the sidebar.
+  let previous = at(0)
+  for (let contrast = 5; contrast <= 100; contrast += 5) {
+    const current = at(contrast)
+    for (const key of ['side', 'surf']) {
+      assert.ok(hexToHsl(current[key]).l >= hexToHsl(previous[key]).l, `${key} never falls at ${contrast}%`)
+    }
+    assert.ok(hexToHsl(current.side).l >= hexToHsl(current.bg).l, `sidebar stays above the canvas at ${contrast}%`)
+    assert.ok(hexToHsl(current.surf).l >= hexToHsl(current.side).l, `panels stay above the sidebar at ${contrast}%`)
+    assert.ok(hexToHsl(current.hov).l >= hexToHsl(current.surf).l, `hover stays above the panel at ${contrast}%`)
+    previous = current
+  }
+  assert.ok(contrastRatio(at(1).bor, at(1).bg) < contrastRatio(at(100).bor, at(100).bg), 'the border gains weight with contrast')
+
+  // The far end approaches the ceilings without ever reaching pure white or
+  // black, and every surface stays distinct from the canvas.
+  for (const [background, text] of [['#141416', '#f8f8f8'], ['#f0f0ee', '#1d1d1b']]) {
+    const palette = customPalette({ accent: '#7c9cff', text, background, contrast: 100 })
+    for (const key of ['side', 'surf', 'hov', 'code', 'codeh', 'mu']) {
+      assert.ok(!/^#(ffffff|000000)$/i.test(palette[key]), `${key} stays inside the range on ${background}`)
+      assert.ok(contrastRatio(palette[key], palette.bg) > 1.01, `${key} stays distinct from the canvas on ${background}`)
+    }
+  }
 })
 
 test('accent ink restores dark text on mid-tone accents and stays readable', () => {
