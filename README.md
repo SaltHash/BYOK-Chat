@@ -1,142 +1,258 @@
-# Private AI chat with your own models
+# BYOK Chat
 
-A local-first chat app for the model endpoints you already use. Bring an OpenAI-compatible or Anthropic Messages endpoint, keep your keys in your browser, and use one model or route across several. Visiting [chat.icodebugs.com](https://chat.icodebugs.com/#chat) or using a small optional Node or Cloudflare backend adds web search, page reading, sharing, device sync, and a relay for providers that block browser requests.
+A local-first AI chat client for the model endpoints you already use. Bring an
+OpenAI-compatible or Anthropic Messages endpoint (a hosted provider, a local
+Ollama server, a gateway, or your own), keep the keys in the browser, and chat
+with one model or route across several.
 
-For the complete feature inventory, maturity review, and prioritised improvement roadmap, see [FEATURE_AUDIT.md](FEATURE_AUDIT.md).
+An optional Node or Cloudflare backend adds web search, page reading, sharing,
+encrypted device sync, and a CORS relay for providers that block browser
+requests. Without it the app still runs as a static site and calls providers
+directly.
+
+For the feature inventory and maturity review see [FEATURE_AUDIT.md](FEATURE_AUDIT.md);
+for the roadmap see [FEATURE_BACKLOG.md](FEATURE_BACKLOG.md); for the rules that
+bite when changing code see [agents.md](agents.md).
 
 ## Why this app
 
-- Your model keys stay in the browser. The backend does not store model credentials.
-- Chats, settings, workspaces, and attachments live on your device.
-- Optional device sync encrypts the payload before upload.
-- Use a hosted provider, a local Ollama server, a gateway, or your own endpoint.
-- Add grounded search, citations, research, files, code, images, MCP tools, and skills in one place.
-- Run it as a web app, an installable PWA, or a self-hosted Node or Cloudflare deployment.
+- Model keys live in the browser. The backend never stores model credentials.
+- Chats, workspaces, attachments and settings live on the device.
+- Device sync encrypts the payload before upload; the server stores ciphertext.
+- Grounding, files, code, images, MCP tools and skills share one chat surface.
+- Runs as a web app, an installable PWA, or a self-hosted Node/Worker deployment.
 
-## Quick start
+## Architecture at a glance
 
-Requires Node 20 or newer.
+```
+Browser: React 18 + Vite + TypeScript + Tailwind v4
+  App.tsx shell ─ sidebar · chat · composer · widgets · lazy settings/palette/share
+        │
+  src/store.ts  one Zustand store: state + actions (source of truth)
+        ├── src/engine.ts   provider streaming, tool loop, search/reader calls
+        ├── src/storage/    localStorage, IndexedDB/OPFS, sync, crypto
+        └── src/components/ UI
 
-```sh
-npm install
-npm run dev
+Optional backend (pick one, same route modules)
+  server.mjs ── Node host ──┐
+  worker/index.mjs ─────────┴── server/*.mjs
+     /api/search · /api/extract · /api/reader · /api/share · /api/sync/* · /api/proxy
 ```
 
-Open the local URL, add an endpoint and key, and start chatting. For a production build through the Node server:
+The browser is the app; the backend is a stateless helper that only sees what a
+given request needs. Model traffic goes straight to the provider, or through
+`/api/proxy` when the provider's CORS policy blocks browser calls.
 
-```sh
-npm run build
-npm start
-```
+## The store
 
-For Cloudflare Workers:
+`src/store.ts` is the heart of the project and the file most changes touch. It
+is a single Zustand store, `useS`, holding everything the app knows: endpoints
+and model selection, chats and their transcripts, prompts, playlists, commands,
+profiles, projects, workspaces, memory, MCP servers, skills, usage history,
+sharing records, settings and appearance. There is no second state container;
+components read slices through selectors (`useS(useShallow(...))`) and call
+store actions to change anything.
 
-```sh
-npm run deploy
-```
+**State is grouped by feature.** The type `S` near the top of `store.ts` is the
+authoritative list. The groups worth knowing:
 
-## Supported providers
+- Model layer: `eps`, `sel`, `favs`, `pls`, `prompts`, `cmds`, `profiles`,
+  `params`, `effort`, `routeStats`.
+- Conversations: `chats`, `chat`, `drafts`, `draft`, `queued`, `busyChats`,
+  `runJournal`, `doneChats`, `undo`, plus per-message pin/bookmark/version data.
+- Capabilities: `tools`, `toolMode`, `toolApproval`, `toolConsent`, `mcps`,
+  `skills`, `imageGen`, `codeRun`, `voicePrefs`, `search`, `memories`,
+  `memoryPrefs`, `docPrefs`.
+- Research: `researchRounds`, per-message research state and `researchPanel`.
+- Workspaces and projects: `workspaces`, `selectedRevision`, `projects`,
+  `activeProject`.
+- Configuration and appearance: `prefs`, `advanced`, `features`,
+  `featureOrder`, `widgetPrefs`, `widgets`, `rail`, `themeMode`, `themeDark`,
+  `themeLight`, custom palettes, fonts and layout widths.
+- Accounting and sync: `usage`, `usageTitles`, `stats`, `shares`, `keys`,
+  `gistToken`.
 
-### Model endpoints
+**Actions are the API.** Everything from creating a chat (`newChat`, `chatOp`,
+`moveChat`) to editing a transcript (`editMsg`, `delMsg`, `regen`, `retryMsg`,
+`regenAt`) to branching (`branch`, `variant`, `gotoPath`) is a store action.
+Replies go through `send(value, attachments)`, which returns whether a run
+started; `stop` and `stopAll` abort per-chat `AbortController`s; `resumeRun` and
+`resumeOrphanedRuns` continue a reply whose tab closed. Research, profiles,
+project context, memory, tool policy (`alwaysAllowTool`), storage maintenance
+(`compactStorage`, `compactChat`) and usage history all live here too.
 
-Use any service that speaks one of these formats:
+**Reply lifecycle.** `send` plans the request (`planRequest` in `chatPlan.ts`),
+resolves candidate endpoints (playlist routing and fallbacks), builds the wire
+history (`wire` in `engine.ts`), streams tokens, runs the tool loop, then
+finalizes the message with stats, citations and workspace changes. Runs are kept
+in a module-level map keyed by chat id, so chats stream independently and Stop
+only affects the chat it was pressed in. A durable run journal records replies
+that were in flight when the tab closed so they can be resumed.
 
-- OpenAI Chat Completions compatible
-- Anthropic Messages compatible
+**Writes funnel through one `set`.** The store wraps Zustand's setter so that
+per-chat drafts stay coherent: `draft` always mirrors the active chat and
+switching chats stages/restores the right draft. Persistence is layered on the
+same write: the persist middleware keeps the settings-and-index copy in
+`localStorage` under `byok.v1`, while `storage/boot.ts` mirrors chats,
+workspaces and attachment blobs to IndexedDB/OPFS (OPFS where available) and
+restores anything localStorage had to prune. Usage history has its own key, and
+sync keeps a separate content-hash baseline.
 
-Common choices include OpenAI, Anthropic, OpenRouter, Google Gemini through its OpenAI-compatible endpoint, Ollama, AIHubMix, and self-hosted gateways. Add a base URL and key by hand, or paste a cURL command to import it. The app can discover models from the endpoint and remembers working catalog URLs.
+**When adding state**, update `S` and defaults, normalize persisted values in
+the same module that owns them, bump `STORE_VERSION` in `persistence.ts` when
+the persisted shape changes, and keep pure logic in a sibling module with a
+`.test.mjs` rather than growing the store further.
 
-### Web search
+## Request path
 
-TinyFish, You.com, Exa, Tavily, Parallel, Valyu, Firecrawl, Jina AI, Bright Data, Perplexity, Serper, Brave Search API, SerpAPI, Linkup, Octen, Google Gemini grounding, OpenAI web search, Anthropic web search, and Azure Bing.
+1. The composer calls `send`, which plans the request: model, system prompt,
+   tools, memory recall, attachments, pinned reply and context budget.
+2. Playlist routing and profiles narrow the endpoint candidates; failures fall
+   through to the next endpoint, with one retry for transient errors.
+3. `engine.wire` turns the transcript into provider wire messages, and
+   `engine.stream` opens the SSE stream through the provider adapter.
+4. Tokens are appended to the message as they arrive; `runToolLoop` executes
+   tool calls (parallel where safe) under the current access policy, asking for
+   approval when a tool is marked as such.
+5. Grounding calls `searchWeb`/`fetchPage`, either directly from the browser or
+   through the backend, and citations are numbered and merged into sources.
+6. The finalized reply records usage, stats, citations, workspace revisions and
+   any pending completion cue, then the mirror writes it to durable storage.
 
-### Page readers
+## Engine and providers
 
-Direct fetch, Jina Reader, Firecrawl, Exa Contents, TinyFish Fetch, Tavily Extract, Parallel Extract, Valyu Contents, Linkup Fetch, Octen Extract, and a custom reader API.
+`src/engine.ts` owns transport, not UI: provider wire formats (OpenAI Chat
+Completions and Anthropic Messages), SSE parsing, a small TTL/LRU session cache
+for search results and page reads, error classification (network, CORS,
+timeout, rate limit, empty response, stalled stream), and the tool loop. The
+`O` options bag carries sampling, effort, caps and abort signals. Provider
+casing, model catalogs and auth headers live in `providerAdapter.ts` and
+`providerRegistry.ts`; playlist classification, effort detection and memory
+recall share configurable helper models rather than hard-coded defaults.
 
-### Other tools
+Context is budgeted deliberately: `contextBudget` respects the smallest context
+window among candidate models, the meter shows the share in use, older turns can
+be replaced by a model-written handoff (`compactAuto`), and one pinned reply may
+occupy a capped slice of the window without crowding the conversation.
 
-- Image generation through an OpenAI-compatible `/images/generations` endpoint.
-- Any Model Context Protocol server over Streamable HTTP.
-- Browser dictation and read-aloud replies.
-- Local JavaScript and Python execution through a disposable Web Worker and Pyodide.
+## Grounding, tools and depth
 
-## Features
+- **Search and reading:** `@search` and automatic grounding with numbered
+  sources and inline citations; page summaries when enabled. Browser keys are
+  used by default, with server fallbacks configured by environment.
+- **Deep research:** tiered runs with a reviewable plan, clarifying questions,
+  steered rounds, cited reports and re-runs against fresh sources.
+- **Tools:** `ask` for mid-turn questions, workspace file actions, memory,
+  graphs, artifacts, prompts/polls, clipboard, location, navigation and local
+  utilities. The composer lock chooses Full, Standard, Restricted or Disabled
+  access; individual tools can require approval in Standard.
+- **Files and workspaces:** PDF, DOCX, ODT, RTF, PPTX, XLSX, ZIP, GZ, text,
+  images, audio and transcript pairing, with optional OCR. Workspaces hold
+  model-created files with preview, diff, revisions, templates, downloads and
+  optional Gist sharing.
+- **Code and images:** a disposable Web Worker for JavaScript, Pyodide for
+  Python, and image generation through an OpenAI-compatible images endpoint.
 
-- **Chat:** streaming replies, mid-turn questions, a Needs you inbox for chats waiting on you, automatic resume after the tab closes, branching conversation paths, reply bookmarks, temporary chats, folders, search, drafts, queued messages, rich copy, and read-only share links.
-- **Models:** multiple endpoints, favorites, OpenRouter provider pinning, playlists with fallback, model discovery, usage estimates, and named profiles that switch model, prompt, tools and access policy together (optionally bound to a project).
-- **Grounding:** automatic or explicit `@search`, numbered sources, inline citations, page reading, page summaries, and deep research with reviewable plans and cited reports. Search snippets stay available for a couple of messages and page summaries for longer; full page reads are not carried forward.
-- **Files and documents:** PDF, DOCX, ODT, RTF, PPTX, XLSX, ZIP, GZ, text, images, audio, and transcript pairing. Optional OCR for scanned images.
-- **Workspaces:** model-created files with code, preview, diff, revisions, templates, downloads, and optional GitHub Gist sharing.
-- **Tools:** calculator, time, date, JSON, Base64, hashing, UUIDs, memory, graphs, image generation, code execution, mid-turn questions (`ask`), MCP servers, skills, and follow-up widgets. The composer lock chooses Full, Standard, Restricted, or Disabled access, and any tool can be marked Require approval for per-call permission.
-- **Memory:** on-device recall with optional model-assisted saving, duplicate cleanup, and temporary-chat controls.
-- **Usage:** local dashboard with model and tool breakdowns, charts, costs, token counts, and kept history.
-- **Customization:** light and dark themes, custom palettes, density, fonts, chat width, reduced motion, high contrast, and configurable system prompts.
-- **Sync and backup:** export or import settings, chats, and keys, or sync devices through an optional server backed by Neon Postgres.
+## Local data, sync and sharing
 
-## Local and private by design
+`localStorage` holds settings and the chat index; IndexedDB/OPFS holds the full
+chats, workspaces and blobs, so quota pruning cannot destroy history. Device
+sync pushes only entities and messages that changed since the last server
+sequence, encrypts the payload in the browser, and merges remote changes on
+boot, on tab focus and on a slow interval. Sharing publishes conversation text,
+title, byline and timestamps only, after stripping keys, prompts, files and
+tool payloads.
 
-Model and search keys are stored in browser storage. They are sent to the provider, or through the app's relay when a provider blocks browser requests. The backend does not store model keys or chat content.
+## Backend API
 
-Chats, workspaces, settings, and attachments stay on the device unless you enable sync or share a conversation. Sync uploads an encrypted envelope, and the server stores a hash of the sync token plus ciphertext, not readable chat data. Sharing publishes only the conversation text, title, byline, and timestamps; keys, prompts, files, and tool payloads are removed first.
-
-The optional backend handles search, page reads, sharing, sync, and CORS relay. A static-only deployment has no backend, so those server features are unavailable, but direct model calls still work when the provider allows browser requests.
-
-## Configuration
-
-Local development may use a gitignored `.env`. Production hosts should use real environment variables or platform secrets.
+The Node host and the Worker run the same modules from `server/`, so behaviour
+cannot drift between deployments. Routes: `/api/health`, `/api/search`,
+`/api/extract`, `/api/reader`, `/api/share` (+ `/:id`), `/api/sync/status`,
+`/api/sync/push`, `/api/sync/pull`, and `/api/proxy` (host allowlist required).
+Per-route sliding-window rate limits, bounded bodies, private-target blocking
+and same-origin checks for writes are shared too; the Worker's limits are per
+isolate and therefore approximate.
 
 ```sh
 PORT=3000
+DATABASE_URL=postgresql://...   # sync and shares; memory fallback without it
+SYNC_BACKEND=neon               # or memory
 SEARCH_API_KEY=...              # shared search fallback
-TINYFISH_API_KEY=...            # or another provider-specific key
-EXA_API_KEY=...
-READER_API_KEY=...              # optional page-reader fallback
-READER_API_KEY_TINYFISH=...     # optional provider-specific reader key
+READER_API_KEY=...              # optional reader fallback
 SEARCH_API_ZONE=...             # Bright Data only
-DATABASE_URL=postgresql://...   # persistent sync and shares
-SYNC_BACKEND=neon               # or memory for local development
 PROXY_ALLOWED_HOSTS=api.example.com,*.example.org
 PROXY_ALLOW_PRIVATE=1           # local gateways only
 TRUST_PROXY=1                   # behind a trusted reverse proxy
 ```
 
-Search providers use browser keys by default. Set `SEARCH_API_KEY` as a shared server fallback, or use the provider-specific names such as `TINYFISH_API_KEY`, `EXA_API_KEY`, `TAVILY_API_KEY`, `FIRECRAWL_API_KEY`, `BRAVE_SEARCH_API_KEY`, and `BING_SEARCH_API_KEY`.
+Provider-specific keys such as `TINYFISH_API_KEY`, `EXA_API_KEY`,
+`TAVILY_API_KEY`, `FIRECRAWL_API_KEY`, `BRAVE_SEARCH_API_KEY` and
+`BING_SEARCH_API_KEY` work alongside the shared fallback. Secrets belong in
+platform secrets or the gitignored `.env`, never in the repository.
 
-## Deployment
+## Appearance and theming
 
-A Node host serves the built frontend and the same-origin API:
+Colours come from theme tokens (`--bg`, `--side`, `--surf`, `--hov`, `--tx`,
+`--mu`, `--ac`, …) defined as `[data-t=...]` blocks in `src/index.css`, with the
+same palettes exported as `THEME_COLORS` in `src/store.ts` for pickers and
+swatches. Custom themes are generated from an accent, text and background
+colour by `customPalette()` in `src/theme.ts`. Style presets change radii and
+shadows only, never colour. `src/contrast.test.mjs` enforces muted-text contrast
+and keeps the CSS and store palettes in sync.
+
+## Getting started
+
+Requires Node 20 or newer.
+
+```sh
+npm install
+npm run dev          # Vite plus the Node API, both reading .env
+```
+
+Open the local URL, add an endpoint and key, and start chatting. Production,
+self-hosted:
 
 ```sh
 npm run build
-npm start
+npm start            # Node serves dist plus /api
+npm run deploy       # build and deploy the Worker through Wrangler
 ```
 
-`wrangler.jsonc` deploys one Worker that serves the frontend and handles `/api/*`:
+## Scripts
 
-```sh
-npm run deploy
+- `npm run dev`: Vite dev server plus the Node API, both loading `.env`.
+- `npm run build`: production frontend into `dist/`.
+- `npm start`: built frontend plus the API on the Node host.
+- `npm run deploy`: `npm run build` then `wrangler deploy`.
+- `npm test`: unit, server, Worker and flow tests via `node --test` and the
+  TypeScript loader in `tests/register-loader.mjs`.
+- `npm run test:worker`: Worker routing smoke test.
+- `npm run smoke:providers`: provider smoke script.
+- `npx tsc --noEmit`: type check (there is no npm script for it).
+
+## Project layout
+
 ```
-
-Store server secrets with `npx wrangler secret put <NAME>`. The same environment names work on Node and Cloudflare. Without `DATABASE_URL`, sync and shares use in-memory storage intended for development.
+src/               app logic, one module per concern with colocated tests
+  components/      UI: chat, composer, sidebar, settings, palette, widgets
+  storage/         durable storage, sync, crypto, coalescing, usage ledger
+  engine.ts        provider transport and tool loop
+  store.ts         the single Zustand store and actions
+  theme.ts         colour maths and custom palette generation
+server/            shared API route modules used by both hosts
+worker/            Cloudflare Workers entry (API then ASSETS)
+tests/             integration, Worker and flow tests
+scripts/           build and smoke helpers
+index.html         document shell and the pre-paint theme script
+```
 
 ## Known limits
 
-- A static-only deployment cannot use search, page reading, sharing, sync, or relay. Run the Node server or Worker for those features.
-- Cloudflare rate limits and caches are approximate per isolate. The single-process Node host enforces exact limits.
-- Browser storage can be cleared by the browser or the user. Export backups regularly.
-- Image generation requires an OpenAI-compatible images endpoint. Anthropic endpoints do not support it.
-- Code execution is an opt-in local sandbox, not a hardened security boundary. Enable Python only for code you trust.
-- The native Gemini API format is not used. Gemini models work through the OpenAI-compatible Google endpoint.
-- Legacy `.doc`, `.xls`, `.ppt`, `.7z`, and `.rar` files are not parsed.
-
-## Development
-
-```sh
-npm run dev        # Vite plus the Node API
-npm run build      # production frontend
-npm test           # unit, integration, worker, and flow tests
-npm run test:worker # Worker routing smoke test
-```
-
-Dependencies use npm. The lockfile is committed.
+- A static-only deployment loses search, page reading, sharing, sync and relay;
+  direct model calls still work when the provider allows browser requests.
+- The Worker's rate limits and caches are per isolate and approximate.
+- Browser storage can be cleared; export a backup and keep sync enabled.
+- Image generation needs an OpenAI-compatible images endpoint.
+- Code execution is an opt-in local sandbox, not a security boundary.
+- Gemini is used through its OpenAI-compatible endpoint, not the native format.
+- Legacy `.doc`, `.xls`, `.ppt`, `.7z` and `.rar` files are not parsed.
