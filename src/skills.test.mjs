@@ -5,7 +5,7 @@ const { BUILTIN_SKILLS, DEFAULT_SKILL_STATE, normSkills, resolveSkill, enabledSk
 
 test('built-in skills cover the required domains with descriptions and instructions', () => {
   const ids = BUILTIN_SKILLS.map((s) => s.id)
-  for (const id of ['frontend-design', 'software-engineering', 'debugging', 'testing', 'writing', 'prompt-writing']) {
+  for (const id of ['frontend-design', 'software-engineering', 'debugging', 'testing', 'writing', 'prompt-writing', 'prompt-architect']) {
     assert.ok(ids.includes(id), `missing built-in skill: ${id}`)
   }
   for (const skill of BUILTIN_SKILLS) {
@@ -40,6 +40,16 @@ test('prompt-writing skill covers conventions and the writing skill is scoped to
   assert.equal(writing.name, 'Creative writing')
   assert.match(writing.description, /creative/i)
   assert.doesNotMatch(writing.description, /README|summaries/)
+})
+
+test('prompt-architect carries the implementation-prompt contract', () => {
+  const skill = BUILTIN_SKILLS.find((s) => s.id === 'prompt-architect')
+  assert.equal(skill.name, 'Prompt architect')
+  assert.match(skill.description, /implementation-ready/i)
+  assert.match(skill.instructions, /^# Role\n/)
+  assert.match(skill.instructions, /## Acceptance criteria/)
+  assert.match(skill.instructions, /## Verification/)
+  assert.match(skill.instructions, /exactly one fenced code block/)
 })
 
 test('model decides: catalog lists skills, instructions load by id', () => {

@@ -45,6 +45,7 @@ import { appendUsageRows, usageRowOf, usageRowsFromChats, usageTitlesFromChats, 
 import { readUsageLedger, usageLedgerExists, writeUsageLedger } from './storage/usageLedger'
 import { providerPresetEntries } from './providerRegistry'
 import { accentHue, adjustThemeColors, customPalette, isHexColor, normalizeHex } from './theme'
+import { PROMPT_ARCHITECT_TEXT } from './promptArchitect'
 import { normDensity, normSpacing, normStylePreset, type Density, type SpacingOverrides, type StylePreset } from './style'
 export { accentHue, adjustThemeColors } from './theme'
 import type { ShareRecord } from './share'
@@ -2758,6 +2759,7 @@ export const useS = create<S>()(
           { id: 'general', name: 'General', text: GENERAL_PROMPT_TEXT },
           { id: 'creativity', name: 'Creativity', text: CREATIVITY_PROMPT_TEXT },
           { id: 'concise', name: 'Concise', text: CONCISE_PROMPT_TEXT },
+          { id: 'architect', name: 'Prompt architect', text: PROMPT_ARCHITECT_TEXT },
         ],
         cmds: [
           { id: 'k1', name: 'describe', desc: 'Describe an image', in: 'image', sys: 'Describe images accurately and objectively.', tpl: 'Describe this image.', pl: '', on: true, args: '' },
@@ -3518,7 +3520,7 @@ export const useS = create<S>()(
       migrate: (p: any, v: number) => {
         delete p.settingsScope
         if (v < 11) {
-          const hasUserData = !!(p.eps?.length || p.chats?.length || p.pls?.length || p.prompts?.some((x: any) => !['general', 'creativity', 'concise', 's1', 's2', 's3'].includes(x.id)))
+          const hasUserData = !!(p.eps?.length || p.chats?.length || p.pls?.length || p.prompts?.some((x: any) => !['general', 'creativity', 'concise', 'architect', 's1', 's2', 's3'].includes(x.id)))
           p.setupDone = hasUserData
         }
         if (v < 18) {
@@ -3629,10 +3631,18 @@ export const useS = create<S>()(
             { id: 'general', name: 'General', text: GENERAL_PROMPT_TEXT },
             { id: 'creativity', name: 'Creativity', text: CREATIVITY_PROMPT_TEXT },
             { id: 'concise', name: 'Concise', text: CONCISE_PROMPT_TEXT },
+            { id: 'architect', name: 'Prompt architect', text: PROMPT_ARCHITECT_TEXT },
           ]
           if (!p.pr) p.pr = 'general'
         } else if (!p.pr && p.prompts.some((x: Prompt) => x.id === 'general')) {
           p.pr = 'general'
+        }
+        // Existing installs that still carry the untouched default prompts get
+        // the prompt-architect preset too; a list the user has edited is left alone.
+        if (Array.isArray(p.prompts)
+          && ['general', 'creativity', 'concise'].every((id) => p.prompts.some((x: Prompt) => x.id === id))
+          && !p.prompts.some((x: Prompt) => x.id === 'architect')) {
+          p.prompts = [...p.prompts, { id: 'architect', name: 'Prompt architect', text: PROMPT_ARCHITECT_TEXT }]
         }
         p.memories = Array.isArray(p.memories) ? p.memories : []
         p.globalPrompt = normGlobalPrompt(p.globalPrompt)

@@ -12,6 +12,8 @@
 // Apache-2.0 licensed. Only its frontmatter is adapted into skill fields; the
 // instruction text is preserved word for word.
 
+import { PROMPT_ARCHITECT_TEXT } from './promptArchitect'
+
 export type SkillDef = {
   id: string
   name: string
@@ -292,6 +294,13 @@ When you return a revision: show the revised prompt ready to paste, then a short
 ## Deliver the result
 
 Return the prompt as a clean, copyable block — not wrapped in commentary. After it, add a brief note covering: the placeholders the user must fill, the assumptions you made, and one test input they can run to check the output against the definition of done. If the prompt is long, keep the surrounding explanation short; the prompt is the deliverable.`,
+    builtin: true,
+  },
+  {
+    id: 'prompt-architect',
+    name: 'Prompt architect',
+    description: 'Use when turning a rough feature request, bug report, or idea into an implementation-ready prompt for a coding agent working in this repository.',
+    instructions: PROMPT_ARCHITECT_TEXT,
     builtin: true,
   },
 ]
