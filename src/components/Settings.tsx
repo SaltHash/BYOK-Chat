@@ -105,7 +105,7 @@ function AddEndpointSplit({ onAdd }: { onAdd: (type: 'openai' | 'anthropic') => 
         <ChevronDown size={14} className={cx('transition-transform', open && 'rotate-180')} />
       </button>
       {open && (
-        <div ref={menu} role="menu" aria-label="Endpoint type" onKeyDown={menuKeys} className="menu-surface absolute left-0 top-full z-20 mt-1.5 w-64 rounded-xl bg-hov p-1.5">
+        <div ref={menu} role="menu" aria-label="Endpoint type" onKeyDown={menuKeys} className="menu-surface absolute left-0 top-full z-20 mt-1.5 w-64 rounded-xl bg-surf p-1.5">
           <Item role="menuitem" icon={Cpu} onClick={() => pick('openai')} sub="Most providers, local servers, OpenRouter">OpenAI-compatible</Item>
           <Item role="menuitem" icon={ScrollText} onClick={() => pick('anthropic')} sub="Anthropic Messages API shape">Anthropic-compatible</Item>
         </div>
@@ -1866,8 +1866,8 @@ function FontPicker({ value, set, options }: { value: string; set: (v: string) =
       if (e.key === 'Enter') { e.preventDefault(); const q = query.trim(); if (q) { const exact = options.find(([font, label]) => font.toLowerCase() === q.toLowerCase() || label.toLowerCase() === q.toLowerCase()); choose(exact?.[0] ?? q) } }
       if (e.key === 'Escape') setOpen(false)
     }} className="w-full rounded-lg bg-bg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ac/40" />
-    {open && <div className="menu-surface dd-list absolute inset-x-0 top-full z-20 mt-1 max-h-44 overflow-y-auto rounded-xl bg-hov p-1.5">
-      {matches.map(([font, label]) => <button type="button" key={font} onMouseDown={(e) => e.preventDefault()} onClick={() => choose(font)} className="block w-full rounded-lg px-2.5 py-2 text-left text-sm hover:bg-surf">{label}</button>)}
+    {open && <div className="menu-surface dd-list absolute inset-x-0 top-full z-20 mt-1 max-h-44 overflow-y-auto rounded-xl bg-surf p-1.5">
+      {matches.map(([font, label]) => <button type="button" key={font} onMouseDown={(e) => e.preventDefault()} onClick={() => choose(font)} className="block w-full rounded-lg px-2.5 py-2 text-left text-sm hover:bg-hov">{label}</button>)}
       {!matches.length && query.trim() && <p className="px-2.5 py-2 text-xs text-mu">Press Enter to use “{query.trim()}”.</p>}
     </div>}
   </div>

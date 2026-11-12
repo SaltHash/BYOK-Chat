@@ -14,7 +14,7 @@ import { DndPlaceholder, DndLiveRegion, showDragOverlay, moveDragOverlay, hideDr
 import { stepInsertion } from '../dndShared'
 
 const act = 'grid size-7 place-items-center rounded-md text-mu hover:text-tx'
-const rowMenuItem = 'side-item flex w-full items-center gap-2.5 rounded-lg px-2.5 text-left text-sm hover:bg-surf'
+const rowMenuItem = 'side-item flex w-full items-center gap-2.5 rounded-lg px-2.5 text-left text-sm hover:bg-hov'
 
 function Name({ v, save, done }: { v: string; save: (t: string) => void; done: () => void }) {
   const [t, setT] = useState(v)
@@ -107,7 +107,7 @@ function RowBody({ c, mv, del, dnd, container, index, shift, onNavigate, time }:
       {menu && (
         <div ref={menuRef} role="menu" aria-label={`Actions for ${c.title}`} onMouseDown={(e) => e.stopPropagation()} onKeyDown={menuKeys}
           style={{ left: menuLeft, top: menuTop }}
-          className="dnd-actions menu-surface fixed z-40 w-52 rounded-xl bg-hov p-1.5">
+          className="dnd-actions menu-surface fixed z-40 w-52 rounded-xl bg-surf p-1.5">
           <button role="menuitem" onClick={() => { setEd(true); setMenu(null) }} className={rowMenuItem}><Pencil size={16} className="text-mu" />Rename</button>
           <button role="menuitem" title="Export this chat (.md + .json)" onClick={() => { exportThis(); setMenu(null) }} className={rowMenuItem}><Download size={16} className="text-mu" />Export (.md + .json)</button>
           <button role="menuitem" onClick={() => { mv(c.id, menuLeft, menuTop); setMenu(null) }} className={rowMenuItem}><Folder size={16} className="text-mu" />Move to project</button>
@@ -553,7 +553,7 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
       || (keepFinished && s.doneChats?.[c.id] === true))
     : tempBase
   const tempMore = temporary.filter((c) => !tempVisible.includes(c)).length
-  const item = 'side-item flex w-full items-center gap-2.5 rounded-lg px-2.5 text-left text-sm hover:bg-surf'
+  const item = 'side-item flex w-full items-center gap-2.5 rounded-lg px-2.5 text-left text-sm hover:bg-hov'
   const safeWidth = clampSidebarWidth(width)
   return (
     <aside ref={asideRef} aria-label="Chats and projects" style={{ width: safeWidth, maxWidth: '90vw', padding: 'var(--ui-side-pad)', gap: 'var(--ui-side-gap)' }} className="side-shell z-20 flex min-w-0 shrink-0 flex-col border-r border-bor bg-side max-md:fixed max-md:inset-y-0 max-md:left-0">
@@ -719,7 +719,7 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
       {themeMenu && (
         <div ref={themeMenuRef} role="menu" aria-label="Choose a theme" onMouseDown={(e) => e.stopPropagation()} onKeyDown={themeMenuKeys}
           style={{ left: Math.max(8, Math.min(themeMenu.x - 208, (typeof window !== 'undefined' ? window.innerWidth : 0) - 216)), top: Math.max(8, themeMenu.y - 8 - (th.length * 40 + 40)) }}
-          className="menu-surface fixed z-40 w-52 rounded-xl bg-hov p-1.5">
+          className="menu-surface fixed z-40 w-52 rounded-xl bg-surf p-1.5">
           <div className="px-2.5 pb-1 text-xs font-medium text-mu">{s.themeMode === 'light' ? 'Light themes' : 'Dark themes'}</div>
           {th.map((k) => {
             const active = k === thCur
@@ -738,7 +738,7 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
         </div>
       )}
       {menu && (
-        <div ref={projectMenuRef} role="menu" aria-label="Move chat to a project" onMouseDown={(e) => e.stopPropagation()} onKeyDown={projectMenuKeys} style={{ left: Math.min(menu.x, Math.max(8, (typeof window !== 'undefined' ? window.innerWidth : 0) - 216)), top: Math.min(menu.y, Math.max(8, (typeof window !== 'undefined' ? window.innerHeight : 0) - (60 + (s.projects.length + 1) * 36))) }} className="menu-surface fixed z-40 w-52 rounded-xl bg-hov p-1.5">
+        <div ref={projectMenuRef} role="menu" aria-label="Move chat to a project" onMouseDown={(e) => e.stopPropagation()} onKeyDown={projectMenuKeys} style={{ left: Math.min(menu.x, Math.max(8, (typeof window !== 'undefined' ? window.innerWidth : 0) - 216)), top: Math.min(menu.y, Math.max(8, (typeof window !== 'undefined' ? window.innerHeight : 0) - (60 + (s.projects.length + 1) * 36))) }} className="menu-surface fixed z-40 w-52 rounded-xl bg-surf p-1.5">
           <button role="menuitem" onClick={() => { s.moveChat(menu.id, ''); setMenu(null) }} className={item}><FolderMinus size={16} className="text-mu" />No project</button>
           {s.projects.map((f) => <button key={f.id} role="menuitem" onClick={() => { s.moveChat(menu.id, f.id); setMenu(null) }} className={item}><Folder size={16} className="text-mu" /><span className="truncate">{f.name}</span></button>)}
           {!s.projects.length && <p className="px-2.5 py-2 text-xs text-mu">Create a project first with the project button.</p>}

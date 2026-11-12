@@ -45,7 +45,7 @@ export const Surface = ({ children, className, padded = true }: { children: Reac
  * for Pop, SearchSelect, Palette, ModelMenu, chat actions and the context
  * meter. */
 export const Menu = ({ children, className }: { children: ReactNode; className?: string }) => (
-  <div className={cx('menu-surface rounded-xl bg-hov p-1.5', className)}>{children}</div>
+  <div className={cx('menu-surface rounded-xl bg-surf p-1.5', className)}>{children}</div>
 )
 
 export function Checkbox({ checked, set, label, disabled = false, className = '' }: { checked: boolean; set: (v: boolean) => void; label: string; disabled?: boolean; className?: string }) {
@@ -261,7 +261,7 @@ export function Pop({ trigger, children, up, right, w = 'w-72', scroll = true, a
 }
 
 export const Item = ({ icon: I, children, sub, on, off, star, toggle, className, ...p }: { icon?: Ic; sub?: string; on?: boolean; off?: boolean; star?: { on: boolean; set: (on: boolean) => void }; /** A switch in place of the check, for rows that turn something on rather than choose it. */ toggle?: { on: boolean; set: (on: boolean) => void; label: string } } & ButtonHTMLAttributes<HTMLButtonElement>) => (
-  <div className={cx('group flex items-center rounded-lg hover:bg-surf', off && 'opacity-50', className)}>
+  <div className={cx('group flex items-center rounded-lg hover:bg-hov', off && 'opacity-50', className)}>
     <button {...p} className="flex min-w-0 flex-1 items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm">
       {I && <I size={16} className="shrink-0 text-mu" />}
       <span className="min-w-0 flex-1 truncate">{children}</span>

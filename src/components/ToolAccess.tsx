@@ -73,7 +73,7 @@ export function ToolAccessButton({ cfg }: { cfg: (target: string) => void }) {
                     if (m.id === 'off' || m.id === 'full') settleToolApprovals(chatId, m.id === 'full')
                     close()
                   }}
-                  className={cx('flex w-full items-start gap-2.5 rounded-lg px-2.5 py-2 text-left hover:bg-surf', mode === m.id && 'bg-surf')}
+                  className={cx('flex w-full items-start gap-2.5 rounded-lg px-2.5 py-2 text-left hover:bg-hov', mode === m.id && 'bg-hov')}
                 >
                   <MIcon size={16} className={cx('mt-0.5 shrink-0', mode === m.id ? 'text-ac' : 'text-mu')} />
                   <span className="min-w-0 flex-1">
@@ -90,7 +90,7 @@ export function ToolAccessButton({ cfg }: { cfg: (target: string) => void }) {
           <button
             type="button"
             onClick={() => { close(); cfg('tools#tool-access') }}
-            className="mx-1 mt-1 block w-[calc(100%-0.5rem)] rounded-lg border-t border-bor/60 px-2.5 py-2 text-left text-xs text-mu hover:bg-surf hover:text-tx"
+            className="mx-1 mt-1 block w-[calc(100%-0.5rem)] rounded-lg border-t border-bor/60 px-2.5 py-2 text-left text-xs text-mu hover:bg-hov hover:text-tx"
           >
             Per-tool approval settings…
           </button>

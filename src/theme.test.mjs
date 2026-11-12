@@ -89,7 +89,10 @@ test('contrast 50 is the balanced default, 0 is genuinely flat, and 100 separate
   assert.ok(step(balanced.hov, balanced.surf) >= 0.04, `hover clears the panel (${step(balanced.hov, balanced.surf).toFixed(3)})`)
   assert.ok(hexToHsl(balanced.surf).l > hexToHsl(flat.surf).l, 'the balanced surface lifts off the background')
   const light = customPalette({ accent: '#3b5bdb', text: '#1d1d1b', background: '#f0f0ee', contrast: 50 })
-  assert.ok(hexToHsl(light.side).l > hexToHsl(light.bg).l, 'the light sidebar also sits above the main background')
+  // A light canvas has no headroom to lift into without turning white, so it
+  // separates downward and the steps stay responsive to 100%.
+  assert.ok(oklchLightness(light.side) < oklchLightness(light.bg), 'the light sidebar separates from the canvas')
+  assert.ok(oklchLightness(light.surf) > oklchLightness(light.side), 'panels sit closer to the light canvas than the sidebar')
   assert.ok(hexToHsl(high.surf).l > hexToHsl(balanced.surf).l, 'higher contrast separates further')
   assert.ok(Math.abs(hexToHsl(high.mu).l - hexToHsl(high.tx).l) < Math.abs(hexToHsl(balanced.mu).l - hexToHsl(balanced.tx).l), 'muted text moves toward the text colour')
 })
@@ -147,11 +150,25 @@ test('OKLCH conversions round-trip and give every hue the same surface step', ()
   assert.ok(mixOklch('#000000', '#ffffff', 0.5) !== '#000000' && mixOklch('#000000', '#ffffff', 1) === '#ffffff')
 })
 
-test('a near-white canvas still gets visible surfaces by darkening', () => {
-  const p = customPalette({ accent: '#3b5bdb', text: '#1d1d1b', background: '#fdfdfc', contrast: 50 })
-  assert.ok(oklchLightness(p.side) < oklchLightness(p.bg), `sidebar darkens (${p.side} vs ${p.bg})`)
-  assert.ok(oklchLightness(p.surf) < oklchLightness(p.side), `panels step further down (${p.surf} vs ${p.side})`)
-  assert.ok(oklchLightness(p.hov) < oklchLightness(p.surf), `hover stays visible (${p.hov})`)
+test('light palettes keep responding across the whole contrast range', () => {
+  const opts = { accent: '#3b5bdb', text: '#1d1d1b', background: '#f0f0ee' }
+  const at = (contrast) => customPalette({ ...opts, contrast })
+  const [flat, balanced, high] = [at(0), at(50), at(100)]
+  for (const key of ['side', 'surf', 'hov']) {
+    const lower = oklchLightness(balanced[key]) - oklchLightness(flat[key])
+    const upper = oklchLightness(high[key]) - oklchLightness(balanced[key])
+    assert.ok(lower <= -0.02, `${key} separates below the default (${lower.toFixed(3)})`)
+    assert.ok(upper <= -0.015, `${key} keeps separating above the default (${upper.toFixed(3)})`)
+  }
+  assert.ok(oklchLightness(high.side) < oklchLightness(high.surf), 'the light hierarchy holds at 100%')
+  assert.ok(oklchLightness(high.hov) < oklchLightness(high.surf), 'hover stays deeper than the panel at 100%')
+  assert.ok(!/^#ffffff$/i.test(high.side) && !/^#ffffff$/i.test(high.surf), 'nothing saturates at white')
+
+  // The same holds for a canvas that is already almost white.
+  const near = customPalette({ accent: '#3b5bdb', text: '#1d1d1b', background: '#fdfdfc', contrast: 50 })
+  assert.ok(oklchLightness(near.side) < oklchLightness(near.bg), `sidebar darkens (${near.side} vs ${near.bg})`)
+  assert.ok(oklchLightness(near.surf) > oklchLightness(near.side), `panels stay above the sidebar (${near.surf} vs ${near.side})`)
+  assert.ok(oklchLightness(near.hov) < oklchLightness(near.surf), `hover stays visible (${near.hov})`)
 })
 
 test('accent ink restores dark text on mid-tone accents and stays readable', () => {

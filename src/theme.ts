@@ -270,17 +270,19 @@ export type CustomPaletteOptions = {
 /** Build a complete palette from three primary colours and one contrast knob.
  *  Surfaces, muted text, code blocks and syntax colours are derived so a
  *  custom theme stays coherent without making the user tune every token.
- *  Surfaces always sit above the chosen background; the sidebar is the first
- *  step up, so the main background is darker than it.
+ *  On dark backgrounds surfaces lift toward white, with the sidebar as the
+ *  first step up and panels above it. A light canvas has almost no headroom
+ *  above it, so light palettes deepen a tint below it instead: the sidebar is
+ *  the deepest step, panels sit closer to the canvas, and hover darkens them.
+ *  Both directions keep moving across the full slider and never reach white.
  *
  *  One curve drives every derived colour: `reach` is 0 at 0% (every surface
  *  is the canvas), exactly 1 at the balanced 50% default and 2 at 100%. Each
  *  half eases into the joint, so its slope is zero on both sides of 50% and
  *  dragging across the default never reverses direction abruptly. Surface
  *  amounts scale with diminishing returns toward a per-surface ceiling rather
- *  than overshooting it, which keeps the hierarchy (canvas < sidebar < panel <
- *  hover, code block below the canvas) intact at every position and stops
- *  surfaces from saturating at white or black. */
+ *  than overshooting it, which keeps the hierarchy intact at every position
+ *  and stops surfaces from saturating at white or black. */
 export function customPalette(opts: CustomPaletteOptions): Record<CustomPaletteKey, string> & { bor: string } {
   const accent = normalizeHex(opts.accent, '#dc8ad8')
   const text = normalizeHex(opts.text, '#f3eaf7')
@@ -306,15 +308,10 @@ export function customPalette(opts: CustomPaletteOptions): Record<CustomPaletteK
   /* Lift a colour by a perceptual delta. The mix runs toward white in OKLab,
    * which keeps the canvas hue, and dividing by the remaining headroom makes
    * the requested lightness delta exact rather than proportional. */
-  const lift = (base: string, amount: number, ceiling: number, maxL = 0.995) => {
-    // `maxL` leaves a sliver below white: a light canvas has only a few points
-    // of headroom, and clamping the delta there keeps every surface (and its
-    // hierarchy) inside the gamut instead of collapsing the ramp into #ffffff.
-    const baseL = oklchLightness(base)
-    const headroom = 1 - baseL
+  const lift = (base: string, amount: number, ceiling: number) => {
+    const headroom = 1 - oklchLightness(base)
     if (headroom <= 0.001) return base
-    const delta = Math.min(spread(amount, ceiling), Math.max(0, maxL - baseL))
-    return mixOklch(base, '#ffffff', delta / headroom)
+    return mixOklch(base, '#ffffff', spread(amount, ceiling) / headroom)
   }
 
   // The sidebar is the first step above the canvas and panels the second, so
@@ -322,18 +319,19 @@ export function customPalette(opts: CustomPaletteOptions): Record<CustomPaletteK
   // steps are 0.06 and 0.10 OKLCH L: below roughly 0.04 a surface change is
   // not reliably visible, which is what made the earlier RGB mixes read as a
   // single flat panel. A user-chosen override still wins, applied below.
-  // A near-white canvas has no headroom to lift into, so surfaces separate by
-  // darkening toward the text instead; otherwise a white or #fafafa custom
-  // background would produce no visible sidebar or panels at all.
-  const nearWhite = 1 - oklchLightness(background) < 0.025
-  const side = nearWhite ? mixOklch(background, text, spread(0.06, 0.16)) : lift(background, 0.06, 0.16, 0.985)
-  const surf = nearWhite ? mixOklch(background, text, spread(0.10, 0.24)) : lift(background, 0.10, 0.24, 0.993)
-  // Hover and selection sit one more perceptual step above the panel in dark
-  // themes. Light themes darken instead: an already-white panel has no room to
-  // get brighter, so a tint toward the text is the only visible hover.
-  const hov = light
-    ? mixOklch(surf, text, spread(0.08, 0.2))
-    : lift(surf, 0.055, 0.14)
+  /* On a light canvas there is almost no headroom above it (about 0.045 L for
+   * #f0f0ee), so lifting toward white used to saturate by the 50% default and
+   * the top half of the slider did nothing. Light themes instead separate by
+   * deepening a tint toward the text: the sidebar, panels and hover keep moving
+   * across the whole range and never reach white. The sidebar is the deepest
+   * step, panels sit closer to the canvas, and hover darkens the panel. */
+  const tint = (base: string, delta: number, ceiling: number) => {
+    const room = Math.max(0.001, oklchLightness(base) - oklchLightness(text))
+    return mixOklch(base, text, spread(delta, ceiling) / room)
+  }
+  const side = light ? tint(background, 0.065, 0.16) : lift(background, 0.06, 0.16)
+  const surf = light ? tint(background, 0.045, 0.115) : lift(background, 0.10, 0.24)
+  const hov = light ? tint(surf, 0.055, 0.14) : lift(surf, 0.055, 0.14)
   // Code blocks sink below the canvas (dark themes) or shade away from it
   // (light themes); the header is the midpoint between the block and the
   // canvas, so it stays a readable band even when panels sit near white.
@@ -344,7 +342,7 @@ export function customPalette(opts: CustomPaletteOptions): Record<CustomPaletteK
   // Muted text keeps a deliberate perceptual distance from the canvas and then
   // closes on the text colour as contrast rises, so raising the slider helps
   // secondary copy instead of pushing it back into the background.
-  const mu = mixOklch(background, text, clamp((light ? 0.62 : 0.60) + 0.09 * Math.max(0, reach - 1), 0, 0.85))
+  const mu = mixOklch(background, text, clamp((light ? 0.63 : 0.66) + 0.09 * Math.max(0, reach - 1), 0, 0.85))
   const er = hslToHex({ h: 2, s: light ? 0.62 : 0.68, l: light ? 0.40 : 0.64 })
   const accentHueValue = hexToHsl(accent).h
   // Syntax keeps recognisable semantic families (strings green, numbers warm,

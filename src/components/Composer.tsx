@@ -258,7 +258,7 @@ function ModelMenu({ close, cfg }: { close: () => void; cfg: (t: string) => void
       {!L.length && <p className="px-2.5 py-3 text-sm text-mu">{query ? 'No matches. Try another search.' : 'No models available. Add an endpoint in Settings.'}</p>}
       </div>
       <div className="shrink-0 border-t border-bor px-1 pt-2">
-        <Item icon={Settings} className="bg-surf/70 hover:bg-surf" onClick={() => { close(); cfg(t === 'pl' && plsOn ? 'pls' : 'eps') }}>Manage…</Item>
+        <Item icon={Settings} className="bg-hov/70 hover:bg-hov" onClick={() => { close(); cfg(t === 'pl' && plsOn ? 'pls' : 'eps') }}>Manage…</Item>
       </div>
     </div>
   )
@@ -773,7 +773,7 @@ export function Composer({ cfg, quote, onClearQuote }: { cfg: (t: string) => voi
         <div className="mt-2 flex items-center gap-1">
           <Pop up w="w-64" onOpenChange={setMenusOpen} trigger={() => <Btn icon={Plus} title="Attach files or manage tools" className="rounded-full" />}>
             {(close) => {
-              const row = 'flex w-full items-center gap-1 rounded-lg px-1 hover:bg-surf'
+              const row = 'flex w-full items-center gap-1 rounded-lg px-1 hover:bg-hov'
               const main = 'flex min-w-0 flex-1 items-center gap-2.5 rounded-lg px-1.5 py-2 text-left text-sm'
               const gear = 'grid size-7 shrink-0 place-items-center rounded-md text-mu hover:bg-hov hover:text-tx'
               return (
