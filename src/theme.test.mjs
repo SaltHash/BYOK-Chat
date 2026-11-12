@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { hexToHsl, hslToHex, accentHue, adjustThemeColors, customPalette, CUSTOM_PALETTE_KEYS, isHexColor, inkOn, contrastRatio, colorSuggestions, SYNTAX_COLOR_KEYS, TEXT_COLOR_KEYS, UNADJUSTED_KEYS } from './theme'
+import { hexToHsl, hslToHex, accentHue, adjustThemeColors, customPalette, CUSTOM_PALETTE_KEYS, isHexColor, inkOn, contrastRatio, colorSuggestions, hexToOklch, oklchToHex, oklchLightness, mixOklch, SYNTAX_COLOR_KEYS, TEXT_COLOR_KEYS, UNADJUSTED_KEYS } from './theme'
 
 test('hexToHsl reads the accent hues the sliders snap to', () => {
   assert.equal(Math.round(hexToHsl('#dc8ad8').h), 303) // plum accent
@@ -80,10 +80,13 @@ test('contrast 50 is the balanced default, 0 is genuinely flat, and 100 separate
   const high = customPalette({ ...opts, contrast: 100 })
   for (const key of ['side', 'surf', 'hov', 'code', 'codeh']) assert.equal(flat[key], flat.bg, `${key} disappears at 0%`)
   assert.equal(flat.bor, flat.bg, 'the border disappears at 0%')
-  assert.equal(balanced.side, '#202022', '50% keeps the old 0% sidebar step')
-  assert.ok(hexToHsl(balanced.side).l > hexToHsl(balanced.bg).l, 'the sidebar sits above the main background')
-  assert.equal(balanced.surf, '#232325', '50% keeps the old 0% surface')
-  assert.ok(hexToHsl(balanced.surf).l > hexToHsl(balanced.side).l, 'panels lift above the sidebar')
+  // The default step is measured in OKLCH lightness, the axis the eye reads as
+  // even: below ~0.04 a surface change stops being reliably visible, which is
+  // the regression this guards against.
+  const step = (a, b) => oklchLightness(a) - oklchLightness(b)
+  assert.ok(step(balanced.side, balanced.bg) >= 0.05, `the sidebar clears the main background (${step(balanced.side, balanced.bg).toFixed(3)})`)
+  assert.ok(step(balanced.surf, balanced.side) >= 0.03, `panels clear the sidebar (${step(balanced.surf, balanced.side).toFixed(3)})`)
+  assert.ok(step(balanced.hov, balanced.surf) >= 0.04, `hover clears the panel (${step(balanced.hov, balanced.surf).toFixed(3)})`)
   assert.ok(hexToHsl(balanced.surf).l > hexToHsl(flat.surf).l, 'the balanced surface lifts off the background')
   const light = customPalette({ accent: '#3b5bdb', text: '#1d1d1b', background: '#f0f0ee', contrast: 50 })
   assert.ok(hexToHsl(light.side).l > hexToHsl(light.bg).l, 'the light sidebar also sits above the main background')
@@ -127,6 +130,28 @@ test('the contrast slider is continuous, ordered and ceiling-limited', () => {
       assert.ok(contrastRatio(palette[key], palette.bg) > 1.01, `${key} stays distinct from the canvas on ${background}`)
     }
   }
+})
+
+test('OKLCH conversions round-trip and give every hue the same surface step', () => {
+  for (const hex of ['#141416', '#7c9cff', '#f0f0ee', '#0d9488', '#ea580c', '#ffffff']) {
+    const back = oklchToHex(hexToOklch(hex))
+    assert.deepEqual([1, 3, 5].map((i) => Math.abs(parseInt(back.slice(i, i + 2), 16) - parseInt(hex.slice(i, i + 2), 16)) <= 1), [true, true, true], `${hex} survives the round trip as ${back}`)
+  }
+  // The whole point of doing the scaling in OKLCH: the same slider value
+  // produces the same perceived step whatever the theme hue.
+  const steps = ['#141416', '#1b1a14', '#101a18', '#241a1a', '#17122a'].map((background) => {
+    const p = customPalette({ accent: '#7c9cff', text: '#f8f8f8', background, contrast: 50 })
+    return oklchLightness(p.side) - oklchLightness(p.bg)
+  })
+  assert.ok(Math.max(...steps) - Math.min(...steps) < 0.004, `steps stay even across hues: ${steps.map((s) => s.toFixed(3)).join(', ')}`)
+  assert.ok(mixOklch('#000000', '#ffffff', 0.5) !== '#000000' && mixOklch('#000000', '#ffffff', 1) === '#ffffff')
+})
+
+test('a near-white canvas still gets visible surfaces by darkening', () => {
+  const p = customPalette({ accent: '#3b5bdb', text: '#1d1d1b', background: '#fdfdfc', contrast: 50 })
+  assert.ok(oklchLightness(p.side) < oklchLightness(p.bg), `sidebar darkens (${p.side} vs ${p.bg})`)
+  assert.ok(oklchLightness(p.surf) < oklchLightness(p.side), `panels step further down (${p.surf} vs ${p.side})`)
+  assert.ok(oklchLightness(p.hov) < oklchLightness(p.surf), `hover stays visible (${p.hov})`)
 })
 
 test('accent ink restores dark text on mid-tone accents and stays readable', () => {

@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
+import { oklchLightness } from './theme'
 
 /* The stylesheet is the runtime source of the built-in palettes, so this
  * reads the real values rather than a duplicate table. Muted text is body
@@ -27,7 +28,7 @@ const themes = () => {
     // the eight shipped palettes have values guaranteed by this app.
     if (name === 'neutral' || name === 'custom') continue
     const value = (key) => match[0].match(new RegExp(`--${key}:\\s*(#[0-9a-f]{6})`, 'i'))?.[1]
-    found.set(name, { bg: value('bg'), side: value('side'), surf: value('surf'), mu: value('mu') })
+    found.set(name, { bg: value('bg'), side: value('side'), surf: value('surf'), hov: value('hov'), mu: value('mu') })
   }
   return found
 }
@@ -55,6 +56,18 @@ test('the main background sits darker than the sidebar on every built-in theme',
       luminance(value.side) > luminance(value.bg),
       `${name}: --side ${value.side} should be lighter than --bg ${value.bg}`,
     )
+  }
+})
+
+test('sidebar, surface and hover steps stay perceptible on every built-in theme', () => {
+  // OKLCH lightness is perceptually even, so these are steps the eye actually
+  // sees. The previous lightened sidebar left hover and panel edges below the
+  // visible threshold on the dark themes; this keeps that from regressing.
+  for (const [name, value] of themes()) {
+    const step = (a, b) => Math.abs(oklchLightness(a) - oklchLightness(b))
+    assert.ok(step(value.side, value.bg) >= 0.03, `${name}: --side only ${step(value.side, value.bg).toFixed(3)} L from --bg`)
+    assert.ok(step(value.surf, value.bg) >= 0.03, `${name}: --surf only ${step(value.surf, value.bg).toFixed(3)} L from --bg`)
+    assert.ok(step(value.hov, value.surf) >= 0.04, `${name}: --hov only ${step(value.hov, value.surf).toFixed(3)} L from --surf`)
   }
 })
 

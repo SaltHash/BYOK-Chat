@@ -60,6 +60,69 @@ export function hslToHex({ h, s, l }: Hsl): string {
   return `#${toHex(r)}${toHex(g)}${toHex(b)}`
 }
 
+/* OKLab/OKLCH: a perceptually uniform colour space. Equal lightness steps read
+ * as equal visual steps at every hue, which RGB and HSL mixing cannot do — a
+ * 3% RGB lift nearly vanishes on a saturated dark hue and blows out on a light
+ * one. All contrast scaling therefore operates on OKLCH lightness. */
+export type Oklch = { l: number; c: number; h: number }
+
+const toLinear = (c: number) => c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4
+const toGamma = (c: number) => c <= 0.0031308 ? 12.92 * c : 1.055 * c ** (1 / 2.4) - 0.055
+
+function hexToOklab(hex: string): [number, number, number] {
+  const [r, g, b] = rgb(hex).map((n) => toLinear(n / 255))
+  const l = Math.cbrt(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b)
+  const m = Math.cbrt(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b)
+  const s = Math.cbrt(0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b)
+  return [
+    0.2104542553 * l + 0.7936177850 * m - 0.0040720468 * s,
+    1.9779984951 * l - 2.4285922050 * m + 0.4505937099 * s,
+    0.0259040371 * l + 0.7827717662 * m - 0.8086757660 * s,
+  ]
+}
+
+function oklabToHex([L, a, b]: [number, number, number]): string {
+  const l = (L + 0.3963377774 * a + 0.2158037573 * b) ** 3
+  const m = (L - 0.1055613458 * a - 0.0638541728 * b) ** 3
+  const s = (L - 0.0894841775 * a - 1.2914855480 * b) ** 3
+  const channels = [
+    4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
+    -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
+    -0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s,
+  ]
+  return `#${channels.map((c) => Math.round(clamp(toGamma(c), 0, 1) * 255).toString(16).padStart(2, '0')).join('')}`
+}
+
+/** Perceptual lightness (0–1) of a colour. */
+export const oklchLightness = (hex: string): number => hexToOklab(hex)[0]
+
+/** `#rrggbb` as OKLCH, with l in [0, 1], c as chroma and h in degrees. */
+export function hexToOklch(hex: string): Oklch {
+  const [l, a, b] = hexToOklab(hex)
+  return { l, c: Math.hypot(a, b), h: ((Math.atan2(b, a) * 180) / Math.PI + 360) % 360 }
+}
+
+/** OKLCH back to lowercase `#rrggbb`, clipping out-of-gamut channels. */
+export function oklchToHex({ l, c, h }: Oklch): string {
+  const rad = (h * Math.PI) / 180
+  return oklabToHex([clamp(l, 0, 1), Math.cos(rad) * c, Math.sin(rad) * c])
+}
+
+/** Perceptual mix in OKLab; amount 0 returns a, 1 returns b. */
+export function mixOklch(a: string, b: string, amount: number): string {
+  const t = clamp(amount, 0, 1)
+  const ca = hexToOklab(a)
+  const cb = hexToOklab(b)
+  return oklabToHex([0, 1, 2].map((i) => ca[i] + (cb[i] - ca[i]) * t) as [number, number, number])
+}
+
+/** The same colour at a new perceptual lightness, keeping its chroma and hue. */
+function withOklabLightness(hex: string, lightness: number): string {
+  const [l, a, b] = hexToOklab(hex)
+  const scale = l > 0.001 ? lightness / l : 1
+  return oklabToHex([clamp(lightness, 0, 1), a * scale, b * scale])
+}
+
 export const isHexColor = (value: unknown): value is string =>
   typeof value === 'string' && HEX.test(value.trim())
 
@@ -71,7 +134,7 @@ export function normalizeHex(value: unknown, fallback: string): string {
   return isHexColor(fallback) ? fallback.toLowerCase() : '#888888'
 }
 
-const rgb = (hex: string): [number, number, number] => {
+function rgb(hex: string): [number, number, number] {
   const value = normalizeHex(hex, '#888888').slice(1)
   return [0, 2, 4].map((i) => Number.parseInt(value.slice(i, i + 2), 16)) as [number, number, number]
 }
@@ -110,11 +173,13 @@ export function contrastRatio(a: string, b: string): number {
 export type ColorRole = 'accent' | 'text' | 'background' | 'onAccent'
 
 const ensureContrast = (color: string, against: string, target: number, direction: 1 | -1): string => {
-  const hsl = hexToHsl(color)
-  for (let i = 0; i < 60 && contrastRatio(hslToHex(hsl), against) < target; i++) {
-    hsl.l = clamp(hsl.l + direction * 0.015, 0, 1)
+  // Step along perceptual lightness so every suggestion travels the shortest
+  // visible route to the target ratio, regardless of its hue or saturation.
+  const oklch = hexToOklch(color)
+  for (let i = 0; i < 80 && contrastRatio(oklchToHex(oklch), against) < target; i++) {
+    oklch.l = clamp(oklch.l + direction * 0.008, 0, 1)
   }
-  return hslToHex(hsl)
+  return oklchToHex(oklch)
 }
 
 const uniqueColors = (colors: string[]): string[] => {
@@ -221,8 +286,9 @@ export function customPalette(opts: CustomPaletteOptions): Record<CustomPaletteK
   const text = normalizeHex(opts.text, '#f3eaf7')
   const background = normalizeHex(opts.background, '#17101c')
   const requested = clamp(Number.isFinite(opts.contrast) ? opts.contrast : 50, 0, 100) / 100
-  const bg = hexToHsl(background)
-  const light = bg.l > 0.58
+  // OKLCH lightness is the axis every surface moves along: a fixed step is the
+  // same perceived change whatever the hue, unlike an RGB or HSL lift.
+  const light = oklchLightness(background) > 0.58
 
   // Smoothstep is flat at both ends, so the halves meet at 50% without a kink
   // and the slider has no dead step exactly at its default.
@@ -231,32 +297,54 @@ export function customPalette(opts: CustomPaletteOptions): Record<CustomPaletteK
     ? ease(requested / 0.5)
     : 1 + ease((requested - 0.5) / 0.5)
 
-  /* A balanced mix amount scaled by the contrast knob: 0 at 0%, the balanced
+  /* A balanced amount scaled by the contrast knob: 0 at 0%, the balanced
    * amount at 50%, easing toward `ceiling` above it. Nothing overshoots the
    * ceiling, so a surface never flips past white or black. */
   const spread = (amount: number, ceiling: number) =>
     ceiling * (1 - Math.pow(1 - clamp(amount / ceiling, 0, 0.999), reach))
-  const lift = (amount: number, ceiling: number) => mixHex(background, '#ffffff', spread(amount, ceiling))
+
+  /* Lift a colour by a perceptual delta. The mix runs toward white in OKLab,
+   * which keeps the canvas hue, and dividing by the remaining headroom makes
+   * the requested lightness delta exact rather than proportional. */
+  const lift = (base: string, amount: number, ceiling: number, maxL = 0.995) => {
+    // `maxL` leaves a sliver below white: a light canvas has only a few points
+    // of headroom, and clamping the delta there keeps every surface (and its
+    // hierarchy) inside the gamut instead of collapsing the ramp into #ffffff.
+    const baseL = oklchLightness(base)
+    const headroom = 1 - baseL
+    if (headroom <= 0.001) return base
+    const delta = Math.min(spread(amount, ceiling), Math.max(0, maxL - baseL))
+    return mixOklch(base, '#ffffff', delta / headroom)
+  }
 
   // The sidebar is the first step above the canvas and panels the second, so
-  // the main background always reads darker than the sidebar. A user-chosen
-  // sidebar override still wins, applied with the rest below.
-  const side = lift(light ? 0.6 : 0.05, light ? 0.88 : 0.12)
-  const surf = lift(light ? 0.72 : 0.065, light ? 0.94 : 0.16)
-  // Hover and selection are a tint of the panel, so they track the panel's own
-  // lift at this position instead of a fixed colour.
-  const hov = mixHex(surf, text, spread(0.075, 0.18))
+  // the main background always reads darker than the sidebar. The balanced
+  // steps are 0.06 and 0.10 OKLCH L: below roughly 0.04 a surface change is
+  // not reliably visible, which is what made the earlier RGB mixes read as a
+  // single flat panel. A user-chosen override still wins, applied below.
+  // A near-white canvas has no headroom to lift into, so surfaces separate by
+  // darkening toward the text instead; otherwise a white or #fafafa custom
+  // background would produce no visible sidebar or panels at all.
+  const nearWhite = 1 - oklchLightness(background) < 0.025
+  const side = nearWhite ? mixOklch(background, text, spread(0.06, 0.16)) : lift(background, 0.06, 0.16, 0.985)
+  const surf = nearWhite ? mixOklch(background, text, spread(0.10, 0.24)) : lift(background, 0.10, 0.24, 0.993)
+  // Hover and selection sit one more perceptual step above the panel in dark
+  // themes. Light themes darken instead: an already-white panel has no room to
+  // get brighter, so a tint toward the text is the only visible hover.
+  const hov = light
+    ? mixOklch(surf, text, spread(0.08, 0.2))
+    : lift(surf, 0.055, 0.14)
   // Code blocks sink below the canvas (dark themes) or shade away from it
   // (light themes); the header is the midpoint between the block and the
   // canvas, so it stays a readable band even when panels sit near white.
   const code = light
-    ? mixHex(background, text, spread(0.035, 0.12))
-    : mixHex(background, '#000000', spread(0.26, 0.5))
-  const codeh = mixHex(code, background, 0.55)
-  // Muted text keeps its footing below the default; it only starts closing on
-  // the text colour once surfaces separate, never merging into the canvas.
-  const textReach = Math.max(1, reach)
-  const mu = mixHex(text, background, 0.44 - 0.14 * (textReach - 1))
+    ? mixOklch(background, text, spread(0.035, 0.12))
+    : mixOklch(background, '#000000', spread(0.26, 0.5))
+  const codeh = mixOklch(code, background, 0.55)
+  // Muted text keeps a deliberate perceptual distance from the canvas and then
+  // closes on the text colour as contrast rises, so raising the slider helps
+  // secondary copy instead of pushing it back into the background.
+  const mu = mixOklch(background, text, clamp((light ? 0.62 : 0.60) + 0.09 * Math.max(0, reach - 1), 0, 0.85))
   const er = hslToHex({ h: 2, s: light ? 0.62 : 0.68, l: light ? 0.40 : 0.64 })
   const accentHueValue = hexToHsl(accent).h
   // Syntax keeps recognisable semantic families (strings green, numbers warm,
@@ -295,7 +383,7 @@ export function customPalette(opts: CustomPaletteOptions): Record<CustomPaletteK
   // The app's border is normally a mix of hover and muted text. Its weight
   // follows the same curve, so it fades out of the canvas continuously instead
   // of stepping to the background only at the very end of the slider.
-  const bor = mixHex(out.hov, out.mu, spread(0.2, 0.36))
+  const bor = mixOklch(out.hov, out.mu, spread(0.2, 0.36))
   return { ...out, bor }
 }
 
@@ -350,13 +438,17 @@ export function adjustThemeColors(
     }
     const hsl = hexToHsl(value)
     const text = (TEXT_COLOR_KEYS as readonly string[]).includes(key)
-    out[key] = hslToHex({
+    const adjusted = hslToHex({
       h: hsl.h + delta,
       s: hsl.s * sat,
-      // Contrast spreads every non-text surface around mid brightness after
-      // the brightness scale: lights get brighter, darks get darker.
-      l: text ? hsl.l : clamp(0.5 + (hsl.l * bright - 0.5) * contrast, 0, 1),
+      l: text ? hsl.l : clamp(hsl.l * bright, 0, 1),
     })
+    // Contrast spreads every non-text surface around mid lightness in OKLCH,
+    // so lights get brighter and darks get darker by an even perceptual step
+    // instead of a hue-dependent HSL percentage.
+    out[key] = text
+      ? adjusted
+      : withOklabLightness(adjusted, clamp(0.5 + (oklchLightness(adjusted) - 0.5) * contrast, 0, 1))
   }
   return out
 }

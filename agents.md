@@ -41,8 +41,10 @@ built frontend in `dist/` is served as static assets.
   than `--bg`.
 - `--bg` is always the darker canvas and the sidebar sits above it; panels sit
   above the sidebar. Custom palettes come from `customPalette()` in
-  `src/theme.ts`, where 50% is the balanced anchor. Preserve those
-  relationships when touching palettes.
+  `src/theme.ts`, where 50% is the balanced anchor. Surface steps are measured
+  in OKLCH lightness (sidebar at least 0.05 L over `--bg`, then panels and
+  hover), so a 3% RGB lift is not enough; preserve the order and the perceptual
+  step when touching palettes.
 - Colours only through the theme tokens; style presets change radii and shadows
   only. No colour literals in components.
 - Settings live in `localStorage`; chats, workspaces and blobs live in
