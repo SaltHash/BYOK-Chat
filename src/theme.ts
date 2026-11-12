@@ -316,22 +316,26 @@ export function customPalette(opts: CustomPaletteOptions): Record<CustomPaletteK
 
   // The sidebar is the first step above the canvas and panels the second, so
   // the main background always reads darker than the sidebar. The balanced
-  // steps are 0.06 and 0.10 OKLCH L: below roughly 0.04 a surface change is
-  // not reliably visible, which is what made the earlier RGB mixes read as a
-  // single flat panel. A user-chosen override still wins, applied below.
+  // steps are 0.04, 0.09 and 0.145 OKLCH L: below roughly 0.035 a surface
+  // change is not reliably visible, which is what made the earlier RGB mixes
+  // read as a single flat panel. A user-chosen override still wins, applied
+  // below.
   /* On a light canvas there is almost no headroom above it (about 0.045 L for
    * #f0f0ee), so lifting toward white used to saturate by the 50% default and
    * the top half of the slider did nothing. Light themes instead separate by
    * deepening a tint toward the text: the sidebar, panels and hover keep moving
-   * across the whole range and never reach white. The sidebar is the deepest
-   * step, panels sit closer to the canvas, and hover darkens the panel. */
+   * across the whole range and never reach white. */
   const tint = (base: string, delta: number, ceiling: number) => {
     const room = Math.max(0.001, oklchLightness(base) - oklchLightness(text))
     return mixOklch(base, text, spread(delta, ceiling) / room)
   }
-  const side = light ? tint(background, 0.065, 0.16) : lift(background, 0.06, 0.16)
-  const surf = light ? tint(background, 0.045, 0.115) : lift(background, 0.10, 0.24)
-  const hov = light ? tint(surf, 0.055, 0.14) : lift(surf, 0.055, 0.14)
+  // The steps are deliberately close to even, with the canvas-to-sidebar step
+  // the smallest: the sidebar should read as the same room as the conversation,
+  // not a separate darker slab, and cards, hover and soft buttons need room to
+  // stand apart from each other. Both ramps scale together with the slider.
+  const side = light ? tint(background, 0.025, 0.055) : lift(background, 0.04, 0.09)
+  const surf = light ? tint(background, 0.055, 0.12) : lift(background, 0.09, 0.2)
+  const hov = light ? tint(surf, 0.045, 0.07) : lift(background, 0.145, 0.3)
   // Code blocks sink below the canvas (dark themes) or shade away from it
   // (light themes); the header is the midpoint between the block and the
   // canvas, so it stays a readable band even when panels sit near white.

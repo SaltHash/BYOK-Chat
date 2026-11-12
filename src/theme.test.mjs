@@ -84,15 +84,24 @@ test('contrast 50 is the balanced default, 0 is genuinely flat, and 100 separate
   // even: below ~0.04 a surface change stops being reliably visible, which is
   // the regression this guards against.
   const step = (a, b) => oklchLightness(a) - oklchLightness(b)
-  assert.ok(step(balanced.side, balanced.bg) >= 0.05, `the sidebar clears the main background (${step(balanced.side, balanced.bg).toFixed(3)})`)
-  assert.ok(step(balanced.surf, balanced.side) >= 0.03, `panels clear the sidebar (${step(balanced.surf, balanced.side).toFixed(3)})`)
+  assert.ok(step(balanced.side, balanced.bg) >= 0.035, `the sidebar clears the main background (${step(balanced.side, balanced.bg).toFixed(3)})`)
+  assert.ok(step(balanced.surf, balanced.side) >= 0.04, `panels clear the sidebar (${step(balanced.surf, balanced.side).toFixed(3)})`)
   assert.ok(step(balanced.hov, balanced.surf) >= 0.04, `hover clears the panel (${step(balanced.hov, balanced.surf).toFixed(3)})`)
+  // The ladder is roughly evenly spaced, and the sidebar-to-canvas step is the
+  // smallest one: cards, hover and soft buttons need room between themselves,
+  // while the sidebar should read as the same room as the conversation.
+  for (const palette of [balanced, high]) {
+    const gaps = [step(palette.side, palette.bg), step(palette.surf, palette.side), step(palette.hov, palette.surf)]
+    assert.ok(gaps[0] <= gaps[1] && gaps[1] <= gaps[2] + 0.005, `surface steps stay in order: ${gaps.map((g) => g.toFixed(3)).join(', ')}`)
+    assert.ok(Math.max(...gaps) - Math.min(...gaps) < 0.03, `surface steps stay even: ${gaps.map((g) => g.toFixed(3)).join(', ')}`)
+  }
   assert.ok(hexToHsl(balanced.surf).l > hexToHsl(flat.surf).l, 'the balanced surface lifts off the background')
   const light = customPalette({ accent: '#3b5bdb', text: '#1d1d1b', background: '#f0f0ee', contrast: 50 })
   // A light canvas has no headroom to lift into without turning white, so it
   // separates downward and the steps stay responsive to 100%.
   assert.ok(oklchLightness(light.side) < oklchLightness(light.bg), 'the light sidebar separates from the canvas')
-  assert.ok(oklchLightness(light.surf) > oklchLightness(light.side), 'panels sit closer to the light canvas than the sidebar')
+  assert.ok(oklchLightness(light.surf) < oklchLightness(light.side), 'panels step further from the light canvas than the sidebar')
+  assert.ok(oklchLightness(light.bg) - oklchLightness(light.side) < oklchLightness(light.bg) - oklchLightness(light.surf), 'the light sidebar is the smallest step')
   assert.ok(hexToHsl(high.surf).l > hexToHsl(balanced.surf).l, 'higher contrast separates further')
   assert.ok(Math.abs(hexToHsl(high.mu).l - hexToHsl(high.tx).l) < Math.abs(hexToHsl(balanced.mu).l - hexToHsl(balanced.tx).l), 'muted text moves toward the text colour')
 })
@@ -160,14 +169,14 @@ test('light palettes keep responding across the whole contrast range', () => {
     assert.ok(lower <= -0.02, `${key} separates below the default (${lower.toFixed(3)})`)
     assert.ok(upper <= -0.015, `${key} keeps separating above the default (${upper.toFixed(3)})`)
   }
-  assert.ok(oklchLightness(high.side) < oklchLightness(high.surf), 'the light hierarchy holds at 100%')
+  assert.ok(oklchLightness(high.surf) < oklchLightness(high.side), 'the light hierarchy holds at 100%')
   assert.ok(oklchLightness(high.hov) < oklchLightness(high.surf), 'hover stays deeper than the panel at 100%')
   assert.ok(!/^#ffffff$/i.test(high.side) && !/^#ffffff$/i.test(high.surf), 'nothing saturates at white')
 
   // The same holds for a canvas that is already almost white.
   const near = customPalette({ accent: '#3b5bdb', text: '#1d1d1b', background: '#fdfdfc', contrast: 50 })
   assert.ok(oklchLightness(near.side) < oklchLightness(near.bg), `sidebar darkens (${near.side} vs ${near.bg})`)
-  assert.ok(oklchLightness(near.surf) > oklchLightness(near.side), `panels stay above the sidebar (${near.surf} vs ${near.side})`)
+  assert.ok(oklchLightness(near.surf) < oklchLightness(near.side), `panels step further than the sidebar (${near.surf} vs ${near.side})`)
   assert.ok(oklchLightness(near.hov) < oklchLightness(near.surf), `hover stays visible (${near.hov})`)
 })
 

@@ -42,11 +42,12 @@ built frontend in `dist/` is served as static assets.
 - Built-in dark and light palettes lift the sidebar above `--bg`, with panels
   above it. Custom palettes come from `customPalette()` in `src/theme.ts`,
   where 50% is the balanced anchor. Their steps are measured in OKLCH
-  lightness: dark canvases lift (sidebar 0.06 L over `--bg`, then panels and
-  hover), while light canvases deepen a tint below the canvas because
-  near-white has almost no headroom. Keep light surfaces responsive all the
-  way to 100% instead of clamping them at white, and never settle for a 3% RGB
-  lift.
+  lightness: dark canvases lift (sidebar 0.04 L over `--bg`, panels 0.09,
+  hover 0.145), while light canvases deepen a tint below the canvas because
+  near-white has almost no headroom. Keep the steps roughly even, with the
+  sidebar-to-canvas gap the smallest: the sidebar should read as the same room
+  as the conversation. Keep light surfaces responsive all the way to 100%
+  instead of clamping them at white, and never settle for a 3% RGB lift.
 - Colours only through the theme tokens; style presets change radii and shadows
   only. No colour literals in components.
 - Settings live in `localStorage`; chats, workspaces and blobs live in

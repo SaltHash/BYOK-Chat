@@ -265,7 +265,7 @@ export const Item = ({ icon: I, children, sub, on, off, star, toggle, className,
     <button {...p} className="flex min-w-0 flex-1 items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm">
       {I && <I size={16} className="shrink-0 text-mu" />}
       <span className="min-w-0 flex-1 truncate">{children}</span>
-      {sub && <span className="max-w-32 truncate text-xs text-mu">{sub}</span>}
+      {sub && <span className="max-w-32 truncate text-xs text-mu transition-colors group-hover:text-tx">{sub}</span>}
       {on && !toggle && <Check size={16} className="shrink-0 text-ac" />}
     </button>
     {toggle && <span className="mr-2 shrink-0"><Toggle on={toggle.on} set={toggle.set} label={toggle.label} /></span>}
