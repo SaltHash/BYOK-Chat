@@ -335,7 +335,7 @@ export function customPalette(opts: CustomPaletteOptions): Record<CustomPaletteK
   // stand apart from each other. Both ramps scale together with the slider.
   const side = light ? tint(background, 0.025, 0.055) : lift(background, 0.04, 0.09)
   const surf = light ? tint(background, 0.055, 0.12) : lift(background, 0.09, 0.2)
-  const hov = light ? tint(surf, 0.045, 0.07) : lift(background, 0.145, 0.3)
+  const hov = light ? tint(surf, 0.035, 0.06) : lift(background, 0.145, 0.3)
   // Code blocks sink below the canvas (dark themes) or shade away from it
   // (light themes); the header is the midpoint between the block and the
   // canvas, so it stays a readable band even when panels sit near white.
