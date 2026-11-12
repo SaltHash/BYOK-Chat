@@ -102,7 +102,7 @@ export function Header({ side, toggle, cfg, pal, title }: { side: boolean; toggl
       {!side && <Btn icon={PanelLeft} title="Show sidebar" onClick={toggle} />}
       <h1 className="min-w-0 flex-1 truncate px-1 font-medium sm:px-2">{title}</h1>
       {curTemporary && <TemporaryFlair cfg={cfg} expiresAt={tempExpiresAt} tempHours={tempHours} />}
-      <ProfileButton cfg={cfg} />
+      {featOn({ features }, 'profiles') && <ProfileButton cfg={cfg} />}
       <ContextMeter cfg={cfg} />
       <span>
         <Pop right autoFocus w="w-64" trigger={() => <Btn icon={MoreVertical} title="Chat actions" aria-label="Chat actions">Actions</Btn>}>

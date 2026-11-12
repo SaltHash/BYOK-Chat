@@ -126,7 +126,7 @@ export const normFeatureOrder = (v: any): FeatureId[] => {
 
 /* Feature kill-switches. A disabled feature must not be used by the AI or the
    program in any capacity until turned back on. `library` is off by default. */
-export type FeatureId = 'prompts' | 'skills' | 'tools' | 'playlists' | 'commands' | 'stats' | 'memory' | 'widgets' | 'shortcuts' | 'library' | 'advanced' | 'workspace' | 'mcp' | 'voice'
+export type FeatureId = 'prompts' | 'skills' | 'tools' | 'playlists' | 'commands' | 'stats' | 'memory' | 'profiles' | 'widgets' | 'shortcuts' | 'library' | 'advanced' | 'workspace' | 'mcp' | 'voice'
 export const FEATURES: [FeatureId, string, string][] = [
   ['prompts', 'Prompts', 'Per-chat system prompts and the global system prompt. Off hides the prompt picker everywhere.'],
   ['skills', 'Skills', 'Extra instructions the AI can use for specific tasks.'],
@@ -137,19 +137,20 @@ export const FEATURES: [FeatureId, string, string][] = [
   ['commands', 'Commands', 'Slash commands, their templates, and the home-screen command shortcuts.'],
   ['stats', 'Stats', 'Token, message, and cost totals. Turning off asks whether to delete existing totals.'],
   ['memory', 'Memory', 'Stored memories and the memory tool. Turning off asks whether to delete all memories.'],
+  ['profiles', 'Profiles', 'Saved setups that switch model, prompt, tools and access policy together. Off hides profiles, the header switcher and project bindings.'],
   ['widgets', 'Widgets', 'The side widget panel and every widget inside it.'],
   ['shortcuts', 'Shortcuts', 'Every keyboard shortcut, plus the shortcut cheat-sheet widget.'],
   ['library', 'Library', 'The sidebar shortcut list below your chats.'],
   ['workspace', 'Workspace', 'Workspace file panel and workspace settings.'],
   ['advanced', 'Advanced', 'Debugging aids: verbose errors, hidden tools, system prompt, payloads and token counts.'],
 ]
-export const DEFAULT_FEATURES: Record<FeatureId, boolean> = { prompts: true, skills: true, tools: true, playlists: true, commands: true, stats: true, memory: true, widgets: true, shortcuts: true, library: false, advanced: false, workspace: true, mcp: true, voice: true }
+export const DEFAULT_FEATURES: Record<FeatureId, boolean> = { prompts: true, skills: true, tools: true, playlists: true, commands: true, stats: true, memory: true, profiles: true, widgets: true, shortcuts: true, library: false, advanced: false, workspace: true, mcp: true, voice: true }
 export const LIBRARY_ITEMS: [string, string][] = [['eps', 'Endpoints'], ['pls', 'Playlists'], ['prompts', 'Prompts'], ['cmds', 'Commands'], ['tools', 'Tools'], ['memory', 'Memory'], ['widgets', 'Widgets']]
 export const DEFAULT_LIBRARY_SHOW: Record<string, boolean> = { eps: true, pls: true, prompts: true, cmds: true, tools: true, memory: true, widgets: true }
 /** Widgets that belong to a feature and must go dark with it. */
 export const FEATURE_WIDGETS: Partial<Record<FeatureId, string[]>> = { prompts: ['prompts'], shortcuts: ['keys'], stats: ['usage', 'cost', 'last'] }
 /** Settings tabs hidden while their feature is off. */
-export const FEATURE_TABS: Partial<Record<FeatureId, string[]>> = { prompts: ['prompts'], skills: ['skills'], tools: ['tools'], playlists: ['pls'], commands: ['cmds'], stats: ['stats'], memory: ['memory'], widgets: ['widgets'], shortcuts: ['keys'], advanced: ['adv'], workspace: ['workspace'], mcp: ['mcp'], voice: ['voice'] }
+export const FEATURE_TABS: Partial<Record<FeatureId, string[]>> = { prompts: ['prompts'], skills: ['skills'], tools: ['tools'], playlists: ['pls'], commands: ['cmds'], stats: ['stats'], memory: ['memory'], profiles: ['profiles'], widgets: ['widgets'], shortcuts: ['keys'], advanced: ['adv'], workspace: ['workspace'], mcp: ['mcp'], voice: ['voice'] }
 export const featOn = (s: { features?: Record<FeatureId, boolean> } | null | undefined, f: FeatureId): boolean => s?.features?.[f] ?? DEFAULT_FEATURES[f]
 /** Whether a widget may render: widgets feature on, its owning feature on, and itself enabled. */
 export const widgetOn = (s: { features?: Record<FeatureId, boolean>; widgets: Record<string, boolean> }, id: string): boolean => {
@@ -3443,20 +3444,21 @@ export const useS = create<S>()(
         setProjectShareWorkspaces: (id, on) => set((s) => ({ projects: s.projects.map((f) => (f.id === id ? { ...f, shareWorkspaces: on } : f)) })),
         saveProfile: (name) => {
           const s = get()
+          if (!featOn(s, 'profiles')) return ''
           const p = captureProfile(s, (name ?? '').trim() || freshProfileName(s.profiles), { id: uid() })
           set({ profiles: [...s.profiles, p], profile: p.id, notice: { t: `Saved “${p.name}” from the current setup.` } })
           return p.id
         },
         updateProfile: (id) => {
           const s = get(), old = s.profiles.find((x) => x.id === id)
-          if (!old) return
+          if (!old || !featOn(s, 'profiles')) return
           const p = captureProfile(s, old.name, { id, createdAt: old.createdAt })
           set({ profiles: s.profiles.map((x) => (x.id === id ? p : x)), profile: p.id, notice: { t: `Updated “${p.name}”.` } })
         },
         renameProfile: (id, name) => set((s) => ({ profiles: s.profiles.map((p) => (p.id === id ? { ...p, name: name.trim().slice(0, 60) || p.name, updatedAt: Date.now() } : p)) })),
         applyProfile: (id) => {
           const s = get(), p = s.profiles.find((x) => x.id === id)
-          if (!p) return
+          if (!p || !featOn(s, 'profiles')) return
           set({ ...profilePatch(p), profile: p.id, notice: { t: `Applied “${p.name}”.` } })
         },
         delProfile: (id) => set((s) => ({
@@ -3467,7 +3469,7 @@ export const useS = create<S>()(
         bindProjectProfile: (pid, profileId) => set((s) => ({ projects: s.projects.map((f) => (f.id === pid ? { ...f, profile: profileId || undefined } : f)) })),
         alwaysAllowTool: (name) => {
           const s = get()
-          const active = s.profiles.find((p) => profileMatches(s, p))
+          const active = featOn(s, 'profiles') ? s.profiles.find((p) => profileMatches(s, p)) : undefined
           set({
             toolApproval: { ...s.toolApproval, [name]: false },
             // Keep the active profile matching: an "always allow" answer is a

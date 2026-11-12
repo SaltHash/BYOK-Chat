@@ -105,6 +105,7 @@ export const SETTING_LINKS: SettingLink[] = [
   { tab: 'features', anchor: 'feature-commands', title: 'Feature: Commands', keywords: 'feature commands toggle slash' },
   { tab: 'features', anchor: 'feature-stats', title: 'Feature: Stats', keywords: 'feature stats toggle totals' },
   { tab: 'features', anchor: 'feature-memory', title: 'Feature: Memory', keywords: 'feature memory toggle' },
+  { tab: 'features', anchor: 'feature-profiles', title: 'Feature: Profiles', keywords: 'feature profiles toggle presets' },
   { tab: 'features', anchor: 'feature-widgets', title: 'Feature: Widgets', keywords: 'feature widgets toggle panel' },
   { tab: 'features', anchor: 'feature-shortcuts', title: 'Feature: Shortcuts', keywords: 'feature shortcuts toggle keyboard' },
   { tab: 'features', anchor: 'feature-library', title: 'Feature: Library', keywords: 'feature library toggle sidebar' },

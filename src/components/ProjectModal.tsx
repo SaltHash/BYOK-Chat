@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react'
 import { FileUp, FileText, X, Folder } from 'lucide-react'
-import { useS, type Project, type ProjectFile } from '../store'
+import { useS, featOn, type Project, type ProjectFile } from '../store'
 import { Btn, HelpTip, Modal, Toggle, cx } from './ui'
 
 /* Optional project context files are stored with their extracted text inline
@@ -31,6 +31,7 @@ export function ProjectModal({ close, project }: { close: () => void; project?: 
   const [shareWs, setShareWs] = useState(project?.shareWorkspaces !== false)
   const [profile, setProfile] = useState(project?.profile ?? '')
   const profiles = useS((s) => s.profiles)
+  const profilesOn = useS((s) => featOn(s, 'profiles'))
   const [over, setOver] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
   const add = async (list: FileList | File[]) => {
@@ -51,7 +52,7 @@ export function ProjectModal({ close, project }: { close: () => void; project?: 
     } else {
       const id = s.addProject(finalName, files)
       s.setProjectShareWorkspaces(id, shareWs)
-      s.bindProjectProfile(id, profile)
+      if (profilesOn) s.bindProjectProfile(id, profile)
       s.openProject(id)
     }
     close()
@@ -90,7 +91,7 @@ export function ProjectModal({ close, project }: { close: () => void; project?: 
             </ul>
           )}
         </div>
-        {profiles.length > 0 && (
+        {profilesOn && profiles.length > 0 && (
           <label className="block text-sm">
             <span className="mb-1 flex items-center gap-1.5 text-xs font-medium text-mu">Profile<HelpTip text="Applied automatically whenever this project is opened: model, prompt, tools and access policy switch together." label="Help: Project profile" /></span>
             <select value={profile} onChange={(e) => setProfile(e.target.value)} className="h-9 w-full rounded-lg bg-surf px-2 text-sm outline-none focus:ring-2 focus:ring-ac/40">
