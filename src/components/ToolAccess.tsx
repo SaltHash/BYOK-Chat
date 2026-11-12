@@ -73,9 +73,9 @@ export function ToolAccessButton({ cfg }: { cfg: (target: string) => void }) {
                     if (m.id === 'off' || m.id === 'full') settleToolApprovals(chatId, m.id === 'full')
                     close()
                   }}
-                  className={cx('flex w-full items-start gap-2.5 rounded-lg px-2.5 py-2 text-left hover:bg-hov', mode === m.id && 'bg-hov')}
+                  className={cx('group flex w-full items-start gap-2.5 rounded-lg px-2.5 py-2 text-left hover:bg-hov', mode === m.id && 'bg-hov')}
                 >
-                  <MIcon size={16} className={cx('mt-0.5 shrink-0', mode === m.id ? 'text-ac' : 'text-mu')} />
+                  <MIcon size={16} className={cx('mt-0.5 shrink-0 transition-colors', mode === m.id ? 'text-ac' : 'text-mu group-hover:text-tx')} />
                   <span className="min-w-0 flex-1">
                     <span className="flex items-center gap-1.5 text-sm font-medium">
                       {m.label}

@@ -1,6 +1,6 @@
 import { memo, useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
-import { GitBranch, ChevronLeft, ChevronRight, ChevronDown, Server, Cpu, Copy, Check, RefreshCw, Trash2, ListOrdered, TriangleAlert, Paperclip, Download, ExternalLink, Volume2, Pin, PinOff, Bookmark, Search, ArrowUp, ArrowDown, X, Quote } from 'lucide-react'
+import { GitBranch, ChevronLeft, ChevronRight, ChevronDown, Server, Cpu, Copy, Check, RefreshCw, Trash2, ListOrdered, TriangleAlert, Paperclip, Download, ExternalLink, Volume2, Pin, PinOff, Bookmark, Search, ArrowUp, ArrowDown, X, Quote, FileText, FileCode2, Terminal, Image as ImageIcon, Wrench } from 'lucide-react'
 import { useS, useLive, usable, featOn, previewSysFor, activeWorkspaceForChat, pinnedReplyOf, type LogDetail, type Msg } from '../store'
 import { clampWorkspaceFrac, roundFrac, CHAT_WIDTH } from '../layout'
 import { focusComposer, startPointerDrag } from '../hooks'
@@ -8,6 +8,7 @@ import { useProcessLogEpoch } from '../uiSignals'
 import { createFrameThrottle } from '../throttle'
 import { CI, fmtDuration } from '../meta'
 import { toolLabel } from '../toolLabels'
+import { summarizeToolCalls, splitToolTrail, type ToolKind, type TrailCall } from '../toolSummary'
 import { formatMsgDateTime, formatMsgTime } from '../time'
 import { Btn, Chip, cx, ZoomableImage, type Ic } from './ui'
 import { Composer } from './Composer'
@@ -174,6 +175,63 @@ const toolName = toolLabel
 function toolNode(label: string, id: string): [string, string] {
   const cut = label.indexOf(' · ')
   return cut < 0 ? [toolName(id), label] : [label.slice(0, cut), label.slice(cut + 3)]
+}
+
+const TOOL_KIND_ICON: Record<ToolKind, Ic> = { search: Search, page: FileText, write: FileCode2, delete: FileCode2, read: FileText, other: Wrench }
+
+/** One collapsed line between two pieces of prose: what the model did when it
+ *  paused to call tools. The title is a sentence (“Searched 8 websites, wrote
+ *  2 files”); expanding it shows each call. */
+function ToolTrail({ calls }: { calls: TrailCall[] }) {
+  const [open, setOpen] = useState(false)
+  const summary = summarizeToolCalls(calls)
+  const Icon = TOOL_KIND_ICON[summary.clauses[0]?.kind ?? 'other'] ?? Wrench
+  return (
+    <div className="my-2">
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={() => setOpen(!open)}
+        title={open ? 'Hide the tool calls behind this text' : 'Show the tool calls behind this text'}
+        className="inline-flex max-w-full items-center gap-2 rounded-lg px-2 py-1 text-xs text-mu transition-colors hover:bg-surf hover:text-tx focus-visible:bg-surf focus-visible:text-tx"
+      >
+        <ChevronRight size={13} className={cx('shrink-0 transition-transform', open && 'rotate-90')} />
+        <Icon size={14} className="shrink-0" aria-hidden="true" />
+        <span className="truncate">{summary.title}</span>
+      </button>
+      {open && (
+        <div className="ml-3 mt-1 space-y-0.5 border-l border-bor pl-3">
+          {calls.map((call, i) => {
+            const [head, desc] = toolNode(toolStep(call.name, call.arguments ?? '', call.result), call.name)
+            const RowIcon = callIcon(call)
+            return (
+              <div key={`${call.name}-${i}`} className="flex items-start gap-2 py-0.5 text-xs">
+                <RowIcon size={13} className={cx('mt-0.5 shrink-0', call.error ? 'text-er' : 'text-mu')} aria-hidden="true" />
+                <span className={cx('min-w-0 break-words text-tx', call.error && 'text-er')}>{head}</span>
+                {desc && <span className={cx('min-w-0 break-words text-mu', call.error && 'text-er')}>{desc}</span>}
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function callIcon(call: TrailCall): Ic {
+  if (call.name === 'search') return Search
+  if (call.name === 'fetch_page') return FileText
+  if (call.name === 'run_code') return Terminal
+  if (call.name === 'generate_image') return ImageIcon
+  if (call.name === 'workspace_upsert') {
+    try {
+      const a = JSON.parse(call.arguments || '{}') as { action?: string }
+      if (a.action === 'read') return FileText
+      if (a.action === 'delete') return FileCode2
+    } catch { /* a malformed call still gets the generic row icon */ }
+    return FileCode2
+  }
+  return Wrench
 }
 /* Generated images live in durable local storage and are referenced by id in
  * the tool result, so the chat never carries base64. Each strip loads lazily. */
@@ -726,6 +784,11 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
           // A reply that made artifacts is rendered in pieces so each one sits
           // where the model called it, not in a block after the whole answer.
           const blocks = liveChunks?.length ? null : artifactBlocks(displayText, m.toolRounds)
+          // A reply that wrote, called tools, then wrote again is split so the
+          // tool run sits between the two pieces, the way it happened. Replies
+          // with artifacts keep the whole-text path, which places them inline.
+          const segments = blocks ? null : splitToolTrail(displayText, m.toolRounds)
+          const interleaved = !!segments && segments.some((s) => s.text) && segments.some((s) => s.calls.length)
           return (
             <>
               {m.t && (
@@ -737,6 +800,13 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
                       <div key={i} className={b.specs ? 'my-3' : undefined}>
                         {b.text ? <Md t={searchPrefs?.citeStyle === 'off' ? stripCitations(b.text) : linkifyCitations(b.text, sources)} cites={cites} /> : null}
                         {b.specs ? <ArtifactList specs={b.specs} /> : null}
+                      </div>
+                    ))
+                  ) : interleaved ? (
+                    segments!.map((seg, i) => (
+                      <div key={`seg-${i}`} className={i ? 'mt-4' : undefined}>
+                        {seg.text && <Md t={searchPrefs?.citeStyle === 'off' ? stripCitations(seg.text) : linkifyCitations(seg.text, sources)} cites={cites} />}
+                        {seg.calls.length > 0 && <ToolTrail calls={seg.calls} />}
                       </div>
                     ))
                   ) : (
