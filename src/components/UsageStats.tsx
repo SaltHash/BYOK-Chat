@@ -13,15 +13,14 @@ import {
   attemptContexts, buildUsageRecordsFromHistory, chartBuckets, bucketUnitFor, BUCKET_LABEL,
   findModel, formatDate, formatDateTime, formatDay, money, moneyExact, modelKey,
   percentOf, periodLabel, rangeLabel, recordsInRange, sharePct, sortModels, statsRange,
-  summarize, seriesTotals, compactTokens, fmtInt, MAX_USAGE_ROWS, USAGE_PERIODS, chartMax,
+  summarize, seriesTotals, compactTokens, fmtInt, USAGE_PERIODS, chartMax,
   allToolRounds, buildToolUsageRecords, aggregateTools, sortTools, inRange,
   type Bucket, type ModelSortKey, type ModelUsage, type StatsRange, type TokenBreakdown,
   type ToolSortKey, type ToolUsage, type ToolUsageRecord, type UsagePeriod, type UsageRecord,
   type UsageSummary, type BucketUnit,
 } from '../usageStats'
-import { Btn, Checkbox, Confirm, HelpTip, Sel, Seg, Surface, cx, useEscapeClose } from './ui'
+import { Btn, Checkbox, Confirm, Sel, Seg, Surface, cx, useEscapeClose } from './ui'
 
-export const STATS_INFO = 'Cost, tokens and per-model usage from every saved reply, including replies from temporary, archived and deleted chats. Tool-call counts come from the replies still stored on your chats. The lifetime counters at the bottom are separate all-time totals.'
 
 /** A kept attempt from a deleted chat has no live title; say so instead of
  *  showing it as an untitled chat that still exists. */
@@ -1369,7 +1368,6 @@ export function UsageStats({ onOpenChat }: { onOpenChat: (chatId: string, messag
       <div className="flex items-start gap-3 pr-10">
         <div className="min-w-0 flex-1">
           <h2 className="flex items-center gap-2 text-lg font-semibold"><TrendingUp size={20} className="text-ac" />Stats</h2>
-          <p className="mt-1 text-sm text-mu">{STATS_INFO}</p>
         </div>
       </div>
       <SubNav view={ui.view} setView={setView} />
@@ -1411,7 +1409,6 @@ function Lifetime({ stats, resetOpen, setResetOpen }: {
 }) {
   const resetStats = useS((s) => s.resetStats)
   const kept = useS((s) => s.usage.length)
-  const keptSince = useS((s) => s.usage[0]?.at ?? 0)
   const keep = useS((s) => s.prefs.keepUsageHistory !== false)
   const clearUsageHistory = useS((s) => s.clearUsageHistory)
   const [clearOpen, setClearOpen] = useState(false)
@@ -1419,7 +1416,6 @@ function Lifetime({ stats, resetOpen, setResetOpen }: {
     <div className="space-y-3 border-t border-bor pt-4">
       <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
         <h3 className="text-sm font-semibold">Lifetime counters</h3>
-        <HelpTip text="All-time totals stored by the app. They are not filtered by the period above and are not affected by deleting chats, so they can differ from the windowed dashboard." label="About lifetime counters" />
         <span className="text-xs text-mu">since {new Date(stats.since).toLocaleDateString()}</span>
       </div>
       <Anchor id="lifetime-counters">
@@ -1433,16 +1429,11 @@ function Lifetime({ stats, resetOpen, setResetOpen }: {
       <Anchor id="keep-usage-history">
         <Surface className="space-y-2">
           <Checkbox checked={keep} set={(v) => useS.getState().setKeepUsageHistory(v)} label="Keep usage from temporary, archived and deleted chats" />
-          <p className="text-xs text-mu">{keep
-            ? `Each attempt is saved in this browser as its reply finishes, so its tokens and cost stay in the dashboard after the chat expires, is archived or is deleted.${kept ? ` ${fmtInt(kept)} attempt${kept === 1 ? '' : 's'} kept${keptSince ? ` since ${formatDate(keptSince)}` : ''}.` : ''}`
-            : 'Only attempts still stored on a chat are counted: deleting a chat, or letting a temporary one expire, removes its detailed usage from the dashboard.'}</p>
-          <p className="text-xs text-mu">The newest {fmtInt(MAX_USAGE_ROWS)} attempts are kept; a full browser storage may keep fewer. Lifetime counters below are unaffected by either choice.</p>
           {kept > 0 && <Btn v="soft" onClick={() => setClearOpen(true)}>Clear kept history</Btn>}
         </Surface>
       </Anchor>
       <div className="flex flex-wrap items-center gap-2">
         <Anchor id="reset-stats"><Btn v="danger" icon={RotateCcw} onClick={() => setResetOpen(true)}>Reset stats</Btn></Anchor>
-        <p className="min-w-0 flex-1 text-xs text-mu">Reset clears the all-time counters only; kept history is cleared separately above.</p>
       </div>
       {resetOpen && <Confirm title="Reset all stats?" text="Tokens, messages and chats-started totals go back to zero. Kept usage history and the attempts still stored on chats are not deleted." ok="Reset" close={() => setResetOpen(false)} run={() => resetStats()} />}
       {clearOpen && <Confirm title="Clear kept usage history?" text="Attempts kept permanently in this browser are removed, including those from temporary, archived and deleted chats. Usage still stored on existing chats and the lifetime counters are not affected." ok="Clear" close={() => setClearOpen(false)} run={() => clearUsageHistory()} />}

@@ -141,7 +141,6 @@ export const SETTING_LINKS: SettingLink[] = [
   { tab: 'workspace', anchor: 'gist-sharing', title: 'GitHub Gist sharing', keywords: 'gist token share github' },
 
   // MCP
-  { tab: 'mcp', anchor: 'add-mcp-server', title: 'Add an MCP server', keywords: 'mcp model context protocol add server remote url' },
 
   // Tools
   { tab: 'tools', anchor: 'tool-access', title: 'Tool access and approvals', keywords: 'tool access approval permission lock full standard restricted disabled composer ask allow deny' },
@@ -208,7 +207,7 @@ export const SETTING_LINKS: SettingLink[] = [
   { tab: 'look', anchor: 'appearance-mode', title: 'Appearance mode (dark / light)', keywords: 'dark light mode theme' },
   { tab: 'look', anchor: 'style-preset', title: 'Style preset', keywords: 'style preset feel modern sharp bubbly floating corners radius rounded shadows elevation' },
   { tab: 'look', anchor: 'density', title: 'Density', keywords: 'density compact comfortable spacious spacing layout' },
-  { tab: 'look', anchor: 'density-advanced', title: 'Advanced spacing overrides', keywords: 'advanced spacing overrides header padding vertical chat margins message gap sidebar composer panel code blocks pixels fine tune' },
+  { tab: 'look', anchor: 'density-advanced', title: 'Advanced spacing', keywords: 'advanced spacing overrides header padding vertical chat margins message gap sidebar composer panel code blocks pixels fine tune' },
   { tab: 'look', anchor: 'high-contrast', title: 'High contrast', keywords: 'high contrast muted text borders readable accessibility theme' },
   { tab: 'look', anchor: 'message-times', title: 'Message times', keywords: 'message times timestamps clock sent at' },
   { tab: 'look', anchor: 'message-actions', title: 'Always show message actions', keywords: 'message actions hover always show copy regenerate delete' },
@@ -241,7 +240,6 @@ export const SETTING_LINKS: SettingLink[] = [
   { tab: 'chats', anchor: 'temp-streaming', title: 'Keep replying temporary chats listed', keywords: 'temporary streaming replying sidebar current only listed running background' },
   { tab: 'chats', anchor: 'temp-finished', title: 'Keep finished temporary chats listed', keywords: 'temporary finished completed background background reply unread sidebar current only listed' },
   { tab: 'chats', anchor: 'stream-md', title: 'Render markdown while streaming', keywords: 'markdown streaming live rich text format incremental' },
-  { tab: 'chats', anchor: 'copy-replies', title: 'Copying replies', keywords: 'copy rich html formatting markdown plain text shift ctrl click word processor google docs tables code links clipboard' },
   { tab: 'chats', anchor: 'send-while-busy', title: 'Sending while replying', keywords: 'queue queued send while streaming busy stop first reply running' },
   { tab: 'chats', anchor: 'process-detail', title: 'Process detail level', keywords: 'process to answer log detail compact standard detailed verbose steps explanation' },
   { tab: 'chats', anchor: 'process-timing', title: 'Process step timings', keywords: 'process log timing duration ms per step total' },

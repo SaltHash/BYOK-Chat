@@ -8,11 +8,10 @@ import { TOOL_REGISTRY, can, stream } from '../engine'
 import { CI, TOOLS, WIDGETS, KEYS, orderTools } from '../meta'
 import { SETTINGS_TABS, SETTINGS_GROUPS, visibleTabs, searchSettings, splitSettingTarget, settingDomId } from '../settingsCatalog'
 import { normQualityFavs, type GlobalPrompt, type PromptQuality, type Quality } from '../flair'
-import { PROMPT_VARS } from '../promptVars'
 import { DataTab, KeysTab, TestRow, TestAllEndpoints } from './Extra'
 import { ToolAccessCard } from './ToolAccess'
-import { Btn, Field, Input, Area, Sel, SearchSelect, Toggle, Seg, RangeSlider, Checkbox, HelpTip, Modal, Surface, Chip, Item, Confirm, cx, useMenuNav, type Ic } from './ui'
-import { Anchor, Panel, Section } from './settingsPrimitives'
+import { Btn, Field, Input, Area, Sel, SearchSelect, Toggle, Seg, RangeSlider, Checkbox, Modal, Surface, Chip, Item, Confirm, cx, useMenuNav, type Ic } from './ui'
+import { Anchor, Panel, Section, SettingRow } from './settingsPrimitives'
 import { SortableList, useFlipAnimate, type SortHandleProps, type SortItemApi } from './dnd'
 import { fetchModelCatalogCached, clearCatalogCache, prefetchModelCatalog, fetchModelProviders, filterCatalogByEndpoint, prioritizeProviderRows, discoverEndpointModels, clearModelDiscoveryCache, type CatalogEntry, type CatalogProvider, type CatalogSource } from '../catalog'
 import { resolveProvider } from '../providerRegistry'
@@ -28,8 +27,8 @@ import { DENSITIES, DENSITY_IDS, SPACING_LIMITS, STYLE_PRESETS, STYLE_PRESET_IDS
 import { USAGE_PERIODS } from '../usageStats'
 import { normCompactAt } from '../compaction'
 import { ARCHIVE_RETENTION_NEVER, archiveRetentionLabel, normArchiveDays } from '../archive'
-import { ColorPicker } from './ColorPicker'
 import { ErrorBoundary } from './ErrorBoundary'
+import { AppearanceSettings } from './AppearanceSettings'
 
 const TABS = SETTINGS_TABS
 // The stats dashboard is a large, self-contained surface. Keep it out of the
@@ -59,15 +58,12 @@ export const helperLabel = (s: { eps: any[] }, ref: string, emptyLabel: string) 
   return `${e.name} · ${modelNameOf(e, m || model)}`
 }
 /** Pointer card replacing a removed duplicate helper-model picker. */
-function HelperPointer({ anchor, title, desc, current }: { anchor: string; title: string; desc: string; current: string }) {
+function HelperPointer({ anchor, title, current }: { anchor: string; title: string; current: string }) {
   return (
     <Anchor id={anchor}>
-    <div className="rounded-xl bg-surf p-3 space-y-2">
-      <div className="text-sm font-medium">{title}</div>
-      <div className="text-xs text-mu">{desc}</div>
-      <div className="text-xs text-mu">Current: <span className="text-tx">{current}</span></div>
-      <div><Btn v="soft" icon={Cpu} onClick={() => goSetting('eps#helper-models')}>Open helper models</Btn></div>
-    </div>
+      <SettingRow label={<><span className="block">{title}</span><span className="mt-0.5 block text-xs text-mu">Current: <span className="text-tx">{current}</span></span></>}>
+        <Btn v="soft" icon={Cpu} onClick={() => goSetting('eps#helper-models')}>Open helper models</Btn>
+      </SettingRow>
     </Anchor>
   )
 }
@@ -125,7 +121,7 @@ const collectAnchors = (node: ReactNode, out: string[] = []): string[] => {
   return out
 }
 
-export function Card({ icon: I, title, sub, help, right, open0, handle, children, muted }: { icon: Ic; title: ReactNode; sub?: string; /** Short explanation shown by the help control instead of as visible subtitle text. */ help?: string; right?: ReactNode; open0?: boolean; handle?: SortHandleProps | null; children?: ReactNode; muted?: boolean }) {
+export function Card({ icon: I, title, sub, right, open0, handle, children, muted }: { icon: Ic; title: ReactNode; sub?: string; right?: ReactNode; open0?: boolean; handle?: SortHandleProps | null; children?: ReactNode; muted?: boolean }) {
   const [o, setO] = useState(!!open0)
   const hasBody = children != null && children !== false
   const anchorKey = useMemo(() => collectAnchors(children).join('|'), [children])
@@ -147,7 +143,6 @@ export function Card({ icon: I, title, sub, help, right, open0, handle, children
           <I size={16} className={cx('shrink-0', muted ? 'text-mu/60' : 'text-mu')} />
           <span className="min-w-0"><span className="block truncate text-sm font-medium">{title}</span>{sub && <span className="block truncate text-xs text-mu">{sub}</span>}</span>
         </div>
-        {help && <HelpTip text={help} label={`About ${typeof title === 'string' ? title : 'this setting'}`} />}
         {right}
         {hasBody && <Btn sm icon={ChevronRight} title={o ? 'Collapse' : 'Expand'} onClick={() => setO(!o)} className={cx('transition-transform', o && 'rotate-90')} />}
       </div>
@@ -234,7 +229,7 @@ function ProviderPicker({ e, model, openRouter, update }: { e: any; model: strin
       <div className="modal-panel flex max-h-[80dvh] w-full max-w-lg flex-col gap-3 rounded-2xl bg-bg p-5 shadow-2xl">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
-            <h3 className="flex items-center gap-1.5 font-semibold">Inference provider<HelpTip text="Choose which provider serves this model. Requests do not fall back to another provider." label="About inference provider" /></h3>
+            <h3 className="flex items-center gap-1.5 font-semibold">Inference provider</h3>
             <p className="mt-0.5 truncate text-xs text-mu">{model}</p>
           </div>
           <button onClick={() => setOpen(false)} className="grid size-8 shrink-0 place-items-center rounded-lg text-mu hover:bg-hov hover:text-tx" aria-label="Close provider picker"><X size={16} /></button>
@@ -399,7 +394,7 @@ function ModelsEditor({ e, update }: { e: any; update: (p: object) => void }) {
     />
     <button onClick={() => { setPicker(true); setSelectedModels([]); void loadCatalog() }} className="flex w-full items-center justify-center gap-2 rounded-lg border border-dashed border-bor py-2 text-sm text-mu hover:text-tx"><Plus size={14} />Add model</button>
     {picker && <Modal close={() => setPicker(false)} keyboard={false}><div className="modal-panel flex max-h-[80dvh] w-full max-w-xl flex-col gap-3 rounded-2xl bg-bg p-5 shadow-2xl">
-      <div className="flex items-center justify-between"><div><h3 className="flex items-center gap-1.5 font-semibold">Choose a model<HelpTip text="Model lists are suggestions. Verify that a model is enabled for this endpoint before relying on it." label="About model lists" /></h3><p className="mt-0.5 text-xs text-mu">{e.name}{endpointId ? ` · ${endpointId}` : ''}</p></div><button onClick={() => setPicker(false)} className="grid size-8 place-items-center rounded-lg text-mu hover:bg-hov hover:text-tx" aria-label="Close model picker"><X size={16}/></button></div>
+      <div className="flex items-center justify-between"><div><h3 className="flex items-center gap-1.5 font-semibold">Choose a model</h3><p className="mt-0.5 text-xs text-mu">{e.name}{endpointId ? ` · ${endpointId}` : ''}</p></div><button onClick={() => setPicker(false)} className="grid size-8 place-items-center rounded-lg text-mu hover:bg-hov hover:text-tx" aria-label="Close model picker"><X size={16}/></button></div>
       <div className="flex flex-wrap gap-2"><button onClick={loadCatalog} className="rounded-lg bg-hov px-3 py-2 text-xs text-tx">{catalog.length ? 'Refresh model catalog' : 'Load available models'}</button>
       <button onClick={() => { clearModelDiscoveryCache(e.url); clearCatalogCache(e.id); void loadCatalog() }} title="Clear cached working and failed model-list URLs for this endpoint, then probe them again." className="rounded-lg px-3 py-2 text-xs text-mu hover:bg-hov hover:text-tx">Retry model-list checks</button></div>
       {catalogState && <p className="text-xs text-mu">{catalogState}</p>}
@@ -444,7 +439,7 @@ function FeaturesTab() {
       <Anchor id="show-disabled-features">
       <div className="flex items-center justify-between gap-3 rounded-xl bg-surf p-3">
         <div className="min-w-0">
-          <div className="text-sm font-medium">Show disabled features<HelpTip text="Keep disabled features listed in Settings, marked Off." label="Help: Show disabled features" /></div>
+          <div className="text-sm font-medium">Show disabled features</div>
         </div>
         <Toggle on={s.prefs.showDisabledFeatures === true} set={(showDisabledFeatures) => s.patch({ prefs: { ...s.prefs, showDisabledFeatures } })} label="Show disabled features" />
       </div>
@@ -453,10 +448,10 @@ function FeaturesTab() {
         const [, label, desc] = byId(id)
         return (
         <Anchor key={id} id={`feature-${id}`}>
-        <Card icon={iconFor(id)} title={label} sub={F[id] ? 'On' : 'Off'} help={desc} muted={!F[id]} right={<span className="flex items-center gap-1"><Btn sm icon={ArrowUp} title={`Move ${label} up`} disabled={order.indexOf(id) === 0} onClick={() => move(id, -1)} /><Btn sm icon={ArrowDown} title={`Move ${label} down`} disabled={order.indexOf(id) === order.length - 1} onClick={() => move(id, 1)} /><Toggle on={!!F[id]} set={(on) => toggle(id, on)} label={`Enable ${label}`} /></span>}>
+        <Card icon={iconFor(id)} title={label} muted={!F[id]} right={<span className="flex items-center gap-1"><Btn sm icon={ArrowUp} title={`Move ${label} up`} disabled={order.indexOf(id) === 0} onClick={() => move(id, -1)} /><Btn sm icon={ArrowDown} title={`Move ${label} down`} disabled={order.indexOf(id) === order.length - 1} onClick={() => move(id, 1)} /><Toggle on={!!F[id]} set={(on) => toggle(id, on)} label={`Enable ${label}`} /></span>}>
           {id === 'library' && !!F[id] && (
             <Anchor id="library-entries">
-            <Field label="Library entries" hint="Choose which shortcuts appear in the sidebar library.">
+            <Field label="Library entries">
               <div className="grid grid-cols-2 gap-2">
                 {LIBRARY_ITEMS.map(([k, l]) => <Checkbox key={k} checked={show[k] ?? true} set={(v) => s.patch({ libraryShow: { ...show, [k]: v } })} label={l} />)}
               </div>
@@ -498,7 +493,6 @@ function FeaturesTab() {
 
 function HelperModels() {
   const s = useSConfig()
-  const [open, setOpen] = useState(false)
   const refs = {
     cls: helperRef(s.memoryPrefs.classifierEp, s.memoryPrefs.classifierModel),
     eff: helperRef(s.prefs.effortEp, s.prefs.effortModel),
@@ -539,54 +533,33 @@ function HelperModels() {
     else if (which === 'compact') s.patch({ prefs: { ...s.prefs, compactEp: ep, compactModel: model } })
     else s.patch({ prefs: { ...s.prefs, effortEp: ep, effortModel: model } })
   }
-  const row = (label: string, hint: string, ref: string, set: (v: string) => void) => (
-    <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-1.5 text-sm font-medium">{label}<HelpTip text={hint} label={`Help: ${label}`} /></div>
-        {!ref && <p className="mt-0.5 text-xs text-mu">Uses the replying model</p>}
-      </div>
-      <div className="w-full shrink-0 sm:w-60"><Sel value={ref} set={set} opts={singleOpts} /></div>
-    </div>
+  const row = (label: string, ref: string, set: (v: string) => void) => (
+    <SettingRow label={label}><div className="w-60 max-w-full"><Sel value={ref} set={set} opts={singleOpts} inline /></div></SettingRow>
   )
   return (
     <Anchor id="helper-models">
-      <Surface>
-        <button type="button" onClick={() => setOpen(!open)} aria-expanded={open} className="flex w-full items-center gap-2 text-left">
-          <Cpu size={18} className="shrink-0 text-ac" />
-          <span className="min-w-0 flex-1"><span className="block font-medium">Helper models</span><span className="block text-xs text-mu">Small background tasks that route, label and compact a reply</span></span>
-          <ChevronRight size={16} aria-hidden="true" className={cx('shrink-0 text-mu transition-transform', open && 'rotate-90')} />
-        </button>
-        <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2">
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-1.5 text-sm font-medium">Model for all helpers<HelpTip text="One model for every helper task listed below. Set it to None and expand the list to choose each task separately." label="Help: Model for all helpers" /></div>
-            <p className="mt-0.5 text-xs text-mu">{main === '__mixed__' ? 'Different models per task' : main ? 'Same model for every helper task' : 'Each task uses the replying model'}</p>
-          </div>
-          <div className="w-full shrink-0 sm:w-60"><Sel value={main} set={setAll} opts={opts} /></div>
-        </div>
-        {mixed && <p className="mt-2 text-xs text-mu">Current: {Object.entries(refs).map(([k, r]) => `${k === 'cls' ? 'routing' : k === 'eff' ? 'effort' : k === 'recall' ? 'recall' : k === 'title' ? 'titles' : 'handoff'}: ${refLabel(r)}`).join(' · ')}</p>}
-        {open && (
-          <div className="mt-5 space-y-6 border-t border-bor pt-5">
-            <div className="space-y-4">
-              <div>
-                <p className="text-sm font-medium">Decision helpers</p>
-                <p className="text-xs text-mu">Fast, cheap models are enough: they choose a route, a reasoning level or a memory, and never write the answer.</p>
-              </div>
-              {row('Model routing', 'Chooses the best model in a playlist for each request. Playlists with their own classifier keep using it; empty falls back to the replying model.', refs.cls, (v) => setOne('cls', v))}
-              {row('Reasoning level', 'Chooses how hard the model thinks when a model is set to Auto.', refs.eff, (v) => setOne('eff', v))}
-              {row('Memory recall', 'Chooses which saved memories matter for each reply. Empty falls back to the routing model.', refs.recall, (v) => setOne('recall', v))}
+      <div className="py-1">
+        <SettingRow label="Model for all helpers"><div className="w-60 max-w-full"><Sel value={main} set={setAll} opts={opts} inline /></div></SettingRow>
+        <details className="group" open>
+          <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-4 py-3 text-sm [&::-webkit-details-marker]:hidden">
+            <span>Per-task models</span>
+            <ChevronDown size={16} className="text-mu transition-transform group-open:rotate-180" />
+          </summary>
+          <div className="space-y-4 pb-3">
+            <div className="space-y-1">
+              <p className="px-0 text-xs font-medium text-mu">Decision helpers</p>
+              {row('Model routing', refs.cls, (v) => setOne('cls', v))}
+              {row('Reasoning level', refs.eff, (v) => setOne('eff', v))}
+              {row('Memory recall', refs.recall, (v) => setOne('recall', v))}
             </div>
-            <div className="space-y-4">
-              <div>
-                <p className="text-sm font-medium">Writing helpers</p>
-                <p className="text-xs text-mu">These produce text the user sees, so a stronger model is worth it. Empty uses the model that answered.</p>
-              </div>
-              {row('Chat titles', 'Names new chats from the first exchange.', refs.title, (v) => setOne('title', v))}
-              {row('Context handoff', 'Writes the summary that replaces older messages when a chat nears its context limit.', refs.compact, (v) => setOne('compact', v))}
+            <div className="space-y-1">
+              <p className="px-0 text-xs font-medium text-mu">Writing helpers</p>
+              {row('Chat titles', refs.title, (v) => setOne('title', v))}
+              {row('Context handoff', refs.compact, (v) => setOne('compact', v))}
             </div>
-            <p className="text-xs text-mu">Page summaries have their own model and fallback flow in Tools → Page reader.</p>
           </div>
-        )}
-      </Surface>
+        </details>
+      </div>
     </Anchor>
   )
 }
@@ -661,7 +634,7 @@ function CurlImportModal({ close, importProvider }: { close: () => void; importP
       <div className="flex items-start justify-between gap-3">
         <div>
           <h3 className="flex items-center gap-2 font-semibold"><Terminal size={18} className="text-ac" />Add provider from cURL</h3>
-          <p className="mt-1 text-xs text-mu">Paste a cURL command from your provider.</p>
+
         </div>
         <button onClick={close} className="grid size-8 shrink-0 place-items-center rounded-lg text-mu hover:bg-hov hover:text-tx" aria-label="Close cURL importer"><X size={16} /></button>
       </div>
@@ -768,34 +741,34 @@ function Eps() {
             <div className="space-y-3">
               <Anchor id="models"><section className="space-y-3 rounded-xl bg-bg p-3">
               <Field label="Preset"><SearchSelect ariaLabel="Endpoint preset" value={e.preset ?? presetForUrl(e.url)?.[0] ?? ''} set={(v) => v ? selectPreset(e.id, v) : u({ preset: '', endpointId: '', endpointFilter: 'author' })} opts={[[ '', 'Choose a preset'], ...Object.keys(PRE).map((k) => [k, k] as [string, string])]} placeholder="Search endpoints" /></Field>
-              <Field label="Models" hint="Press Enter to add the next row. Every row uses this endpoint and API key.">
+              <Field label="Models">
                 <ModelsEditor e={e} update={u} />
               </Field>
-              <Anchor id="model-behavior"><Field label="Model behavior" hint="Playlist mode groups this endpoint's models into a single playlist entry and tries them in order." row>
+              <Anchor id="model-behavior"><Field label="Model behavior" row>
                 <Seg v={e.modelsMode ?? 'separate'} set={(modelsMode) => u({ modelsMode })} opts={[["separate", "Separate models"], ["playlist", "Treat as playlist"]]} />
               </Field></Anchor>
               </section></Anchor>
               <Anchor id="credentials"><section className="space-y-3 rounded-xl bg-bg p-3"><div className="text-sm font-medium">Credentials</div>
-              <Field label="API key" hint="Stored unencrypted in this browser and sent only to the base URL.">
+              <Field label="API key">
                 <div className="relative">
                   <Input aria-label="Endpoint API key" type={show === e.id ? 'text' : 'password'} value={e.key} set={(v) => u({ key: v })} placeholder="Leave empty for local servers" />
                   <button onClick={() => setShow(show === e.id ? '' : e.id)} aria-label={show === e.id ? 'Hide API key' : 'Show API key'} title={show === e.id ? 'Hide API key' : 'Show API key'} className="absolute right-2 top-1/2 -translate-y-1/2 text-mu hover:text-tx">{show === e.id ? <EyeOff size={16} /> : <Eye size={16} />}</button>
                 </div>
               </Field>
-              {!provider && <Field label="Auth method" hint="How the key is sent. Custom endpoints use this; named presets keep their own auth scheme." row>
+              {!provider && <Field label="Auth method" row>
                 <Sel value={endpointAuthOf(e)} set={(v) => u({ auth: v as EndpointAuth })} opts={ENDPOINT_AUTH_OPTIONS} placeholder="Choose auth" />
               </Field>}
-              <Field label="Extra headers" hint="Optional. One Name: value per line. Sent with chat and model-list requests. Auth headers here override the auth method.">
+              <Field label="Extra headers">
                 <Area rows={3} value={e.headers ?? ''} set={(v) => u({ headers: v })} placeholder={'HTTP-Referer: https://example.com\nX-Title: BYOK Chat'} className="font-mono text-xs" spellCheck={false} />
               </Field>
               </section></Anchor>
               <Anchor id="advanced-connection"><details open={advanced.includes(e.id)} onToggle={(ev) => { const isOpen = ev.currentTarget.open; setAdvanced(current => isOpen ? [...new Set([...current, e.id])] : current.filter(id => id !== e.id)) }} className="rounded-xl bg-bg px-3"><summary className="flex cursor-pointer list-none items-center gap-2 py-3 text-sm font-medium text-mu"><span>Advanced connection settings</span><ChevronRight size={16} aria-hidden="true" className={cx('transition-transform', advanced.includes(e.id) && 'rotate-90')} /></summary><div className="space-y-3 pb-3">
-                <Field label="Base URL" hint="The app adds the API path to this URL automatically."><Input value={e.url} set={(v) => { const match = presetForUrl(v); u({ url: v, ...(match ? { preset: match[0], endpointId: match[1][2], endpointFilter: match[1][3] } : { preset: '', endpointId: '', endpointFilter: 'author' }) }) }} placeholder="https://…/v1" /></Field>
+                <Field label="Base URL"><Input value={e.url} set={(v) => { const match = presetForUrl(v); u({ url: v, ...(match ? { preset: match[0], endpointId: match[1][2], endpointFilter: match[1][3] } : { preset: '', endpointId: '', endpointFilter: 'author' }) }) }} placeholder="https://…/v1" /></Field>
                 <Field label="API format" row><Seg label="API format" v={e.type} set={(v) => u({ type: v })} opts={[[ 'openai', 'OpenAI-compatible'], ['anthropic', 'Anthropic Messages']]} /></Field>
-                <Field label="Endpoint ID" hint="Used to limit OpenRouter catalog suggestions to this brand or hosting provider."><Input value={e.endpointId ?? presetForUrl(e.url)?.[1][2] ?? ''} set={(endpointId) => u({ endpointId, endpointFilter: catalogPrefs(endpointId) })} placeholder="e.g. anthropic" /></Field>
-                {provider?.accountScoped && <Field label="Account ID" hint="Cloudflare account-scoped APIs put this in the base URL. Find it in the Cloudflare dashboard; it is stored in this browser with the key."><Input value={e.accountId ?? ''} set={(accountId) => u({ accountId })} placeholder="Cloudflare account ID" /></Field>}
-                {provider?.gatewayHeader && <Field label={provider.gatewayHeader.label} hint={`Sent as the ${provider.gatewayHeader.header} header. Workers AI models (${provider.gatewayHeader.modelPrefix ?? '@cf/'}) require an AI Gateway.`}><Input value={e.gatewayId ?? ''} set={(gatewayId) => u({ gatewayId })} placeholder="Optional AI Gateway id" /></Field>}
-                <Field label="Request routing" hint="Auto tries the provider directly and relays through this app's server only when the browser blocks it (CORS). Always relay sends every provider request through this server — it works for any provider, but the server sees the key in transit (it is never stored or logged). Direct only never relays." row>
+                <Field label="Endpoint ID"><Input value={e.endpointId ?? presetForUrl(e.url)?.[1][2] ?? ''} set={(endpointId) => u({ endpointId, endpointFilter: catalogPrefs(endpointId) })} placeholder="e.g. anthropic" /></Field>
+                {provider?.accountScoped && <Field label="Account ID"><Input value={e.accountId ?? ''} set={(accountId) => u({ accountId })} placeholder="Cloudflare account ID" /></Field>}
+                {provider?.gatewayHeader && <Field label={provider.gatewayHeader.label}><Input value={e.gatewayId ?? ''} set={(gatewayId) => u({ gatewayId })} placeholder="Optional AI Gateway id" /></Field>}
+                <Field label="Request routing" row>
                   <Seg label="Request routing" v={(s.prefs.proxyMode ?? 'auto') as 'auto' | 'always' | 'off'} set={(v) => s.patch({ prefs: { ...s.prefs, proxyMode: v } })} opts={[['auto', 'Auto'], ['always', 'Always relay'], ['off', 'Direct only']]} />
                 </Field>
               </div></details></Anchor>
@@ -854,12 +827,10 @@ function Eps() {
       {!!eps.length && <TestAllEndpoints eps={eps} />}
       </Section>
       <Section title="Helper models">
-      <HelperModels />
-      <Anchor id="model-pricing-toggle">
-      <div className="rounded-xl bg-surf p-3 space-y-2">
-        <label className="flex items-center justify-between gap-3 text-sm">Show model pricing controls<HelpTip text="Adds per-model pricing fields to each endpoint." label="Help: Show model pricing controls" /><Toggle on={s.prefs.showModelPricing} set={(showModelPricing) => s.patch({ prefs: { ...s.prefs, showModelPricing } })} label="Show model pricing controls" /></label>
-      </div>
-      </Anchor>
+        <HelperModels />
+        <Anchor id="model-pricing-toggle">
+          <SettingRow label="Show model pricing controls"><Toggle on={s.prefs.showModelPricing} set={(showModelPricing) => s.patch({ prefs: { ...s.prefs, showModelPricing } })} label="Show model pricing controls" /></SettingRow>
+        </Anchor>
       </Section>
       {curlOpen && <CurlImportModal close={() => setCurlOpen(false)} importProvider={importCurl} />}
     </Panel>
@@ -870,7 +841,6 @@ function Eps() {
 
 /* The {variable} placeholders a system prompt can use, described in the
  * help tooltip instead of insert buttons. */
-const PROMPT_VAR_HINT = `${PROMPT_VARS.map((v) => `{${v.id}} — ${v.desc}`).join(' · ')}`
 
 function QualityEditor({ initial, existingIds, close, save }: { initial?: Quality; existingIds: string[]; close: () => void; save: (q: Quality) => void }) {
   const [label, setLabel] = useState(initial?.label ?? '')
@@ -900,11 +870,11 @@ function QualityEditor({ initial, existingIds, close, save }: { initial?: Qualit
       <div className="modal-panel flex max-h-[85dvh] w-full max-w-xl flex-col gap-4 overflow-y-auto rounded-2xl bg-bg p-5">
         <div className="flex items-center gap-2 font-semibold"><Sparkles size={18} className="text-ac" />{initial ? 'Edit quality' : 'New quality'}</div>
         <Field label="Name"><Input value={label} set={setLabel} placeholder="e.g. Evidence-led" maxLength={60} /></Field>
-        <Field label="Short description" hint="Shown on the card and in the composer tooltip."><Input value={desc} set={setDesc} placeholder="What this quality changes" maxLength={200} /></Field>
-        <Field label="Prompt addition" hint="Appended to the global prompt as a standing requirement. Leave empty when the quality only changes how the request runs."><Area rows={6} value={text} set={setText} placeholder="Write the instruction the model should always follow…" /></Field>
-        <Field label="Reasoning effort" hint="Overrides the model's reasoning effort for replies with this quality on."><Seg v={effort} set={setEffort} opts={[['none', 'Model default'], ['lowest', 'Lowest'], ['highest', 'Highest']]} /></Field>
+        <Field label="Short description"><Input value={desc} set={setDesc} placeholder="What this quality changes" maxLength={200} /></Field>
+        <Field label="Prompt addition"><Area rows={6} value={text} set={setText} placeholder="Write the instruction the model should always follow…" /></Field>
+        <Field label="Reasoning effort"><Seg v={effort} set={setEffort} opts={[['none', 'Model default'], ['lowest', 'Lowest'], ['highest', 'Highest']]} /></Field>
         <div className="flex items-center justify-between gap-3 text-sm"><span>Turn off all skills</span><Toggle on={skillsOff} set={setSkillsOff} label="Turn off all skills" /></div>
-        <div className="flex items-start justify-between gap-3 text-sm"><span className="min-w-0 flex-1">Always ask before using a tool<HelpTip text="Runs this reply in Restricted tool access without changing your global tool setting." label="Help: Always ask" /></span><Toggle on={safetyAsk} set={setSafetyAsk} label="Always ask before using a tool" /></div>
+        <div className="flex items-start justify-between gap-3 text-sm"><span className="min-w-0 flex-1">Always ask before using a tool</span><Toggle on={safetyAsk} set={setSafetyAsk} label="Always ask before using a tool" /></div>
         <div className="flex justify-end gap-2 pt-1"><Btn v="soft" onClick={close}>Cancel</Btn><Btn v="solid" disabled={!ok} onClick={submit}>{initial ? 'Save quality' : 'Add quality'}</Btn></div>
       </div>
     </Modal>
@@ -934,44 +904,36 @@ function QualitiesTab() {
     patch({ qualities: exists ? qualityList.map((x) => (x.id === q.id ? q : x)) : [...qualityList, q] })
     setEditQ(null)
   }
-  const activeCount = qualities.length + (g.on ? 1 : 0)
   return (
     <Panel id="prompts">
       <Section title="System prompt">
         <Anchor id="global-prompt">
           <div className="space-y-4 py-4">
-            <div className="flex flex-wrap items-start gap-3">
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-1.5 text-sm font-medium">Global system prompt<HelpTip text="Sent before every request, in addition to the selected chat prompt. It never replaces the chat prompt. Star it to switch it from the composer, and turn it off to keep the text without sending it." label="Help: Global system prompt" /></div>
-                <p className="mt-0.5 text-xs text-mu">{g.on ? 'On · applies to every message in every chat' : 'Off · the text below is kept but not sent'}{activeCount ? ` · ${activeCount} active ${activeCount === 1 ? 'setting' : 'settings'}` : ''}</p>
-              </div>
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="min-w-0 flex-1 text-sm">Global system prompt</div>
               <button type="button" aria-pressed={isFav('global')} onClick={() => toggleFav('global')} title={isFav('global') ? 'Remove from the composer' : 'Pin to the composer for quick switching'} className={cx('grid size-9 shrink-0 place-items-center rounded-lg border transition-colors', isFav('global') ? 'border-ac/50 bg-ac/10 text-ac' : 'border-bor text-mu hover:bg-hov hover:text-tx')}><Star size={16} fill={isFav('global') ? 'currentColor' : 'none'} /></button>
               <Toggle on={g.on} set={(on) => setG({ on })} label="Apply global prompt to every message" />
             </div>
-            <Field label="Prompt text" hint={`The base instruction. Write one from scratch, copy a chat prompt below, or keep the default. You can use {variable} placeholders, replaced with the current UTC values when the request is sent: ${PROMPT_VAR_HINT}`}>
+            <Field label="Prompt text">
               <Area rows={8} value={g.text} set={(v) => setG({ text: v })} className="border border-bor bg-bg" />
             </Field>
-            <div className="flex flex-wrap items-center gap-3">
-              <div className="flex min-w-0 flex-1 items-center gap-2">
-                <span className="shrink-0 text-sm">Copy from</span>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <span className="shrink-0 text-sm">Copy from</span>
+              <div className="flex min-w-0 flex-1 items-center justify-end gap-2">
                 <div className="w-64 max-w-full">
-                  <Sel value="" set={(v) => { const p = prompts.find((x) => x.id === v); if (p) setG({ text: p.text }) }} opts={[['', 'Choose a chat prompt…'], ...prompts.map((p) => [p.id, p.name] as [string, string])]} />
+                  <Sel value="" set={(v) => { const p = prompts.find((x) => x.id === v); if (p) setG({ text: p.text }) }} opts={[['', 'Choose a chat prompt…'], ...prompts.map((p) => [p.id, p.name] as [string, string])]} inline />
                 </div>
+                <Btn v="soft" icon={CornerDownRight} onClick={() => setG({ on: true, text: GENERAL_PROMPT_TEXT, qualities: [] })}>Revert to default</Btn>
               </div>
-              <Btn v="soft" icon={CornerDownRight} onClick={() => setG({ on: true, text: GENERAL_PROMPT_TEXT, qualities: [] })}>Revert to default</Btn>
             </div>
           </div>
         </Anchor>
       </Section>
 
-      <Section title="Qualities" desc="Small behaviours that change how replies read, think or use tools. Pick any combination; favourites appear as switches in the composer.">
+      <Section title="Qualities">
         <Anchor id="qualities">
           <div className="py-4">
-            <div className="mb-3 flex flex-wrap items-start gap-3">
-              <div className="flex min-w-0 flex-1 items-start gap-2 text-xs text-mu">
-                <Sparkles size={14} className="mt-px shrink-0" />
-                <p className="flex-1">Star a quality to show it in the composer&rsquo;s qualities picker, where it can be switched on or off for the next reply without opening Settings. The composer also lists the global prompt.</p>
-              </div>
+            <div className="mb-3 flex justify-end">
               <Btn v="soft" icon={Plus} onClick={() => setEditQ('new')}>Add quality</Btn>
             </div>
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -1013,11 +975,11 @@ function QualitiesTab() {
 
       {editQ && <QualityEditor key={editQ === 'new' ? 'new' : editQ.id} {...(editQ === 'new' ? {} : { initial: editQ })} existingIds={qualityList.map((q) => q.id)} close={() => setEditQ(null)} save={saveQuality} />}
 
-      <Section title="Chat prompts">
+      <Section>
         <div className="flex items-center gap-3 py-3">
           <div className="min-w-0 flex-1">
             <p className="text-sm font-medium">Reusable prompts</p>
-            <p className="text-xs text-mu">A chat prompt replaces the global prompt for the chats where it is selected. Use qualities for changes that should apply everywhere.</p>
+
           </div>
           <Btn v="soft" icon={Plus} onClick={() => useS.getState().add('prompts')}>Add prompt</Btn>
         </div>
@@ -1028,7 +990,7 @@ function QualitiesTab() {
             <Anchor key={pid} id={`prompt-${p.id}`}>
               <Card handle={handle} icon={ScrollText} title={p.name} sub={p.text.slice(0, 70)}>
                 <Field label="Name"><Input value={p.name} set={(v) => upd('prompts', p.id, { name: v })} /></Field>
-                <Field label="System prompt" hint={`Sent as the system prompt when this prompt is selected. {variable} placeholders are replaced with the current UTC values when the request is sent: ${PROMPT_VAR_HINT}`}><Area rows={6} value={p.text} set={(v) => upd('prompts', p.id, { text: v })} /></Field>
+                <Field label="System prompt"><Area rows={6} value={p.text} set={(v) => upd('prompts', p.id, { text: v })} /></Field>
                 <Acts k="prompts" id={p.id} />
               </Card>
             </Anchor>
@@ -1050,25 +1012,9 @@ function Pls() {
     })
     .sort((a, b) => b.calls - a.calls)
   return (
-    <Panel id="pls" k="pls" n={pls.length} add="Add playlist">
-      <Section title="Routing">
-      <Anchor id="routing-mode"><Card icon={Route} title="Routing mode" sub="How multi-model requests try models">
-        <Field label="Candidate order" hint="Ordered tries list order. Fastest tries the quickest-measured models first (new models go first until measured). Cheapest tries the lowest input price first (models without a price go last). A playlist classifier, when set, still picks first; the mode orders the rest." row>
-          <Seg v={routingMode} set={(v) => useS.getState().patch({ prefs: { ...useS.getState().prefs, routingMode: v as typeof routingMode } })} opts={[['ordered', 'Ordered'], ['fastest', 'Fastest'], ['cheapest', 'Cheapest']]} />
-        </Field>
-        <div className="space-y-1">
-          <Anchor id="observed-performance"><div className="flex items-center justify-between"><span className="text-sm font-medium">Observed performance</span><Btn v="soft" disabled={!statRows.length} onClick={() => useS.getState().patch({ routeStats: {} })}>Reset</Btn></div></Anchor>
-          {!statRows.length && <p className="text-xs text-mu">No attempts recorded yet. Averages appear here after replies run.</p>}
-          {statRows.slice(0, 12).map((r) => (
-            <div key={r.key} className="flex items-center gap-2 rounded-lg bg-bg px-2.5 py-1.5 text-xs">
-              <span className="min-w-0 flex-1 truncate">{r.name}</span>
-              <span className="text-mu">{r.calls} tries · {r.fails} failed · ~{r.avg} ms</span>
-            </div>
-          ))}
-        </div>
-      </Card></Anchor>
-      </Section>
-      <Section title="Playlists">
+    <Panel id="pls" k="pls" add="Add playlist">
+      <Section>
+      {!pls.length && <p className="py-6 text-center text-sm text-mu">No playlists yet.</p>}
       <SortableCards k="pls" ids={pls.map((x) => x.id)} label="Playlist" renderCard={(plid, handle) => {
         const p = pls.find((x) => x.id === plid)
         if (!p) return null
@@ -1077,8 +1023,8 @@ function Pls() {
           <Anchor key={plid} id={`playlist-${p.id}`}>
           <Card handle={handle} icon={ListMusic} title={p.name} sub={`${p.e.length} entries${p.cls ? ' · classifier' : ''}`}>
             <Field label="Name"><Input value={p.name} set={(v) => u({ name: v })} /></Field>
-            <Field label="System prompt" hint={`Optional. Used when this playlist is selected and no prompt override is chosen. {variable} placeholders are replaced with the current UTC values when the request is sent: ${PROMPT_VAR_HINT}`}><Area value={p.sys} set={(v) => u({ sys: v })} /></Field>
-            <Field label="Models" hint="Each entry is one model from an endpoint. Tried top to bottom until one responds without error.">
+            <Field label="System prompt"><Area value={p.sys} set={(v) => u({ sys: v })} /></Field>
+            <Field label="Models">
               <div className="space-y-1.5">
                 <SortableList
                   ids={(() => { const seen = new Map<string, number>(); return p.e.map((r) => { const n = (seen.get(r) ?? 0) + 1; seen.set(r, n); return `${p.id}#${n}#${r}` }) })()}
@@ -1106,7 +1052,7 @@ function Pls() {
             </Field>
             <div className="space-y-3 rounded-xl bg-bg p-3">
               <Anchor id="classifier-routing"><div className="flex items-center gap-2 text-sm font-medium"><Route size={16} className="text-ac" />Classifier routing</div></Anchor>
-              <Field label="Classifier endpoint" hint="Picks which model in this playlist answers each request. Replies that don't pick a model from this list are ignored. Empty uses the helper classification model from Endpoints when one is set, otherwise list order." row>
+              <Field label="Classifier endpoint" row>
                 <Sel value={p.cls} set={(v) => u({ cls: v })} opts={[[ '', useS.getState().memoryPrefs.classifierEp ? 'None, use helper model' : 'None, use list order'], ...eps.map((e) => [e.id, e.name] as [string, string])]} />
               </Field>
               {p.cls && eps.find((e) => e.id === p.cls) && <Field label="Classifier model" row><Sel value={p.clsModel ?? ""} set={(v) => u({ clsModel: v })} opts={[["", "Default model"], ...modelsOf(eps.find((e) => e.id === p.cls)!).map((model) => [model, modelNameOf(eps.find((e) => e.id === p.cls)!, model) + " · " + model] as [string, string])]} /></Field>}
@@ -1118,6 +1064,22 @@ function Pls() {
         )
       }} />
       </Section>
+      <Section title="Routing">
+      <Anchor id="routing-mode"><Card icon={Route} title="Routing mode">
+        <Field label="Candidate order" row>
+          <Seg v={routingMode} set={(v) => useS.getState().patch({ prefs: { ...useS.getState().prefs, routingMode: v as typeof routingMode } })} opts={[['ordered', 'Ordered'], ['fastest', 'Fastest'], ['cheapest', 'Cheapest']]} />
+        </Field>
+        <div className="space-y-1">
+          <Anchor id="observed-performance"><div className="flex items-center justify-between"><span className="text-sm font-medium">Observed performance</span><Btn v="soft" disabled={!statRows.length} onClick={() => useS.getState().patch({ routeStats: {} })}>Reset</Btn></div></Anchor>
+          {statRows.slice(0, 12).map((r) => (
+            <div key={r.key} className="flex items-center gap-2 rounded-lg bg-bg px-2.5 py-1.5 text-xs">
+              <span className="min-w-0 flex-1 truncate">{r.name}</span>
+              <span className="text-mu">{r.calls} tries · {r.fails} failed · ~{r.avg} ms</span>
+            </div>
+          ))}
+        </div>
+      </Card></Anchor>
+      </Section>
     </Panel>
   )
 }
@@ -1125,8 +1087,9 @@ function Pls() {
 function Cmds() {
   const { cmds, pls, upd } = useSConfig()
   return (
-    <Panel id="cmds" k="cmds" n={cmds.length} add="Add command">
-      <Section title="Commands">
+    <Panel id="cmds" k="cmds" add="Add command">
+      <Section>
+      {!cmds.length && <p className="py-6 text-center text-sm text-mu">No commands yet.</p>}
       <SortableCards k="cmds" ids={cmds.map((x) => x.id)} label="Command" renderCard={(cid, handle) => {
         const c = cmds.find((x) => x.id === cid)
         if (!c) return null
@@ -1135,14 +1098,14 @@ function Cmds() {
           <Anchor key={cid} id={`command-${c.id}`}>
           <Card handle={handle} icon={CI[c.in]} title={'/' + c.name} sub={c.desc || c.in} muted={!c.on} right={<Toggle on={c.on} set={(v) => u({ on: v })} label={`Enable /${c.name}`} />}>
             <div className="grid gap-4 sm:grid-cols-3">
-              <Field label="Name" hint="Typed after /"><Input value={c.name} set={(v) => u({ name: v.replace(/[^\w-]/g, '') })} /></Field>
+              <Field label="Name"><Input value={c.name} set={(v) => u({ name: v.replace(/[^\w-]/g, '') })} /></Field>
               <Field label="Description"><Input value={c.desc} set={(v) => u({ desc: v })} /></Field>
-              <Field label="Argument hint" hint="Shown after the command name in the / menu, e.g. <topic> or [language]. This is guidance only; it is not sent to the model."><Input value={c.args ?? ''} set={(v) => u({ args: v })} placeholder="<topic>" /></Field>
+              <Field label="Argument hint"><Input value={c.args ?? ''} set={(v) => u({ args: v })} placeholder="<topic>" /></Field>
             </div>
             <Field label="Input type" row><Seg v={c.in} set={(v) => u({ in: v })} opts={[['text', 'Text', CI.text], ['image', 'Image', CI.image], ['image+text', 'Image + text', CI['image+text']], ['doc', 'Document', CI.doc]]} /></Field>
-            <Field label="System prompt" hint={`Sent as the system prompt when the command runs. {variable} placeholders are replaced with the current UTC values when the request is sent: ${PROMPT_VAR_HINT}`}><Area value={c.sys} set={(v) => u({ sys: v })} /></Field>
-            <Field label="Message template" hint="{{input}} is replaced by the text typed after the command."><Area rows={3} value={c.tpl} set={(v) => u({ tpl: v })} /></Field>
-            <Field label="Run on" hint="The first endpoint that accepts the input type is used; the rest are fallbacks." row>
+            <Field label="System prompt"><Area value={c.sys} set={(v) => u({ sys: v })} /></Field>
+            <Field label="Message template"><Area rows={3} value={c.tpl} set={(v) => u({ tpl: v })} /></Field>
+            <Field label="Run on" row>
               <Sel value={c.pl} set={(v) => u({ pl: v })} opts={[['', 'Any enabled endpoint, in list order'], ...pls.map((p) => [p.id, 'Playlist: ' + p.name] as [string, string])]} />
             </Field>
             <Acts k="cmds" id={c.id} />
@@ -1171,12 +1134,11 @@ function ToolLimitCard() {
   }
   return (
     <Anchor id="tool-limit">
-    <Card icon={Wrench} title="Tool execution limit" sub={unlimited ? 'Unlimited (unlocked)' : `${sliderVal} round${sliderVal === 1 ? '' : 's'}`} help="Each round is another billed model request. Higher limits can run longer and cost more." open0>
+    <Card icon={Wrench} title="Tool execution limit" sub={unlimited ? 'Unlimited (unlocked)' : `${sliderVal} round${sliderVal === 1 ? '' : 's'}`} open0>
       <div className="flex items-center gap-2">
         <div className="min-w-0 flex-1">
           <RangeSlider label="Tool execution limit" min={TOOL_ROUNDS_MIN} max={sliderMax} step={1} value={sliderVal} valueText={unlimited ? 'Unlimited' : `${sliderVal} rounds`} set={(n) => set(n > TOOL_ROUNDS_MAX ? 0 : Math.round(n))} />
         </div>
-        <span aria-live="polite" className="w-24 shrink-0 text-right text-sm text-mu">{unlimited ? 'Unlimited' : `${sliderVal} rounds`}</span>
         <Btn sm icon={unlocked ? LockOpen : Lock} title={unlocked ? 'Lock back to 32 rounds' : 'Unlock up to 64 rounds plus unlimited'} onClick={() => (unlocked ? relock() : setWarn(true))} />
       </div>
       {warn && (
@@ -1205,10 +1167,10 @@ function DocumentsSettings() {
   return (
     <Anchor id="documents">
     <div className="space-y-4">
-      <div className="flex items-center justify-between gap-3"><div className="flex items-center gap-1.5 text-sm font-medium">Extract PDF text<HelpTip text="Reads the text layer of PDFs; scanned pages still need OCR or a vision endpoint." label="Help: Extract PDF text" /></div><Toggle on={d.pdfText} set={(pdfText) => set({ pdfText })} label="Extract PDF text" /></div>
-      <div className="flex items-center justify-between gap-3"><div className="flex items-center gap-1.5 text-sm font-medium">Read Office documents<HelpTip text="Extracts text from Office files. Legacy .doc, .xls and .ppt files still need conversion." label="Help: Read Office documents" /></div><Toggle on={d.office} set={(office) => set({ office })} label="Read Office documents" /></div>
-      <div className="flex items-center justify-between gap-3"><div className="flex items-center gap-1.5 text-sm font-medium">Unpack archives<HelpTip text="Expands .zip and .gz attachments and pairs matching transcript files." label="Help: Unpack archives" /></div><Toggle on={d.archives} set={(archives) => set({ archives })} label="Unpack archives" /></div>
-      <Field label="Image text extraction (OCR)" hint="Auto transcribes images only when the answering model can't read images itself. Always transcribes every image. Uses the vision endpoint below." row>
+      <div className="flex items-center justify-between gap-3"><div className="flex items-center gap-1.5 text-sm font-medium">Extract PDF text</div><Toggle on={d.pdfText} set={(pdfText) => set({ pdfText })} label="Extract PDF text" /></div>
+      <div className="flex items-center justify-between gap-3"><div className="flex items-center gap-1.5 text-sm font-medium">Read Office documents</div><Toggle on={d.office} set={(office) => set({ office })} label="Read Office documents" /></div>
+      <div className="flex items-center justify-between gap-3"><div className="flex items-center gap-1.5 text-sm font-medium">Unpack archives</div><Toggle on={d.archives} set={(archives) => set({ archives })} label="Unpack archives" /></div>
+      <Field label="Image text extraction (OCR)" row>
         <Seg v={d.ocr} set={(ocr) => set({ ocr })} opts={[['off', 'Off'], ['auto', 'Auto'], ['always', 'Always']]} />
       </Field>
       <Anchor id="ocr">
@@ -1221,16 +1183,16 @@ function DocumentsSettings() {
       )}
       </Anchor>
       <Anchor id="per-file-chars">
-      <Field label="Text per document" hint="Character budget for each extracted document. The message-wide text budget still applies." row>
+      <Field label="Text per document" row>
         <Sel value={String(d.perFileChars)} set={(v) => set({ perFileChars: Number(v) })} opts={[['15000', '15k characters'], ['30000', '30k characters'], ['60000', '60k characters'], ['100000', '100k characters'], ['200000', '200k characters (max)']]} />
       </Field>
       </Anchor>
       <Anchor id="total-file-chars">
-      <Field label="Text across all files" hint="Combined character budget for this message's attachments and pasted pages. Raise it for a large-context model; lower it to keep requests small. When a file exceeds its own limit, the opening and conclusion are kept and the omission is marked." row>
+      <Field label="Text across all files" row>
         <Sel value={String(d.totalChars)} set={(v) => set({ totalChars: Number(v) })} opts={[['100000', '100k characters'], ['250000', '250k characters'], ['500000', '500k characters (default)'], ['750000', '750k characters'], ['1000000', '1M characters']]} />
       </Field>
       </Anchor>
-      <div className="flex items-center justify-between gap-3"><div className="flex items-center gap-1.5 text-sm font-medium">Private file names<HelpTip text="Sends neutral names such as file-1.pdf instead of the original file names." label="Help: Private file names" /></div><Toggle on={d.privateNames} set={(privateNames) => set({ privateNames })} label="Private file names" /></div>
+      <div className="flex items-center justify-between gap-3"><div className="flex items-center gap-1.5 text-sm font-medium">Private file names</div><Toggle on={d.privateNames} set={(privateNames) => set({ privateNames })} label="Private file names" /></div>
     </div>
     </Anchor>
   )
@@ -1244,19 +1206,19 @@ function ImageGenCard() {
   const ep = s.eps.find((e) => e.id === g.ep && usable(e)) ?? eps[0]
   return (
     <Anchor id="image-generation">
-      <Card icon={ImageIcon} title="Image generation" sub={g.on ? `@generate_image · On${ep ? ` · ${ep.name}${g.model ? ` · ${g.model}` : ''}` : ' · no OpenAI-compatible endpoint'}` : '@generate_image · Off'} help="Generates images with an OpenAI-compatible endpoint." muted={!g.on} open0={g.on && !eps.length} right={<Toggle on={g.on} set={(on) => set({ on })} label="Allow image generation" />}>
+      <Card icon={ImageIcon} title="Image generation" sub={g.on ? `@generate_image · On${ep ? ` · ${ep.name}${g.model ? ` · ${g.model}` : ''}` : ' · no OpenAI-compatible endpoint'}` : '@generate_image · Off'} muted={!g.on} open0={g.on && !eps.length} right={<Toggle on={g.on} set={(on) => set({ on })} label="Allow image generation" />}>
         {!eps.length && <p role="status" className="rounded-lg bg-er/10 px-3 py-2 text-xs text-er">No enabled OpenAI-compatible endpoint is available. Add one in Endpoints first.</p>}
-        <Field label="Image endpoint" hint="Which endpoint receives the image request. Empty uses the first usable OpenAI-compatible endpoint." row>
+        <Field label="Image endpoint" row>
           <Sel value={g.ep && s.eps.some((e) => e.id === g.ep) ? g.ep : ''} set={(id) => set({ ep: id })} opts={[['', eps[0] ? `First usable · ${eps[0].name}` : 'First usable OpenAI-compatible'], ...s.eps.filter((e) => e.type === 'openai').map((e) => [e.id, `${e.name}${e.on ? '' : ' (disabled)'}`] as [string, string])]} />
         </Field>
-        <Field label="Image model" hint="Model id for the image endpoint, for example gpt-image-1, dall-e-3, or a Flux model served by a compatible API. Empty uses the endpoint's default model.">
+        <Field label="Image model">
           <Input value={g.model} set={(model) => set({ model })} placeholder={ep?.model ? `Default: ${ep.model}` : 'e.g. gpt-image-1'} />
         </Field>
         <div className="grid gap-3 sm:grid-cols-2">
-          <Field label="Size" hint="Sizes the endpoint accepts. Unsupported sizes fail with the provider's own message." row>
+          <Field label="Size" row>
             <Sel value={g.size} set={(size) => set({ size })} opts={IMAGE_SIZES} />
           </Field>
-          <Field label="Images per call" hint="How many images one request generates. 1-4." row>
+          <Field label="Images per call" row>
             <Sel value={String(g.count)} set={(v) => set({ count: Number(v) })} opts={[['1', '1'], ['2', '2'], ['3', '3'], ['4', '4']]} />
           </Field>
         </div>
@@ -1279,30 +1241,30 @@ function CodeRunCard() {
   const secs = c.timeoutMs / 1000
   return (
     <Anchor id="code-execution">
-      <Card icon={Code2} title="Code execution" sub={c.on ? `@run_code · On · JavaScript${c.python ? ' and Python' : ''} · ${secs}s limit` : '@run_code · Off'} help="Runs short snippets locally and returns the output." muted={!c.on} right={<Toggle on={c.on} set={(on) => set({ on })} label="Allow code execution" />}>
+      <Card icon={Code2} title="Code execution" sub={c.on ? `@run_code · On · JavaScript${c.python ? ' and Python' : ''} · ${secs}s limit` : '@run_code · Off'} muted={!c.on} right={<Toggle on={c.on} set={(on) => set({ on })} label="Allow code execution" />}>
         <Anchor id="code-timeout">
-          <Field label={`Time limit · ${secs}s`} hint="Wall-clock budget for the snippet once it starts running: the worker is terminated when it runs out. Python runtime startup and package downloads have their own 60 s guard so a slow download does not eat the execution budget.">
+          <Field label={`Time limit · ${secs}s`}>
             <RangeSlider label="Code time limit" min={CODE_TIMEOUT_MIN / 1000} max={CODE_TIMEOUT_MAX / 1000} step={1} value={secs} valueText={`${secs} second${secs === 1 ? '' : 's'}`} set={(n) => set({ timeoutMs: Math.round(n) * 1000 })} className="w-full" />
           </Field>
         </Anchor>
         <Anchor id="code-output">
-          <Field label="Output limit" hint="Maximum characters of stdout and result kept from a run. Longer output is truncated with a notice." row>
+          <Field label="Output limit" row>
             <Sel value={String(c.maxOutput)} set={(v) => set({ maxOutput: Number(v) })} opts={[['5000', '5k characters'], ['20000', '20k characters'], ['50000', '50k characters'], [String(CODE_OUTPUT_MAX), '100k characters (max)']]} />
           </Field>
         </Anchor>
         <div className="flex items-center justify-between gap-3">
-          <div className="flex items-center gap-1.5 text-sm font-medium">Enable Python<HelpTip text="The first run downloads the Python runtime; later runs use the browser cache." label="Help: Enable Python" /></div>
+          <div className="flex items-center gap-1.5 text-sm font-medium">Enable Python</div>
           <Toggle on={c.python} set={(python) => set({ python })} label="Allow Python code execution" />
         </div>
         {c.python && <>
           <Anchor id="code-packages">
             <div className="flex items-center justify-between gap-3">
-              <div className="flex items-center gap-1.5 text-sm font-medium">Load Python packages<HelpTip text="Downloads packages when a snippet imports them, then caches them in the browser." label="Help: Load Python packages" /></div>
+              <div className="flex items-center gap-1.5 text-sm font-medium">Load Python packages</div>
               <Toggle on={c.pyPackages} set={(pyPackages) => set({ pyPackages })} label="Load Python packages on demand" />
             </div>
           </Anchor>
           <Anchor id="code-pyodide-url">
-            <Field label="Pyodide URL" hint="Directory containing pyodide.js, or a full pyodide.js link. Point this at a self-hosted copy to avoid the CDN. Invalid values fall back to the pinned CDN.">
+            <Field label="Pyodide URL">
               <Input value={c.pyodideUrl} set={(pyodideUrl) => set({ pyodideUrl })} placeholder={PYODIDE_DEFAULT_URL} />
             </Field>
           </Anchor>
@@ -1439,99 +1401,97 @@ function Tools() {
       <Section title="Capabilities">
       <ImageGenCard />
       <Anchor id="deep-research">
-      <Card icon={Brain} title="Deep research" sub="@research(query)" help="Plans a multi-step investigation, searches, reads pages, and produces a cited report." />
+      <Card icon={Brain} title="Deep research" sub="@research(query)" />
       </Anchor>
       </Section>
       <Section title="Tools">
       <div className="flex items-center justify-between gap-3 rounded-xl bg-surf p-3">
-        <div className="flex min-w-0 items-center gap-1.5 text-sm font-medium">Ask before enabling device tools<HelpTip text="One prompt covers Location, Clipboard, Date and time." label="Help: Ask before enabling device tools" /></div>
+        <div className="flex min-w-0 items-center gap-1.5 text-sm font-medium">Ask before enabling device tools</div>
         <Toggle on={!consent} set={(v) => s.patch({ toolConsent: !v })} label="Ask before enabling device tools" />
       </div>
       {listed.map(([k, n, I, u, d, p]) => (
         <div key={k} ref={(el) => { if (el) cardEls.current.set(k, el); else cardEls.current.delete(k) }}>
         <Anchor id={`tool-${k}`}>
-        <Card icon={I} title={n} sub={u} help={`${d} Permission: ${p}`} muted={!s.tools[k]} right={
+        <Card icon={I} title={n} sub={u} muted={!s.tools[k]} right={
           <>
             <span className="hidden items-center gap-1.5 text-xs text-mu sm:flex">{s.tools[k] ? <ShieldCheck size={14} className="text-ac" /> : <Shield size={14} />}{s.tools[k] ? 'Allowed' : 'Off'}</span>
             <Toggle on={!!s.tools[k]} set={(v) => toggleTool(k, v)} label={`Enable ${n} tool`} />
           </>
         }>
           <div className="flex items-center justify-between gap-3 rounded-lg bg-bg p-2.5">
-            <div className="flex items-center gap-1.5 text-sm font-medium">Require approval<HelpTip text="Pauses before this tool runs in Standard access. Full access ignores this switch; Restricted asks for every tool." label="Help: Require approval" /></div>
+            <div className="flex items-center gap-1.5 text-sm font-medium">Require approval</div>
             <Toggle on={!!s.toolApproval[k]} set={(v) => s.patch({ toolApproval: { ...s.toolApproval, [k]: v } })} label={`Require approval for ${n}`} />
           </div>
           {k === 'workspace_upsert' && <Anchor id="workspace-view"><div className="space-y-3 rounded-xl bg-bg p-3">
-            <div className="flex items-center justify-between gap-3"><div className="flex items-center gap-1.5 text-sm font-medium">Default view for workspace tiles<HelpTip text="Pinned shows the revision created by each message. Latest shows the newest revision." label="Help: Workspace tile view" /></div><Seg v={s.workspacePrefs?.defaultView ?? 'pinned'} set={(defaultView) => s.patch({ workspacePrefs: { ...s.workspacePrefs, defaultView } })} opts={[['pinned', 'Pinned'], ['latest', 'Latest']]} /></div>
-            <div className="flex items-center justify-between gap-3"><div className="flex items-center gap-1.5 text-sm font-medium">Auto-open workspace panel<HelpTip text="Opens the side panel when the AI starts writing files." label="Help: Auto-open workspace panel" /></div><Toggle on={s.workspacePrefs?.autoOpen ?? true} set={(autoOpen) => s.patch({ workspacePrefs: { ...s.workspacePrefs, autoOpen } })} label="Auto-open workspace panel" /></div>
-            <div className="flex items-center justify-between gap-3"><div className="flex items-center gap-1.5 text-sm font-medium">Auto-follow active file<HelpTip text="Selects the file the AI is currently writing." label="Help: Auto-follow active file" /></div><Toggle on={s.workspacePrefs?.autoFollow ?? true} set={(autoFollow) => s.patch({ workspacePrefs: { ...s.workspacePrefs, autoFollow } })} label="Auto-follow active file" /></div>
+            <div className="flex items-center justify-between gap-3"><div className="flex items-center gap-1.5 text-sm font-medium">Default view for workspace tiles</div><Seg v={s.workspacePrefs?.defaultView ?? 'pinned'} set={(defaultView) => s.patch({ workspacePrefs: { ...s.workspacePrefs, defaultView } })} opts={[['pinned', 'Pinned'], ['latest', 'Latest']]} /></div>
+            <div className="flex items-center justify-between gap-3"><div className="flex items-center gap-1.5 text-sm font-medium">Auto-open workspace panel</div><Toggle on={s.workspacePrefs?.autoOpen ?? true} set={(autoOpen) => s.patch({ workspacePrefs: { ...s.workspacePrefs, autoOpen } })} label="Auto-open workspace panel" /></div>
+            <div className="flex items-center justify-between gap-3"><div className="flex items-center gap-1.5 text-sm font-medium">Auto-follow active file</div><Toggle on={s.workspacePrefs?.autoFollow ?? true} set={(autoFollow) => s.patch({ workspacePrefs: { ...s.workspacePrefs, autoFollow } })} label="Auto-follow active file" /></div>
           </div></Anchor>}
           {k === 'search' && <div className="space-y-3 rounded-xl bg-bg p-3">
             <Anchor id="search-provider">
-            <Field label="API provider" hint="Your searches run through this provider with your own key below. The results ground the reply and become its sources. Jina AI works without a key at a lower rate limit. The Google, OpenAI and Anthropic options use a fixed small model with that vendor's built-in web search, so they can cost more than a search-only API." row>
+            <Field label="API provider" row>
               <Sel value={search.provider} set={(provider) => { setShowSearchKey(false); setSearch({ provider: provider as typeof search.provider }) }} opts={SEARCH_PROVIDERS.map(([id, label]) => [id, label] as [string, string])} />
             </Field>
             </Anchor>
             {!ownKey && !keyless && <p role="status" className="rounded-lg bg-er/10 px-3 py-2 text-xs text-er">No {health?.apiProviders?.[search.provider]?.label ?? search.provider} key saved in this browser yet. Searches will fail until you paste one below.</p>}
             {keyless && !ownKey && <p className="rounded-lg bg-hov px-3 py-2 text-xs text-mu">{health?.apiProviders?.[search.provider]?.label ?? search.provider} works without a key at a lower rate limit. Add one to raise the limits.</p>}
             <Anchor id="search-key">
-            <Field label={`${health?.apiProviders?.[search.provider]?.label ?? search.provider} API key`} hint="Bring your own key. Stored unencrypted in this browser and sent only to your search backend with each query.">
+            <Field label={`${health?.apiProviders?.[search.provider]?.label ?? search.provider} API key`}>
               <div className="relative">
                 <Input type={showSearchKey ? 'text' : 'password'} value={search.keys[search.provider] ?? ''} set={(v) => setSearch({ keys: { [search.provider]: v } })} placeholder="Paste your search API key" />
                 <button onClick={() => setShowSearchKey(!showSearchKey)} title="Show or hide key" className="absolute right-2 top-1/2 -translate-y-1/2 text-mu hover:text-tx">{showSearchKey ? <EyeOff size={16} /> : <Eye size={16} />}</button>
               </div>
             </Field>
             </Anchor>
-            {search.provider === 'brightdata' && <Anchor id="search-zone"><Field label="SERP zone" hint="Your Bright Data SERP API zone name. Stored in this browser like the key."><Input value={search.zone} set={(zone) => setSearch({ zone })} placeholder="e.g. serp_api1" /></Field></Anchor>}
+            {search.provider === 'brightdata' && <Anchor id="search-zone"><Field label="SERP zone"><Input value={search.zone} set={(zone) => setSearch({ zone })} placeholder="e.g. serp_api1" /></Field></Anchor>}
             <Anchor id="search-max-results">
-            <Field label={`Results per search · ${search.maxResults}`} hint="How many search results the model gets each time. The model may ask for fewer, but never more than this. Most search APIs top out at 10.">
+            <Field label={`Results per search · ${search.maxResults}`}>
               <RangeSlider label="Results per search" min={1} max={10} step={1} value={search.maxResults} valueText={`${search.maxResults} result${search.maxResults === 1 ? '' : 's'}`} set={(maxResults) => setSearch({ maxResults: Math.round(maxResults) })} className="w-full" />
             </Field>
             </Anchor>
             <Anchor id="search-timeout">
-            <Field label={`Request timeout · ${(search.timeoutMs / 1000).toFixed(search.timeoutMs % 1000 ? 1 : 0)}s`} hint="How long to wait for the search provider before retrying or failing.">
+            <Field label={`Request timeout · ${(search.timeoutMs / 1000).toFixed(search.timeoutMs % 1000 ? 1 : 0)}s`}>
               <RangeSlider label="Request timeout" min={1000} max={30000} step={1000} value={search.timeoutMs} valueText={`${(search.timeoutMs / 1000).toFixed(search.timeoutMs % 1000 ? 1 : 0)} seconds`} set={(timeoutMs) => setSearch({ timeoutMs: Math.round(timeoutMs) })} className="w-full" />
             </Field>
             </Anchor>
             <Anchor id="search-snippet">
-            <Field label={`Snippet length · ${search.maxSnippetChars} characters`} hint="How much text to request and keep for each search result. Providers with a length control receive it; TinyFish snippets are expanded through TinyFish Fetch. More text uses more context.">
+            <Field label={`Snippet length · ${search.maxSnippetChars} characters`}>
               <RangeSlider label="Snippet length" min={200} max={3000} step={100} value={search.maxSnippetChars} valueText={`${search.maxSnippetChars.toLocaleString()} characters`} set={(maxSnippetChars) => setSearch({ maxSnippetChars: Math.round(maxSnippetChars) })} className="w-full" />
             </Field>
             </Anchor>
             <Anchor id="search-retries">
-            <Field label="Retries" hint="Bounded retries for transient failures (429/5xx/timeouts). Permanent errors are never retried." row>
+            <Field label="Retries" row>
               <Sel value={String(search.maxRetries)} set={(v) => setSearch({ maxRetries: Number(v) })} opts={[['0', '0 · none'], ['1', '1'], ['2', '2'], ['3', '3'], ['4', '4 · max']]} />
             </Field>
             </Anchor>
             <Anchor id="search-retry-delay">
-            <Field label="Retry base delay" hint="Base backoff between retries (doubles each attempt, capped at 4s)." row>
+            <Field label="Retry base delay" row>
               <Sel value={String(search.retryBaseMs)} set={(v) => setSearch({ retryBaseMs: Number(v) })} opts={[['50', '50ms'], ['100', '100ms'], ['300', '300ms'], ['500', '500ms'], ['1000', '1s'], ['2000', '2s · max']]} />
             </Field>
             </Anchor>
             <Anchor id="citations">
             <div className="space-y-3 rounded-xl bg-surf p-3">
               <div className="text-sm font-medium">Sources & transparency</div>
-              <Field label="Inline citations" hint="Off hides [S1] markers in replies (Sources list stays below the reply). Pills jump to the Sources list below the reply (description first, Open button inside). Links render as plain markdown links." row>
+              <Field label="Inline citations" row>
                 <Seg v={search.citeStyle} set={(citeStyle) => setSearch({ citeStyle })} opts={[['off', 'Off'], ['pills', 'Pills'], ['links', 'Links']]} />
               </Field>
-              <div className="flex items-center justify-between gap-3"><div className="flex items-center gap-1.5 text-sm font-medium">Expand Sources by default<HelpTip text="Shows the source list open on grounded replies." label="Help: Expand Sources by default" /></div><Toggle on={search.sourcesOpen} set={(sourcesOpen) => setSearch({ sourcesOpen })} label="Expand Sources by default" /></div>
-              <div className="flex items-center justify-between gap-3"><div className="flex items-center gap-1.5 text-sm font-medium">Strict citation warnings<HelpTip text="Flags grounded replies that cite nothing or cite sources they were not given." label="Help: Strict citation warnings" /></div><Toggle on={search.strictCitations} set={(strictCitations) => setSearch({ strictCitations })} label="Strict citation warnings" /></div>
+              <div className="flex items-center justify-between gap-3"><div className="flex items-center gap-1.5 text-sm font-medium">Expand Sources by default</div><Toggle on={search.sourcesOpen} set={(sourcesOpen) => setSearch({ sourcesOpen })} label="Expand Sources by default" /></div>
+              <div className="flex items-center justify-between gap-3"><div className="flex items-center gap-1.5 text-sm font-medium">Strict citation warnings</div><Toggle on={search.strictCitations} set={(strictCitations) => setSearch({ strictCitations })} label="Strict citation warnings" /></div>
             </div>
             </Anchor>
           </div>}
           {k === 'fetch_page' && <div className="space-y-3 rounded-xl bg-bg p-3">
             <Anchor id="page-reader">
-            <div className="flex items-center justify-between gap-3"><div className="flex items-center gap-1.5 text-sm font-medium">Page reader<HelpTip text="Lets the model open a search result and read the full page." label="Help: Page reader" /></div><Toggle on={search.reader} set={(reader) => setSearch({ reader })} label="Page reader" /></div>
+            <div className="flex items-center justify-between gap-3"><div className="flex items-center gap-1.5 text-sm font-medium">Page reader</div><Toggle on={search.reader} set={(reader) => setSearch({ reader })} label="Page reader" /></div>
             </Anchor>
             <Anchor id="reader-api">
-            <Field label="Page reader API" hint="Which service reads a page when the model opens a search result. Every provider that supports page extraction is a first-class choice; direct fetch needs no key. Pick a different service than your search API to use a separate provider and key." row>
+            <Field label="Page reader API" row>
               <Sel value={search.readerProvider} set={(readerProvider) => setSearch({ readerProvider: readerProvider as typeof search.readerProvider })} opts={READER_PROVIDERS.map(([id, label]) => [id, label] as [string, string])} />
             </Field>
             </Anchor>
             {search.readerProvider !== 'direct' && <>
               <Anchor id="reader-key">
-              <Field label="Reader API key" hint={search.readerProvider === 'custom'
-                ? 'Optional. Sent as a bearer token to your reader service.'
-                : 'Required by TinyFish, Exa, Tavily, Parallel, Valyu, Linkup and Octen. Optional for Jina and Firecrawl. Stored in this browser like the search key; your matching search key is reused when this is empty.'}>
+              <Field label="Reader API key">
                 <div className="relative">
                   <Input type={showReaderKey ? 'text' : 'password'} value={search.readerKey} set={(v) => setSearch({ readerKey: v })} placeholder={search.readerProvider === 'custom' ? 'Optional' : 'Paste your reader API key'} />
                   <button onClick={() => setShowReaderKey(!showReaderKey)} title="Show or hide key" className="absolute right-2 top-1/2 -translate-y-1/2 text-mu hover:text-tx">{showReaderKey ? <EyeOff size={16} /> : <Eye size={16} />}</button>
@@ -1539,57 +1499,57 @@ function Tools() {
               </Field>
               </Anchor>
               {search.readerProvider === 'custom' && <Anchor id="reader-url">
-              <Field label="Reader API URL" hint="Your own reader endpoint. Use {url} where the page address should go, for example https://example.com/read?url={url}. It must return JSON with a text field, or plain text.">
+              <Field label="Reader API URL">
                 <Input value={search.readerUrl} set={(v) => setSearch({ readerUrl: v })} placeholder="https://example.com/read?url={url}" />
               </Field>
               </Anchor>}
-              <div className="flex items-center justify-between gap-3"><div className="flex items-center gap-1.5 text-sm font-medium">Fall back to direct page fetch<HelpTip text="Fetches the page directly when the reader API fails or has no key." label="Help: Fall back to direct page fetch" /></div><Toggle on={search.readerFallback} set={(readerFallback) => setSearch({ readerFallback })} label="Fall back to direct page fetch" /></div>
+              <div className="flex items-center justify-between gap-3"><div className="flex items-center gap-1.5 text-sm font-medium">Fall back to direct page fetch</div><Toggle on={search.readerFallback} set={(readerFallback) => setSearch({ readerFallback })} label="Fall back to direct page fetch" /></div>
             </>}
             <Anchor id="reader-summary">
-            <div className="flex items-center justify-between gap-3"><div className="flex items-center gap-1.5 text-sm font-medium">Summarize pages with another model<HelpTip text="Sends long pages to a helper model and gives the main model the summary instead." label="Help: Summarize pages" /></div><Toggle on={search.readerSummary} set={(readerSummary) => setSearch({ readerSummary })} label="Summarize pages with another model" /></div>
+            <div className="flex items-center justify-between gap-3"><div className="flex items-center gap-1.5 text-sm font-medium">Summarize pages with another model</div><Toggle on={search.readerSummary} set={(readerSummary) => setSearch({ readerSummary })} label="Summarize pages with another model" /></div>
             </Anchor>
             {search.readerSummary && <>
               <Anchor id="reader-summary-mode">
-              <Field label="Summary model" hint="Use one exact model, or a model flow: an endpoint's models in order, or an entire playlist, until one works." row>
+              <Field label="Summary model" row>
                 <Seg v={search.readerSummaryFlow ? 'flow' : 'picked'} set={(v) => setSearch({ readerSummaryFlow: v === 'flow' })} opts={[['picked', 'Picked model'], ['flow', 'Model flow']]} />
               </Field>
               </Anchor>
               {search.readerSummaryFlow ? (
                 <Anchor id="reader-summary-endpoint">
-                <Field label="Summary flow source" hint="The flow tries every model in this source in order: an endpoint's default model first, then the rest of its models — or every entry of a playlist. A model that fails is skipped for the rest of the reply; if every model fails, the raw page text is used." row>
+                <Field label="Summary flow source" row>
                   <Sel value={summaryFlowRef} set={setSummaryFlowRef} opts={summaryEpOpts} />
                 </Field>
                 </Anchor>
               ) : (
                 <Anchor id="reader-summary-model">
-                <Field label="Summary model" hint="The exact model that writes the summary. Pick the endpoint and the model id; there is no silent fallback, and a failed summary uses the raw page instead." row>
+                <Field label="Summary model" row>
                   <Sel value={summaryRef} set={setSummaryRef} opts={summaryOpts} />
                 </Field>
                 </Anchor>
               )}
               <Anchor id="reader-summary-length">
-              <Field label={`Summary length · ${search.readerSummaryChars.toLocaleString()} characters`} hint="Roughly how long a page summary may be. Shorter keeps the context small, longer keeps more detail.">
+              <Field label={`Summary length · ${search.readerSummaryChars.toLocaleString()} characters`}>
                 <RangeSlider label="Summary length" min={400} max={8000} step={200} value={search.readerSummaryChars} valueText={`${search.readerSummaryChars.toLocaleString()} characters`} set={(readerSummaryChars) => setSearch({ readerSummaryChars: Math.round(readerSummaryChars) })} className="w-full" />
               </Field>
               </Anchor>
             </>}
             <Anchor id="fetch-timeout">
-            <Field label={`Page request timeout · ${(search.fetchTimeoutMs / 1000).toFixed(search.fetchTimeoutMs % 1000 ? 1 : 0)}s`} hint="How long to wait for a page before retrying or failing.">
+            <Field label={`Page request timeout · ${(search.fetchTimeoutMs / 1000).toFixed(search.fetchTimeoutMs % 1000 ? 1 : 0)}s`}>
               <RangeSlider label="Page request timeout" min={1000} max={30000} step={1000} value={search.fetchTimeoutMs} valueText={`${(search.fetchTimeoutMs / 1000).toFixed(search.fetchTimeoutMs % 1000 ? 1 : 0)} seconds`} set={(fetchTimeoutMs) => setSearch({ fetchTimeoutMs: Math.round(fetchTimeoutMs) })} className="w-full" />
             </Field>
             </Anchor>
             <Anchor id="fetch-chars">
-            <Field label={`Text kept per page · ${(search.fetchMaxChars / 1000).toFixed(search.fetchMaxChars % 1000 ? 1 : 0)}k characters`} hint="How much page text to read. Capped at 50,000 characters. When summaries are on, this is the text the summary model sees.">
+            <Field label={`Text kept per page · ${(search.fetchMaxChars / 1000).toFixed(search.fetchMaxChars % 1000 ? 1 : 0)}k characters`}>
               <RangeSlider label="Text kept per page" min={1000} max={50000} step={1000} value={search.fetchMaxChars} valueText={`${search.fetchMaxChars.toLocaleString()} characters`} set={(fetchMaxChars) => setSearch({ fetchMaxChars: Math.round(fetchMaxChars) })} className="w-full" />
             </Field>
             </Anchor>
             <Anchor id="fetch-retries">
-            <Field label="Page retries" hint="Bounded retries for transient failures (429/5xx/timeouts). Permanent errors are never retried." row>
+            <Field label="Page retries" row>
               <Sel value={String(search.fetchMaxRetries)} set={(v) => setSearch({ fetchMaxRetries: Number(v) })} opts={[['0', '0 · none'], ['1', '1'], ['2', '2'], ['3', '3'], ['4', '4 · max']]} />
             </Field>
             </Anchor>
             <Anchor id="fetch-retry-delay">
-            <Field label="Page retry base delay" hint="Base backoff between page retries (doubles each attempt, capped at 4s)." row>
+            <Field label="Page retry base delay" row>
               <Sel value={String(search.fetchRetryBaseMs)} set={(v) => setSearch({ fetchRetryBaseMs: Number(v) })} opts={[['50', '50ms'], ['100', '100ms'], ['300', '300ms'], ['500', '500ms'], ['1000', '1s'], ['2000', '2s · max']]} />
             </Field>
             </Anchor>
@@ -1602,7 +1562,7 @@ function Tools() {
       {featOn(s, 'advanced') && s.advanced?.showHiddenTools && (
         <Section title="Additional capabilities">
         <Anchor id="hidden-capabilities">
-        <Card icon={FlaskConical} title="Additional capabilities" sub="Owned by other features · read-only" help="These capabilities follow their feature and cannot be toggled here.">
+        <Card icon={FlaskConical} title="Additional capabilities">
           {Object.keys(TOOL_REGISTRY)
             .filter((name) => name === 'memory' || !TOOLS.some(([t]) => t === name))
             .map((name) => {
@@ -1639,11 +1599,11 @@ function Tools() {
             <p className="text-sm text-mu">{asked[5]}</p>
             <label className="flex items-start gap-3 rounded-xl bg-surf p-3 text-sm">
               <input type="checkbox" checked={askApprove} onChange={(e) => setAskApprove(e.target.checked)} className="mt-0.5 size-4 accent-[var(--accent)]" />
-              <span><span className="font-medium">Require approval before each call</span><span className="mt-0.5 block text-xs text-mu">Takes effect in Standard access. The tool is enabled now, but the model must ask before it runs.</span></span>
+              <span className="font-medium">Require approval before each call</span>
             </label>
             <label className="flex items-start gap-3 rounded-xl bg-surf p-3 text-sm">
               <input type="checkbox" checked={askAlways} onChange={(e) => setAskAlways(e.target.checked)} className="mt-0.5 size-4 accent-[var(--accent)]" />
-              <span><span className="font-medium">Do not show again</span><span className="mt-0.5 block text-xs text-mu">Skips this prompt for Location, Clipboard, Date and Date and time. Turn it back on with Ask before enabling device tools.</span></span>
+              <span className="font-medium">Do not show again</span>
             </label>
             <div className="flex justify-end gap-2">
               <Btn v="soft" onClick={() => { setAsk(null); setAskAlways(false) }}>Cancel</Btn>
@@ -1674,7 +1634,7 @@ function SkillsTab() {
   }
   return (
     <Panel id="skills">
-      <Section title="Skills">
+      <Section>
       {!!warnings.length && <p role="status" className="rounded-xl bg-er/10 px-3 py-2 text-xs text-er">{warnings[0]} Edit or reset the skill below to fix it.</p>}
       {skills.map((st) => {
         const def = resolveSkill(st)
@@ -1682,11 +1642,10 @@ function SkillsTab() {
         const builtin = BUILTIN_SKILLS.some((b) => b.id === st.id)
         return (
           <Anchor key={st.id} id={`skill-${st.id}`}>
-          <Card icon={Sparkles} title={def.name} sub={`${st.enabled ? 'On' : 'Off'} · id: ${st.id}`} muted={!st.enabled} right={<Toggle on={st.enabled} set={(enabled) => upd(st.id, { enabled })} label={`Enable skill ${def.name}`} />}>
-            <p className="text-xs text-mu">Skill id: <span className="font-mono">{st.id}</span></p>
+          <Card icon={Sparkles} title={def.name} muted={!st.enabled} right={<Toggle on={st.enabled} set={(enabled) => upd(st.id, { enabled })} label={`Enable skill ${def.name}`} />}>
             {def.source && <p className="text-xs text-mu">Source: {def.source}{def.license ? ` · ${def.license}` : ''}</p>}
-            <Field label="When to use" hint="Short description of when this skill applies."><Input value={st.description ?? def.description} set={(description) => upd(st.id, { description })} placeholder="When this skill applies." /></Field>
-            <Field label="Instructions" hint={builtin ? 'What to do when this skill is used. Editing overrides the built-in text for this browser. Reset restores it.' : 'What to do when this skill is used.'}><Area rows={6} value={st.instructions ?? def.instructions} set={(instructions) => upd(st.id, { instructions })} /></Field>
+            <Field label="When to use"><Input value={st.description ?? def.description} set={(description) => upd(st.id, { description })} placeholder="When this skill applies." /></Field>
+            <Field label="Instructions"><Area rows={6} value={st.instructions ?? def.instructions} set={(instructions) => upd(st.id, { instructions })} /></Field>
             <div className="flex gap-2">
               {builtin && <Btn v="soft" icon={RotateCcw} onClick={() => upd(st.id, { name: undefined, description: undefined, instructions: undefined } as Partial<SkillState>)}>Reset</Btn>}
               {!builtin && <Btn v="danger" icon={Trash2} onClick={() => setSkills(skills.filter((x) => x.id !== st.id))}>Remove</Btn>}
@@ -1698,13 +1657,13 @@ function SkillsTab() {
       </Section>
       <Section title="Custom skills">
       <Anchor id="add-skill">
-      <Card icon={Plus} title="Add a custom skill" sub="Your own reusable instructions" open0={false}>
+      <Card icon={Plus} title="Add a custom skill" open0={false}>
         <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="ID" hint="Lowercase letters, numbers, hyphens."><Input value={draft.id} set={(id) => setDraft({ ...draft, id })} placeholder="e.g. api-docs" /></Field>
+          <Field label="ID"><Input value={draft.id} set={(id) => setDraft({ ...draft, id })} placeholder="e.g. api-docs" /></Field>
           <Field label="Name"><Input value={draft.name} set={(name) => setDraft({ ...draft, name })} placeholder="e.g. API docs" /></Field>
         </div>
-        <Field label="When to use" hint="The model reads this to decide whether to load the skill."><Input value={draft.description} set={(description) => setDraft({ ...draft, description })} placeholder="When this skill applies." /></Field>
-        <Field label="Instructions" hint="Full steps the model follows after loading the skill."><Area rows={5} value={draft.instructions} set={(instructions) => setDraft({ ...draft, instructions })} /></Field>
+        <Field label="When to use"><Input value={draft.description} set={(description) => setDraft({ ...draft, description })} placeholder="When this skill applies." /></Field>
+        <Field label="Instructions"><Area rows={5} value={draft.instructions} set={(instructions) => setDraft({ ...draft, instructions })} /></Field>
         {error && <p role="alert" className="text-xs text-er">{error}</p>}
         <div><Btn v="solid" icon={Plus} onClick={add}>Add skill</Btn></div>
       </Card>
@@ -1723,38 +1682,25 @@ function VoiceTab() {
   return (
     <Panel id="voice">
       <Section title="Dictation">
-      <Anchor id="voice-dictation">
-      <Card icon={AudioLines} title="Dictation" sub={canDictate ? 'Microphone button in the composer' : 'Not supported in this browser'} muted={!canDictate}>
-        <p className="text-sm">Press the microphone beside Send and speak. The transcript stays editable before you send.</p>
-        {!canDictate && <p role="status" className="rounded-lg bg-er/10 px-3 py-2 text-xs text-er">This browser does not offer SpeechRecognition. Try Chrome, Edge, or Safari for dictation.</p>}
-        <Field label="Dictation language" hint="Language the microphone should expect. Browser default follows your system language." row>
-          <Sel value={v.dictLang} set={(dictLang) => set({ dictLang })} opts={VOICE_LANGS} />
-        </Field>
-      </Card>
-      </Anchor>
+        {!canDictate && <p role="status" className="py-3 text-sm text-er">This browser does not offer SpeechRecognition. Try Chrome, Edge, or Safari for dictation.</p>}
+        <Anchor id="voice-dictation">
+          <SettingRow label="Dictation language"><div className="w-56 max-w-full"><Sel value={v.dictLang} set={(dictLang) => set({ dictLang })} opts={VOICE_LANGS} inline /></div></SettingRow>
+        </Anchor>
       </Section>
-      <Section title="Read aloud" desc="Speak replies with the browser's own voice.">
-      <Anchor id="voice-read-aloud">
-      <Card icon={Volume2} title="Read aloud" sub={canSpeak ? (v.autoRead ? 'On · reads every new reply' : 'Button on each reply') : 'Not supported in this browser'} muted={!canSpeak}>
-        <p className="text-sm">A speaker button on every reply reads it aloud with the browser\u2019s speech synthesis. Code blocks and links are skipped; only the prose is spoken.</p>
-        {!canSpeak && <p role="status" className="rounded-lg bg-er/10 px-3 py-2 text-xs text-er">This browser does not offer speechSynthesis, so read-aloud is unavailable.</p>}
-        <Field label="Speaking language" hint="Voice used for read-aloud. Browser default picks the system voice." row>
-          <Sel value={v.speakLang} set={(speakLang) => set({ speakLang })} opts={VOICE_LANGS} />
-        </Field>
-        <div className="space-y-2">
-          <div className="text-sm font-medium">Speaking rate</div>
-          <div className="flex items-center gap-3">
-            <RangeSlider label="Speaking rate" min={0.5} max={2} step={0.05} value={v.rate} valueText={`${v.rate.toFixed(2)}x`} set={(rate) => set({ rate: Math.round(rate * 100) / 100 })} className="flex-1" />
-            <span className="w-16 text-right text-sm">{v.rate.toFixed(2)}×</span>
-          </div>
-        </div>
-        <label className="flex items-center justify-between gap-3 text-sm">Read every new reply automatically<Toggle on={v.autoRead} set={(autoRead) => set({ autoRead })} label="Read replies automatically" /></label>
-        <div className="flex gap-2">
+      <Section title="Read aloud">
+        {!canSpeak && <p role="status" className="py-3 text-sm text-er">This browser does not offer speechSynthesis, so read-aloud is unavailable.</p>}
+        <Anchor id="voice-read-aloud">
+          <SettingRow label="Speaking language"><div className="w-56 max-w-full"><Sel value={v.speakLang} set={(speakLang) => set({ speakLang })} opts={VOICE_LANGS} inline /></div></SettingRow>
+        </Anchor>
+        <SettingRow label="Speaking rate">
+          <RangeSlider label="Speaking rate" min={0.5} max={2} step={0.05} value={v.rate} valueText={`${v.rate.toFixed(2)}x`} set={(rate) => set({ rate: Math.round(rate * 100) / 100 })} className="w-40" />
+          <span className="w-14 text-right text-sm tabular-nums">{v.rate.toFixed(2)}×</span>
+        </SettingRow>
+        <SettingRow label="Read every new reply automatically"><Toggle on={v.autoRead} set={(autoRead) => set({ autoRead })} label="Read replies automatically" /></SettingRow>
+        <div className="flex gap-2 py-3">
           <Btn v="soft" icon={Play} disabled={!canSpeak} onClick={() => speak('This is how replies will sound. You can change the language and the speed here at any time.', v)}>Test voice</Btn>
           <Btn v="soft" icon={X} disabled={!canSpeak} onClick={() => stopSpeaking()}>Stop</Btn>
         </div>
-      </Card>
-      </Anchor>
       </Section>
     </Panel>
   )
@@ -1785,12 +1731,10 @@ function McpTab() {
     }
   }
   return (
-    <Panel id="mcp" k="mcps" n={mcps.length} add="Add server">
-      <Section title="Servers" desc="External tool servers whose tools join the normal tool loop.">
-      <div className="space-y-2 rounded-xl bg-surf p-4 text-sm">
-        <p>Press Test connection to load a server&rsquo;s tools.</p>
-        {!toolsOn && <p role="status" className="rounded-lg bg-er/10 px-3 py-2 text-xs text-er">The Tools feature is off, so no MCP tool can be called. Turn on Tools in Settings &rarr; Features.</p>}
-      </div>
+    <Panel id="mcp" k="mcps" add="Add server">
+      <Section>
+      {!toolsOn && <p role="status" className="py-3 text-sm text-er">The Tools feature is off, so no MCP tool can be called. Turn on Tools in Settings → Features.</p>}
+      {!mcps.length && <p className="py-6 text-center text-sm text-mu">No servers yet.</p>}
       {mcps.map((m) => {
         const tools = m.tools ?? []
         return (
@@ -1805,9 +1749,9 @@ function McpTab() {
             >
               <div className="grid gap-3 sm:grid-cols-2">
                 <Field label="Name"><Input value={m.name} set={(name) => upd('mcps', m.id, { name })} placeholder="e.g. Filesystem" /></Field>
-                <Field label="Server URL" hint="The MCP endpoint, usually ending in /mcp or /sse. Must be reachable from this page."><Input value={m.url} set={(url) => upd('mcps', m.id, { url, error: undefined })} placeholder="https://example.com/mcp" /></Field>
+                <Field label="Server URL"><Input value={m.url} set={(url) => upd('mcps', m.id, { url, error: undefined })} placeholder="https://example.com/mcp" /></Field>
               </div>
-              <Field label="Headers" hint="Optional. One Name: value pair per line. Stored unencrypted in this browser, so prefer a scoped token.">
+              <Field label="Headers">
                 <Area rows={3} value={m.headers} set={(headers) => upd('mcps', m.id, { headers })} placeholder={'Authorization: Bearer …'} />
               </Field>
               <div className="flex flex-wrap items-center gap-3">
@@ -1823,7 +1767,7 @@ function McpTab() {
                   {tools.map((t) => (
                     <div key={t.name} className="rounded-lg bg-surf p-2.5 text-sm">
                       <div className="font-mono text-xs text-ac">{mcpToolName(m, t.name)}</div>
-                      <div className="mt-0.5 flex items-center gap-1.5">{t.title || t.name}{t.description && <HelpTip text={t.description} label={`About ${t.title || t.name}`} />}</div>
+                      <div className="mt-0.5 flex items-center gap-1.5">{t.title || t.name}</div>
                     </div>
                   ))}
                 </div>
@@ -1832,7 +1776,6 @@ function McpTab() {
           </Anchor>
         )
       })}
-      <Anchor id="add-mcp-server"><span className="block text-xs text-mu">Use Add server above. A server with no loaded tools contributes nothing until you test it.</span></Anchor>
       </Section>
     </Panel>
   )
@@ -1863,50 +1806,42 @@ function MemoryTab() {
     setDupes((d) => (d ?? []).filter((p) => p.a !== a && p.b !== b && p.a !== b && p.b !== a))
   }
   return <Panel id="memory">
-    <Section title="Memory tool" desc="How the model stores and recalls things about you.">
-    <Anchor id="memory-tool">
-    <div className="rounded-xl bg-surf p-4 space-y-3">
-      <div className="flex items-center justify-between gap-3"><div className="flex items-center gap-1.5 font-medium">Memory tool<HelpTip text="Memories stay in this browser and are sent to your selected model when recalled." label="About the memory tool" /></div><Toggle on={mp.enabled} set={(enabled) => setPrefs({ enabled })} label="Memory tool" /></div>
-      <div className="flex items-center justify-between gap-3 border-t border-bor pt-3">
-        <div className="flex min-w-0 items-center gap-1.5 text-sm font-medium">Require approval<HelpTip text="Pauses before the model stores a memory in Standard access." label="Help: Require approval" /></div>
-        <Toggle on={!!s.toolApproval.memory} set={(v) => s.patch({ toolApproval: { ...s.toolApproval, memory: v } })} label="Require approval for memory writes" />
-      </div>
+    <Section>
+      <Anchor id="memory-tool"><SettingRow label="Memory tool"><Toggle on={mp.enabled} set={(enabled) => setPrefs({ enabled })} label="Memory tool" /></SettingRow></Anchor>
+      <SettingRow label="Require approval"><Toggle on={!!s.toolApproval.memory} set={(v) => s.patch({ toolApproval: { ...s.toolApproval, memory: v } })} label="Require approval for memory writes" /></SettingRow>
       <Anchor id="memory-mode">
-      <Field label="Memory mode" hint="Intentional stores explicit remember requests. Balanced also stores important disclosures. Aggressive includes smaller details and preferences." row>
-        <Seg v={mp.intent} set={(intent) => setPrefs({ intent })} opts={[["intentional", "Intentional"], ["balanced", "Balanced"], ["aggressive", "Aggressive"]]} />
-      </Field>
+        <SettingRow label="Memory mode"><Seg v={mp.intent} set={(intent) => setPrefs({ intent })} opts={[["intentional", "Intentional"], ["balanced", "Balanced"], ["aggressive", "Aggressive"]]} /></SettingRow>
       </Anchor>
       <Anchor id="memory-temp-chats">
-      <div className="flex items-center justify-between gap-3 border-t border-bor pt-3">
-        <div className="flex min-w-0 items-center gap-1.5 text-sm font-medium">Use memory in temporary chats<HelpTip text="Memories are kept even though the temporary chat transcript expires." label="Help: Memory in temporary chats" /></div>
-        <Toggle on={mp.tempChats !== false} set={(tempChats) => setPrefs({ tempChats })} label="Use memory in temporary chats" />
-      </div>
+        <SettingRow label="Use memory in temporary chats"><Toggle on={mp.tempChats !== false} set={(tempChats) => setPrefs({ tempChats })} label="Use memory in temporary chats" /></SettingRow>
       </Anchor>
       <Anchor id="recall-method">
-      <Field label="Recall method" hint="Local rank picks memories on this device with no model calls (fast, free, offline). Classifier call asks a model to choose, and costs a request per reply." row>
-        <Seg v={mp.method ?? 'local'} set={(method) => setPrefs({ method })} opts={[["local", "Local rank"], ["classifier", "Classifier call"]]} />
-      </Field>
+        <SettingRow label="Recall method"><Seg v={mp.method ?? 'local'} set={(method) => setPrefs({ method })} opts={[["local", "Local rank"], ["classifier", "Classifier call"]]} /></SettingRow>
       </Anchor>
       <Anchor id="recall-mode">
-      <Field label="Recall mode" hint="Holistic sends every memory. Contextual and Specific rank to the most relevant ones." row>
-        <Seg v={mp.recall} set={(recall) => setPrefs({ recall })} opts={[["holistic", "Holistic"], ["contextual", "Contextual"], ["specific", "Specific"]]} />
-      </Field>
+        <SettingRow label="Recall mode"><Seg v={mp.recall} set={(recall) => setPrefs({ recall })} opts={[["holistic", "Holistic"], ["contextual", "Contextual"], ["specific", "Specific"]]} /></SettingRow>
       </Anchor>
-      {(mp.method ?? 'local') === 'classifier' && mp.recall !== 'holistic' && <HelperPointer anchor="recall-classifier" title="Memory recall model" desc="Set in Endpoints → Helper models. Chooses which saved memories matter for each reply." current={helperLabel(s, helperRef(s.prefs.recallEp, s.prefs.recallModel) || helperRef(mp.classifierEp, mp.classifierModel), 'Classification model (fallback)')} />}
-    </div>
-    </Anchor>
+      {(mp.method ?? 'local') === 'classifier' && mp.recall !== 'holistic' && <HelperPointer anchor="recall-classifier" title="Memory recall model" current={helperLabel(s, helperRef(s.prefs.recallEp, s.prefs.recallModel) || helperRef(mp.classifierEp, mp.classifierModel), 'Classification model (fallback)')} />}
     </Section>
-    <Section title="Your memories" desc="Everything stored in this browser.">
+    <Section title="Your memories">
     <Anchor id="add-memory">
-    <div className="rounded-xl bg-surf p-4 space-y-3"><div className="font-medium">Add a memory</div><Area rows={2} value={draft} set={setDraft} placeholder="A short fact, preference, or reminder…" /><div className="flex gap-2"><Input value={category} set={setCategory} placeholder="Category" /><Btn v="solid" icon={Plus} onClick={addMemory}>Add memory</Btn></div>
+      <div className="space-y-2 py-3">
+        <Area rows={2} value={draft} set={setDraft} placeholder="A short fact, preference, or reminder…" />
+        <div className="flex flex-wrap gap-2">
+          <div className="min-w-40 flex-1"><Input value={category} set={setCategory} placeholder="Category" /></div>
+          <Btn v="solid" icon={Plus} onClick={addMemory}>Add memory</Btn>
+        </div>
       </div>
     </Anchor>
     <Anchor id="stored-memories">
-    <div className="flex items-center justify-between"><div className="text-sm font-medium">Stored memories ({s.memories.length})</div><div className="flex gap-2"><Btn v="soft" disabled={s.memories.length < 2} onClick={() => setDupes(findDuplicatePairs(s.memories))}>Check duplicates</Btn><Btn v="danger" icon={Trash2} disabled={!s.memories.length} onClick={() => setClearOpen(true)}>Delete all</Btn></div></div>
+      <div className="flex min-h-11 flex-wrap items-center justify-between gap-3 py-3">
+        <span className="text-sm">Stored memories ({s.memories.length})</span>
+        <div className="flex gap-2"><Btn v="soft" disabled={s.memories.length < 2} onClick={() => setDupes(findDuplicatePairs(s.memories))}>Check duplicates</Btn><Btn v="danger" icon={Trash2} disabled={!s.memories.length} onClick={() => setClearOpen(true)}>Delete all</Btn></div>
+      </div>
     </Anchor>
     {clearOpen && <Confirm title="Delete all stored memories?" text="Every memory stored in this browser is removed. Chats and settings are not affected." ok="Delete all" close={() => setClearOpen(false)} run={() => s.patch({ memories: [] })} />}
-    <Anchor id="check-duplicates">
     {dupes && (
+      <Anchor id="check-duplicates">
       <div className="rounded-xl bg-surf p-4 space-y-2">
         <div className="text-sm font-medium">{dupes.length ? `${dupes.length} near-duplicate pair${dupes.length === 1 ? '' : 's'}` : 'No near-duplicates found.'}</div>
         {dupes.map((p) => {
@@ -1921,10 +1856,10 @@ function MemoryTab() {
           )
         })}
       </div>
+      </Anchor>
     )}
-    </Anchor>
     {s.memories.map((m) => <div key={m.id} className="rounded-xl bg-surf p-3 space-y-2"><div className="flex gap-2"><Input value={m.category} set={(category) => s.patch({ memories: s.memories.map((x) => x.id === m.id ? { ...x, category, updatedAt: Date.now() } : x) })} placeholder="Category" /><Btn v="danger" icon={Trash2} title="Delete memory" onClick={() => s.patch({ memories: s.memories.filter((x) => x.id !== m.id) })}>Delete</Btn></div><Area rows={2} value={m.text} set={(text) => s.patch({ memories: s.memories.map((x) => x.id === m.id ? { ...x, text, updatedAt: Date.now() } : x) })} /></div>)}
-    {!s.memories.length && <p className="rounded-xl bg-surf p-4 text-sm text-mu">No memories stored yet. Add one here or enable memory and choose a mode.</p>}
+    {!s.memories.length && <p className="py-3 text-sm text-mu">No memories stored.</p>}
     </Section>
   </Panel>
 }
@@ -1941,56 +1876,45 @@ function WidgetsTab() {
   }
   return (
     <Panel id="widgets">
-      <Section title="Context meter" desc="The token ring in the chat header.">
-      <Anchor id="context-meter">
-      <div className="rounded-xl bg-surf p-3 space-y-3">
-        <label className="flex items-center justify-between gap-3 text-sm">Show context meter<HelpTip text="A ring in the chat header estimates the open chat's tokens. Click it for the reported breakdown." label="About the context meter" /><Toggle on={s.prefs.showContextMeter ?? true} set={(showContextMeter) => s.patch({ prefs: { ...s.prefs, showContextMeter } })} label="Show context meter" /></label>
-        <Anchor id="context-limit"><Field label="Manual context limit" hint="Fallback scale when the model has no published context size. This does not change the model's actual context window."><Input type="number" min="1000" step="1000" value={s.widgetPrefs.contextLimit} set={(v) => s.patch({ widgetPrefs: { ...s.widgetPrefs, contextLimit: Math.max(1000, Number(v) || 1000) } })} /></Field></Anchor>
-        <Field label="Characters per estimated token" hint="A rough estimate; 4 is a common default for English text."><Input type="number" min="1" max="10" value={s.widgetPrefs.charsPerToken} set={(v) => s.patch({ widgetPrefs: { ...s.widgetPrefs, charsPerToken: Math.min(10, Math.max(1, Number(v) || 4)) } })} /></Field>
+      <Section title="Context meter">
+        <Anchor id="context-meter"><SettingRow label="Show context meter"><Toggle on={s.prefs.showContextMeter ?? true} set={(showContextMeter) => s.patch({ prefs: { ...s.prefs, showContextMeter } })} label="Show context meter" /></SettingRow></Anchor>
+        <Anchor id="context-limit"><SettingRow label="Manual context limit"><div className="w-32"><Input type="number" min="1000" step="1000" value={s.widgetPrefs.contextLimit} set={(v) => s.patch({ widgetPrefs: { ...s.widgetPrefs, contextLimit: Math.max(1000, Number(v) || 1000) } })} /></div></SettingRow></Anchor>
+        <SettingRow label="Characters per estimated token"><div className="w-32"><Input type="number" min="1" max="10" value={s.widgetPrefs.charsPerToken} set={(v) => s.patch({ widgetPrefs: { ...s.widgetPrefs, charsPerToken: Math.min(10, Math.max(1, Number(v) || 4)) } })} /></div></SettingRow>
+        <SettingRow label="Compact automatically"><Toggle on={s.prefs.compactAuto !== false} set={(compactAuto) => s.patch({ prefs: { ...s.prefs, compactAuto } })} label="Compact automatically" /></SettingRow>
         <Anchor id="context-compact">
-        <div className="space-y-2 border-t border-bor pt-3">
-          <label className="flex items-center justify-between gap-3 text-sm">Compact automatically<Toggle on={s.prefs.compactAuto !== false} set={(compactAuto) => s.patch({ prefs: { ...s.prefs, compactAuto } })} label="Compact automatically" /></label>
-          <div className={cx('space-y-2', s.prefs.compactAuto === false && 'opacity-50')}>
-            <div className="flex items-center gap-3">
-              <RangeSlider label="Auto-compact threshold" min={5} max={100} step={5} disabled={s.prefs.compactAuto === false} value={normCompactAt(s.prefs.compactAt)} set={(compactAt) => s.patch({ prefs: { ...s.prefs, compactAt: normCompactAt(compactAt) } })} className="flex-1" />
-              <span className="w-12 text-right text-sm">{normCompactAt(s.prefs.compactAt)}%</span>
-            </div>
-            <p className="text-[11px] text-mu">When the estimated context reaches this share of the model's window, the model writes a handoff memo of the older conversation. Later requests send the memo instead of the messages it covers; the full transcript stays in the chat. 100% waits until the window is full.</p>
-          </div>
-          <p className="text-[11px] text-mu">The header meter's popover shows the same threshold as a line on the context bar, with a Compact button for doing it now.</p>
-        </div>
+          <SettingRow label="Auto-compact threshold">
+            <RangeSlider label="Auto-compact threshold" min={5} max={100} step={5} disabled={s.prefs.compactAuto === false} value={normCompactAt(s.prefs.compactAt)} set={(compactAt) => s.patch({ prefs: { ...s.prefs, compactAt: normCompactAt(compactAt) } })} className={cx('w-40', s.prefs.compactAuto === false && 'opacity-50')} />
+            <span className="w-12 text-right text-sm tabular-nums">{normCompactAt(s.prefs.compactAt)}%</span>
+          </SettingRow>
         </Anchor>
-      </div>
-      </Anchor>
       </Section>
-      <Section title="Panels" desc="The optional panels beside the chat. Enabled panels are listed first.">
+      <Section title="Panels">
       {/* Enabled panels first; the rest keep their relevance order. */}
       {WIDGETS.map((w, i) => ({ w, i })).sort((a, b) => (s.widgets[a.w[0]] ? 0 : 1) - (s.widgets[b.w[0]] ? 0 : 1) || a.i - b.i).map(({ w: [k, n, I, d] }) => {
         const blocked = blockedBy(k)
         return (
         <Anchor key={k} id={`widget-${k}`}>
-        <Card icon={I} title={n} sub={blocked ? `Needs the ${blocked} feature` : d} muted={!!blocked || !s.widgets[k]} right={blocked
+        <Card icon={I} title={n} sub={blocked ? `Needs the ${blocked} feature` : undefined} muted={!!blocked || !s.widgets[k]} right={blocked
           ? <span className="shrink-0 rounded-md bg-hov px-2 py-1 text-xs text-mu">Off</span>
           : <Toggle on={!!s.widgets[k]} set={(v) => s.patch({ widgets: { ...s.widgets, [k]: v }, rail: v || s.rail })} label={`Enable ${n} widget`} />}>
           <div className={blocked ? 'pointer-events-none opacity-50' : ''}>
-          <p className="text-sm text-mu">Shown in the panel at the right of the chat. Open or close that panel with the panel button in the chat header.</p>
-          {k === 'usage' && <Anchor id="usage-settings"><div className="space-y-3 rounded-xl bg-bg p-3">
+          {k === 'usage' && <Anchor id="usage-settings"><div className="space-y-3">
             <Field label="Group usage" row><Seg v={wp.usageGroup} set={(usageGroup) => setWp({ usageGroup })} opts={[["endpoint", "Endpoint totals"], ["model", "Individual models"]]} /></Field>
             <Field label="Show" row><Seg v={wp.usageMode} set={(usageMode) => setWp({ usageMode })} opts={[["success", "OK / fails"], ["tokens", "Tokens"]]} /></Field>
-            {wp.usageMode === 'tokens' && <Field label="Token format" hint="Use {in} and {out} where input and output totals should appear."><Input value={wp.usageFormat} set={(usageFormat) => setWp({ usageFormat })} /></Field>}
-            <Field label="Usage period" row><Seg v={wp.usagePeriod} set={(usagePeriod) => setWp({ usagePeriod })} opts={USAGE_PERIODS} /></Field>
-            {wp.usagePeriod === 'custom' && <div className="grid grid-cols-2 gap-2"><Field label="From"><Input type="date" value={wp.usageFrom ?? ''} set={(usageFrom) => setWp({ usageFrom })} /></Field><Field label="Through"><Input type="date" value={wp.usageTo ?? ''} set={(usageTo) => setWp({ usageTo })} /></Field></div>}
+            {wp.usageMode === 'tokens' && <Field label="Token format" row><div className="w-48"><Input value={wp.usageFormat} set={(usageFormat) => setWp({ usageFormat })} /></div></Field>}
+            <Field label="Usage period" row><div className="w-44 max-w-full"><Sel value={wp.usagePeriod} set={(usagePeriod) => setWp({ usagePeriod: usagePeriod as typeof wp.usagePeriod })} opts={USAGE_PERIODS} inline /></div></Field>
+            {wp.usagePeriod === 'custom' && <div className="grid grid-cols-2 gap-3"><Field label="From"><Input type="date" value={wp.usageFrom ?? ''} set={(usageFrom) => setWp({ usageFrom })} /></Field><Field label="Through"><Input type="date" value={wp.usageTo ?? ''} set={(usageTo) => setWp({ usageTo })} /></Field></div>}
             <Checkbox checked={wp.usageTotal} set={(usageTotal) => setWp({ usageTotal })} label="Show total across models and endpoints" />
           </div></Anchor>}
-          {k === 'last' && <Anchor id="last-settings"><div className="space-y-3"><div className="rounded-xl bg-bg p-3"><Checkbox checked={wp.lastSpeed} set={(lastSpeed) => setWp({ lastSpeed })} label="Show response speed" /></div><Field label="Time unit" row><Seg v={wp.timeUnit} set={(timeUnit) => setWp({ timeUnit })} opts={[["auto", "Auto"], ["ms", "Milliseconds"], ["s", "Seconds"]]} /></Field></div></Anchor>}
-          {k === 'keys' && <Anchor id="shortcut-list"><div className="grid gap-2 rounded-xl bg-bg p-3 sm:grid-cols-2">{KEYS.map(([id, label]) => <Checkbox key={id} checked={wp.shortcuts.includes(id)} set={(checked) => setWp({ shortcuts: checked ? [...wp.shortcuts, id] : wp.shortcuts.filter((x) => x !== id) })} label={label} />)}</div></Anchor>}
-          {k === 'eps' && <Anchor id="show-disabled"><div className="rounded-xl bg-bg p-3"><Checkbox checked={wp.showDisabledEndpoints} set={(showDisabledEndpoints) => setWp({ showDisabledEndpoints })} label="Show disabled endpoints" /></div></Anchor>}
-          {k === 'pad' && <Anchor id="scratch-rows"><Field label="Visible note height" hint="Number of text rows before scrolling."><Input type="number" min="2" max="20" value={wp.scratchRows} set={(v) => setWp({ scratchRows: Math.min(20, Math.max(2, Number(v) || 6)) })} /></Field></Anchor>}
-          {k === 'snips' && <Anchor id="snippet-limit"><Field label="Maximum snippets shown" hint="Older snippets remain saved and can be found by removing newer ones."><Input type="number" min="1" max="100" value={wp.snippetLimit} set={(v) => setWp({ snippetLimit: Math.min(100, Math.max(1, Number(v) || 20)) })} /></Field></Anchor>}
-          {k === 'cost' && <Anchor id="cost-decimals"><Field label="Decimal places"><Input type="number" min="0" max="8" value={wp.costDecimals} set={(v) => setWp({ costDecimals: Math.min(8, Math.max(0, Number(v) || 0)) })} /></Field></Anchor>}
-          {k === 'prompts' && <Anchor id="active-prompts-only"><div className="rounded-xl bg-bg p-3"><Checkbox checked={wp.activePromptsOnly} set={(activePromptsOnly) => setWp({ activePromptsOnly })} label="Show only the selected prompt" /></div></Anchor>}
-          {k === 'draft' && <Anchor id="chars-per-token"><Field label="Characters per estimated token" hint="A rough estimate; 4 is a common default for English text."><Input type="number" min="1" max="10" value={wp.charsPerToken} set={(v) => setWp({ charsPerToken: Math.min(10, Math.max(1, Number(v) || 4)) })} /></Field></Anchor>}
-          {k === 'todo' && <Anchor id="hide-done"><div className="rounded-xl bg-bg p-3"><Checkbox checked={wp.hideDoneTodos} set={(hideDoneTodos) => setWp({ hideDoneTodos })} label="Hide completed tasks" /></div></Anchor>}
+          {k === 'last' && <Anchor id="last-settings"><div className="space-y-3"><Checkbox checked={wp.lastSpeed} set={(lastSpeed) => setWp({ lastSpeed })} label="Show response speed" /><Field label="Time unit" row><Seg v={wp.timeUnit} set={(timeUnit) => setWp({ timeUnit })} opts={[["auto", "Auto"], ["ms", "Milliseconds"], ["s", "Seconds"]]} /></Field></div></Anchor>}
+          {k === 'keys' && <Anchor id="shortcut-list"><div className="grid gap-2 sm:grid-cols-2">{KEYS.map(([id, label]) => <Checkbox key={id} checked={wp.shortcuts.includes(id)} set={(checked) => setWp({ shortcuts: checked ? [...wp.shortcuts, id] : wp.shortcuts.filter((x) => x !== id) })} label={label} />)}</div></Anchor>}
+          {k === 'eps' && <Anchor id="show-disabled"><Checkbox checked={wp.showDisabledEndpoints} set={(showDisabledEndpoints) => setWp({ showDisabledEndpoints })} label="Show disabled endpoints" /></Anchor>}
+          {k === 'pad' && <Anchor id="scratch-rows"><Field label="Visible note height" row><div className="w-24"><Input type="number" min="2" max="20" value={wp.scratchRows} set={(v) => setWp({ scratchRows: Math.min(20, Math.max(2, Number(v) || 6)) })} /></div></Field></Anchor>}
+          {k === 'snips' && <Anchor id="snippet-limit"><Field label="Maximum snippets shown" row><div className="w-24"><Input type="number" min="1" max="100" value={wp.snippetLimit} set={(v) => setWp({ snippetLimit: Math.min(100, Math.max(1, Number(v) || 20)) })} /></div></Field></Anchor>}
+          {k === 'cost' && <Anchor id="cost-decimals"><Field label="Decimal places" row><div className="w-24"><Input type="number" min="0" max="8" value={wp.costDecimals} set={(v) => setWp({ costDecimals: Math.min(8, Math.max(0, Number(v) || 0)) })} /></div></Field></Anchor>}
+          {k === 'prompts' && <Anchor id="active-prompts-only"><Checkbox checked={wp.activePromptsOnly} set={(activePromptsOnly) => setWp({ activePromptsOnly })} label="Show only the selected prompt" /></Anchor>}
+          {k === 'draft' && <Anchor id="chars-per-token"><Field label="Characters per estimated token" row><div className="w-24"><Input type="number" min="1" max="10" value={wp.charsPerToken} set={(v) => setWp({ charsPerToken: Math.min(10, Math.max(1, Number(v) || 4)) })} /></div></Field></Anchor>}
+          {k === 'todo' && <Anchor id="hide-done"><Checkbox checked={wp.hideDoneTodos} set={(hideDoneTodos) => setWp({ hideDoneTodos })} label="Hide completed tasks" /></Anchor>}
           </div>
         </Card>
         </Anchor>
@@ -2001,374 +1925,6 @@ function WidgetsTab() {
   )
 }
 
-function FontPicker({ value, set, options }: { value: string; set: (v: string) => void; options: [string, string][] }) {
-  const [query, setQuery] = useState(value === 'system' ? '' : value)
-  const [open, setOpen] = useState(false)
-  const matches = options.filter(([font, label]) => `${font} ${label}`.toLowerCase().includes(query.trim().toLowerCase()))
-  useEffect(() => setQuery(value === 'system' ? '' : value), [value])
-  const choose = (font: string) => { set(font); setQuery(font === 'system' ? '' : font); setOpen(false) }
-  return <div className="relative">
-    <input value={query} placeholder="Search fonts or type a name" onFocus={() => setOpen(true)} onChange={(e) => { setQuery(e.target.value); setOpen(true) }} onBlur={() => setTimeout(() => setOpen(false), 120)} onKeyDown={(e) => {
-      if (e.key === 'Enter') { e.preventDefault(); const q = query.trim(); if (q) { const exact = options.find(([font, label]) => font.toLowerCase() === q.toLowerCase() || label.toLowerCase() === q.toLowerCase()); choose(exact?.[0] ?? q) } }
-      if (e.key === 'Escape') setOpen(false)
-    }} className="w-full rounded-lg bg-bg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ac/40" />
-    {open && <div className="menu-surface dd-list absolute inset-x-0 top-full z-20 mt-1 max-h-44 overflow-y-auto rounded-xl bg-surf p-1.5">
-      {matches.map(([font, label]) => <button type="button" key={font} onMouseDown={(e) => e.preventDefault()} onClick={() => choose(font)} className="block w-full rounded-lg px-2.5 py-2 text-left text-sm hover:bg-hov">{label}</button>)}
-      {!matches.length && query.trim() && <p className="px-2.5 py-2 text-xs text-mu">Press Enter to use “{query.trim()}”.</p>}
-    </div>}
-  </div>
-}
-
-type PrefToggle = 'showBy' | 'showLog' | 'showTps' | 'enterSends' | 'autoTitle' | 'temporaryByDefault' | 'streamMd' | 'seasonal' | 'cues' | 'remoteImages' | 'showTimestamps' | 'alwaysShowActions' | 'codeWrap' | 'reduceTransparency' | 'customSearch'
-
-/** One boolean preference rendered as a labelled toggle row. */
-function prefRow(s: ReturnType<typeof useSConfig>, anchor: string, k: PrefToggle, t: string, d: string) {
-  return (
-    <Anchor id={anchor}>
-    <div className="flex items-center gap-3 py-3">
-      <div className="flex flex-1 items-center gap-2 text-sm">{t}<HelpTip text={d} label={`Help: ${t}`} /></div>
-      <Toggle on={k === 'seasonal' ? s.prefs[k] !== false : !!s.prefs[k]} set={(v) => s.patch({ prefs: { ...s.prefs, [k]: v } })} label={t} />
-    </div>
-    </Anchor>
-  )
-}
-
-function Look() {
-  const s = useSConfig()
-  const glassOn = s.prefs.glassComposer !== false
-  const glassBlur = s.prefs.glassBlur ?? 14
-  const glassOpacity = s.prefs.glassOpacity ?? 80
-  const settingsWidth = s.prefs.settingsWidth ?? 1024
-  const settingsHeight = s.prefs.settingsHeight ?? 780
-  const modelPickerHeight = s.prefs.modelPickerHeight ?? 480
-  const row = (anchor: string, k: PrefToggle, t: string, d: string) => prefRow(s, anchor, k, t, d)
-  return (
-    <Panel id="look">
-      <Section title="Theme and color" desc="Theme, colors and the small flourishes.">
-      <Anchor id="appearance-mode">
-      <div className="flex flex-wrap items-center gap-3 py-3">
-        <div className="flex-1 text-sm font-medium">Theme</div>
-        <Seg v={s.themeMode} set={(themeMode) => s.patch({ themeMode })} opts={[['dark', 'Dark'], ['light', 'Light']]} />
-      </div>
-      </Anchor>
-      <Anchor id="theme-picker">
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-        {[...(s.themeMode === 'light' ? LIGHT_THEMES : DARK_THEMES), 'custom'].map((k) => {
-          const n = THEMES[k as keyof typeof THEMES]
-          const active = (s.themeMode === 'light' ? s.themeLight : s.themeDark) === k
-          const custom = s.themeMode === 'light' ? s.customLightColors : s.customDarkColors
-          return (
-          <button key={k} onClick={() => {
-            const before = s.themeMode === 'light' ? s.themeLight : s.themeDark
-            // Entering custom adopts the theme you were just on as its base,
-            // so the palette starts from where you left off instead of plum.
-            if (k === 'custom' && before !== 'custom') {
-              const source = THEME_COLORS[before]
-              const seed = s.themeMode === 'light' ? s.customLightTheme : s.customDarkTheme
-              const next = normCustomTheme({ ...seed, accent: source.ac, text: source.tx, background: source.bg, overrides: {} }, defaultCustomTheme(before as typeof seed.base))
-              const nextColors = customThemeColors(next)
-              s.patch(s.themeMode === 'light' ? { themeLight: 'custom' as const, customLightTheme: next, customLightColors: nextColors } : { themeDark: 'custom' as const, customDarkTheme: next, customDarkColors: nextColors })
-            } else s.patch(s.themeMode === 'light' ? { themeLight: k as typeof s.themeLight } : { themeDark: k as typeof s.themeDark })
-          }} className={cx('space-y-2 rounded-xl bg-surf p-2 text-left text-sm', active && 'ring-2 ring-ac')}>
-            <div className="flex h-16 overflow-hidden rounded-lg">
-              <div className="w-1/4" style={{ background: k === 'custom' ? custom.side : THEME_COLORS[k].side }} />
-              <div className="flex-1 p-2" style={{ background: k === 'custom' ? custom.bg : THEME_COLORS[k].bg }}><div className="h-2 w-2/3 rounded-sm" style={{ background: k === 'custom' ? custom.ac : THEME_COLORS[k].ac }} /></div>
-            </div>
-            <span className="flex items-center justify-between px-1">{n}{active && <Check size={14} className="text-ac" />}</span>
-          </button>
-          )
-        })}
-      </div>
-      </Anchor>
-      {((s.themeMode === 'light' ? s.themeLight : s.themeDark) === 'custom') && (() => {
-        const mode = s.themeMode === 'light' ? 'light' : 'dark'
-        const custom = s.themeMode === 'light' ? s.customLightTheme : s.customDarkTheme
-        const colors = customThemeColors(custom)
-        const pickerTheme = { accent: custom.accent, text: custom.text, background: custom.background }
-        const advancedKeys = THEME_COLOR_KEYS.filter((key) => key !== 'ac' && key !== 'tx' && key !== 'bg')
-        const roleFor = (key: typeof advancedKeys[number]): 'accent' | 'text' | 'background' | 'onAccent' =>
-          key === 'acx' ? 'onAccent' : key === 'mu' ? 'text' : key === 'er' || key.startsWith('c') ? 'accent' : 'background'
-        const setCustomTheme = (next: typeof custom) => {
-          const norm = normCustomTheme(next, defaultCustomTheme(custom.base))
-          const setColors = customThemeColors(norm)
-          s.patch(mode === 'light' ? { customLightTheme: norm, customLightColors: setColors } : { customDarkTheme: norm, customDarkColors: setColors })
-        }
-        const setOverride = (key: typeof advancedKeys[number], value: string | null) => {
-          const overrides = { ...custom.overrides }
-          if (value) overrides[key] = value
-          else delete overrides[key]
-          setCustomTheme({ ...custom, overrides })
-        }
-        return <Anchor id="custom-colors"><div className="rounded-xl bg-surf p-3 space-y-4">
-        <div className="flex items-center gap-1.5 text-sm font-medium">Custom theme<HelpTip text="Sets the accent, text and background colours. Other colours are derived automatically." label="About custom themes" /></div>
-        <div className="grid gap-3 sm:grid-cols-2">
-          {([
-            ['accent', 'Accent', 'Buttons, links, selection and focus.'],
-            ['text', 'Text', 'The main reading colour.'],
-            ['background', 'Background', 'The canvas behind every surface.'],
-          ] as const).map(([key, title, hint]) => (
-            <div key={key} className="space-y-2 rounded-lg bg-bg p-2.5">
-              <div><div className="text-sm font-medium">{title}</div><div className="text-[11px] text-mu">{hint}</div></div>
-              <ColorPicker
-                value={custom[key]}
-                onChange={(color) => setCustomTheme(key === 'accent' ? { ...custom, accent: color } : key === 'text' ? { ...custom, text: color } : { ...custom, background: color })}
-                label={`${title} color`}
-                role={key}
-                theme={pickerTheme}
-              />
-            </div>
-          ))}
-        </div>
-        <Field label={`Contrast · ${custom.contrast}%`} hint="50% is the balanced default. Below it, surfaces and borders ease back into the background until 0% leaves them all one colour; above it, they separate further toward their limits and the syntax palette strengthens. In-between values blend smoothly, so nothing jumps at the default."><RangeSlider label="Custom theme contrast" min={0} max={100} step={1} value={custom.contrast} set={(v) => setCustomTheme({ ...custom, contrast: Math.round(v) })} className="w-full" /></Field>
-        <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-mu">
-          <Btn v="ghost" className="px-2 py-1" onClick={() => setCustomTheme(defaultCustomTheme(custom.base))}>Reset to defaults</Btn>
-        </div>
-        <div className="space-y-2"><div className="text-sm font-medium">Live preview</div><div className="flex h-14 overflow-hidden rounded-lg border border-bor"><div className="w-1/4" style={{ background: colors.side }} /><div className="flex-1 flex items-center gap-2 p-2" style={{ background: colors.bg }}><div className="h-2 w-10 rounded-sm" style={{ background: colors.ac }} /><span className="text-xs" style={{ color: colors.tx }}>Text</span><span className="text-xs" style={{ color: colors.mu }}>Muted</span></div><div className="w-1/4" style={{ background: colors.surf }} /></div></div>
-        <details className="rounded-lg bg-bg p-2">
-          <summary className="cursor-pointer text-xs text-mu">Advanced colors</summary>
-          <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-            {advancedKeys.map((key) => {
-              const overridden = Object.prototype.hasOwnProperty.call(custom.overrides, key)
-              return <div key={key} className="space-y-1.5 rounded-lg bg-surf p-2">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="text-xs font-medium">{THEME_COLOR_LABELS[key]}</span>
-                  <button type="button" disabled={!overridden} onClick={() => setOverride(key, null)} className={cx('rounded px-1.5 py-0.5 text-[10px] uppercase tracking-wide', overridden ? 'bg-ac/15 text-ac hover:bg-ac/25' : 'text-mu/60')}>{overridden ? 'Reset' : 'Auto'}</button>
-                </div>
-                <ColorPicker value={colors[key]} onChange={(color) => setOverride(key, color)} label={`${THEME_COLOR_LABELS[key]} color`} role={roleFor(key)} theme={pickerTheme} />
-              </div>
-            })}
-          </div>
-          <div className="mt-2 flex justify-end"><Btn v="ghost" className="px-2 py-1" disabled={!Object.keys(custom.overrides).length} onClick={() => setCustomTheme({ ...custom, overrides: {} })}>Reset all advanced colors</Btn></div>
-        </details>
-      </div>
-      </Anchor>
-      })()}
-      {row('seasonal', 'seasonal', 'Seasonal touches', 'Show a festive greeting on holidays. Turn off to keep the greeting plain.')}
-      {row('completion-cues', 'cues', 'Completion cues', 'A soft chime and a little confetti when deep research or a workspace update finishes.')}
-      </Section>
-      <Section title="Style" desc="The shape of surfaces and how much room the chat breathes.">
-      <Anchor id="style-preset">
-      <div className="rounded-xl bg-surf p-3 space-y-3">
-        <div className="flex items-center gap-1.5 text-sm font-medium">Style preset<HelpTip text="Changes corner rounding and elevation without affecting colours, fonts or layout." label="About style presets" /></div>
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-          {STYLE_PRESET_IDS.map((id) => {
-            const active = (s.prefs.stylePreset ?? 'modern') === id
-            return (
-              <button key={id} type="button" aria-pressed={active} onClick={() => s.patch({ prefs: { ...s.prefs, stylePreset: id } })} className={cx('space-y-2 rounded-xl border p-2 text-left text-sm transition-colors', active ? 'border-ac ring-1 ring-ac' : 'border-bor hover:bg-hov')}>
-                <span data-style={id} aria-hidden="true" className="flex h-12 items-center gap-1.5 rounded-lg bg-bg p-2">
-                  <i className="size-6 shrink-0 rounded-md bg-hov" />
-                  <i className="h-6 flex-1 rounded-lg bg-surf shadow-md" />
-                  <i className="h-6 w-3 shrink-0 rounded-2xl bg-ac/40" />
-                </span>
-                <span className="flex items-center justify-between gap-1 font-medium">{STYLE_PRESETS[id].label}{active && <Check size={14} className="text-ac" />}</span>
-                <span className="block text-[11px] font-normal leading-4 text-mu">{STYLE_PRESETS[id].description}</span>
-              </button>
-            )
-          })}
-        </div>
-      </div>
-      </Anchor>
-      {(() => {
-        const spacing = resolveSpacing(s.prefs.density, s.prefs.uiSpacing)
-        const custom = hasSpacingOverrides(s.prefs.uiSpacing)
-        const setSpacing = (patch: Partial<NonNullable<typeof s.prefs.uiSpacing>>) =>
-          s.patch({ prefs: { ...s.prefs, uiSpacing: { ...(s.prefs.uiSpacing ?? {}), ...patch } } })
-        return (
-          <>
-          <Anchor id="density">
-          <div className="rounded-xl bg-surf p-3 space-y-2">
-            <div className="text-sm font-medium">Density</div>
-            <Seg v={s.prefs.density ?? 'comfortable'} set={(density) => s.patch({ prefs: { ...s.prefs, density, uiSpacing: custom ? s.prefs.uiSpacing : {} } })} opts={DENSITY_IDS.map((id) => [id, DENSITIES[id].label] as [typeof id, string])} />
-          </div>
-          </Anchor>
-          <Anchor id="density-advanced">
-          <details className="rounded-xl bg-surf p-3">
-            <summary className="flex cursor-pointer items-center gap-2 text-sm font-medium">Advanced spacing overrides{custom && <span className="rounded-full bg-ac/15 px-2 py-0.5 text-[11px] text-ac">custom</span>}</summary>
-            <p className="mt-1 text-xs text-mu">Fine-tune each area without changing the density preset. Values are in pixels; the conversation's vertical margins follow its horizontal margin.</p>
-            <div className="mt-3 space-y-3">
-              <div className="text-xs font-medium uppercase tracking-wide text-mu">Top bar</div>
-              <Field label={`Inline padding · ${spacing.headerPad}px`}><RangeSlider label="Top bar inline padding" min={SPACING_LIMITS.headerPad.min} max={SPACING_LIMITS.headerPad.max} step={1} value={spacing.headerPad} set={(headerPad) => setSpacing({ headerPad })} className="w-full" /></Field>
-              <Field label={`Vertical padding · ${spacing.headerPadY}px`} hint="Extra breathing room above and below the title row."><RangeSlider label="Top bar vertical padding" min={SPACING_LIMITS.headerPadY.min} max={SPACING_LIMITS.headerPadY.max} step={1} value={spacing.headerPadY} set={(headerPadY) => setSpacing({ headerPadY })} className="w-full" /></Field>
-              <div className="pt-2 text-xs font-medium uppercase tracking-wide text-mu">Conversation</div>
-              <Field label={`Container margins · ${spacing.chatPad}px`}><RangeSlider label="Chat container margins" min={SPACING_LIMITS.chatPad.min} max={SPACING_LIMITS.chatPad.max} step={1} value={spacing.chatPad} set={(chatPad) => setSpacing({ chatPad })} className="w-full" /></Field>
-              <Field label={`Message spacing · ${spacing.messageGap}px`}><RangeSlider label="Message spacing" min={SPACING_LIMITS.messageGap.min} max={SPACING_LIMITS.messageGap.max} step={1} value={spacing.messageGap} set={(messageGap) => setSpacing({ messageGap })} className="w-full" /></Field>
-              <div className="pt-2 text-xs font-medium uppercase tracking-wide text-mu">Sidebar</div>
-              <Field label={`Outer padding · ${spacing.sidePad}px`}><RangeSlider label="Sidebar outer padding" min={SPACING_LIMITS.sidePad.min} max={SPACING_LIMITS.sidePad.max} step={1} value={spacing.sidePad} set={(sidePad) => setSpacing({ sidePad })} className="w-full" /></Field>
-              <Field label={`Section gap · ${spacing.sideGap}px`} hint="Space between the toolbar, search, chat list and library."><RangeSlider label="Sidebar section gap" min={SPACING_LIMITS.sideGap.min} max={SPACING_LIMITS.sideGap.max} step={1} value={spacing.sideGap} set={(sideGap) => setSpacing({ sideGap })} className="w-full" /></Field>
-              <Field label={`Item padding · ${spacing.sideItemPad}px`} hint="Vertical padding inside each chat and item row."><RangeSlider label="Sidebar item padding" min={SPACING_LIMITS.sideItemPad.min} max={SPACING_LIMITS.sideItemPad.max} step={1} value={spacing.sideItemPad} set={(sideItemPad) => setSpacing({ sideItemPad })} className="w-full" /></Field>
-              <Field label={`Item spacing · ${spacing.sideItemGap}px`} hint="Space between the rows in the chat list."><RangeSlider label="Sidebar item spacing" min={SPACING_LIMITS.sideItemGap.min} max={SPACING_LIMITS.sideItemGap.max} step={1} value={spacing.sideItemGap} set={(sideItemGap) => setSpacing({ sideItemGap })} className="w-full" /></Field>
-              <div className="pt-2 text-xs font-medium uppercase tracking-wide text-mu">Composer &amp; panels</div>
-              <Field label={`Composer padding · ${spacing.composerPad}px`}><RangeSlider label="Composer padding" min={SPACING_LIMITS.composerPad.min} max={SPACING_LIMITS.composerPad.max} step={1} value={spacing.composerPad} set={(composerPad) => setSpacing({ composerPad })} className="w-full" /></Field>
-              <Field label={`Side panel padding · ${spacing.panelPad}px`} hint="The widget rail, the workspace tile and panel, and similar docked cards."><RangeSlider label="Side panel padding" min={SPACING_LIMITS.panelPad.min} max={SPACING_LIMITS.panelPad.max} step={1} value={spacing.panelPad} set={(panelPad) => setSpacing({ panelPad })} className="w-full" /></Field>
-              <div className="pt-2 text-xs font-medium uppercase tracking-wide text-mu">Code blocks</div>
-              <Field label={`Body padding X · ${spacing.codePadX}px`}><RangeSlider label="Code body horizontal padding" min={SPACING_LIMITS.codePadX.min} max={SPACING_LIMITS.codePadX.max} step={1} value={spacing.codePadX} set={(codePadX) => setSpacing({ codePadX })} className="w-full" /></Field>
-              <Field label={`Body padding Y · ${spacing.codePadY}px`}><RangeSlider label="Code body vertical padding" min={SPACING_LIMITS.codePadY.min} max={SPACING_LIMITS.codePadY.max} step={1} value={spacing.codePadY} set={(codePadY) => setSpacing({ codePadY })} className="w-full" /></Field>
-              <Field label={`Header padding X · ${spacing.codeHeadPadX}px`}><RangeSlider label="Code header horizontal padding" min={SPACING_LIMITS.codeHeadPadX.min} max={SPACING_LIMITS.codeHeadPadX.max} step={1} value={spacing.codeHeadPadX} set={(codeHeadPadX) => setSpacing({ codeHeadPadX })} className="w-full" /></Field>
-              <Field label={`Header padding Y · ${spacing.codeHeadPadY}px`}><RangeSlider label="Code header vertical padding" min={SPACING_LIMITS.codeHeadPadY.min} max={SPACING_LIMITS.codeHeadPadY.max} step={1} value={spacing.codeHeadPadY} set={(codeHeadPadY) => setSpacing({ codeHeadPadY })} className="w-full" /></Field>
-              <div className="flex items-center justify-between gap-2 text-xs text-mu">
-                <span>Overrides apply on top of the density preset.</span>
-                <Btn v="ghost" className="px-2 py-1" disabled={!custom} onClick={() => s.patch({ prefs: { ...s.prefs, uiSpacing: {} } })}>Reset to density defaults</Btn>
-              </div>
-            </div>
-          </details>
-          </Anchor>
-          </>
-        )
-      })()}
-      </Section>
-      <Section title="Messages" desc="Extra details around each reply.">
-      {row('message-times', 'showTimestamps', 'Message times', 'Show the time each message was sent: beside the model label on replies and above your own messages.')}
-      {row('message-actions', 'alwaysShowActions', 'Always show message actions', 'Keep copy, read aloud, regenerate, branch and delete visible on every reply instead of revealing them on hover.')}
-      </Section>
-      <Section title="Model picker" desc="What the model menu shows and how tall it may grow.">
-      <Anchor id="model-picker-labels">
-      <div className="rounded-xl bg-surf p-3 space-y-2">
-        <div className="text-sm font-medium">Model picker main label</div>
-        <div className="text-xs text-mu">The main identifier shown on the left of each model.</div>
-        <Seg v={s.prefs.modelPrimary ?? 'name'} set={(modelPrimary) => {
-          const secondary = s.prefs.modelSecondary ?? 'none'
-          s.patch({ prefs: { ...s.prefs, modelPrimary, modelSecondary: secondary === modelPrimary ? (modelPrimary === 'name' ? 'id' : 'name') : secondary } })
-        }} opts={[["name", "Model name"], ["id", "Model ID"]]} />
-      </div>
-      </Anchor>
-      <Anchor id="model-picker-labels-secondary">
-      <div className="rounded-xl bg-surf p-3 space-y-2">
-        <div className="text-sm font-medium">Model picker secondary label</div>
-        <div className="text-xs text-mu">The detail shown on the right of each model.</div>
-        <Seg v={s.prefs.modelSecondary ?? 'none'} set={(modelSecondary) => s.patch({ prefs: { ...s.prefs, modelSecondary } })} opts={(s.prefs.modelPrimary ?? 'name') === 'name' ? [["provider", "Provider"], ["id", "Model ID"], ["none", "None"]] : [["provider", "Provider"], ["name", "Model name"], ["none", "None"]]} />
-      </div>
-      </Anchor>
-      <Anchor id="model-picker-height">
-      <div className="rounded-xl bg-surf p-3 space-y-2"><div className="text-sm font-medium">Model picker height</div><div className="text-xs text-mu">Maximum height of the model and playlist menu. Smaller screens constrain it to fit.</div><Field label={`Height · ${modelPickerHeight}px`}><RangeSlider label="Model picker height" min={320} max={720} step={20} value={modelPickerHeight} set={(modelPickerHeight) => s.patch({ prefs: { ...s.prefs, modelPickerHeight } })} className="w-full" /></Field></div>
-      </Anchor>
-      <Anchor id="model-favorites">
-      <div className="rounded-xl bg-surf p-3 space-y-3">
-        <div>
-          <div className="text-sm font-medium">Favorite models</div>
-          <div className="text-xs text-mu">Star a model in the model menu or an endpoint's model list to pin it to a Favorites section at the top of the picker.</div>
-        </div>
-        <label className="flex items-center justify-between gap-3 text-sm">Show Favorites section<Toggle on={s.prefs.favoritesSection !== false} set={(favoritesSection) => s.patch({ prefs: { ...s.prefs, favoritesSection } })} label="Show Favorites section" /></label>
-        <label className="flex items-center justify-between gap-3 text-sm">Hide favorites from provider lists<Toggle on={s.prefs.hideFavoritesInProviders !== false} set={(hideFavoritesInProviders) => s.patch({ prefs: { ...s.prefs, hideFavoritesInProviders } })} label="Hide favorites from provider lists" /></label>
-        <label className="flex items-center justify-between gap-3 text-sm">Show provider beside favorite names<Toggle on={s.prefs.hideFavoriteProvider !== true} set={(show) => s.patch({ prefs: { ...s.prefs, hideFavoriteProvider: !show } })} label="Show provider beside favorite names" /></label>
-        {(s.favs?.length ?? 0) > 0 ? <>
-          <div className="space-y-1">{(s.favs ?? []).map((ref) => {
-            const [id, model] = splitHelperRef(ref)
-            const e = s.eps.find((x) => x.id === id)
-            return <div key={ref} className="flex items-center gap-2 rounded-lg bg-bg px-2.5 py-2 text-sm">
-              <Star size={13} fill="currentColor" className="shrink-0 text-ac" />
-              <span className="min-w-0 flex-1 truncate">{e ? `${e.name} · ${modelNameOf(e, model)}` : 'Removed endpoint'}</span>
-              <button type="button" onClick={() => s.patch({ favs: (s.favs ?? []).filter((x) => x !== ref) })} title="Remove from favorites" aria-label="Remove from favorites" className="grid size-6 shrink-0 place-items-center rounded-md text-mu hover:bg-hov hover:text-tx"><X size={13} /></button>
-            </div>
-          })}</div>
-          <button type="button" onClick={() => s.patch({ favs: [] })} className="text-xs text-mu hover:text-er">Clear all favorites</button>
-        </> : <p className="text-xs text-mu">No favorites yet. Hover a model in the picker and click its star.</p>}
-        {(s.prefs.collapsedProviders?.length ?? 0) > 0 && <button type="button" onClick={() => s.patch({ prefs: { ...s.prefs, collapsedProviders: [] } })} className="block text-xs text-mu hover:text-tx">Expand all collapsed provider groups</button>}
-      </div>
-      </Anchor>
-      </Section>
-      <Section title="Layout" desc="Sizes and spacing of the chat, the composer and the panels.">
-      <Anchor id="palette-height">
-      <div className="rounded-xl bg-surf p-3 space-y-2">
-        <div className="text-sm font-medium">Command palette height</div>
-        <div className="text-xs text-mu">Maximum height of the result list before it scrolls.</div>
-        <div className="flex items-center gap-3"><RangeSlider label="Command palette maximum height" min={200} max={720} step={20} value={s.prefs.paletteMax} set={(paletteMax) => s.patch({ prefs: { ...s.prefs, paletteMax } })} className="flex-1" /><span className="w-20 text-right text-sm">{s.prefs.paletteMax}px</span></div>
-      </div>
-      </Anchor>
-      <Anchor id="chat-width">
-      <div className="rounded-xl bg-surf p-3 space-y-2">
-        <div className="text-sm font-medium">Message width</div>
-        <div className="text-xs text-mu">Set the maximum width of the conversation column.</div>
-        <Seg v={s.prefs.chatWidth} set={(chatWidth) => s.patch({ prefs: { ...s.prefs, chatWidth } })} opts={[["narrow", "Narrow"], ["standard", "Standard"], ["wide", "Wide"]]} />
-      </div>
-      </Anchor>
-      <Anchor id="glass-composer">
-      <div className="rounded-xl bg-surf p-3 space-y-3">
-        <label className="flex items-center justify-between gap-3 text-sm">Glass composer<Toggle on={glassOn} set={(glassComposer) => s.patch({ prefs: { ...s.prefs, glassComposer } })} label="Glass composer" /></label>
-        <div className="text-xs text-mu">Give the message box a translucent, blurred surface. Blur softens whatever sits behind it; opacity sets how solid the surface itself is. 100% is fully opaque.</div>
-        <Field label={`Blur · ${glassBlur}px`}><RangeSlider label="Glass composer blur" min={0} max={40} step={1} value={glassBlur} set={(v) => s.patch({ prefs: { ...s.prefs, glassBlur: Math.round(v) } })} disabled={!glassOn} className="w-full" /></Field>
-        <Field label={`Opacity · ${glassOpacity}%`}><RangeSlider label="Glass composer opacity" min={20} max={100} step={5} value={glassOpacity} set={(v) => s.patch({ prefs: { ...s.prefs, glassOpacity: Math.round(v) } })} disabled={!glassOn} className="w-full" /></Field>
-      </div>
-      </Anchor>
-      <Anchor id="reduce-transparency">
-      <div className="flex items-center justify-between gap-3 rounded-xl bg-surf p-3">
-        <div className="min-w-0">
-          <div className="text-sm font-medium">Reduce transparency<HelpTip text="Removes glass, background blur and dropped shadows across the app for flat, opaque surfaces. Easier to read on slow GPUs, and skips the blur work entirely." label="Help: Reduce transparency" /></div>
-          <div className="text-xs text-mu">Flat, opaque surfaces: no glass, no background blur, no dropped shadows.</div>
-        </div>
-        <Toggle on={s.prefs.reduceTransparency === true} set={(reduceTransparency) => s.patch({ prefs: { ...s.prefs, reduceTransparency } })} label="Reduce transparency" />
-      </div>
-      </Anchor>
-      <Anchor id="high-contrast">
-      <div className="flex items-center justify-between gap-3 rounded-xl bg-surf p-3">
-        <div className="min-w-0">
-          <div className="text-sm font-medium">High contrast<HelpTip text="Pushes muted text and hairline borders toward full strength, beyond what the theme defines. Works on every theme, including custom ones." label="Help: High contrast" /></div>
-          <div className="text-xs text-mu">Stronger muted text and borders for easier reading.</div>
-        </div>
-        <Toggle on={s.prefs.highContrast === true} set={(highContrast) => s.patch({ prefs: { ...s.prefs, highContrast } })} label="High contrast" />
-      </div>
-      </Anchor>
-      <Anchor id="settings-size">
-      <div className="rounded-xl bg-surf p-3 space-y-3">
-        <div><div className="text-sm font-medium">Settings window size</div><div className="text-xs text-mu">Set the maximum width and height of the settings window. Smaller screens constrain it to fit.</div></div>
-        <Field label={`Width · ${settingsWidth}px`}><RangeSlider label="Settings window width" min={720} max={1440} step={40} value={settingsWidth} set={(settingsWidth) => s.patch({ prefs: { ...s.prefs, settingsWidth } })} className="w-full" /></Field>
-        <Field label={`Height · ${settingsHeight}px`}><RangeSlider label="Settings window height" min={520} max={1000} step={20} value={settingsHeight} set={(settingsHeight) => s.patch({ prefs: { ...s.prefs, settingsHeight } })} className="w-full" /></Field>
-      </div>
-      </Anchor>
-      <Anchor id="overlay">
-      <div className="rounded-xl bg-surf p-3 space-y-3">
-        <div><div className="text-sm font-medium">Overlay appearance</div><div className="text-xs text-mu">Control how dialogs and the settings panel sit over the workspace.</div></div>
-        <Field label={`Modal background blur · ${s.prefs.modalBlur}px`} hint="Blur behind confirmation and selection dialogs. Settings itself stays sharp."><RangeSlider label="Modal background blur" min={0} max={24} step={1} value={s.prefs.modalBlur} set={(modalBlur) => s.patch({ prefs: { ...s.prefs, modalBlur } })} className="w-full" /></Field>
-        <Field label={`Settings background opacity · ${s.prefs.settingsOpacity}%`} hint="How much the settings backdrop dims the workspace behind the settings panel."><RangeSlider label="Settings background opacity" min={0} max={100} step={5} value={s.prefs.settingsOpacity} set={(settingsOpacity) => s.patch({ prefs: { ...s.prefs, settingsOpacity } })} className="w-full" /></Field>
-      </div>
-      </Anchor>
-      </Section>
-      <Section title="Typography" desc="The fonts used across the app.">
-      <Anchor id="fonts">
-      <div className="rounded-xl bg-surf p-3 space-y-3">
-        <div><div className="text-sm font-medium">Fonts</div><div className="text-xs text-mu">Fonts already loaded in the app are reused; other choices load from Google Fonts.</div></div>
-        <Field label="Body font"><FontPicker value={s.prefs.fontBody} set={(fontBody) => s.patch({ prefs: { ...s.prefs, fontBody } })} options={FONT_OPTIONS} /></Field>
-        <Field label="Heading font"><FontPicker value={s.prefs.fontHeader} set={(fontHeader) => s.patch({ prefs: { ...s.prefs, fontHeader } })} options={FONT_OPTIONS} /></Field>
-        <Field label="Monospace font"><FontPicker value={s.prefs.fontMono} set={(fontMono) => s.patch({ prefs: { ...s.prefs, fontMono } })} options={MONO_OPTIONS} /></Field>
-      </div>
-      </Anchor>
-      <Anchor id="text-size">
-      <div className="rounded-xl bg-surf p-3 space-y-2">
-        <div className="text-sm font-medium">Text size</div>
-        <div className="text-xs text-mu">Scales every text together — chat, replies and settings — on top of the font choices. 100% is the app default.</div>
-        <div className="flex items-center gap-3">
-          <RangeSlider label="Text size" min={85} max={135} step={5} value={s.prefs.textScale ?? 100} set={(textScale) => s.patch({ prefs: { ...s.prefs, textScale } })} className="flex-1" />
-          <span className="w-14 text-right text-sm">{s.prefs.textScale ?? 100}%</span>
-        </div>
-      </div>
-      </Anchor>
-      {row('code-wrap', 'codeWrap', 'Wrap long code lines', 'Soft-wrap long lines inside code blocks instead of scrolling them sideways.')}
-      <Anchor id="code-line-numbers">
-      <div className="flex items-center justify-between gap-3 rounded-xl bg-surf p-3">
-        <div className="min-w-0">
-          <div className="text-sm font-medium">Code line numbers</div>
-          <div className="text-xs text-mu">Show a fixed gutter of line numbers beside highlighted code blocks. Copying still copies only the code.</div>
-        </div>
-        <Toggle on={s.prefs.codeLines === true} set={(codeLines) => s.patch({ prefs: { ...s.prefs, codeLines } })} label="Code line numbers" />
-      </div>
-      </Anchor>
-      <Anchor id="code-max-height">
-      <div className="rounded-xl bg-surf p-3 space-y-2">
-        <div className="text-sm font-medium">Code block height</div>
-        <div className="text-xs text-mu">Cap how tall a code block grows before it scrolls internally. Long replies stay readable without the page jumping. 0 means no cap.</div>
-        <div className="flex items-center gap-3">
-          <RangeSlider label="Code block maximum height" min={0} max={1200} step={40} value={s.prefs.codeMaxHeight ?? 0} set={(codeMaxHeight) => s.patch({ prefs: { ...s.prefs, codeMaxHeight } })} className="flex-1" />
-          <span className="w-20 text-right text-sm">{s.prefs.codeMaxHeight ? `${s.prefs.codeMaxHeight}px` : 'No cap'}</span>
-        </div>
-      </div>
-      </Anchor>
-      </Section>
-    </Panel>
-  )
-}
-
-const FONT_OPTIONS: [string, string][] = [['system', 'System default'], ['Arial', 'Arial'], ['Verdana', 'Verdana'], ['Georgia', 'Georgia'], ['Trebuchet MS', 'Trebuchet MS'], ['Times New Roman', 'Times New Roman'], ['Inter', 'Inter'], ['Roboto', 'Roboto'], ['Open Sans', 'Open Sans'], ['Segoe UI', 'Segoe UI'], ['Helvetica Neue', 'Helvetica Neue']]
-const MONO_OPTIONS: [string, string][] = [['system', 'System monospace'], ['Consolas', 'Consolas'], ['Menlo', 'Menlo'], ['Monaco', 'Monaco'], ['Courier New', 'Courier New'], ['Cascadia Code', 'Cascadia Code'], ['JetBrains Mono', 'JetBrains Mono'], ['Fira Code', 'Fira Code']]
-
 function AdvancedTab() {
   const s = useSConfig()
   if (!featOn(s, 'advanced')) return null
@@ -2377,20 +1933,20 @@ function AdvancedTab() {
   const row = (anchor: string, k: 'verboseErrors' | 'showHiddenTools' | 'showSystemPrompt' | 'showToolPayloads' | 'showTokenCounts' | 'showModelParams', t: string, d: string) => (
     <Anchor id={anchor}>
     <div className="flex items-center gap-3 py-3">
-      <div className="flex flex-1 items-center gap-2 text-sm">{t}<HelpTip text={d} label={`Help: ${t}`} /></div>
+      <div className="flex flex-1 items-center gap-2 text-sm">{t}</div>
       <Toggle on={a[k]} set={(v) => setA({ [k]: v })} label={t} />
     </div>
     </Anchor>
   )
   return (
     <Panel id="adv">
-      <Section title="Diagnostics" desc="What the app shows about the requests it makes.">
+      <Section title="Diagnostics">
       {row('verbose-errors', 'verboseErrors', 'Verbose errors', 'Show exact provider error messages in the process log and failure replies. The endpoint key is still masked; other key-like tokens are shown verbatim.')}
       {row('show-system-prompt', 'showSystemPrompt', 'Show full system prompt', 'Save the exact system prompt sent with each reply and show it in the process log: global prompt, selected prompt, tool guidance, skill catalog, and memory context.')}
       {row('show-tool-payloads', 'showToolPayloads', 'Show tool arguments and results', 'Render the full JSON arguments and returned text of every tool call in the process log instead of one-line summaries.')}
       {row('show-token-counts', 'showTokenCounts', 'Show per-step token counts', 'List reported input/output tokens beside each process-log entry when the provider reports them.')}
       </Section>
-      <Section title="Interface" desc="Extra details in the chat and the settings.">
+      <Section title="Interface">
       {row('show-hidden-tools', 'showHiddenTools', 'Show additional capabilities', 'List capabilities owned by other features in Settings → Tools. They stay read-only and cannot be toggled there.')}
       {row('show-model-params', 'showModelParams', 'Model parameters', 'Show the temperature, top-p, and max-tokens controls in the chat header. Turn off to hide them even while the Advanced feature stays on.')}
       </Section>
@@ -2406,16 +1962,14 @@ function WorkspaceTab() {
   const draft = useS((s) => s.draft)
   return (
     <Panel id="workspace">
-      <Section title="Panel" desc="How the workspace side panel behaves.">
-      <div className="space-y-3">
-        <Anchor id="default-view"><Field label="Default view" row><Seg v={wp.defaultView ?? 'pinned'} set={(defaultView) => set({ defaultView: defaultView as typeof wp.defaultView })} opts={[['pinned', 'Pinned'], ['latest', 'Latest']]} /></Field></Anchor>
-        <Anchor id="auto-open"><div className="flex items-center justify-between gap-3"><div><div className="text-sm font-medium">Auto-open panel</div><div className="text-xs text-mu">Open the side panel when the AI starts writing files.</div></div><Toggle on={wp.autoOpen ?? true} set={(autoOpen) => set({ autoOpen })} label="Auto-open panel" /></div></Anchor>
-        <Anchor id="auto-follow"><div className="flex items-center justify-between gap-3"><div><div className="text-sm font-medium">Auto-follow file</div><div className="text-xs text-mu">Select the file the AI is writing automatically.</div></div><Toggle on={wp.autoFollow ?? true} set={(autoFollow) => set({ autoFollow })} label="Auto-follow file" /></div></Anchor>
-      </div>
+      <Section title="Panel">
+        <Anchor id="default-view"><SettingRow label="Default view"><Seg v={wp.defaultView ?? 'pinned'} set={(defaultView) => set({ defaultView: defaultView as typeof wp.defaultView })} opts={[['pinned', 'Pinned'], ['latest', 'Latest']]} /></SettingRow></Anchor>
+        <Anchor id="auto-open"><SettingRow label="Auto-open panel"><Toggle on={wp.autoOpen ?? true} set={(autoOpen) => set({ autoOpen })} label="Auto-open panel" /></SettingRow></Anchor>
+        <Anchor id="auto-follow"><SettingRow label="Auto-follow file"><Toggle on={wp.autoFollow ?? true} set={(autoFollow) => set({ autoFollow })} label="Auto-follow file" /></SettingRow></Anchor>
       </Section>
-      <Section title="Project templates" desc="Starter file sets the model can scaffold.">
+      <Section>
       <Anchor id="templates">
-      <Card icon={LayoutTemplate} title="Project templates" sub="Starter file sets the model can scaffold with template + createNew">
+      <Card icon={LayoutTemplate} title="Project templates">
         <div className="space-y-2">
           {WORKSPACE_TEMPLATES.map((t) => (
             <Anchor key={t.id} id={`template-${t.id}`}>
@@ -2438,10 +1992,10 @@ function WorkspaceTab() {
       </Card>
       </Anchor>
       </Section>
-      <Section title="Sharing" desc="Send workspace files to a GitHub Gist.">
+      <Section title="Sharing">
       <Anchor id="gist-sharing">
-      <Card icon={Share2} title="GitHub Gist sharing" sub="Optional personal token · saved with your settings">
-        <Field label="Gist token (classic, gist scope)" hint="Only used when you press Share in a workspace panel. Leave empty to disable sharing. When device sync is on, it is included in the encrypted sync payload.">
+      <Card icon={Share2} title="GitHub Gist sharing">
+        <Field label="Gist token (classic, gist scope)">
           <div className="relative">
             <Input type={showToken ? 'text' : 'password'} value={gistToken} set={(v) => useS.getState().patch({ gistToken: v })} placeholder="ghp_…" />
             <button onClick={() => setShowToken(!showToken)} title="Show or hide token" className="absolute right-2 top-1/2 -translate-y-1/2 text-mu hover:text-tx">{showToken ? <EyeOff size={16} /> : <Eye size={16} />}</button>
@@ -2456,161 +2010,110 @@ function WorkspaceTab() {
 
 function Chats() {
   const s = useSConfig()
-  const row = (anchor: string, k: PrefToggle, t: string, d: string) => prefRow(s, anchor, k, t, d)
+  const { prefs } = s
+  const patch = (p: Partial<typeof prefs>) => s.patch({ prefs: { ...prefs, ...p } })
+  const toggle = (anchor: string, key: keyof typeof prefs, label: string) => (
+    <Anchor id={anchor}><SettingRow label={label}><Toggle on={key === 'seasonal' ? prefs[key] !== false : !!prefs[key]} set={(v) => patch({ [key]: v } as Partial<typeof prefs>)} label={label} /></SettingRow></Anchor>
+  )
   return (
     <Panel id="chats">
-      <Section title="Replies" desc="What each reply shows and how it is rendered.">
-      {row('show-by', 'showBy', 'Show which model answered', 'Label each reply with the endpoint and model that produced it.')}
-      {row('show-log', 'showLog', 'Show model-use details', 'Show the Process to answer panel under each reply: every helper, model round and tool call, with its timing, model and any failure.')}
-      {row('show-tps', 'showTps', 'Show generation speed', 'Show tokens per second below each reply.')}
-      {row('stream-md', 'streamMd', 'Render markdown while streaming', 'Format each completed line as markdown as it arrives instead of plain text. Off shows plain text until the reply finishes.')}
-      {row('custom-search', 'customSearch', 'Custom find in conversation (Ctrl+F)', 'Enable the in-chat search box that highlights matches in text and code blocks.')}
-      <Anchor id="copy-replies">
-      <div className="rounded-xl bg-surf p-3">
-        <div className="text-sm font-medium">Copying replies</div>
-        <div className="text-xs text-mu">The copy button writes rich text, so headings, lists, tables and code blocks keep their formatting in a word processor. Shift-click copies Markdown with citation links; Ctrl/Cmd-click copies plain prose.</div>
-      </div>
-      </Anchor>
-      <Anchor id="pinned-context">
-      <div className="rounded-xl bg-surf p-3 space-y-3">
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <div className="text-sm font-medium">Include the pinned reply in context</div>
-            <div className="text-xs text-mu">A pinned reply (the pin on any answer) is added to the model's context on every request, so its guidance survives even when the original message has scrolled out of the working history.</div>
-          </div>
-          <Toggle on={s.prefs.pinContext !== false} set={(pinContext) => s.patch({ prefs: { ...s.prefs, pinContext } })} label="Include pinned reply in context" />
-        </div>
-        <div className={cx('space-y-2', s.prefs.pinContext === false && 'opacity-50')}>
-          <div className="flex items-center gap-3">
-            <RangeSlider label="Pinned reply context share" min={5} max={50} step={5} value={s.prefs.pinContextPercent ?? 50} set={(pinContextPercent) => s.patch({ prefs: { ...s.prefs, pinContextPercent } })} className="flex-1" />
-            <span className="w-20 text-right text-sm">≤{s.prefs.pinContextPercent ?? 50}%</span>
-          </div>
-          <p className="text-[11px] text-mu">The pin is included whole while it fits under this share of the model's context window; past that it is truncated. Keeping it at or below 50% leaves room for the conversation itself.</p>
-        </div>
-      </div>
-      </Anchor>
-      {row('remote-images', 'remoteImages', 'Load remote images', 'Render images that replies link to over the network. Off keeps them behind a click-to-load button, so reading a reply never contacts third-party hosts.')}
-      <Anchor id="stream-fade">
-      <div className="rounded-xl bg-surf p-3 space-y-3">
-        <div><div className="text-sm font-medium">Reply fade-in</div><div className="text-xs text-mu">Each chunk of a streaming reply fades in as it arrives. Off disables it entirely.</div></div>
-        <div className="flex items-center gap-3">
-          <RangeSlider label="Reply fade-in duration" min={0} max={1} step={0.1} value={s.prefs.streamFade} set={(streamFade) => s.patch({ prefs: { ...s.prefs, streamFade } })} className="flex-1" />
-          <span className="w-24 text-right text-sm">{s.prefs.streamFade === 0 ? 'Off' : `${Math.round(s.prefs.streamFade * 1000)}ms`}</span>
-        </div>
-      </div>
-      </Anchor>
+      <Section title="Replies">
+        {toggle('show-by', 'showBy', 'Show which model answered')}
+        {toggle('show-log', 'showLog', 'Show model-use details')}
+        {toggle('show-tps', 'showTps', 'Show generation speed')}
+        {toggle('stream-md', 'streamMd', 'Render markdown while streaming')}
+        {toggle('custom-search', 'customSearch', 'Custom find in conversation (Ctrl+F)')}
+        {toggle('remote-images', 'remoteImages', 'Load remote images')}
+        {toggle('pinned-context', 'pinContext', 'Include the pinned reply in context')}
+        <Anchor id="pinned-share">
+          <SettingRow label="Pinned reply share">
+            <RangeSlider label="Pinned reply share" min={5} max={50} step={5} value={prefs.pinContextPercent ?? 50} set={(pinContextPercent) => patch({ pinContextPercent })} disabled={prefs.pinContext === false} className="w-40" />
+            <span className="w-12 text-right text-sm tabular-nums">{prefs.pinContextPercent ?? 50}%</span>
+          </SettingRow>
+        </Anchor>
+        <Anchor id="stream-fade">
+          <SettingRow label="Reply fade-in">
+            <RangeSlider label="Reply fade-in duration" min={0} max={1} step={0.1} value={prefs.streamFade} set={(streamFade) => patch({ streamFade })} className="w-40" />
+            <span className="w-14 text-right text-sm tabular-nums">{prefs.streamFade === 0 ? 'Off' : `${Math.round(prefs.streamFade * 1000)}ms`}</span>
+          </SettingRow>
+        </Anchor>
       </Section>
-      <Section title="Process to answer" desc="The step list saved with each reply: what was called, how long it took, and why.">
-      <Anchor id="process-detail">
-      <div className="rounded-xl bg-surf p-3 space-y-2">
-        <div className="text-sm font-medium">Detail level</div>
-        <div className="text-xs text-mu">Compact keeps each step to its name and timing. Standard adds a short explanation and clips anything long behind a read-more. Detailed shows every saved explanation in full.</div>
-        <Seg v={s.prefs.logDetail ?? 'standard'} set={(v) => s.patch({ prefs: { ...s.prefs, logDetail: normLogDetail(v) } })} opts={[['compact', 'Compact'], ['standard', 'Standard'], ['verbose', 'Detailed']]} />
-      </div>
-      </Anchor>
-      <Anchor id="process-timing">
-      <div className="flex items-center justify-between gap-3 rounded-xl bg-surf p-3">
-        <div className="min-w-0"><div className="text-sm font-medium">Show step timings</div><div className="text-xs text-mu">Print each step's duration, and the panel total, on the right of its row.</div></div>
-        <Toggle on={s.prefs.logTiming !== false} set={(logTiming) => s.patch({ prefs: { ...s.prefs, logTiming } })} label="Show step timings" />
-      </div>
-      </Anchor>
-      <Anchor id="process-models">
-      <div className="flex items-center justify-between gap-3 rounded-xl bg-surf p-3">
-        <div className="min-w-0"><div className="text-sm font-medium">Show the model on each step</div><div className="text-xs text-mu">Label every step with the endpoint and model that served it, not just the endpoint name.</div></div>
-        <Toggle on={s.prefs.logModels !== false} set={(logModels) => s.patch({ prefs: { ...s.prefs, logModels } })} label="Show the model on each step" />
-      </div>
-      </Anchor>
-      <p className="px-1 text-xs text-mu">Per-step token counts, tool arguments and results, and the full system prompt live in Settings → Advanced → Diagnostics.</p>
+
+      <Section title="Process to answer">
+        <Anchor id="process-detail">
+          <SettingRow label="Detail level">
+            <Seg v={prefs.logDetail ?? 'standard'} set={(v) => patch({ logDetail: normLogDetail(v) })} opts={[['compact', 'Compact'], ['standard', 'Standard'], ['verbose', 'Detailed']]} />
+          </SettingRow>
+        </Anchor>
+        {toggle('process-timing', 'logTiming', 'Show step timings')}
+        {toggle('process-models', 'logModels', 'Show the model on each step')}
       </Section>
+
       <Anchor id="temporary-chats">
-      <Section title="Temporary chats" desc="Chats that are removed automatically after a while.">
-      {row('temporary-default', 'temporaryByDefault', 'New chats are temporary by default', 'New chats are deleted after the retention period, or when you leave if retention is set to Immediate.')}
-      <Anchor id="temp-retention">
-      <div className="rounded-xl bg-surf p-3 space-y-2">
-        <div className="text-sm font-medium">Temporary chat retention</div>
-        <div className="text-xs text-mu">Temporary chats are removed automatically after this time. Immediate also removes them when you start another chat or leave this page.</div>
-        <div className="flex items-center gap-3"><RangeSlider label="Temporary chat retention" min={0} max={48} step={1} value={s.prefs.tempHours} set={(tempHours) => s.patch({ prefs: { ...s.prefs, tempHours } })} className="flex-1" /><span className="w-24 text-right text-sm">{s.prefs.tempHours === 0 ? 'Immediate' : `${s.prefs.tempHours} hours`}</span></div>
-      </div>
+        <Section title="Temporary chats">
+          {toggle('temporary-default', 'temporaryByDefault', 'New chats are temporary by default')}
+          <Anchor id="temp-retention">
+            <SettingRow label="Temporary chat retention">
+              <RangeSlider label="Temporary chat retention" min={0} max={48} step={1} value={prefs.tempHours} set={(tempHours) => patch({ tempHours })} className="w-40" />
+              <span className="w-20 text-right text-sm tabular-nums">{prefs.tempHours === 0 ? 'Immediate' : `${prefs.tempHours} hours`}</span>
+            </SettingRow>
+          </Anchor>
+          <Anchor id="temp-visible">
+            <SettingRow label="Temporary chats shown">
+              <RangeSlider label="Temporary chats shown" min={0} max={6} step={1} value={prefs.tempShow ?? 2} set={(tempShow) => patch({ tempShow })} className="w-40" />
+              <span className="w-20 text-right text-sm tabular-nums">{(prefs.tempShow ?? 2) === 0 ? 'Current only' : (prefs.tempShow ?? 2) >= 6 ? 'All' : `${prefs.tempShow ?? 2} chat${(prefs.tempShow ?? 2) === 1 ? '' : 's'}`}</span>
+            </SettingRow>
+          </Anchor>
+          {toggle('temp-streaming', 'tempShowStreaming', 'Keep replying temporary chats listed')}
+          {toggle('temp-finished', 'tempShowDone', 'Keep finished temporary chats listed')}
+        </Section>
       </Anchor>
-      <Anchor id="temp-visible">
-      <div className="rounded-xl bg-surf p-3 space-y-2">
-        <div className="text-sm font-medium">Temporary chats shown</div>
-        <div className="text-xs text-mu">How many temporary chats the sidebar lists before you need to expand it. The first tick shows only the one you are reading; the last shows them all.</div>
-        <div className="flex items-center gap-3">
-          <RangeSlider label="Temporary chats shown" min={0} max={6} step={1} value={s.prefs.tempShow ?? 2} set={(tempShow) => s.patch({ prefs: { ...s.prefs, tempShow } })} className="flex-1" />
-          <span className="w-28 text-right text-sm">{(s.prefs.tempShow ?? 2) === 0 ? 'Current only' : (s.prefs.tempShow ?? 2) >= 6 ? 'All' : `${s.prefs.tempShow ?? 2} chat${(s.prefs.tempShow ?? 2) === 1 ? '' : 's'}`}</span>
-        </div>
-      </div>
-      </Anchor>
-      <Anchor id="temp-streaming">
-      <div className="flex items-center justify-between gap-3 rounded-xl bg-surf p-3">
-        <div className="min-w-0"><div className="text-sm font-medium">Keep replying temporary chats listed</div><div className="text-xs text-mu">A temporary chat that is still writing stays in the sidebar even when the list above shows only the chat you have open, so you can watch over it from another chat. Turn this off to hide it like any other chat past the limit.</div></div>
-        <Toggle on={s.prefs.tempShowStreaming !== false} set={(tempShowStreaming) => s.patch({ prefs: { ...s.prefs, tempShowStreaming } })} label="Keep replying temporary chats listed" />
-      </div>
-      </Anchor>
-      <Anchor id="temp-finished">
-      <div className="flex items-center justify-between gap-3 rounded-xl bg-surf p-3">
-        <div className="min-w-0"><div className="text-sm font-medium">Keep finished temporary chats listed</div><div className="text-xs text-mu">A temporary chat whose reply finished while you were in another chat stays in the sidebar until you open it, even when the list above shows only the chat you have open. Turn this off to hide it as soon as the reply is done.</div></div>
-        <Toggle on={s.prefs.tempShowDone !== false} set={(tempShowDone) => s.patch({ prefs: { ...s.prefs, tempShowDone } })} label="Keep finished temporary chats listed" />
-      </div>
-      </Anchor>
-      </Section>
-      </Anchor>
+
       <Anchor id="archived-chats">
-      <Section title="Archived chats" desc="Chats you archive are kept out of the main list and removed automatically after a while.">
-      <Anchor id="archive-retention">
-      <div className="rounded-xl bg-surf p-3 space-y-2">
-        <div className="text-sm font-medium">Archived chat retention</div>
-        <div className="text-xs text-mu">Archived chats are permanently deleted after this many days. The last tick shows Never and keeps them indefinitely.</div>
-        <div className="flex items-center gap-3">
-          <RangeSlider label="Archived chat retention" min={1} max={ARCHIVE_RETENTION_NEVER} step={1} value={normArchiveDays(s.prefs.archiveDays)} valueText={archiveRetentionLabel(s.prefs.archiveDays)} set={(n) => s.patch({ prefs: { ...s.prefs, archiveDays: normArchiveDays(n) } })} className="flex-1" />
-          <span className="w-24 text-right text-sm">{archiveRetentionLabel(s.prefs.archiveDays)}</span>
-        </div>
-      </div>
+        <Section title="Archived chats">
+          <Anchor id="archive-retention">
+            <SettingRow label="Archived chat retention">
+              <RangeSlider label="Archived chat retention" min={1} max={ARCHIVE_RETENTION_NEVER} step={1} value={normArchiveDays(prefs.archiveDays)} valueText={archiveRetentionLabel(prefs.archiveDays)} set={(n) => patch({ archiveDays: normArchiveDays(n) })} className="w-40" />
+              <span className="w-20 text-right text-sm tabular-nums">{archiveRetentionLabel(prefs.archiveDays)}</span>
+            </SettingRow>
+          </Anchor>
+        </Section>
       </Anchor>
+
+      <Section title="Behavior">
+        {toggle('enter-sends', 'enterSends', 'Enter sends the message')}
+        <Anchor id="send-while-busy">
+          <SettingRow label="Sending while a reply is running">
+            <Seg v={(prefs.sendWhileBusy ?? 'queue') as 'queue' | 'stop'} set={(sendWhileBusy) => patch({ sendWhileBusy })} opts={[['queue', 'Queue'], ['stop', 'Stop first']]} />
+          </SettingRow>
+        </Anchor>
+        <Anchor id="prompt-recall">
+          <SettingRow label="Prompt recall (↑ / ↓)">
+            <div className="w-52 max-w-full"><Sel value={normPromptRecall(prefs.promptRecall)} set={(promptRecall) => patch({ promptRecall: normPromptRecall(promptRecall) })} opts={PROMPT_RECALL_MODES as unknown as [string, string][]} inline /></div>
+          </SettingRow>
+        </Anchor>
+        {toggle('auto-title', 'autoTitle', 'Auto-generate chat names')}
+        <Anchor id="startup">
+          <SettingRow label="Open on load">
+            <div className="w-52 max-w-full"><Sel value={normStartup(prefs.startup)} set={(startup) => patch({ startup: normStartup(startup) })} opts={STARTUP_MODES as [string, string][]} inline /></div>
+          </SettingRow>
+        </Anchor>
+        <Anchor id="draft-survival">
+          <SettingRow label="Drafts across reloads">
+            <div className="w-52 max-w-full"><Sel value={prefs.draftSurvive ?? 'both'} set={(draftSurvive) => patch({ draftSurvive: draftSurvive as typeof prefs.draftSurvive })} opts={[['off', 'Never'], ['new', 'New chat screen'], ['chats', 'Existing chats'], ['both', 'Both']]} inline /></div>
+          </SettingRow>
+        </Anchor>
       </Section>
-      </Anchor>
-      <Section title="Behavior" desc="How the app handles sending messages and opening chats.">
-      {row('enter-sends', 'enterSends', 'Enter sends the message', 'Turn off to send with the button and use Enter for new lines.')}
-      <Anchor id="send-while-busy">
-      <div className="rounded-xl bg-surf p-3 space-y-2">
-        <div className="text-sm font-medium">Sending while a reply is running</div>
-        <div className="text-xs text-mu">Queue holds the message and sends it as soon as the current reply finishes. Stop first keeps the send button as Stop, so the running reply has to end before a new message can go.</div>
-        <Seg v={(s.prefs.sendWhileBusy ?? 'queue') as 'queue' | 'stop'} set={(sendWhileBusy) => s.patch({ prefs: { ...s.prefs, sendWhileBusy } })} opts={[['queue', 'Queue'], ['stop', 'Stop first']]} />
-      </div>
-      </Anchor>
-      <Anchor id="prompt-recall">
-      <div className="rounded-xl bg-surf p-3 space-y-2">
-        <div className="text-sm font-medium">Prompt recall (↑ / ↓)</div>
-        <div className="text-xs text-mu">When the up and down arrows recall the messages you sent this session. While walking, both keys step through the history; typing exits it. Off also stops recording them.</div>
-        <Seg v={normPromptRecall(s.prefs.promptRecall)} set={(promptRecall) => s.patch({ prefs: { ...s.prefs, promptRecall: normPromptRecall(promptRecall) } })} opts={PROMPT_RECALL_MODES as unknown as [string, string][]} />
-      </div>
-      </Anchor>
-      {row('auto-title', 'autoTitle', 'Auto-generate chat names', 'Automatically generate a concise title after the first reply.')}
-      <Anchor id="startup">
-      <div className="rounded-xl bg-surf p-3 space-y-2">
-        <div className="text-sm font-medium">Open on load</div>
-        <div className="text-xs text-mu">Most recent chat restores the last selected chat on this device. Most recent permanent chat skips temporary and archived chats.</div>
-        <Sel value={normStartup(s.prefs.startup)} set={(startup) => s.patch({ prefs: { ...s.prefs, startup: normStartup(startup) } })} opts={STARTUP_MODES as [string, string][]} />
-      </div>
-      </Anchor>
-      <Anchor id="draft-survival">
-      <div className="rounded-xl bg-surf p-3 space-y-2">
-        <div className="text-sm font-medium">Drafts across reloads</div>
-        <div className="text-xs text-mu">Keep half-typed messages when you close or reload the page. New chat screen covers a chat you have not sent to yet; existing chats covers everything already named.</div>
-        <Seg v={(s.prefs.draftSurvive ?? 'both') as 'off' | 'new' | 'chats' | 'both'} set={(draftSurvive) => s.patch({ prefs: { ...s.prefs, draftSurvive } })} opts={[['off', 'Never'], ['new', 'New chat screen'], ['chats', 'Existing chats'], ['both', 'Both']]} />
-      </div>
-      </Anchor>
-      </Section>
-      <Section title="Documents" desc="Reading attached files and images.">
-      <DocumentsSettings />
-      <HelperPointer anchor="title-model" title="Title generation model" desc="Set in Endpoints → Helper models. Names new chats automatically; when empty, the model that answered is used." current={helperLabel(s, helperRef(s.prefs.titleEp, s.prefs.titleModel), 'Default (model that answered)')} />
+
+      <Section title="Documents">
+        <DocumentsSettings />
+        <HelperPointer anchor="title-model" title="Title generation model" current={helperLabel(s, helperRef(prefs.titleEp, prefs.titleModel), 'Default (model that answered)')} />
       </Section>
     </Panel>
   )
 }
 
-const VIEWS: Record<string, () => ReactNode> = { features: FeaturesTab, eps: Eps, prompts: QualitiesTab, skills: SkillsTab, pls: Pls, cmds: Cmds, workspace: WorkspaceTab, tools: Tools, mcp: McpTab, memory: MemoryTab, widgets: WidgetsTab, look: Look, chats: Chats, voice: VoiceTab, keys: KeysTab, data: DataTab, adv: AdvancedTab }
+const VIEWS: Record<string, () => ReactNode> = { features: FeaturesTab, eps: Eps, prompts: QualitiesTab, skills: SkillsTab, pls: Pls, cmds: Cmds, workspace: WorkspaceTab, tools: Tools, mcp: McpTab, memory: MemoryTab, widgets: WidgetsTab, look: AppearanceSettings, chats: Chats, voice: VoiceTab, keys: KeysTab, data: DataTab, adv: AdvancedTab }
 
 export function Settings({ tab, setTab }: { tab: string; setTab: (t: string) => void }) {
   const features = useS((s) => s.features)

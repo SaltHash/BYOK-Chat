@@ -12,8 +12,8 @@ import { combo, fmt, rec as R, testEp } from '../engine'
 import { probeProviderCors, resolveProvider } from '../providerAdapter'
 import { KEYS, TOOLS, DEFAULT_TOOLS } from '../meta'
 import { DEFAULT_TOOL_APPROVAL, normToolApproval, normToolMode } from '../toolApprovals'
-import { Btn, Toggle, Checkbox, Confirm, Modal, Surface, Input, HelpTip, cx, type Ic } from './ui'
-import { Panel, Anchor, Section } from './settingsPrimitives'
+import { Btn, Toggle, Checkbox, Confirm, Modal, Surface, Input, cx, type Ic } from './ui'
+import { Panel, Anchor, Section, SettingRow } from './settingsPrimitives'
 import { detectAvailableCategories, buildExportPayload, chatsInDateRange, mergeImportedSearch } from '../configIO'
 import { getAutoBackup, setAutoBackup, runLocalBackup, listLocalBackups, readLocalBackup, deleteLocalBackup, getLastBackup, type BackupMeta } from '../storage/localBackup'
 import { readSyncConflicts, dismissSyncConflict, clearSyncConflicts, conflictChat, type SyncConflict } from '../storage/syncConflicts'
@@ -134,7 +134,6 @@ export function TestAllEndpoints({ eps }: { eps: Ep[] }) {
   return <div className="space-y-2 rounded-xl bg-surf p-3">
     <div className="flex flex-wrap items-center gap-3">
       <Btn v="soft" icon={Play} disabled={running || !eps.some((e) => modelsOf(e).length)} onClick={run}>Test all endpoints</Btn>
-      <span className="text-xs text-mu">Tests every configured model across all providers, including disabled endpoints.</span>
     </div>
     {rows.map((x) => <div key={x.key} className={cx('flex items-start gap-2 text-sm', x.s === 'err' ? 'text-er' : x.s === 'ok' ? 'text-ac' : 'text-mu')}>
       {x.s === 'err' ? <CircleX size={14} className="mt-0.5 shrink-0" /> : x.s === 'ok' ? <CircleCheck size={14} className="mt-0.5 shrink-0" /> : null}
@@ -143,12 +142,12 @@ export function TestAllEndpoints({ eps }: { eps: Ep[] }) {
   </div>
 }
 
-const Box = ({ icon: I, t, d, children }: { icon: Ic; t: string; d: string; children?: ReactNode }) => (
-  <Surface className="flex flex-wrap items-center gap-3">
-    <span className="grid size-9 place-items-center rounded-lg bg-hov text-ac"><I size={18} /></span>
-    <div className="min-w-48 flex-1"><div className="text-sm font-medium">{t}</div><div className="text-xs text-mu">{d}</div></div>
+const Box = ({ icon: I, t, d, children }: { icon: Ic; t: string; d?: string; children?: ReactNode }) => (
+  <div className="flex min-h-14 flex-wrap items-center gap-3 py-3">
+    <I size={16} className="shrink-0 text-mu" aria-hidden="true" />
+    <div className="min-w-48 flex-1"><div className="text-sm">{t}</div>{d && <div className="mt-0.5 text-xs text-mu">{d}</div>}</div>
     {children}
-  </Surface>
+  </div>
 )
 
 export function KeysTab() {
@@ -175,27 +174,24 @@ export function KeysTab() {
   if (off) return null
   return (
     <Panel id="keys">
-      <Section title="Shortcuts" desc="Press Change, then the keys you want. Shortcuts need Ctrl/Cmd or Alt.">
-      <div className="space-y-2">
+      <Section>
         {KEYS.map(([id, label, def]) => {
           const cur = keys[id] ?? def
           return (
             <Anchor key={id} id={`key-${id}`}>
-            <div className="flex flex-wrap items-center gap-3 rounded-xl bg-surf p-3">
-              <span className="min-w-40 flex-1 text-sm">{label}</span>
-              {rec === id ? <span className="text-sm text-ac">Press the new keys…</span>
-                : <span className="flex gap-1">{cur.split('+').map((k, i) => <kbd key={i} className="rounded-md bg-hov px-1.5 py-0.5 text-xs font-medium">{fmt(k)}</kbd>)}</span>}
-              <Btn v="soft" onClick={() => { setErr(''); setRec(rec === id ? '' : id) }}>{rec === id ? 'Cancel' : 'Change'}</Btn>
-              <Btn sm icon={RotateCcw} title="Reset to default" disabled={cur === def} onClick={() => patch({ keys: { ...keys, [id]: def } })} />
-            </div>
+              <div className="flex min-h-11 flex-wrap items-center gap-3 py-3">
+                <span className="min-w-40 flex-1 text-sm">{label}</span>
+                {rec === id ? <span className="text-sm text-ac">Press the new keys…</span>
+                  : <span className="flex gap-1">{cur.split('+').map((k, i) => <kbd key={i} className="rounded-md bg-hov px-1.5 py-0.5 text-xs font-medium">{fmt(k)}</kbd>)}</span>}
+                <Btn v="soft" onClick={() => { setErr(''); setRec(rec === id ? '' : id) }}>{rec === id ? 'Cancel' : 'Change'}</Btn>
+                <Btn sm icon={RotateCcw} title="Reset to default" disabled={cur === def} onClick={() => patch({ keys: { ...keys, [id]: def } })} />
+              </div>
             </Anchor>
           )
         })}
-      </div>
-      {err && <p className="text-sm text-er">{err}</p>}
-      <div className="flex items-center gap-3">
+      {err && <p className="py-2 text-sm text-er">{err}</p>}
+      <div className="flex items-center justify-end py-3">
         <Anchor id="reset-all-keys"><Btn v="soft" icon={RotateCcw} onClick={() => patch({ keys: Object.fromEntries(KEYS.map(([k, , d]) => [k, d])) })}>Reset all</Btn></Anchor>
-        <span className="text-xs text-mu">Press Escape while recording to cancel. Some browser shortcuts, such as opening a new tab, cannot be overridden.</span>
       </div>
       </Section>
     </Panel>
@@ -263,14 +259,15 @@ function LargestChats({ kb }: { kb: (n: number) => string }) {
     setTop(sizes())
   }
   return (
-    <div className="basis-full">
-      <button onClick={() => { if (!show) setTop(sizes()); setShow((v) => !v) }} aria-expanded={show} className="text-xs font-medium text-mu hover:text-tx">
-        {show ? 'Hide largest chats' : 'Largest chats'}
-      </button>
+    <div className="basis-full border-t border-bor pt-3">
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-sm">Largest chats</span>
+        <Btn v="soft" sm onClick={() => { if (!show) setTop(sizes()); setShow((v) => !v) }} aria-expanded={show}>{show ? 'Hide' : 'Show'}</Btn>
+      </div>
       {show && (
-        <div className="mt-1.5 space-y-1">
+        <div className="mt-2 space-y-1">
           {top.length ? top.map((c) => (
-            <div key={c.id} className="flex items-center gap-2 rounded-lg bg-bg px-2 py-1 text-xs">
+            <div key={c.id} className="flex items-center gap-2 rounded-lg bg-surf px-2 py-1 text-xs">
               <span className="min-w-0 flex-1 truncate text-tx" title={c.title}>{c.title}</span>
               <span className="shrink-0 text-mu">~{kb(c.chars)}</span>
               <button onClick={() => del(c.id)} title="Delete chat permanently" aria-label={`Permanently delete ${c.title}`} className="grid size-5 shrink-0 place-items-center rounded-sm text-mu hover:text-er"><Trash2 size={12} /></button>
@@ -314,14 +311,17 @@ function LocalBackups({ onRestore }: { onRestore: (j: Record<string, any>) => vo
     dl(`chat-backup-${new Date(Number(id.split('-').pop()) || Date.now()).toISOString().slice(0, 10)}.json`, raw, 'application/json')
   }
   return (
-    <div className="space-y-3 rounded-xl bg-surf p-4">
-      <div className="flex flex-wrap items-center gap-2 text-sm font-medium"><DatabaseBackup size={16} className="text-ac" />Local backups <span className="text-xs font-normal text-mu">{last ? `last ${new Date(last).toLocaleString()}` : 'on this device only'}</span><HelpTip text="A daily on-device snapshot of settings, prompts, projects and chats. API keys and file bytes are excluded." label="About local backups" /></div>
-      <div className="flex flex-wrap items-center gap-2">
-        <Checkbox checked={auto} set={(v) => { setAuto(v); setAutoBackup(v) }} label="Daily automatic backup" />
-        <Btn v="solid" icon={DatabaseBackup} disabled={busy} onClick={() => void make()}>{busy ? 'Backing up…' : 'Back up now'}</Btn>
-        <Btn v="soft" icon={RefreshCw} onClick={refresh}>Refresh</Btn>
+    <div className="space-y-1 py-1">
+      <div className="divide-y divide-bor">
+        <SettingRow label={<span className="flex flex-wrap items-center gap-2"><DatabaseBackup size={16} className="shrink-0 text-mu" />Local backups<span className="text-xs text-mu">{items.length ? `${items.length} saved` : 'No backups yet'}{last ? ` · last ${new Date(last).toLocaleString()}` : ''}</span></span>}>
+          <Btn v="soft" icon={RefreshCw} onClick={refresh}>Refresh</Btn>
+          <Btn v="solid" icon={DatabaseBackup} disabled={busy} onClick={() => void make()}>{busy ? 'Backing up…' : 'Back up now'}</Btn>
+        </SettingRow>
+        <SettingRow label="Daily automatic backup">
+          <Toggle on={auto} set={(v) => { setAuto(v); setAutoBackup(v) }} label="Daily automatic backup" />
+        </SettingRow>
       </div>
-      {note && <p className="text-xs text-mu">{note}</p>}
+      {note && <p className="py-2 text-sm text-mu">{note}</p>}
       {items.length ? (
         <div className="space-y-1.5">
           {items.map((b) => (
@@ -334,7 +334,7 @@ function LocalBackups({ onRestore }: { onRestore: (j: Record<string, any>) => vo
             </div>
           ))}
         </div>
-      ) : <p className="text-xs text-mu">No local backups yet. Turn on daily backups or press Back up now.</p>}
+      ) : null}
     </div>
   )
 }
@@ -358,7 +358,7 @@ function ConflictsBox() {
   return (
     <div className="space-y-2 rounded-xl border border-er/30 bg-er/5 p-4">
       <div className="flex items-center gap-2 text-sm font-medium"><GitMerge size={16} className="text-er" />Sync conflicts <span className="text-xs font-normal text-mu">{items.length}</span></div>
-      <p className="text-xs text-mu">Both devices added different messages to these chats. The merge kept the richer copy; restore whichever side you meant to keep. This replaces that chat locally and the choice syncs on the next push.</p>
+
       {items.map((c) => (
         <div key={c.id} className="space-y-2 rounded-lg bg-bg p-2.5 text-xs">
           <div className="font-medium">{c.title}</div>
@@ -539,18 +539,18 @@ export function DataTab() {
   }
   return (
     <Panel id="data">
-      <Section title="Transfer and backups" desc="Back up or move your setup somewhere else.">
+      <Section title="Transfer and backups">
       {DEVICE_SYNC_ENABLED && <Anchor id="device-sync"><SyncBox /></Anchor>}
       {DEVICE_SYNC_ENABLED && <Anchor id="sync-conflicts"><ConflictsBox /></Anchor>}
       <Anchor id="local-backups"><LocalBackups onRestore={restoreParsed} /></Anchor>
       <Anchor id="export">
-      <Box icon={Download} t="Export data" d="Choose which data to include in a JSON file. Add a password to encrypt it.">
+      <Box icon={Download} t="Export data">
         <Btn v="soft" onClick={() => { setExpMsg(''); setCf(3) }}>Export</Btn>
         {expMsg && <span className="basis-full text-xs text-mu">{expMsg}</span>}
       </Box>
       </Anchor>
       <Anchor id="import">
-      <Box icon={Upload} t="Import data" d="Choose a JSON data file, then select what to import.">
+      <Box icon={Upload} t="Import data">
         <label className="inline-flex h-9 cursor-pointer items-center rounded-lg bg-hov px-3 text-sm font-medium hover:opacity-80">
           <input type="file" accept=".json,application/json" hidden onChange={(e) => { chooseFile(e.target.files?.[0]); e.target.value = '' }} />Choose file
         </label>
@@ -558,17 +558,17 @@ export function DataTab() {
       </Box>
       </Anchor>
       </Section>
-      <Section title="Storage" desc="What this browser holds for the app.">
+      <Section title="Storage">
       <Anchor id="browser-storage"><StorageBox /></Anchor>
       </Section>
-      <Section title="Danger zone" desc="Actions that remove data from this browser.">
+      <Section title="Danger zone">
       <Anchor id="chat-history">
-      <Box icon={FileText} t="Chat history" d="Include conversations in data exports, or delete them all. Stats are kept.">
+      <Box icon={FileText} t="Chat history">
         <Btn v="danger" disabled={!chatCount} onClick={() => setCf(1)}>Delete all</Btn>
       </Box>
       </Anchor>
       <Anchor id="erase-everything">
-      <Box icon={Trash2} t="Erase everything" d="Removes all endpoints, keys, prompts, skills, memories, chats, stats and settings from this browser.">
+      <Box icon={Trash2} t="Erase everything">
         <Btn v="danger" onClick={() => setCf(2)}>Erase</Btn>
       </Box>
       </Anchor>
@@ -601,7 +601,7 @@ export function DataTab() {
         )}
         <div className="space-y-1.5 rounded-xl bg-surf p-3">
           <Input type="password" value={expPw} set={setExpPw} placeholder="Password (optional)" />
-          <p className="text-xs text-mu">Leave empty for a plain JSON file. A password encrypts the export.</p>
+
         </div>
         <div className="flex justify-end gap-2"><Btn v="soft" onClick={() => setCf(0)}>Cancel</Btn><Btn v="solid" icon={Download} onClick={() => { void exp(); setCf(0) }}>Export</Btn></div>
       </section></Modal>}

@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react'
 import { FileUp, FileText, X, Folder } from 'lucide-react'
 import { useS, type Project, type ProjectFile } from '../store'
-import { Btn, HelpTip, Modal, Toggle, cx } from './ui'
+import { Btn, Modal, Toggle, cx } from './ui'
 
 /* Optional project context files are stored with their extracted text inline
  * (like text-backed chat attachments). Binary files (images, PDFs) are kept
@@ -63,7 +63,7 @@ export function ProjectModal({ close, project }: { close: () => void; project?: 
             className="h-9 w-full rounded-lg bg-surf px-3 text-sm outline-none focus:ring-2 focus:ring-ac/40" />
         </label>
         <div className="text-sm">
-          <span className="mb-1 flex items-center gap-1.5 text-xs font-medium text-mu">Context files <span className="font-normal">(optional)</span><HelpTip text="Files are background the AI may consult, not instructions. Text is read; other files keep only their names." label="Help: Context files" /></span>
+          <span className="mb-1 flex items-center gap-1.5 text-xs font-medium text-mu">Context files <span className="font-normal">(optional)</span></span>
           {/* Drop zone + picker. Files land as reference material only: the AI
               may read them when relevant, they are never standing orders. */}
           <div onDragOver={(e) => { e.preventDefault(); setOver(true) }} onDragLeave={() => setOver(false)}
@@ -88,7 +88,7 @@ export function ProjectModal({ close, project }: { close: () => void; project?: 
         </div>
         <div className="flex items-center justify-between gap-3 rounded-xl bg-surf p-3">
           <div className="min-w-0">
-            <div className="flex items-center gap-1.5 text-sm font-medium">Share workspace across chats<HelpTip text="Lets every chat in this project write to the same workspace. Projects never share workspaces with each other." label="Help: Share workspace across chats" /></div>
+            <div className="flex items-center gap-1.5 text-sm font-medium">Share workspace across chats</div>
           </div>
           <Toggle on={shareWs} set={setShareWs} label="Share workspace across chats" />
         </div>

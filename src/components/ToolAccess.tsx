@@ -181,28 +181,15 @@ export function ToolAccessCard() {
   const s = useSConfig()
   const chatId = useS((st) => st.chat)
   const mode = normToolMode(s.toolMode)
-  const info = modeInfo(mode)
   const Icon = MODE_ICONS[mode]
   return (
     <Anchor id="tool-access">
-      <div className="space-y-3 rounded-xl bg-surf p-3">
-        <div className="flex items-center gap-2">
-          <Icon size={16} className="shrink-0 text-ac" />
-          <div className="min-w-0">
-            <div className="text-sm font-medium">Tool access</div>
-            <div className="text-xs text-mu">Composer lock · {info.label}</div>
-          </div>
-        </div>
-        <p className="text-sm">{info.description}</p>
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+      <div className="space-y-3 py-3">
+        <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2">
+          <span className="flex items-center gap-2 text-sm"><Icon size={16} className="shrink-0 text-mu" />Tool access</span>
           <Seg label="Tool access mode" v={mode} set={(toolMode) => { s.patch({ toolMode, ...(toolMode === 'off' ? {} : { features: { ...s.features, tools: true } }) }); if (toolMode === 'off' || toolMode === 'full') settleToolApprovals(chatId, toolMode === 'full') }} opts={TOOL_MODES.map((m) => [m.id, m.short] as [ToolMode, string])} />
-          <span className="text-xs text-mu">Same control as the lock in the composer.</span>
         </div>
-        <p className="text-sm text-mu">
-          Standard uses each tool's <span className="text-tx">Require approval</span> switch. Restricted asks for every call, including MCP and hidden capabilities. Disabled removes all tool schemas, so the model cannot plan around a call it cannot run.
-        </p>
         {mode === 'off' && <p role="status" className="rounded-lg bg-er/10 px-3 py-2 text-xs text-er">No tool calls can run while access is Disabled. Per-tool switches are kept for when you re-enable access.</p>}
-        {mode !== 'full' && <p className="text-xs text-mu">Deep research keeps its own approved plan and budget; this switch governs ordinary chat tool calls.</p>}
       </div>
     </Anchor>
   )

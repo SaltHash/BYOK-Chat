@@ -247,7 +247,16 @@ html[data-codewrap] .code-lines .code-line > code { flex: 1 1 auto; min-width: 0
   border: 1px solid color-mix(in srgb, var(--mu) 36%, var(--bor));
   box-shadow: var(--menu-shadow);
 }
-.settings-root [aria-haspopup="listbox"] { border: 1px solid color-mix(in srgb, var(--mu) 36%, transparent); }
+/* Settings text fields read as filled controls, not outlined boxes. */
+.settings-root :is(input:not([type]), input[type="text"], input[type="search"], input[type="number"], input[type="password"], input[type="url"], input[type="email"], input[type="date"], input[type="time"], input[type="datetime-local"], textarea) {
+  border: 0;
+  background-color: var(--surf);
+  color: var(--tx);
+  transition: background-color 120ms ease;
+}
+.settings-root :is(input:not([type]), input[type="text"], input[type="search"], input[type="number"], input[type="password"], input[type="url"], input[type="email"], input[type="date"], input[type="time"], input[type="datetime-local"], textarea):hover {
+  background-color: var(--hov);
+}
 
 /* Custom dropdowns scroll in one place, so that place needs a visible,
  * themeable scrollbar — the global thin scrollbar is invisible on several
