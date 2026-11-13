@@ -8,7 +8,7 @@
 
 export type PollOption = {
   label: string
-  /** Optional follow-up text a model wants sent for this option. */
+  /** Optional secondary question shown with a text field for this option. */
   prompt?: string
   /** The UI shows a text field attached to this option when it is selected. */
   fillBlank?: boolean
@@ -33,7 +33,7 @@ export type PollQuestion = {
 export type PollAnswer = {
   /** Selected option indexes (one unless the question allows multiple). */
   choice: number[]
-  /** Free text, and the typed value attached to a fill-in-the-blank option. */
+  /** Free text, and the typed value attached to an option that accepts one. */
   text: string
   /** Slider and number values are kept as strings so an empty field can be detected. */
   number: string
@@ -158,27 +158,40 @@ export function initialPollAnswers(questions: readonly PollQuestion[]): PollAnsw
   return out
 }
 
+const optionNeedsText = (o: PollOption): boolean => !!(o.fillBlank || o.prompt)
+
+/** Whether a question has an answer complete enough to send. A choice that
+ *  opens a secondary field only counts once that field has text. */
+export function pollQuestionAnswered(q: PollQuestion, a: PollAnswer | undefined): boolean {
+  if (!a) return false
+  if (q.type === 'choice') {
+    const picked = a.choice
+      .map((index) => q.options[index])
+      .filter((o): o is PollOption => !!o)
+    return picked.length > 0 && !picked.some((o) => optionNeedsText(o) && !a.text.trim())
+  }
+  if (q.type === 'slider' || q.type === 'number') return !!a.number.trim()
+  return !!a.text.trim()
+}
+
 /** Build the message sent back to the model when Continue is pressed. Each
  *  answered question stays on its own line so the answer keeps its context. */
 export function pollAnswerText(questions: readonly PollQuestion[], answers: PollAnswers): string {
   const out: string[] = []
   questions.forEach((q, i) => {
     const a = answers[i]
-    if (!a) return
+    if (!pollQuestionAnswered(q, a)) return
     if (q.type === 'choice') {
       const picked = a.choice
         .map((index) => q.options[index])
         .filter((o): o is PollOption => !!o)
-      if (!picked.length) return
       const value = picked
-        .map((o) => (o.fillBlank && a.text.trim() ? `${o.label}: ${a.text.trim()}` : o.label))
+        .map((o) => (optionNeedsText(o) && a.text.trim() ? `${o.label}: ${a.text.trim()}` : o.label))
         .join(', ')
       out.push(`${q.label}\n${value}`)
     } else if (q.type === 'slider' || q.type === 'number') {
-      if (!a.number.trim()) return
       out.push(`${q.label}\n${a.number.trim()}`)
     } else {
-      if (!a.text.trim()) return
       out.push(`${q.label}\n${a.text.trim()}`)
     }
   })

@@ -7,6 +7,7 @@ import {
   normalizePoll,
   pollAnswerText,
   pollLimits,
+  pollQuestionAnswered,
   type PollAnswer,
   type PollAnswers,
   type PollOption,
@@ -74,7 +75,7 @@ function ChoiceQuestion({ q, qi, answer, disabled, onChange }: {
                 </span>
                 <span className="min-w-0">{option.label}</span>
               </button>
-              {option.fillBlank && selected && (
+              {(option.fillBlank || option.prompt) && selected && (
                 <div className="px-3 pb-2.5">
                   <input
                     value={answer.text}
@@ -82,8 +83,8 @@ function ChoiceQuestion({ q, qi, answer, disabled, onChange }: {
                     autoFocus
                     onChange={(e) => onChange(qi, { text: e.target.value })}
                     onKeyDown={(e) => e.stopPropagation()}
-                    placeholder={option.placeholder ?? `Type your answer${option.label.toLowerCase() === 'other' ? '' : ` for ${option.label.toLowerCase()}`}`}
-                    aria-label={`Your answer for ${option.label}`}
+                    placeholder={option.placeholder ?? option.prompt ?? `Type your answer${option.label.toLowerCase() === 'other' ? '' : ` for ${option.label.toLowerCase()}`}`}
+                    aria-label={option.prompt ?? `Your answer for ${option.label}`}
                     className="w-full rounded-md border border-bor bg-bg px-2.5 py-1.5 text-sm outline-none focus:ring-2 focus:ring-ac/40 disabled:opacity-50"
                   />
                 </div>
@@ -171,11 +172,7 @@ function PollCard({ call, busy, used, onSend }: {
   const answer = useMemo(() => pollAnswerText(questions, answers), [questions, answers])
   const update: AnswerChange = (index, patch) => setAnswers((prev) => ({ ...prev, [index]: { ...answerFor(prev, index), ...patch } }))
   if (!questions.length) return null
-  const answered = questions.filter((q, i) => {
-    const a = answers[i]
-    if (!a) return false
-    return q.type === 'choice' ? a.choice.length > 0 : q.type === 'slider' || q.type === 'number' ? !!a.number.trim() : !!a.text.trim()
-  }).length
+  const answered = questions.filter((q, i) => pollQuestionAnswered(q, answers[i])).length
   const disabled = busy || used
   return (
     <section aria-label="Quick questions" className="w-full max-w-xl space-y-4 rounded-xl border border-bor bg-surf p-4">

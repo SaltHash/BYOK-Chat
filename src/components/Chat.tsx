@@ -10,6 +10,7 @@ import { CI, fmtDuration } from '../meta'
 import { toolLabel } from '../toolLabels'
 import { summarizeToolCalls, splitToolTrail, type ToolKind, type TrailCall } from '../toolSummary'
 import { formatMsgDateTime, formatMsgTime } from '../time'
+import { exactCost, formatCost, messageCostOf, outputTokensOf } from '../replyMetrics'
 import { Btn, Chip, cx, TextLightbox, ZoomableImage, type Ic } from './ui'
 import { Composer } from './Composer'
 import { ProjectOverview } from './ProjectOverview'
@@ -244,7 +245,7 @@ function ToolTrail({ calls }: { calls: TrailCall[] }) {
   const summary = summarizeToolCalls(other.length ? other : calls)
   const Icon = TOOL_KIND_ICON[summary.clauses[0]?.kind ?? 'other'] ?? Wrench
   return (
-    <div className="my-3 space-y-2 rounded-xl bg-surf/45 p-3">
+    <div className="my-3 space-y-2">
       {searches.map((search, i) => (
         <div key={`search-${i}`} className="space-y-2">
           <div className="flex items-center gap-1.5 text-xs font-medium text-tx">
@@ -306,7 +307,7 @@ function ToolTrail({ calls }: { calls: TrailCall[] }) {
             aria-expanded={open}
             onClick={() => setOpen(!open)}
             title={open ? 'Hide the tool calls behind this text' : 'Show the tool calls behind this text'}
-            className="inline-flex max-w-full items-center gap-2 rounded-lg px-2 py-1.5 text-xs text-mu transition-colors hover:bg-surf hover:text-tx focus-visible:bg-surf focus-visible:text-tx"
+            className="inline-flex max-w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-mu transition-colors hover:bg-surf hover:text-tx focus-visible:bg-surf focus-visible:text-tx"
           >
             <Icon size={14} className="shrink-0" aria-hidden="true" />
             <span className="truncate">{summary.title}</span>
@@ -598,13 +599,6 @@ function replyTitle(m: Msg, style: ReplyModelLabel, eps: Ep[]) {
   return `${base}${effort ? ` (${effort})` : ''}${withEndpoint}`
 }
 
-function replyTokenCount(m: Msg) {
-  if (typeof m.tokens === 'number') return m.tokens
-  const final = [...(m.log ?? [])].reverse().find((a) => a.tin != null || a.tout != null || a.contextTin != null || a.contextTout != null)
-  if (!final) return 0
-  return (final.tin ?? final.contextTin ?? 0) + (final.tout ?? final.contextTout ?? 0)
-}
-
 function replyDuration(m: Msg) {
   if (m.took && m.took > 0) return m.took
   const logged = (m.log ?? []).reduce((ms, a) => ms + Math.max(0, a.ms ?? 0), 0)
@@ -689,11 +683,12 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
   const searchPrefs = useS((s) => s.search)
   const sources = useMemo(() => collectMessageSources(m.toolRounds), [m.toolRounds])
   const replyStats = prefs.replyStats ?? DEFAULT_REPLY_STATS
-  const replyTokens = replyTokenCount(m)
+  const replyTokens = outputTokensOf(m)
   const replyTime = replyDuration(m)
   const showSpeed = replyStats.includes('tps') && m.tps != null
   const showTokens = replyStats.includes('tokens') && replyTokens > 0
   const showTime = replyStats.includes('time') && replyTime > 0
+  const replyCost = replyStats.includes('cost') ? messageCostOf(eps, m.log) : null
   const title = replyTitle(m, prefs.replyModelLabel ?? 'name', eps)
   const displayText = m.toolFinal ?? m.t
   // While the live streamed text is on screen this output is not rendered, so
@@ -1101,14 +1096,15 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
           claim={srcClaim}
         />
       )}
-      {!m.err && (showSpeed || showTokens || showTime) && (
-        <div aria-label="Reply details" className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-mu">
+      {(m.toolRounds ?? []).length > 0 && <MessageActions calls={(m.toolRounds ?? []).flatMap((round) => round.calls)} />}
+      {!m.err && (showSpeed || showTokens || showTime || !!replyCost) && (
+        <div aria-label="Reply details" className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-mu opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
           {showSpeed && <span title="Generation speed">{m.tps!.toLocaleString(undefined, { maximumFractionDigits: 1 })} tok/s</span>}
-          {showTokens && <span title="Total input and output tokens">{replyTokens.toLocaleString()} tokens</span>}
+          {showTokens && <span title="Output tokens">{replyTokens.toLocaleString()} tokens</span>}
           {showTime && <span title="Total response time">{fmtDuration(replyTime)}</span>}
+          {replyCost && <span title={`Message cost: ${exactCost(replyCost.total)} · ${replyCost.estimated ? 'estimated from endpoint pricing' : 'reported by the provider'}`}>{replyCost.estimated ? '≈ ' : ''}{formatCost(replyCost.total)}</span>}
         </div>
       )}
-      {(m.toolRounds ?? []).length > 0 && <MessageActions calls={(m.toolRounds ?? []).flatMap((round) => round.calls)} />}
       <div className={cx('flex flex-wrap items-center gap-0.5 transition-opacity', prefs.alwaysShowActions || (m.alts && m.alts.length > 1) || (m.fork && m.fork.paths.length > 0) ? '' : 'opacity-100 md:opacity-0 md:group-hover:opacity-100 md:focus-within:opacity-100')}>
         {m.alts && m.alts.length > 1 && !busy && (
           <>

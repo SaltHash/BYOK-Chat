@@ -899,6 +899,15 @@ function QualitiesTab() {
     const on = qualities.includes(id)
     setG({ qualities: on ? qualities.filter((x) => x !== id) : [...qualities, id] })
   }
+  const moveQuality = (id: string, delta: number) => {
+    const from = qualityList.findIndex((q) => q.id === id)
+    const to = from + delta
+    if (from < 0 || to < 0 || to >= qualityList.length) return
+    const next = [...qualityList]
+    const [moved] = next.splice(from, 1)
+    next.splice(to, 0, moved)
+    patch({ qualities: next })
+  }
   const saveQuality = (q: Quality) => {
     const exists = qualityList.some((x) => x.id === q.id)
     patch({ qualities: exists ? qualityList.map((x) => (x.id === q.id ? q : x)) : [...qualityList, q] })
@@ -937,7 +946,7 @@ function QualitiesTab() {
               <Btn v="soft" icon={Plus} onClick={() => setEditQ('new')}>Add quality</Btn>
             </div>
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              {qualityList.map((q) => {
+              {qualityList.map((q, qi) => {
                 const on = qualities.includes(q.id)
                 const fav = isFav(q.id)
                 const effect = q.effect
@@ -954,6 +963,8 @@ function QualitiesTab() {
                     <div className="flex items-center gap-2">
                       <span className={cx('grid size-4 shrink-0 place-items-center rounded border transition-colors', on ? 'border-ac bg-ac text-white' : 'border-bor bg-bg')}>{on && <Check size={11} strokeWidth={3} />}</span>
                       <span className="min-w-0 flex-1 truncate text-sm font-medium">{q.label}</span>
+                      <button type="button" aria-label={`Move ${q.label} up`} disabled={qi === 0} onClick={(e) => { e.stopPropagation(); moveQuality(q.id, -1) }} title="Move up" className="grid size-6 shrink-0 place-items-center rounded-md text-mu/70 transition-colors hover:bg-hov hover:text-tx disabled:cursor-not-allowed disabled:opacity-25"><ArrowUp size={13} /></button>
+                      <button type="button" aria-label={`Move ${q.label} down`} disabled={qi === qualityList.length - 1} onClick={(e) => { e.stopPropagation(); moveQuality(q.id, 1) }} title="Move down" className="grid size-6 shrink-0 place-items-center rounded-md text-mu/70 transition-colors hover:bg-hov hover:text-tx disabled:cursor-not-allowed disabled:opacity-25"><ArrowDown size={13} /></button>
                       <button type="button" aria-pressed={fav} aria-label={fav ? `Unpin ${q.label}` : `Pin ${q.label} to the composer`} onClick={(e) => { e.stopPropagation(); toggleFav(q.id) }} title={fav ? 'Pinned to the composer' : 'Pin to the composer'} className={cx('grid size-6 shrink-0 place-items-center rounded-md transition-colors hover:bg-hov', fav ? 'text-ac' : 'text-mu/70 hover:text-tx')}><Star size={14} fill={fav ? 'currentColor' : 'none'} /></button>
                       <button type="button" aria-label={`Edit ${q.label}`} onClick={(e) => { e.stopPropagation(); setEditQ(q) }} title="Edit quality" className="grid size-6 shrink-0 place-items-center rounded-md text-mu/70 transition-colors hover:bg-hov hover:text-tx"><Pencil size={13} /></button>
                     </div>

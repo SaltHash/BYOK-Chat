@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-const { normalizePoll, initialPollAnswers, pollAnswerText } = await import('../src/replyWidgets.ts')
+const { normalizePoll, initialPollAnswers, pollAnswerText, pollQuestionAnswered } = await import('../src/replyWidgets.ts')
 
 test('normalizes the current questions schema', () => {
   const poll = normalizePoll({
@@ -44,6 +44,27 @@ test('answers include the typed value attached to a fill-in option', () => {
   const answers = initialPollAnswers(poll)
   answers[0] = { ...answers[0], choice: [1], text: 'Neovim' }
   assert.equal(pollAnswerText(poll, answers), 'Which editor?\nOther: Neovim')
+})
+
+test('an option-level prompt opens a required secondary answer', () => {
+  const poll = normalizePoll({
+    questions: [{
+      label: 'What city or neighborhood are you in, or should I use your device location?',
+      type: 'choice',
+      options: [
+        { label: 'Use my device location' },
+        { label: 'I’ll enter a city or neighborhood', prompt: 'Enter your city or neighborhood.' },
+      ],
+    }],
+  })
+  assert.equal(poll[0].options[1].prompt, 'Enter your city or neighborhood.')
+  const answers = initialPollAnswers(poll)
+  answers[0] = { ...answers[0], choice: [1] }
+  assert.equal(pollQuestionAnswered(poll[0], answers[0]), false)
+  assert.equal(pollAnswerText(poll, answers), '')
+  answers[0] = { ...answers[0], text: 'Austin' }
+  assert.equal(pollQuestionAnswered(poll[0], answers[0]), true)
+  assert.equal(pollAnswerText(poll, answers), 'What city or neighborhood are you in, or should I use your device location?\nI’ll enter a city or neighborhood: Austin')
 })
 
 test('slider answers start at their minimum and can be sent', () => {
