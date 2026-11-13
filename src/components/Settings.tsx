@@ -1,13 +1,13 @@
 import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { X, Plus, Trash2, ArrowUp, ArrowDown, CornerDownRight, ChevronDown, ChevronRight, Eye, EyeOff, Play, ShieldCheck, Shield, Download, Check, CircleCheck, CircleX, Cpu, Route, GripVertical, Server, ListMusic, ScrollText, Terminal, Wrench, Palette, FolderOpen, PanelRight, TrendingUp, Keyboard, Search, Brain, Pencil, Sparkles, RotateCcw, SlidersHorizontal, FlaskConical, Library, Database, Lock, LockOpen, LayoutTemplate, Share2, Plug, Image as ImageIcon, Volume2, AudioLines, Code2, Star } from 'lucide-react'
 import { modelListEdit } from '../models'
-import { useS, useSConfig, PRE, BLANK, THEMES, DARK_THEMES, LIGHT_THEMES, THEME_COLOR_KEYS, THEME_COLOR_LABELS, THEME_COLORS, defaultCustomTheme, customThemeColors, normCustomTheme, SEARCH_PROVIDERS, READER_PROVIDERS, FEATURES, LIBRARY_ITEMS, FEATURE_TABS, FEATURE_WIDGETS, DEFAULT_LIBRARY_SHOW, DEFAULT_ADVANCED, featOn, normSearch, normAdvanced, normLogDetail, normDocs, usable, modelsOf, modelNameOf, helperRef, splitHelperRef, favRef, toggleFavRef, effortClassifierOf, TOOL_ROUNDS_DEFAULT, TOOL_ROUNDS_MIN, TOOL_ROUNDS_BASE_MAX, TOOL_ROUNDS_MAX, toolRoundLimitOf, isToolRoundsUnlimited, GENERAL_PROMPT_TEXT, STARTUP_MODES, normStartup, PROMPT_RECALL_MODES, normPromptRecall, type PromptRecallMode, type Kind, type FeatureId, type DocPrefs, type ModelPrice } from '../store'
+import { useS, useSConfig, PRE, BLANK, THEMES, DARK_THEMES, LIGHT_THEMES, THEME_COLOR_KEYS, THEME_COLOR_LABELS, THEME_COLORS, defaultCustomTheme, customThemeColors, normCustomTheme, SEARCH_PROVIDERS, READER_PROVIDERS, FEATURES, LIBRARY_ITEMS, FEATURE_TABS, FEATURE_WIDGETS, DEFAULT_LIBRARY_SHOW, DEFAULT_ADVANCED, featOn, normSearch, normAdvanced, normLogDetail, normDocs, usable, modelsOf, modelNameOf, helperRef, splitHelperRef, favRef, toggleFavRef, effortClassifierOf, TOOL_ROUNDS_DEFAULT, TOOL_ROUNDS_MIN, TOOL_ROUNDS_BASE_MAX, TOOL_ROUNDS_MAX, toolRoundLimitOf, isToolRoundsUnlimited, GENERAL_PROMPT_TEXT, STARTUP_MODES, normStartup, PROMPT_RECALL_MODES, normPromptRecall, uid, type PromptRecallMode, type Kind, type FeatureId, type DocPrefs, type ModelPrice } from '../store'
 import { normSkills, resolveSkill, validateCustomSkill, enabledSkills, BUILTIN_SKILLS, SKILL_TOOL_NAME, type SkillState } from '../skills'
 import { findDuplicatePairs, mergeMemory } from '../recall'
 import { TOOL_REGISTRY, can, stream } from '../engine'
 import { CI, TOOLS, WIDGETS, KEYS, orderTools } from '../meta'
 import { SETTINGS_TABS, SETTINGS_GROUPS, visibleTabs, searchSettings, splitSettingTarget, settingDomId } from '../settingsCatalog'
-import { PROMPT_QUALITIES, normQualityFavs, type GlobalPrompt, type PromptQuality } from '../flair'
+import { normQualityFavs, type GlobalPrompt, type PromptQuality, type Quality } from '../flair'
 import { PROMPT_VARS } from '../promptVars'
 import { DataTab, KeysTab, TestRow, TestAllEndpoints } from './Extra'
 import { ToolAccessCard } from './ToolAccess'
@@ -872,13 +872,54 @@ function Eps() {
  * help tooltip instead of insert buttons. */
 const PROMPT_VAR_HINT = `${PROMPT_VARS.map((v) => `{${v.id}} — ${v.desc}`).join(' · ')}`
 
+function QualityEditor({ initial, existingIds, close, save }: { initial?: Quality; existingIds: string[]; close: () => void; save: (q: Quality) => void }) {
+  const [label, setLabel] = useState(initial?.label ?? '')
+  const [desc, setDesc] = useState(initial?.desc ?? '')
+  const [text, setText] = useState(initial?.text ?? '')
+  const [effort, setEffort] = useState<'none' | 'lowest' | 'highest'>(initial?.effect?.effort ?? 'none')
+  const [skillsOff, setSkillsOff] = useState(initial?.effect?.skillsOff === true)
+  const [safetyAsk, setSafetyAsk] = useState(initial?.effect?.safety === 'ask')
+  const ok = label.trim().length > 0
+  const submit = () => {
+    if (!ok) return
+    const base = label.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || `quality-${uid()}`
+    let id = initial?.id ?? base
+    if (!initial) {
+      let n = 2
+      while (existingIds.includes(id)) id = `${base}-${n++}`
+    }
+    const effect = {
+      ...(effort !== 'none' ? { effort } : {}),
+      ...(skillsOff ? { skillsOff: true } : {}),
+      ...(safetyAsk ? { safety: 'ask' as const } : {}),
+    }
+    save({ id, label: label.trim().slice(0, 60), desc: desc.trim().slice(0, 200), text, ...(Object.keys(effect).length ? { effect } : {}) })
+  }
+  return (
+    <Modal close={close} label={initial ? `Edit ${initial.label}` : 'Add a quality'}>
+      <div className="modal-panel flex max-h-[85dvh] w-full max-w-xl flex-col gap-4 overflow-y-auto rounded-2xl bg-bg p-5">
+        <div className="flex items-center gap-2 font-semibold"><Sparkles size={18} className="text-ac" />{initial ? 'Edit quality' : 'New quality'}</div>
+        <Field label="Name"><Input value={label} set={setLabel} placeholder="e.g. Evidence-led" maxLength={60} /></Field>
+        <Field label="Short description" hint="Shown on the card and in the composer tooltip."><Input value={desc} set={setDesc} placeholder="What this quality changes" maxLength={200} /></Field>
+        <Field label="Prompt addition" hint="Appended to the global prompt as a standing requirement. Leave empty when the quality only changes how the request runs."><Area rows={6} value={text} set={setText} placeholder="Write the instruction the model should always follow…" /></Field>
+        <Field label="Reasoning effort" hint="Overrides the model's reasoning effort for replies with this quality on."><Seg v={effort} set={setEffort} opts={[['none', 'Model default'], ['lowest', 'Lowest'], ['highest', 'Highest']]} /></Field>
+        <div className="flex items-center justify-between gap-3 text-sm"><span>Turn off all skills</span><Toggle on={skillsOff} set={setSkillsOff} label="Turn off all skills" /></div>
+        <div className="flex items-start justify-between gap-3 text-sm"><span className="min-w-0 flex-1">Always ask before using a tool<HelpTip text="Runs this reply in Restricted tool access without changing your global tool setting." label="Help: Always ask" /></span><Toggle on={safetyAsk} set={setSafetyAsk} label="Always ask before using a tool" /></div>
+        <div className="flex justify-end gap-2 pt-1"><Btn v="soft" onClick={close}>Cancel</Btn><Btn v="solid" disabled={!ok} onClick={submit}>{initial ? 'Save quality' : 'Add quality'}</Btn></div>
+      </div>
+    </Modal>
+  )
+}
+
 function QualitiesTab() {
   const { prompts, upd, patch, globalPrompt } = useSConfig()
   const prefs = useS((s) => s.prefs)
+  const qualityList = useS((s) => s.qualities)
+  const [editQ, setEditQ] = useState<Quality | 'new' | null>(null)
   const g = globalPrompt ?? { on: false, text: '', qualities: [] }
   const qualities = g.qualities ?? []
   const setG = (v: Partial<GlobalPrompt>) => patch({ globalPrompt: { ...g, ...v } })
-  const favs = normQualityFavs(prefs.qualityFavs)
+  const favs = normQualityFavs(prefs.qualityFavs, qualityList.map((q) => q.id))
   const isFav = (id: string) => favs.includes(id)
   const toggleFav = (id: string) => {
     const next = isFav(id) ? favs.filter((x) => x !== id) : [...favs, id]
@@ -887,6 +928,11 @@ function QualitiesTab() {
   const toggleQuality = (id: PromptQuality) => {
     const on = qualities.includes(id)
     setG({ qualities: on ? qualities.filter((x) => x !== id) : [...qualities, id] })
+  }
+  const saveQuality = (q: Quality) => {
+    const exists = qualityList.some((x) => x.id === q.id)
+    patch({ qualities: exists ? qualityList.map((x) => (x.id === q.id ? q : x)) : [...qualityList, q] })
+    setEditQ(null)
   }
   const activeCount = qualities.length + (g.on ? 1 : 0)
   return (
@@ -903,7 +949,7 @@ function QualitiesTab() {
               <Toggle on={g.on} set={(on) => setG({ on })} label="Apply global prompt to every message" />
             </div>
             <Field label="Prompt text" hint={`The base instruction. Write one from scratch, copy a chat prompt below, or keep the default. You can use {variable} placeholders, replaced with the current UTC values when the request is sent: ${PROMPT_VAR_HINT}`}>
-              <Area rows={8} value={g.text} set={(v) => setG({ text: v })} />
+              <Area rows={8} value={g.text} set={(v) => setG({ text: v })} className="border border-bor bg-bg" />
             </Field>
             <div className="flex flex-wrap items-center gap-3">
               <div className="flex min-w-0 flex-1 items-center gap-2">
@@ -921,12 +967,15 @@ function QualitiesTab() {
       <Section title="Qualities" desc="Small behaviours that change how replies read, think or use tools. Pick any combination; favourites appear as switches in the composer.">
         <Anchor id="qualities">
           <div className="py-4">
-            <div className="mb-3 flex items-start gap-2 text-xs text-mu">
-              <Sparkles size={14} className="mt-px shrink-0" />
-              <p className="flex-1">Qualities are independent of the base prompt: a quality still applies when the global prompt is off. Reasoning and tool qualities also change how the request runs, not just what the model is told.</p>
+            <div className="mb-3 flex flex-wrap items-start gap-3">
+              <div className="flex min-w-0 flex-1 items-start gap-2 text-xs text-mu">
+                <Sparkles size={14} className="mt-px shrink-0" />
+                <p className="flex-1">Star a quality to show it in the composer&rsquo;s qualities picker, where it can be switched on or off for the next reply without opening Settings. The composer also lists the global prompt.</p>
+              </div>
+              <Btn v="soft" icon={Plus} onClick={() => setEditQ('new')}>Add quality</Btn>
             </div>
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              {PROMPT_QUALITIES.map((q) => {
+              {qualityList.map((q) => {
                 const on = qualities.includes(q.id)
                 const fav = isFav(q.id)
                 const effect = q.effect
@@ -944,13 +993,14 @@ function QualitiesTab() {
                       <span className={cx('grid size-4 shrink-0 place-items-center rounded border transition-colors', on ? 'border-ac bg-ac text-white' : 'border-bor bg-bg')}>{on && <Check size={11} strokeWidth={3} />}</span>
                       <span className="min-w-0 flex-1 truncate text-sm font-medium">{q.label}</span>
                       <button type="button" aria-pressed={fav} aria-label={fav ? `Unpin ${q.label}` : `Pin ${q.label} to the composer`} onClick={(e) => { e.stopPropagation(); toggleFav(q.id) }} title={fav ? 'Pinned to the composer' : 'Pin to the composer'} className={cx('grid size-6 shrink-0 place-items-center rounded-md transition-colors hover:bg-hov', fav ? 'text-ac' : 'text-mu/70 hover:text-tx')}><Star size={14} fill={fav ? 'currentColor' : 'none'} /></button>
+                      <button type="button" aria-label={`Edit ${q.label}`} onClick={(e) => { e.stopPropagation(); setEditQ(q) }} title="Edit quality" className="grid size-6 shrink-0 place-items-center rounded-md text-mu/70 transition-colors hover:bg-hov hover:text-tx"><Pencil size={13} /></button>
                     </div>
                     <p className="text-xs leading-relaxed text-mu">{q.desc}</p>
-                    {(effect?.effort || effect?.skillsOff || effect?.toolsOff) && (
+                    {(effect?.effort || effect?.skillsOff || effect?.safety) && (
                       <div className="mt-auto flex flex-wrap gap-1.5 pt-0.5">
                         {effect.effort && <span className="rounded-md bg-bg px-1.5 py-0.5 text-[11px] text-mu">{effect.effort === 'highest' ? 'Highest reasoning' : 'Lowest reasoning'}</span>}
                         {effect.skillsOff && <span className="rounded-md bg-bg px-1.5 py-0.5 text-[11px] text-mu">Skills off</span>}
-                        {effect.toolsOff && <span className="rounded-md bg-bg px-1.5 py-0.5 text-[11px] text-mu">Tools off</span>}
+                        {effect.safety === 'ask' && <span className="rounded-md bg-bg px-1.5 py-0.5 text-[11px] text-mu">Always asks</span>}
                       </div>
                     )}
                   </div>
@@ -960,6 +1010,8 @@ function QualitiesTab() {
           </div>
         </Anchor>
       </Section>
+
+      {editQ && <QualityEditor key={editQ === 'new' ? 'new' : editQ.id} {...(editQ === 'new' ? {} : { initial: editQ })} existingIds={qualityList.map((q) => q.id)} close={() => setEditQ(null)} save={saveQuality} />}
 
       <Section title="Chat prompts">
         <div className="flex items-center gap-3 py-3">

@@ -1,8 +1,8 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { useShallow } from 'zustand/react/shallow'
-import { Plus, FileUp, FileText, ArrowUp, Square, CornerDownRight, ChevronRight, ListMusic, ListPlus, Cpu, ScrollText, Settings, Search, BookOpen, X, TriangleAlert, Wrench, Link as LinkIcon, ScanText, Loader2, Mic, Star, GripVertical, Check, Globe } from 'lucide-react'
+import { Plus, FileUp, FileText, ArrowUp, Square, CornerDownRight, ChevronRight, ListMusic, ListPlus, Cpu, ScrollText, Settings, Search, BookOpen, X, TriangleAlert, Wrench, Link as LinkIcon, ScanText, Loader2, Mic, Star, GripVertical, Check, Globe, Pencil } from 'lucide-react'
 import { useS, usable, modelsOf, modelNameOf, featOn, normDocs, normSearch, fetchOptsOf, effortClassifierOf, helperRef, splitHelperRef, toggleFavRef, type Att, type Ep } from '../store'
-import { DEFAULT_QUALITY_FAVS, PROMPT_QUALITIES, normQualities, normQualityFavs, type PromptQuality } from '../flair'
+import { DEFAULT_QUALITY_FAVS, normQualities, normQualityFavs, type PromptQuality } from '../flair'
 import { CI, orderTools } from '../meta'
 import { composerWidth } from '../layout'
 import { can, readAtts, ocrImage, fetchPage } from '../engine'
@@ -16,6 +16,7 @@ import { ToolAccessButton, ToolApprovalPrompt, QuestionPrompt } from './ToolAcce
 import { dictationAvailable, startDictation, stopSpeaking, normVoice, type Dictation } from '../voice'
 import { getPromptHistory, pushPromptHistory } from '../promptHistory'
 import { quoteForSend } from '../quote'
+import { isLargePaste } from '../paste'
 
 const chip = 'flex h-9 min-w-0 items-center gap-2 rounded-lg px-2.5 text-sm text-mu hover:bg-hov hover:text-tx'
 
@@ -467,6 +468,16 @@ export function Composer({ cfg, quote, onClearQuote }: { cfg: (t: string) => voi
     } catch (x: any) { setOcrStatus(''); s.patch({ notice: { t: `Transcription did not finish (${String(x?.message ?? x)}). Try again, or pick a different endpoint in Settings.` } }) }
     finally { setOcrBusy(null) }
   }
+  /** Turn a pasted-text attachment back into editable composer text. */
+  const editPasted = (a: Att) => {
+    if (!a.text) return
+    const text = a.text
+    setAtt((list) => list.filter((x) => x !== a))
+    pending.current = 'end'
+    const base = useS.getState().draft
+    s.patch({ draft: base ? `${base}${base.endsWith('\n') ? '' : '\n'}${text}` : text })
+    requestAnimationFrame(() => ta.current?.focus())
+  }
   const ready = !!v.trim() || att.length > 0 || !!quote
   const submit = async () => {
     if (streaming && !queueMode) return
@@ -660,6 +671,7 @@ export function Composer({ cfg, quote, onClearQuote }: { cfg: (t: string) => voi
                   <div onPointerDown={hp.onPointerDown} title={bad(a) ? 'The selected model cannot process this file' : `${a.name}${a.source ? ` · ${a.source}` : ''}${a.pages ? ` · ${a.pages} pages` : ''}${a.text ? ` · ${Math.round(a.text.length / 1024)} KB text` : ''}`} className={cx('inline-flex items-center gap-1.5 rounded-lg bg-hov py-1 pl-2 pr-1 text-xs', bad(a) && 'text-er')}>
                     {handle('!bg-transparent !text-mu hover:!text-tx')}
                     {bad(a) ? <TriangleAlert size={13} /> : <FileText size={13} />}{a.text && a.kind !== 'txt' ? '✓ ' : ''}{a.name}<span className="text-mu">{a.size}</span>
+                    {a.source === 'paste' && <Btn sm icon={Pencil} title="Edit pasted text in the composer" onClick={(e) => { e.stopPropagation(); editPasted(a) }} onPointerDown={(e) => e.stopPropagation()} />}
                     <Btn sm icon={X} title={`Remove ${a.name}`} onClick={remove} />
                   </div>
                 )
@@ -761,6 +773,20 @@ export function Composer({ cfg, quote, onClearQuote }: { cfg: (t: string) => voi
               const text = e.clipboardData.getData('text/plain')
               if (!text) return
               e.preventDefault()
+              // A long paste is reference material, not the message. Attach it
+              // so the model sees a clear file boundary instead of treating the
+              // pasted document as an instruction.
+              if (isLargePaste(text)) {
+                const dp = normDocs(s.docPrefs)
+                const used = att.reduce((n, a) => n + (a.text?.length ?? 0), 0)
+                if (used + text.length > dp.totalChars) {
+                  s.patch({ notice: { t: 'That paste is too large to attach because this message is already at its text limit. Send it in a file instead, or remove an attachment first.' } })
+                  return
+                }
+                const n = att.filter((a) => a.source === 'paste').length + 1
+                setAtt((list) => [...list, { name: `Pasted text ${n}`, kind: 'txt', size: `${Math.max(1, Math.round(text.length / 1024))} KB`, source: 'paste', text }])
+                return
+              }
               const el = ta.current
               if (el) { insertText(el, text); commitInput() }
             }}
@@ -823,15 +849,15 @@ export function Composer({ cfg, quote, onClearQuote }: { cfg: (t: string) => voi
             )
           }}>{(close) => <ModelMenu close={close} cfg={cfg} />}</Pop>
           {featOn(s, 'prompts') && <Pop up onOpenChange={setMenusOpen} trigger={(o) => (
-            <button className={chip} title={normQualities(s.globalPrompt?.qualities).length ? `${normQualities(s.globalPrompt?.qualities).length} qualities on` : undefined}><ScrollText size={16} /><span className="max-w-20 truncate sm:max-w-32">{pr ? pr.name : 'No prompt'}</span>{(() => { const n = normQualities(s.globalPrompt?.qualities).length; return n ? <span className="inline-flex items-center gap-0.5 text-xs text-mu"><Star size={11} />{n}</span> : null })()}<ChevronRight size={14} className={cx('transition-transform', o && 'rotate-90')} /></button>
+            <button className={chip} title={normQualities(s.globalPrompt?.qualities, s.qualities.map((q) => q.id)).length ? `${normQualities(s.globalPrompt?.qualities, s.qualities.map((q) => q.id)).length} qualities on` : undefined}><ScrollText size={16} /><span className="max-w-20 truncate sm:max-w-32">{pr ? pr.name : 'No prompt'}</span>{(() => { const n = normQualities(s.globalPrompt?.qualities, s.qualities.map((q) => q.id)).length; return n ? <span className="inline-flex items-center gap-0.5 text-xs text-mu"><Star size={11} />{n}</span> : null })()}<ChevronRight size={14} className={cx('transition-transform', o && 'rotate-90')} /></button>
           )}>
             {(close) => {
               const g = s.globalPrompt ?? { on: false, text: '', qualities: [] }
-              const activeQualities = normQualities(g.qualities)
-              const favQualities = normQualityFavs(s.prefs.qualityFavs ?? DEFAULT_QUALITY_FAVS)
+              const activeQualities = normQualities(g.qualities, s.qualities.map((q) => q.id))
+              const favQualities = normQualityFavs(s.prefs.qualityFavs ?? DEFAULT_QUALITY_FAVS, s.qualities.map((q) => q.id))
                 .filter((id) => id !== 'global')
-                .map((id) => PROMPT_QUALITIES.find((q) => q.id === id))
-                .filter((q): q is (typeof PROMPT_QUALITIES)[number] => !!q)
+                .map((id) => s.qualities.find((q) => q.id === id))
+                .filter((q): q is (typeof s.qualities)[number] => !!q)
               const toggleQuality = (id: PromptQuality) => {
                 const next = activeQualities.includes(id) ? activeQualities.filter((x) => x !== id) : [...activeQualities, id]
                 s.patch({ globalPrompt: { ...g, qualities: next } })

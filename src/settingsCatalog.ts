@@ -117,7 +117,7 @@ export const SETTING_LINKS: SettingLink[] = [
   { tab: 'eps', anchor: 'test-connection', title: 'Test endpoint connections', keywords: 'test connection reachable all endpoints' },
 
   // Qualities
-  { tab: 'prompts', anchor: 'global-prompt', title: 'Global system prompt', keywords: 'global system prompt every message qualities tone instant concise playful sophisticated thorough warm direct curious practical deep reasoning quick reasoning no skills cautious no tools' },
+  { tab: 'prompts', anchor: 'global-prompt', title: 'Global system prompt', keywords: 'global system prompt every message qualities tone instant concise playful sophisticated thorough creative warm curious practical no skills cautious always ask lowest highest reasoning' },
   { tab: 'prompts', anchor: 'qualities', title: 'Qualities', keywords: 'qualities favorites favourite personality tone style reasoning effort skills safety' },
   { tab: 'prompts', anchor: 'add-prompt', title: 'Add prompt', keywords: 'add prompt new reusable' },
 

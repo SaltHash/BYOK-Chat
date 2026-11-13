@@ -169,75 +169,120 @@ export function activityLine(toolNames: readonly string[], seed: string): string
 
 /* A quality is a small, named behaviour the user can switch on for every
  * reply. Most add a sentence to the system prompt; some also change how the
- * request runs (reasoning effort, skills, tools), so a quality can be more
- * than tone. The base system prompt always stays authoritative. */
-export type PromptQuality =
-  | 'instant' | 'concise' | 'playful' | 'sophisticated' | 'thorough'
-  | 'warm' | 'direct' | 'curious' | 'practical'
-  | 'deep-reasoning' | 'quick-reasoning' | 'no-skills' | 'cautious' | 'no-tools'
+ * request runs (reasoning effort, skills, tool approval). The base system
+ * prompt always stays authoritative. Qualities are editable records, not a
+ * fixed enum, so users can add and change their own. */
+export type PromptQuality = string
 
-export type QualityEffect = { effort?: 'lowest' | 'highest'; skillsOff?: boolean; toolsOff?: boolean }
+export type QualityEffect = {
+  effort?: 'lowest' | 'highest'
+  skillsOff?: boolean
+  /** Every tool call pauses for permission, regardless of the global access mode. */
+  safety?: 'ask'
+}
 
-export type GlobalPrompt = { on: boolean; text: string; qualities: PromptQuality[] }
-
-/** The qualities shown as cards in Settings and offered in the composer. */
-export const PROMPT_QUALITIES: {
-  id: PromptQuality
+export type Quality = {
+  id: string
   label: string
   desc: string
   text: string
   effect?: QualityEffect
-}[] = [
-  { id: 'instant', label: 'Instant', desc: 'Shortest useful answer, no preamble.', text: 'Answer as quickly and briefly as possible. Give the direct answer first, skip preamble, restatement and closing offers, and add detail only when the answer would otherwise be wrong or unusable.' },
+}
+
+export type GlobalPrompt = { on: boolean; text: string; qualities: PromptQuality[] }
+
+/** Built-in qualities. Users can edit these records; the ids are only stable
+ *  defaults and are not treated as a closed set when stored state is read. */
+export const DEFAULT_QUALITIES: Quality[] = [
+  { id: 'instant', label: 'Instant', desc: 'Shortest useful answer, lowest reasoning.', text: 'Answer as quickly and briefly as possible. Give the direct answer first, skip preamble, restatement and closing offers, and add detail only when the answer would otherwise be wrong or unusable.', effect: { effort: 'lowest' } },
   { id: 'concise', label: 'Concise', desc: 'Lead with the answer; keep detail tight.', text: 'Lead with the answer, keep supporting detail brief, and stop when the request is satisfied.' },
   { id: 'playful', label: 'Playful', desc: 'Light humour without losing accuracy.', text: 'Use light humor and informal phrasing when the context allows, while keeping the answer accurate.' },
   { id: 'sophisticated', label: 'Sophisticated', desc: 'Nuanced, well-structured, polished prose.', text: 'Write with precision and nuance. Use a clear structure, name important tradeoffs and assumptions, and prefer the exact word over the approximate one. Do not pad the answer to sound impressive.' },
-  { id: 'thorough', label: 'Thorough', desc: 'Cover edge cases and supporting evidence.', text: 'Be thorough: cover the important edge cases, state the assumptions the answer depends on, and support claims with evidence or concrete reasoning. Prefer completeness over brevity when the two conflict.' },
+  { id: 'thorough', label: 'Thorough', desc: 'Cover edge cases and use the highest reasoning.', text: 'Be thorough: cover the important edge cases, state the assumptions the answer depends on, and support claims with evidence or concrete reasoning. Prefer completeness over brevity when the two conflict.', effect: { effort: 'highest' } },
   { id: 'warm', label: 'Warm', desc: 'Friendly and encouraging.', text: 'Use a friendly, encouraging tone, and acknowledge the user\u2019s effort or situation.' },
-  { id: 'direct', label: 'Direct', desc: 'Plain answer, no hedging or padding.', text: 'State the answer and any caveats plainly, without hedging or padding.' },
   { id: 'curious', label: 'Curious', desc: 'Explore useful alternative angles.', text: 'Consider alternative angles when they are useful, and ask a follow-up only when it would materially improve the answer.' },
   { id: 'practical', label: 'Practical', desc: 'Concrete steps, examples and tradeoffs.', text: 'Favor concrete steps, examples, and tradeoffs, and explain abstract ideas only when they help.' },
-  { id: 'deep-reasoning', label: 'Deep reasoning', desc: 'Use the model\u2019s highest reasoning effort.', text: 'Think carefully before answering. Reason through the problem, check the result, and only then write the answer.', effect: { effort: 'highest' } },
-  { id: 'quick-reasoning', label: 'Quick reasoning', desc: 'Use the lowest reasoning effort.', text: 'Answer without extended deliberation; use the smallest amount of reasoning that still produces a correct answer.', effect: { effort: 'lowest' } },
+  { id: 'creative', label: 'Creative', desc: 'Flowery, imaginative writing and rhetorical analysis.', text: 'Bring imagination and expressive craft to the writing. Use vivid imagery, deliberate rhythm and rhetorical devices when they serve the piece, and for rhetorical analysis examine how a text persuades through structure, diction, imagery and appeals rather than only summarizing what it says. Keep factual claims honest and never present invented material as fact.' },
   { id: 'no-skills', label: 'No skills', desc: 'Skip installed skill instructions.', text: '', effect: { skillsOff: true } },
-  { id: 'cautious', label: 'Cautious', desc: 'Flag risk and ask before irreversible steps.', text: 'Be conservative. Call out risky, destructive or irreversible actions before describing them, prefer reversible options, and state the limits of what you can verify. Do not guess when the cost of being wrong is high.' },
-  { id: 'no-tools', label: 'No tools', desc: 'Answer from the conversation only.', text: '', effect: { toolsOff: true } },
+  { id: 'cautious', label: 'Cautious', desc: 'Flag risk and always ask before using a tool.', text: 'Be conservative. Call out risky, destructive or irreversible actions before describing them, prefer reversible options, and state the limits of what you can verify. Do not guess when the cost of being wrong is high.', effect: { safety: 'ask' } },
 ]
 
-const QUALITY_IDS = new Set<string>(PROMPT_QUALITIES.map((q) => q.id))
+/** Alias kept for callers that only need the built-in set. */
+export const PROMPT_QUALITIES = DEFAULT_QUALITIES
 
-/** Qualities offered in the composer out of the box, plus the global-prompt row. */
 export const DEFAULT_QUALITY_FAVS: string[] = ['global', 'instant', 'concise', 'playful', 'sophisticated']
 
-/** Keep known quality ids, drop duplicates and anything stored by an older version. */
-export function normQualities(value: unknown): PromptQuality[] {
+const copyQuality = (q: Quality): Quality => ({ ...q, ...(q.effect ? { effect: { ...q.effect } } : {}) })
+
+const shortText = (v: unknown, max: number) => String(v ?? '').replace(/[\u0000-\u001f\u007f]+/g, ' ').trim().slice(0, max)
+
+const cleanEffect = (value: unknown): QualityEffect | undefined => {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
+  const v = value as Record<string, unknown>
+  const effect: QualityEffect = {}
+  if (v.effort === 'lowest' || v.effort === 'highest') effect.effort = v.effort
+  if (v.skillsOff === true) effect.skillsOff = true
+  if (v.safety === 'ask') effect.safety = 'ask'
+  return Object.keys(effect).length ? effect : undefined
+}
+
+/** Sanitize a stored or imported quality list. Malformed rows are dropped,
+ *  ids are deduplicated, and a missing list falls back to the built-ins. */
+export function normQualityList(value: unknown): Quality[] {
+  if (!Array.isArray(value)) return DEFAULT_QUALITIES.map(copyQuality)
+  const out: Quality[] = []
+  const seen = new Set<string>()
+  for (const raw of value) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) continue
+    const q = raw as Record<string, unknown>
+    const label = shortText(q.label, 60)
+    if (!label) continue
+    let id = shortText(q.id, 80).replace(/\s+/g, '-').toLowerCase() || label.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
+    if (!id) id = `quality-${out.length + 1}`
+    if (seen.has(id)) continue
+    seen.add(id)
+    out.push({
+      id,
+      label,
+      desc: shortText(q.desc, 200),
+      text: typeof q.text === 'string' ? q.text.slice(0, 12000) : '',
+      ...(cleanEffect(q.effect) ? { effect: cleanEffect(q.effect)! } : {}),
+    })
+  }
+  return out.length ? out : DEFAULT_QUALITIES.map(copyQuality)
+}
+
+/** Keep known quality ids, drop duplicates and ids no longer offered. */
+export function normQualities(value: unknown, known: readonly string[] = DEFAULT_QUALITIES.map((q) => q.id)): PromptQuality[] {
   if (!Array.isArray(value)) return []
+  const allowed = new Set(known)
   const out: PromptQuality[] = []
   for (const raw of value) {
-    if (typeof raw !== 'string' || !QUALITY_IDS.has(raw) || out.includes(raw as PromptQuality)) continue
-    out.push(raw as PromptQuality)
+    if (typeof raw !== 'string' || !allowed.has(raw) || out.includes(raw)) continue
+    out.push(raw)
   }
   return out
 }
 
 /** The favourites list shown in the composer. `global` is the pseudo-id for
  *  the global system prompt toggle; unknown ids are dropped. */
-export function normQualityFavs(value: unknown): string[] {
+export function normQualityFavs(value: unknown, known: readonly string[] = DEFAULT_QUALITIES.map((q) => q.id)): string[] {
   if (value === undefined) return [...DEFAULT_QUALITY_FAVS]
-  const list = Array.isArray(value) ? value.filter((x): x is string => typeof x === 'string') : []
-  return list.filter((id, i) => (id === 'global' || QUALITY_IDS.has(id)) && list.indexOf(id) === i)
+  if (!Array.isArray(value)) return []
+  const allowed = new Set(['global', ...known])
+  return value.filter((id, i): id is string => typeof id === 'string' && allowed.has(id) && value.indexOf(id) === i)
 }
 
 /** What the selected qualities change beyond their prompt text. */
-export function qualityEffects(value: unknown): QualityEffect {
-  const ids = normQualities(value)
+export function qualityEffects(value: unknown, qualities: Quality[] = DEFAULT_QUALITIES): QualityEffect {
+  const ids = normQualities(value, qualities.map((q) => q.id))
   const effects: QualityEffect = {}
   for (const id of ids) {
-    const effect = PROMPT_QUALITIES.find((q) => q.id === id)?.effect
+    const effect = qualities.find((q) => q.id === id)?.effect
     if (!effect) continue
     if (effect.effort) effects.effort = effect.effort
     if (effect.skillsOff) effects.skillsOff = true
-    if (effect.toolsOff) effects.toolsOff = true
+    if (effect.safety === 'ask') effects.safety = 'ask'
   }
   return effects
 }
@@ -247,13 +292,17 @@ export function normGlobalPrompt(value: unknown): GlobalPrompt {
   return { on: v.on === true, text: typeof v.text === 'string' ? v.text : '', qualities: normQualities(v.qualities) }
 }
 
-/** The block appended after the base global prompt. Empty when nothing is selected. */
-export function qualityPrompt(value: unknown): string {
-  const ids = normQualities(value)
+/** The block appended after the base global prompt. Empty when nothing is
+ *  selected. Qualities are framed as standing requirements, not suggestions. */
+export function qualityPrompt(value: unknown, qualities: Quality[] = DEFAULT_QUALITIES): string {
+  const ids = normQualities(value, qualities.map((q) => q.id))
   if (!ids.length) return ''
-  const lines = ids.map((id) => PROMPT_QUALITIES.find((x) => x.id === id)).filter((q) => !!q?.text).map((q) => `- ${q!.label}: ${q!.text}`)
+  const lines = ids
+    .map((id) => qualities.find((x) => x.id === id))
+    .filter((q): q is Quality => !!q?.text.trim())
+    .map((q) => `- ${q.label}: ${q.text.trim()}`)
   if (!lines.length) return ''
-  return `# Selected qualities\nApply these qualities to your reply. They shape style and approach, but never override the other instructions in this prompt:\n${lines.join('\n')}`
+  return `# Qualities (standing requirements)\nThese qualities are standing requirements. ALWAYS follow them in every reply, even when the request or your default style points elsewhere. Apply them as a guiding principle throughout the answer, not as an optional suggestion. They refine the other instructions; they never override safety or honesty rules.\n${lines.join('\n')}`
 }
 
 const FORTUNES = [

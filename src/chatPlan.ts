@@ -2,7 +2,7 @@ import { TOOLS } from './meta'
 import { can } from './engine'
 import { enabledSkills, normSkills, composeSystemPrompt } from './skills'
 import { modelsOf, usable } from './models'
-import { qualityEffects, qualityPrompt, type GlobalPrompt, type QualityEffect } from './flair'
+import { qualityEffects, qualityPrompt, type GlobalPrompt, type Quality, type QualityEffect } from './flair'
 import { applyPromptVars, dateContext } from './promptVars'
 import type { Ep, Pl, Cmd, Msg, Notice, FeatureId } from './store'
 import type { ToolMode } from './toolApprovals'
@@ -17,6 +17,7 @@ type PlanState = {
   prompts: { id: string; text: string }[]
   pr: string; sel: { k: 'ep' | 'pl'; id: string; model?: string } | null
   globalPrompt: GlobalPrompt
+  qualities: Quality[]
   features?: Record<FeatureId, boolean>
   tools: Record<string, boolean>
   /** Full/standard/restricted/off; off must not advertise tools to the model. */
@@ -68,14 +69,14 @@ export function planRequest(s: PlanState, um: Msg, defaultFeatures: Record<Featu
   // Qualities are independent of the base prompt toggle: the composer offers
   // them as their own switches, so they still apply when the long base text is
   // switched off. The base text itself rides along only while it is on.
-  const effects: QualityEffect = F.prompts ? qualityEffects(s.globalPrompt?.qualities) : {}
+  const effects: QualityEffect = F.prompts ? qualityEffects(s.globalPrompt?.qualities, s.qualities) : {}
   const globalSys = F.prompts
-    ? [(s.globalPrompt?.on ? applyPromptVars(s.globalPrompt.text.trim()) : ''), qualityPrompt(s.globalPrompt?.qualities)].filter(Boolean).join('\n\n')
+    ? [(s.globalPrompt?.on ? applyPromptVars(s.globalPrompt.text.trim()) : ''), qualityPrompt(s.globalPrompt?.qualities, s.qualities)].filter(Boolean).join('\n\n')
     : ''
   // The date context rides along with every prompt so the model always knows
   // which day it is, even when the user wrote no prompt at all.
   const baseSys = [dateContext(), globalSys, scoped].filter(Boolean).join('\n\n')
-  const enabledTools = F.tools && !effects.toolsOff && s.toolMode !== 'off' ? TOOLS.filter(([name]) => s.tools[name] === true).map(([name]) => name) : []
+  const enabledTools = F.tools && s.toolMode !== 'off' ? TOOLS.filter(([name]) => s.tools[name] === true).map(([name]) => name) : []
   const widgetTools = enabledTools.some((name) => name === 'prompt_chip' || name === 'inline_poll')
   const widgetSys = widgetTools ? 'Follow-up chips and choice cards are rendered by the interface after your reply. Never mention them in your prose, never say that you added follow-up options, and never tell the user to click or fill them.' : ''
   const toolSys = enabledTools.length ? `${baseSys}${baseSys ? '\n\n' : ''}You may use the enabled tools when needed to answer the user. Call a tool for requests that need its actual result, then base your answer on the returned result.${widgetSys ? ` ${widgetSys}` : ''}` : baseSys

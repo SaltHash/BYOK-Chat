@@ -10,6 +10,7 @@ import { syncBackend, redact, neonSyncEnabled } from './syncStore.mjs'
 import { shareBackend } from './shareStore.mjs'
 import { handleShareCreate, handleShareGet, handleShareUpdate, shareIdOf } from './share.mjs'
 import { clientIp, headerValue, jsonResult, readBodyText, requestHost, sameOrigin } from './http.mjs'
+import { apiMock } from './mock.mjs'
 import { overRateLimit, bumpRateLimit } from './ratelimit.mjs'
 
 // Hard server-side caps. Per-request tuning arrives from the user's search
@@ -341,6 +342,7 @@ export async function apiRoute(req, env = process.env, opts = {}) {
   else if (url.pathname === '/api/reader') result = await apiReader(req, env, opts)
   else if (url.pathname === '/api/share' || url.pathname.startsWith('/api/share/')) result = await apiShare(req, env)
   else if (url.pathname.startsWith('/api/sync/')) result = await apiSync(req, env)
+  else if (url.pathname === '/api/mock' || url.pathname.startsWith('/api/mock/')) result = await apiMock(req, env)
   else if (url.pathname === '/api' || url.pathname.startsWith('/api/')) result = jsonResult(404, { error: 'Not found' })
   if (!result) return null
   // HEAD mirrors the GET route it targets: same status and headers, no body.

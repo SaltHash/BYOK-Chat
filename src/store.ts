@@ -22,7 +22,7 @@ export type { ResearchState, ResearchTierId, ResearchPlan, ResearchPlanStep, Res
 import { collectMessageSources, citationCoverage, citationRule, createCiteIds, mergeSources } from './citations'
 import { appendHint, getErrorCode, classifyModelError, type ErrorCode } from './errors'
 import { toggleBookmark } from './bookmarks'
-import { celebrate, normGlobalPrompt, normQualityFavs, DEFAULT_QUALITY_FAVS, type GlobalPrompt } from './flair'
+import { celebrate, normGlobalPrompt, normQualities, normQualityFavs, normQualityList, DEFAULT_QUALITIES, DEFAULT_QUALITY_FAVS, type GlobalPrompt, type Quality } from './flair'
 // Set by workspace writes; read once when a reply ends to decide on the completion cue.
 let workspaceWritesPending = false
 /* Guards the awaited vision-OCR pass inside send(): the chat is not marked
@@ -45,6 +45,7 @@ import { readUsageLedger, usageLedgerExists, writeUsageLedger } from './storage/
 import { providerPresetEntries } from './providerRegistry'
 import { accentHue, adjustThemeColors, customPalette, isHexColor, normalizeHex } from './theme'
 import { PROMPT_ARCHITECT_TEXT } from './promptArchitect'
+import { isLocalHost, isLocalMockEndpoint, localMockEndpoint, mockSearchData } from './devMocks'
 import { normDensity, normSpacing, normStylePreset, type Density, type SpacingOverrides, type StylePreset } from './style'
 export { accentHue, adjustThemeColors } from './theme'
 import type { ShareRecord } from './share'
@@ -340,8 +341,40 @@ export const PRE: Record<string, ['openai' | 'anthropic', string, string, 'autho
   Object.entries(PRESET_PRE).sort(([a], [b]) => presetRank(a) - presetRank(b)),
 )
 export const GENERAL_PROMPT_TEXT = 'Current date: {date} ({weekday}). When searching, prefer the freshest information and sources as close to this date as possible.\n\nYou are a helpful general-purpose assistant. Follow the user\u2019s instructions carefully and answer directly. Match the length and detail to the request. Work through problems carefully, and explain the key reasoning when it helps.\n\nBe honest about what you know, what you infer, and what you are unsure about. Do not present guesses as facts, and never fabricate sources, quotes, links, or capabilities. When you use sources, cite them clearly, but do not impose a citation style or add a bibliography such as MLA unless the user asks for one. Ask a brief clarifying question only when the answer would materially change your response. If you can proceed with a reasonable assumption, state it and continue.\n\nWrite clearly and naturally, with concrete, varied language. Avoid filler, stock phrases, and clich\u00e9s. In your own prose, avoid em dashes; use commas, periods, colons, or parentheses instead. Keep them when quoting, preserving user text, or when they are part of code or a title. Reply in the language of the user\u2019s latest message unless they ask for a translation or another language. Use light markdown when it aids readability, and plain prose for conversational replies. When someone seems distressed, respond with warmth before problem-solving.\n\nMake responses interactive when it genuinely helps the user act on the answer. Prefer links you found through tools or that the user provided, and never invent a URL. When a request is ambiguous or has a few reasonable paths, offer short, concrete choices. If the app provides follow-up buttons or choice cards, use them; otherwise keep next steps to one short line. Skip these elements for simple answers, casual chat, or anything where they would add clutter.\n\nTool failure handling: never pretend a tool call succeeded when it failed. Distinguish between a tool that is unavailable, an execution error, a timeout, and an invalid result. If a tool returns incomplete information, explain the limitation instead of filling the gap. Retry only when the failure is transient and a retry is unlikely to duplicate an action. Never repeat a potentially destructive or irreversible action without checking whether the first attempt took effect. When a tool is unavailable, explain what can still be accomplished without it.\n\nFollow any tool, skill, or memory instructions appended to this prompt. If the user has enabled additional instructions, follow them. Where they conflict with these defaults, the more specific instruction wins, except that the honesty and safety rules in this prompt always apply.\n\nRefuse requests that would cause serious harm, briefly and without lecturing.'
-export const CREATIVITY_PROMPT_TEXT = 'You are a creativity-focused assistant. Favor original ideas, imaginative angles, and unconventional approaches over the most obvious answer. Explore multiple possibilities, make surprising but useful connections between seemingly unrelated concepts, and write richly and expressively when the task calls for it. Adapt to the user\u2019s requested style, tone, genre, and constraints, and experiment freely within them. Stay factually honest: never present invented content as fact, and never fabricate sources, evidence, quotes, or capabilities.'
-export const CONCISE_PROMPT_TEXT = 'Answer briefly and directly. Skip preamble.'
+export const SOFTWARE_ENGINEERING_PROMPT_TEXT = `# Role
+
+You are a senior software engineer working directly in the user\u2019s repository. Implement the request end to end, in the existing codebase, rather than describing a generic solution.
+
+# Working rules
+
+- Inspect the repository first. Confirm the relevant files, conventions, dependencies, scripts and test setup before editing. Never invent paths, APIs, libraries or commands.
+- Make the smallest change that fully satisfies the request. Do not refactor, restyle or add features the user did not ask for.
+- Match the project\u2019s existing naming, structure, error handling, accessibility and formatting conventions.
+- Preserve behavior outside the request. If a change could break callers, update them or explain the tradeoff.
+- Verify the result with the repository\u2019s real typecheck, test or build commands. Use the narrowest relevant check first, inspect failures instead of suppressing them, and report clearly what passed and what could not run.
+- Keep the final explanation short: what changed, why, and what was verified.`
+export const RESEARCHER_PROMPT_TEXT = `# Role
+
+You are a research analyst. Answer the user\u2019s question from evidence, then make the evidence and its quality auditable.
+
+# Method
+
+- Dig deep. Prefer primary sources, current documentation, filings, papers and first-party announcements over aggregators, listicles and marketing copy. Verify important claims against an independent source where one exists.
+- Read past the first page when the question needs it, follow promising leads, and look for the strongest counter-evidence rather than only confirming the first answer.
+- Separate sourced fact from inference. Never invent a source, quote, date, statistic or URL. If a claim stays uncertain or contested, say so plainly.
+
+# Output
+
+Start with a **TL;DR** that directly answers the question in a few sentences, including the verdict or recommendation when the request calls for one.
+
+Then add a **Sources** section. For every source, give its title as a link, a one or two sentence summary of the relevant findings, why it is relevant to the request, and a short credibility note (primary or secondary, recency, expertise, independence, known bias). Order sources by importance, not by the order you found them.
+
+Finish with **Leads for further research**: related questions that were outside the requested scope but worth pursuing, each with a short note on why it matters and where to start. Keep this section clearly separate from the answer.`
+export const DEFAULT_PROMPT_PRESETS: Prompt[] = [
+  { id: 'software-engineering', name: 'Software engineering', text: SOFTWARE_ENGINEERING_PROMPT_TEXT },
+  { id: 'architect', name: 'Prompt architect', text: PROMPT_ARCHITECT_TEXT },
+  { id: 'researcher', name: 'Researcher', text: RESEARCHER_PROMPT_TEXT },
+]
 export const uid = () => Math.random().toString(36).slice(2, 9)
 
 /* Tool-loop round cap. `maxToolRounds` of 0 means unlimited; otherwise 1..64.
@@ -619,6 +652,8 @@ type S = {
   /** Starred models as `<endpointId>::<model>` refs, newest last. */
   favs: string[]
   globalPrompt: GlobalPrompt
+  /** Editable quality definitions shown in Settings and the composer. */
+  qualities: Quality[]
   features: Record<FeatureId, boolean>
   featureOrder: FeatureId[]
   libraryShow: Record<string, boolean>
@@ -1488,7 +1523,7 @@ export const useS = create<S>()(
                   scopeUsed++
                   patchRs(chatId, mid, (rs) => ({ ...rs, scope: scopeUsed }))
                   try {
-                    const data = await searchWeb(String(q ?? ''), { ...searchOpts, cache: true })
+                    const data = isLocalMockEndpoint(e) ? mockSearchData(String(q ?? '')) : await searchWeb(String(q ?? ''), { ...searchOpts, cache: true })
                     return formatSearch(data as never, { inlineCites: false })
                   } catch (err: any) {
                     // A failed context search must never dead-end planning: tell
@@ -1735,7 +1770,7 @@ export const useS = create<S>()(
                 counters.searches++
                 patchAgent(agentId, { searches: counters.searches })
                 try {
-                  const data = await searchWeb(String(q ?? ''), { ...searchOpts, count: searchCountOf(prefs, count), cache: true })
+                  const data = isLocalMockEndpoint(e) ? mockSearchData(String(q ?? '')) : await searchWeb(String(q ?? ''), { ...searchOpts, count: searchCountOf(prefs, count), cache: true })
                   const results = (data as { results?: { id: string; title: string; url: string }[] }).results ?? []
                   for (const item of results) item.id = citeIdFor(item.url)
                   mergeAgentSources(agentId, results.map((x) => ({ citeId: x.id, title: x.title, url: x.url })))
@@ -1825,7 +1860,7 @@ export const useS = create<S>()(
                 const id = `s${stepN}`
                 patchRs(chatId, mid, (rs) => withStepLead(rs, { id, kind: 'search', label: `Search ${attempt}`, query: String(q ?? '').slice(0, 120), state: 'running' }))
                 try {
-                  const data = await searchWeb(String(q ?? ''), { ...searchOpts, count: searchCountOf(prefs, count), cache: true })
+                  const data = isLocalMockEndpoint(e) ? mockSearchData(String(q ?? '')) : await searchWeb(String(q ?? ''), { ...searchOpts, count: searchCountOf(prefs, count), cache: true })
                   const results = (data as { results?: { id: string; url: string }[] }).results ?? []
                   for (const item of results) item.id = citeIdFor(item.url)
                   const out = formatSearch(data as never, { inlineCites: prefs.citeStyle !== 'off' })
@@ -2451,7 +2486,7 @@ export const useS = create<S>()(
                 const g = get(), GF = g.features ?? DEFAULT_FEATURES
                 // The composer lock can turn every schema off; keeping the
                 // per-tool switches intact means choosing Full restores them.
-                const toolsAllowed = GF.tools && !p.effects.toolsOff && normToolMode(g.toolMode) !== 'off'
+                const toolsAllowed = GF.tools && normToolMode(g.toolMode) !== 'off'
                 const base: Record<string, boolean> = toolsAllowed ? { ...g.tools, memory: memOn } : {}
                 // MCP tools are registered at reply time with their own names;
                 // the per-server switch already decided whether they exist.
@@ -2657,7 +2692,10 @@ export const useS = create<S>()(
               maxParallel: 4,
               approve: async (call) => {
                 const g = get()
-                const mode = normToolMode(g.toolMode)
+                // A cautious quality raises this reply to Restricted for the
+                // whole run: every tool call asks, without changing the global
+                // access setting the user chose.
+                const mode = p.effects.safety === 'ask' ? 'restricted' : normToolMode(g.toolMode)
                 // Off can be chosen while a reply is in flight; refuse at the
                 // boundary instead of letting a queued call slip through.
                 if (mode === 'off') return false
@@ -2756,13 +2794,8 @@ export const useS = create<S>()(
       }
 
       return {
-        eps: [], pls: [], mcps: [],
-        prompts: [
-          { id: 'general', name: 'General', text: GENERAL_PROMPT_TEXT },
-          { id: 'creativity', name: 'Creativity', text: CREATIVITY_PROMPT_TEXT },
-          { id: 'concise', name: 'Concise', text: CONCISE_PROMPT_TEXT },
-          { id: 'architect', name: 'Prompt architect', text: PROMPT_ARCHITECT_TEXT },
-        ],
+        eps: isLocalHost() ? [localMockEndpoint()] : [], pls: [], mcps: [],
+        prompts: DEFAULT_PROMPT_PRESETS.map((x) => ({ ...x })),
         cmds: [
           { id: 'k1', name: 'describe', desc: 'Describe an image', in: 'image', sys: 'Describe images accurately and objectively.', tpl: 'Describe this image.', pl: '', on: true, args: '' },
           { id: 'k2', name: 'summarize', desc: 'Summarize a document', in: 'doc', sys: 'Summarize documents faithfully in under 150 words.', tpl: 'Summarize the attached document. {{input}}', pl: '', on: true, args: '[focus]' },
@@ -2776,7 +2809,7 @@ export const useS = create<S>()(
         params: { ...DEFAULT_PARAMS }, effort: {},
         workspacePrefs: { defaultView: 'latest', autoOpen: true, autoFollow: true },
         advanced: { ...DEFAULT_ADVANCED },
-        sel: null, favs: [], pr: 'general', globalPrompt: { on: true, text: GENERAL_PROMPT_TEXT, qualities: [] }, features: { ...DEFAULT_FEATURES }, featureOrder: FEATURES.map(([id]) => id), libraryShow: { ...DEFAULT_LIBRARY_SHOW }, themeMode: 'dark', themeDark: 'plum', themeLight: 'paper', customDarkColors: { ...DEFAULT_CUSTOM_COLORS }, customLightColors: { ...DEFAULT_CUSTOM_LIGHT_COLORS }, customDarkTheme: { ...DEFAULT_CUSTOM_DARK_THEME }, customLightTheme: { ...DEFAULT_CUSTOM_LIGHT_THEME }, setupDone: false, prefs: { ...DEFAULT_PREFS },
+        sel: null, favs: [], pr: 'software-engineering', globalPrompt: { on: true, text: GENERAL_PROMPT_TEXT, qualities: [] }, qualities: DEFAULT_QUALITIES.map((q) => ({ ...q, ...(q.effect ? { effect: { ...q.effect } } : {}) })), features: { ...DEFAULT_FEATURES }, featureOrder: FEATURES.map(([id]) => id), libraryShow: { ...DEFAULT_LIBRARY_SHOW }, themeMode: 'dark', themeDark: 'plum', themeLight: 'paper', customDarkColors: { ...DEFAULT_CUSTOM_COLORS }, customLightColors: { ...DEFAULT_CUSTOM_LIGHT_COLORS }, customDarkTheme: { ...DEFAULT_CUSTOM_DARK_THEME }, customLightTheme: { ...DEFAULT_CUSTOM_LIGHT_THEME }, setupDone: false, prefs: { ...DEFAULT_PREFS },
         stats: ZERO(), keys: Object.fromEntries(KEYS.map(([k, , d]) => [k, d])), gistToken: '',
         usage: initialLedger.rows, usageTitles: initialLedger.titles,
         projects: [], activeProject: '', price: { in: 0, out: 0 }, todos: [],
@@ -3484,6 +3517,20 @@ export const useS = create<S>()(
       name: 'byok.v1', version: STORE_VERSION, storage: persistStorage,
       migrate: (p: any, v: number) => {
         delete p.settingsScope
+        p.qualities = normQualityList(p.qualities)
+        if (v < 26) {
+          // The old chat presets are replaced by exactly three supported ones.
+          // Match by id or name so an edited copy keeps its id, while the
+          // prompt-architect role always receives the current contract text.
+          const old = Array.isArray(p.prompts) ? p.prompts : []
+          const kept = DEFAULT_PROMPT_PRESETS.map((preset) => {
+            if (preset.id === 'architect') return { ...preset }
+            const match = old.find((x: Prompt) => x?.id === preset.id || String(x?.name ?? '').toLowerCase() === preset.name.toLowerCase())
+            return match ? { ...match, id: preset.id, name: preset.name } : { ...preset }
+          })
+          p.prompts = kept
+          if (!kept.some((x) => x.id === p.pr)) p.pr = 'software-engineering'
+        }
         if (v < 11) {
           const hasUserData = !!(p.eps?.length || p.chats?.length || p.pls?.length || p.prompts?.some((x: any) => !['general', 'creativity', 'concise', 'architect', 's1', 's2', 's3'].includes(x.id)))
           p.setupDone = hasUserData
@@ -3550,7 +3597,7 @@ export const useS = create<S>()(
         if (p.prefs && p.prefs.showTps === undefined) p.prefs.showTps = false
         p.prefs = { ...p.prefs, hideFavoriteProvider: p.prefs?.hideFavoriteProvider === true, logDetail: normLogDetail(p.prefs?.logDetail), logTiming: p.prefs?.logTiming !== false, logModels: p.prefs?.logModels !== false, codeLines: p.prefs?.codeLines === true, codeMaxHeight: typeof p.prefs?.codeMaxHeight === 'number' && Number.isFinite(p.prefs.codeMaxHeight) ? Math.max(0, Math.min(1200, Math.round(p.prefs.codeMaxHeight))) : 0, pinContext: p.prefs?.pinContext !== false, pinContextPercent: typeof p.prefs?.pinContextPercent === 'number' && Number.isFinite(p.prefs.pinContextPercent) ? Math.max(5, Math.min(50, Math.round(p.prefs.pinContextPercent))) : 50, tempHours: p.prefs?.tempHours ?? 3, archiveDays: normArchiveDays(p.prefs?.archiveDays), startup: normStartup(p.prefs?.startup), tempShow: Number.isInteger(p.prefs?.tempShow) ? Math.max(0, Math.min(6, p.prefs.tempShow)) : 2, tempShowStreaming: p.prefs?.tempShowStreaming !== false, tempShowDone: p.prefs?.tempShowDone !== false, draftSurvive: ['off', 'new', 'chats', 'both'].includes(p.prefs?.draftSurvive) ? p.prefs.draftSurvive : 'both', fontBody: p.prefs?.fontBody ?? 'system', fontMono: p.prefs?.fontMono ?? 'system', fontHeader: p.prefs?.fontHeader ?? 'system', modelPrimary: p.prefs?.modelPrimary ?? ({ none: 'id', name: 'name', provider: 'id', both: 'name' } as const)[(p.prefs?.modelDisplay as string) ?? 'both'] ?? 'name', modelSecondary: p.prefs?.modelSecondary ?? ({ none: 'none', name: 'none', provider: 'provider', both: 'provider' } as const)[(p.prefs?.modelDisplay as string) ?? 'both'] ?? 'none', paletteMax: p.prefs?.paletteMax ?? 320, chatWidth: p.prefs?.chatWidth ?? 'standard', settingsWidth: p.prefs?.settingsWidth ?? 1024, settingsHeight: p.prefs?.settingsHeight ?? 780, modelPickerHeight: p.prefs?.modelPickerHeight ?? 480, showModelPricing: p.prefs?.showModelPricing ?? false, showContextMeter: p.prefs?.showContextMeter ?? true, titleEp: p.prefs?.titleEp ?? '', titleModel: p.prefs?.titleModel ?? '', effortEp: p.prefs?.effortEp ?? '', effortModel: p.prefs?.effortModel ?? '', recallEp: p.prefs?.recallEp ?? '', recallModel: p.prefs?.recallModel ?? '', routingMode: ['ordered', 'fastest', 'cheapest'].includes(p.prefs?.routingMode) ? p.prefs.routingMode : 'ordered', sidebarWidth: p.prefs?.sidebarWidth ?? 288, widgetWidth: p.prefs?.widgetWidth ?? 320, workspaceWidth: typeof p.prefs?.workspaceWidth === 'number' && p.prefs.workspaceWidth <= 1 ? p.prefs.workspaceWidth : 0.4, workspaceSplit: typeof p.prefs?.workspaceSplit === 'number' ? p.prefs.workspaceSplit : 0.2, modalBlur: p.prefs?.modalBlur ?? 12, settingsOpacity: p.prefs?.settingsOpacity ?? 55, temporaryByDefault: p.prefs?.temporaryByDefault ?? false, streamFade: typeof p.prefs?.streamFade === 'number' && p.prefs.streamFade >= 0 && p.prefs.streamFade <= 1 ? p.prefs.streamFade : 0.3, streamMd: p.prefs?.streamMd ?? true, proxyMode: p.prefs?.proxyMode === 'always' || p.prefs?.proxyMode === 'off' ? p.prefs.proxyMode : 'auto', glassComposer: p.prefs?.glassComposer ?? true, glassBlur: typeof p.prefs?.glassBlur === 'number' && Number.isFinite(p.prefs.glassBlur) ? Math.max(0, Math.min(40, Math.round(p.prefs.glassBlur))) : 14, glassOpacity: typeof p.prefs?.glassOpacity === 'number' && Number.isFinite(p.prefs.glassOpacity) ? Math.max(0, Math.min(100, Math.round(p.prefs.glassOpacity))) : 80, showDisabledFeatures: p.prefs?.showDisabledFeatures === true, stylePreset: normStylePreset(p.prefs?.stylePreset), density: normDensity(p.prefs?.density), uiSpacing: normSpacing(p.prefs?.uiSpacing), showTimestamps: p.prefs?.showTimestamps === true, alwaysShowActions: p.prefs?.alwaysShowActions === true, textScale: typeof p.prefs?.textScale === 'number' && Number.isFinite(p.prefs.textScale) ? Math.round(Math.min(200, Math.max(50, p.prefs.textScale))) : 100, codeWrap: p.prefs?.codeWrap === true, reduceTransparency: p.prefs?.reduceTransparency === true, promptRecall: normPromptRecall(p.prefs?.promptRecall), highContrast: p.prefs?.highContrast === true }
         p.favs = Array.isArray(p.favs) ? [...new Set(p.favs.filter((x: unknown) => typeof x === 'string' && x.includes('::')))] : []
-        p.prefs = { ...p.prefs, qualityFavs: normQualityFavs(p.prefs?.qualityFavs), favoritesSection: p.prefs?.favoritesSection !== false, hideFavoritesInProviders: p.prefs?.hideFavoritesInProviders !== false, collapsedProviders: Array.isArray(p.prefs?.collapsedProviders) ? p.prefs.collapsedProviders.filter((x: unknown) => typeof x === 'string') : [] }
+        p.prefs = { ...p.prefs, qualityFavs: normQualityFavs(p.prefs?.qualityFavs, (Array.isArray(p.qualities) ? p.qualities : DEFAULT_QUALITIES).map((q: Quality) => q.id)), favoritesSection: p.prefs?.favoritesSection !== false, hideFavoritesInProviders: p.prefs?.hideFavoritesInProviders !== false, collapsedProviders: Array.isArray(p.prefs?.collapsedProviders) ? p.prefs.collapsedProviders.filter((x: unknown) => typeof x === 'string') : [] }
         // Image backgrounds were removed; drop their persisted settings.
         if (p.prefs && typeof p.prefs === 'object') {
           const legacy = p.prefs as Record<string, unknown>
@@ -3584,28 +3631,16 @@ export const useS = create<S>()(
         p.researchPanel = null
         p.skills = normSkills(p.skills).skills
         if (typeof p.pr !== 'string') p.pr = ''
-        // Fresh installs start on the general-purpose prompt. Existing custom
-        // prompts are never deleted here; coding expertise now lives in skills.
-        if (!Array.isArray(p.prompts) || !p.prompts.length) {
-          p.prompts = [
-            { id: 'general', name: 'General', text: GENERAL_PROMPT_TEXT },
-            { id: 'creativity', name: 'Creativity', text: CREATIVITY_PROMPT_TEXT },
-            { id: 'concise', name: 'Concise', text: CONCISE_PROMPT_TEXT },
-            { id: 'architect', name: 'Prompt architect', text: PROMPT_ARCHITECT_TEXT },
-          ]
-          if (!p.pr) p.pr = 'general'
-        } else if (!p.pr && p.prompts.some((x: Prompt) => x.id === 'general')) {
-          p.pr = 'general'
-        }
-        // Existing installs that still carry the untouched default prompts get
-        // the prompt-architect preset too; a list the user has edited is left alone.
-        if (Array.isArray(p.prompts)
-          && ['general', 'creativity', 'concise'].every((id) => p.prompts.some((x: Prompt) => x.id === id))
-          && !p.prompts.some((x: Prompt) => x.id === 'architect')) {
-          p.prompts = [...p.prompts, { id: 'architect', name: 'Prompt architect', text: PROMPT_ARCHITECT_TEXT }]
-        }
+        // New installs start with the three supported chat presets. Rehydration
+        // after a reload keeps any prompts the user adds later.
+        if (!Array.isArray(p.prompts) || !p.prompts.length) p.prompts = DEFAULT_PROMPT_PRESETS.map((x) => ({ ...x }))
+        if (!p.pr && p.prompts.some((x: Prompt) => x.id === 'software-engineering')) p.pr = 'software-engineering'
         p.memories = Array.isArray(p.memories) ? p.memories : []
         p.globalPrompt = normGlobalPrompt(p.globalPrompt)
+        p.globalPrompt.qualities = normQualities(p.globalPrompt.qualities, p.qualities.map((q: Quality) => q.id))
+        // A deleted or renamed preset must never leave the composer pointing at
+        // a prompt that is no longer in the list.
+        if (!p.prompts.some((x: Prompt) => x.id === p.pr)) p.pr = p.prompts[0]?.id ?? ''
         // Turn the global prompt on by default (the general-purpose base). Existing
         // installs that never configured it migrate over too, so the new default
         // takes effect without wiping a user's own edits.
@@ -3655,6 +3690,7 @@ export const useS = create<S>()(
         p.widgetPrefs.widgetOrder = [...new Set([...(p.widgetPrefs.widgetOrder ?? []), ...WIDGETS.map(([k]) => k)])].filter((k) => k !== 'ctx')
         p.stats = { ...ZERO(), ...p.stats }
         p.eps = (p.eps ?? []).map((e: Ep) => ({ ...e, modelsMode: e.modelsMode ?? 'separate', models: e.models?.length ? e.models : [e.model], modelNames: e.modelNames ?? {}, modelContext: e.modelContext ?? {}, modelProviders: e.modelProviders ?? {}, prices: e.prices ?? {} }))
+
         p.pls = (p.pls ?? []).map((pl: Pl) => ({ ...pl, e: (pl.e ?? []).flatMap((ref) => {
           if (ref.includes('::')) return [ref]
           const ep = p.eps.find((item: Ep) => item.id === ref)
@@ -3675,6 +3711,11 @@ export const useS = create<S>()(
       // removed theme keys and drop anything unknown so `data-t` is always valid.
       merge: (persisted, current) => {
         const p = { ...current, ...(persisted as any) }
+        p.qualities = normQualityList(p.qualities)
+        // Development convenience: a real same-origin endpoint that streams
+        // canned replies, calls tools and runs deep research without a key.
+        // It is only offered on loopback hosts, and merge runs on every load.
+        if (isLocalHost() && !(p.eps ?? []).some((e: Ep) => isLocalMockEndpoint(e))) p.eps = [...(p.eps ?? []), localMockEndpoint()]
         // The Gist token used to live in its own localStorage key and so never
         // reached sync or backups. It now lives in the store: import any legacy
         // value once, then drop the old key so it cannot go stale or survive

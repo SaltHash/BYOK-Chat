@@ -32,7 +32,25 @@ const mime = {
 
 function sendResult(res, result) {
   res.writeHead(result.status, result.headers)
-  res.end(result.body === null ? undefined : JSON.stringify(result.body))
+  // Local test models stream canned SSE chunks. Writing them over a few
+  // frames exercises the same streaming path a provider uses instead of
+  // delivering one batched body.
+  if (Array.isArray(result.sseChunks)) {
+    let i = 0
+    let timer
+    const next = () => {
+      if (res.destroyed) return
+      if (i >= result.sseChunks.length) { res.end(); return }
+      res.write(result.sseChunks[i++])
+      timer = setTimeout(next, 12)
+      timer.unref?.()
+    }
+    res.on('close', () => clearTimeout(timer))
+    next()
+    return
+  }
+  const body = result.body === null ? undefined : typeof result.body === 'string' ? result.body : JSON.stringify(result.body)
+  res.end(body)
 }
 
 /* Stream a Fetch API Response (used by the /api/proxy relay) onto a Node

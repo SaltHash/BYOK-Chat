@@ -101,7 +101,7 @@ test('quality ids are unique and have short prompt text', () => {
 })
 
 test('stored qualities keep known ids, drop duplicates and junk', () => {
-  assert.deepEqual(normQualities(['warm', 'warm', 'nope', null, 'direct']), ['warm', 'direct'])
+  assert.deepEqual(normQualities(['warm', 'warm', 'nope', null, 'concise']), ['warm', 'concise'])
   assert.deepEqual(normQualities(undefined), [])
   assert.deepEqual(normQualities('warm'), [])
 })
@@ -118,20 +118,21 @@ test('global prompt normalization supplies safe defaults', () => {
 test('quality prompt appends only selected qualities and keeps the base authoritative', () => {
   assert.equal(qualityPrompt([]), '')
   const text = qualityPrompt(['warm', 'practical'])
-  assert.match(text, /^# Selected qualities\n/)
+  assert.match(text, /^# Qualities \(standing requirements\)\n/)
   assert.match(text, /- Warm: /)
   assert.match(text, /- Practical: /)
   assert.ok(!text.includes('- Concise: '))
-  assert.match(text, /never override the other instructions/)
-  assert.equal(qualityPrompt(['no-skills', 'no-tools']), '', 'effect-only qualities add no prompt text')
+  assert.match(text, /ALWAYS follow them/)
+  assert.match(text, /guiding principle/)
+  assert.equal(qualityPrompt(['no-skills']), '', 'effect-only qualities add no prompt text')
 })
 
 test('quality effects describe the run, not just the wording', () => {
   assert.deepEqual(qualityEffects([]), {})
-  assert.deepEqual(qualityEffects(['deep-reasoning']), { effort: 'highest' })
-  assert.deepEqual(qualityEffects(['quick-reasoning']), { effort: 'lowest' })
-  assert.deepEqual(qualityEffects(['no-skills', 'no-tools', 'cautious']), { skillsOff: true, toolsOff: true })
-  assert.deepEqual(qualityEffects(['quick-reasoning', 'deep-reasoning']), { effort: 'highest' })
+  assert.deepEqual(qualityEffects(['thorough']), { effort: 'highest' })
+  assert.deepEqual(qualityEffects(['instant']), { effort: 'lowest' })
+  assert.deepEqual(qualityEffects(['no-skills', 'cautious']), { skillsOff: true, safety: 'ask' })
+  assert.deepEqual(qualityEffects(['instant', 'thorough']), { effort: 'highest' })
 })
 
 test('composer favourites default to the five starter switches and reject junk', () => {

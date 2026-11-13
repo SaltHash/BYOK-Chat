@@ -17,7 +17,10 @@ import { jsonResult } from '../server/http.mjs'
 
 function toResponse(result) {
   // HEAD (and any route that answers without content) must send no body at all.
-  return new Response(result.body === null ? null : JSON.stringify(result.body), { status: result.status, headers: result.headers })
+  const payload = Array.isArray(result.sseChunks)
+    ? result.sseChunks.join('')
+    : result.body === null ? null : typeof result.body === 'string' ? result.body : JSON.stringify(result.body)
+  return new Response(payload, { status: result.status, headers: result.headers })
 }
 
 /* Extension of a URL path ("" when none). Mirrors node:path.extname for the
