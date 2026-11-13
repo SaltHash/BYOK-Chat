@@ -293,6 +293,24 @@ export function ImageLightbox({ src, alt, close }: { src: string; alt?: string; 
   )
 }
 
+/** Full-screen viewer for pasted text. Uses the same portal and modal shell as
+ *  the image lightbox so the two previews behave identically. */
+export function TextLightbox({ text, title, close }: { text: string; title: string; close: () => void }) {
+  const titleId = useRef(`text-preview-${++layerId}`)
+  return createPortal(
+    <Modal close={close} blur={false} opacity={82} labelledBy={titleId.current}>
+      <section className="modal-panel flex max-h-[92vh] w-full max-w-[min(96vw,1100px)] flex-col overflow-hidden rounded-2xl border border-bor bg-bg shadow-2xl">
+        <header className="flex shrink-0 items-center gap-3 border-b border-bor px-4 py-3">
+          <div id={titleId.current} className="min-w-0 flex-1 truncate text-sm font-medium">{title}</div>
+          <Btn sm icon={X} title="Close full screen" onClick={close} />
+        </header>
+        <pre className="min-h-0 flex-1 overflow-auto whitespace-pre-wrap break-words p-5 font-mono text-sm leading-relaxed text-tx">{text}</pre>
+      </section>
+    </Modal>,
+    document.body,
+  )
+}
+
 /** An image that opens the lightbox when clicked. Clicks on a button or link
  *  inside the surrounding card are left alone, so the controls keep working. */
 export function ZoomableImage({ src, alt, className, ...rest }: { src: string; alt?: string; className?: string } & Omit<ImgHTMLAttributes<HTMLImageElement>, 'src' | 'alt' | 'className'>) {

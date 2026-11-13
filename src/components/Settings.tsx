@@ -1,7 +1,7 @@
 import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { X, Plus, Trash2, ArrowUp, ArrowDown, CornerDownRight, ChevronDown, ChevronRight, Eye, EyeOff, Play, ShieldCheck, Shield, Download, Check, CircleCheck, CircleX, Cpu, Route, GripVertical, Server, ListMusic, ScrollText, Terminal, Wrench, Palette, FolderOpen, PanelRight, TrendingUp, Keyboard, Search, Brain, Pencil, Sparkles, RotateCcw, SlidersHorizontal, FlaskConical, Library, Database, Lock, LockOpen, LayoutTemplate, Share2, Plug, Image as ImageIcon, Volume2, AudioLines, Code2, Star } from 'lucide-react'
 import { modelListEdit } from '../models'
-import { useS, useSConfig, PRE, BLANK, THEMES, DARK_THEMES, LIGHT_THEMES, THEME_COLOR_KEYS, THEME_COLOR_LABELS, THEME_COLORS, defaultCustomTheme, customThemeColors, normCustomTheme, SEARCH_PROVIDERS, READER_PROVIDERS, FEATURES, LIBRARY_ITEMS, FEATURE_TABS, FEATURE_WIDGETS, DEFAULT_LIBRARY_SHOW, DEFAULT_ADVANCED, featOn, normSearch, normAdvanced, normLogDetail, normDocs, usable, modelsOf, modelNameOf, helperRef, splitHelperRef, favRef, toggleFavRef, effortClassifierOf, TOOL_ROUNDS_DEFAULT, TOOL_ROUNDS_MIN, TOOL_ROUNDS_BASE_MAX, TOOL_ROUNDS_MAX, toolRoundLimitOf, isToolRoundsUnlimited, GENERAL_PROMPT_TEXT, STARTUP_MODES, normStartup, PROMPT_RECALL_MODES, normPromptRecall, uid, type PromptRecallMode, type Kind, type FeatureId, type DocPrefs, type ModelPrice } from '../store'
+import { useS, useSConfig, PRE, BLANK, THEMES, DARK_THEMES, LIGHT_THEMES, THEME_COLOR_KEYS, THEME_COLOR_LABELS, THEME_COLORS, defaultCustomTheme, customThemeColors, normCustomTheme, SEARCH_PROVIDERS, READER_PROVIDERS, FEATURES, LIBRARY_ITEMS, FEATURE_TABS, FEATURE_WIDGETS, DEFAULT_LIBRARY_SHOW, DEFAULT_ADVANCED, featOn, normSearch, normAdvanced, normLogDetail, normDocs, usable, modelsOf, modelNameOf, helperRef, splitHelperRef, favRef, toggleFavRef, effortClassifierOf, TOOL_ROUNDS_DEFAULT, TOOL_ROUNDS_MIN, TOOL_ROUNDS_BASE_MAX, TOOL_ROUNDS_MAX, toolRoundLimitOf, isToolRoundsUnlimited, GENERAL_PROMPT_TEXT, STARTUP_MODES, normStartup, PROMPT_RECALL_MODES, normPromptRecall, uid, REPLY_METRICS, DEFAULT_REPLY_STATS, type PromptRecallMode, type ReplyMetric, type ReplyModelLabel, type Kind, type FeatureId, type DocPrefs, type ModelPrice } from '../store'
 import { normSkills, resolveSkill, validateCustomSkill, enabledSkills, BUILTIN_SKILLS, SKILL_TOOL_NAME, type SkillState } from '../skills'
 import { findDuplicatePairs, mergeMemory } from '../recall'
 import { TOOL_REGISTRY, can, stream } from '../engine'
@@ -2015,12 +2015,51 @@ function Chats() {
   const toggle = (anchor: string, key: keyof typeof prefs, label: string) => (
     <Anchor id={anchor}><SettingRow label={label}><Toggle on={key === 'seasonal' ? prefs[key] !== false : !!prefs[key]} set={(v) => patch({ [key]: v } as Partial<typeof prefs>)} label={label} /></SettingRow></Anchor>
   )
+  const footerStats = prefs.replyStats ?? DEFAULT_REPLY_STATS
+  const toggleFooterStat = (id: ReplyMetric) => {
+    const next = new Set(footerStats)
+    if (next.has(id)) next.delete(id)
+    else next.add(id)
+    patch({ replyStats: REPLY_METRICS.map((metric) => metric.id).filter((metric) => next.has(metric)) })
+  }
   return (
     <Panel id="chats">
       <Section title="Replies">
         {toggle('show-by', 'showBy', 'Show which model answered')}
+        <Anchor id="reply-model-label">
+          <SettingRow label="Model label">
+            <div className="w-60 max-w-full">
+              <Sel
+                value={prefs.replyModelLabel ?? 'name'}
+                set={(value) => patch({ replyModelLabel: value as ReplyModelLabel })}
+                opts={[['name', 'Display name'], ['slug', 'Model slug'], ['name-endpoint', 'Name + endpoint'], ['slug-endpoint', 'Slug + endpoint']]}
+                inline
+              />
+            </div>
+          </SettingRow>
+        </Anchor>
         {toggle('show-log', 'showLog', 'Show model-use details')}
-        {toggle('show-tps', 'showTps', 'Show generation speed')}
+        <Anchor id="reply-footer">
+          <SettingRow label="Reply footer">
+            <div role="group" aria-label="Reply footer metrics" className="flex flex-wrap items-center gap-1.5">
+              {REPLY_METRICS.map((metric) => {
+                const on = footerStats.includes(metric.id)
+                return (
+                  <button
+                    key={metric.id}
+                    type="button"
+                    aria-pressed={on}
+                    title={`${on ? 'Hide' : 'Show'} ${metric.label.toLowerCase()} below replies`}
+                    onClick={() => toggleFooterStat(metric.id)}
+                    className={cx('rounded-full border px-2.5 py-1 text-xs font-medium transition-colors', on ? 'border-ac/40 bg-ac/10 text-ac' : 'border-bor text-mu hover:bg-surf hover:text-tx')}
+                  >
+                    {metric.label}
+                  </button>
+                )
+              })}
+            </div>
+          </SettingRow>
+        </Anchor>
         {toggle('stream-md', 'streamMd', 'Render markdown while streaming')}
         {toggle('custom-search', 'customSearch', 'Custom find in conversation (Ctrl+F)')}
         {toggle('remote-images', 'remoteImages', 'Load remote images')}

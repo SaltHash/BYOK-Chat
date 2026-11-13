@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import { Check, ChevronLeft, ChevronRight, Sparkles } from 'lucide-react'
-import { useS, THEMES, THEME_COLORS, DARK_THEMES, LIGHT_THEMES, themeKeyOf, featOn } from '../store'
+import { useS, THEMES, THEME_COLORS, DARK_THEMES, LIGHT_THEMES, themeKeyOf, featOn, DEFAULT_REPLY_STATS } from '../store'
 import { TOOLS, WIDGETS } from '../meta'
 import { Btn, Modal, Seg, Toggle, cx } from './ui'
 
@@ -23,7 +23,7 @@ export function Welcome({ addEndpoint, close }: { addEndpoint: () => void; close
     const toolsPatch = featOn(s, 'tools') ? { tools: Object.fromEntries(Object.keys(s.tools).map(k => [k, !!toolSel[k]])) } : {}
     // Widgets stay off by default; enable them later in Settings → Widgets.
     const widgetsPatch = featOn(s, 'widgets') ? { widgets: Object.fromEntries(WIDGETS.map(([k]) => [k, false])), rail: false } : { rail: false }
-    s.patch({ ...toolsPatch, ...widgetsPatch, setupDone: true, prefs: { ...s.prefs, showBy: responseInfo, showLog: responseInfo, showTps: responseInfo } })
+    s.patch({ ...toolsPatch, ...widgetsPatch, setupDone: true, prefs: { ...s.prefs, showBy: responseInfo, showLog: responseInfo, showTps: responseInfo, replyStats: responseInfo ? [...DEFAULT_REPLY_STATS] : [] } })
   }
   const finish = (add: boolean) => { apply(); if (add) addEndpoint(); else close() }
   // The fast path keeps the store defaults; the optional setup flow below still

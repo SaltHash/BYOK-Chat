@@ -1,7 +1,7 @@
 import { memo, useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import { GitBranch, ChevronLeft, ChevronRight, ChevronDown, Server, Cpu, Copy, Check, RefreshCw, Trash2, ListOrdered, TriangleAlert, Paperclip, Download, ExternalLink, Volume2, Pin, PinOff, Bookmark, Search, ArrowUp, ArrowDown, X, Quote, FileText, FileCode2, Terminal, Image as ImageIcon, Wrench } from 'lucide-react'
-import { useS, useLive, usable, featOn, previewSysFor, activeWorkspaceForChat, pinnedReplyOf, type LogDetail, type Msg } from '../store'
+import { useS, useLive, usable, modelNameOf, featOn, previewSysFor, activeWorkspaceForChat, pinnedReplyOf, DEFAULT_REPLY_STATS, type Ep, type LogDetail, type Msg, type ReplyModelLabel } from '../store'
 import { clampWorkspaceFrac, roundFrac, CHAT_WIDTH } from '../layout'
 import { focusComposer, startPointerDrag } from '../hooks'
 import { useProcessLogEpoch } from '../uiSignals'
@@ -10,7 +10,7 @@ import { CI, fmtDuration } from '../meta'
 import { toolLabel } from '../toolLabels'
 import { summarizeToolCalls, splitToolTrail, type ToolKind, type TrailCall } from '../toolSummary'
 import { formatMsgDateTime, formatMsgTime } from '../time'
-import { Btn, Chip, cx, ZoomableImage, type Ic } from './ui'
+import { Btn, Chip, cx, TextLightbox, ZoomableImage, type Ic } from './ui'
 import { Composer } from './Composer'
 import { ProjectOverview } from './ProjectOverview'
 import { Header } from './Header'
@@ -25,7 +25,7 @@ import { splitStream } from '../streamMd'
 import { WorkspaceTile, WorkspacePanel } from './Workspace'
 import { ResearchTierPicker, ResearchQuestionsCard, ResearchPlanCard, ResearchProgressCard, ResearchTile, ResearchPanel } from './Research'
 import { SourcesPanel, scrollToSource } from './Sources'
-import { claimForCitation, collectMessageSources, linkifyCitations, messageForCopy, parseSearchEvidence, stripCitations } from '../citations'
+import { claimForCitation, collectMessageSources, linkifyCitations, messageForCopy, parsePageExcerpt, parseSearchEvidence, stripCitations } from '../citations'
 import { findWritingPath, extractWorkspaceIds, type WorkspaceCallLike } from '../workspace'
 import { imageRefsFromRounds, imageSrc, type GeneratedImage } from '../imagegen'
 import { blobGet } from '../storage/durable'
@@ -179,39 +179,154 @@ function toolNode(label: string, id: string): [string, string] {
 
 const TOOL_KIND_ICON: Record<ToolKind, Ic> = { search: Search, page: FileText, write: FileCode2, delete: FileCode2, read: FileText, other: Wrench }
 
-/** One collapsed line between two pieces of prose: what the model did when it
- *  paused to call tools. The title is a sentence (“Searched 8 websites, wrote
- *  2 files”); expanding it shows each call. */
+type TrailLink = { url: string; title: string; host: string }
+
+const trailArgs = (raw?: string): Record<string, unknown> => {
+  try {
+    const v = JSON.parse(raw || '{}')
+    return v && typeof v === 'object' ? (v as Record<string, unknown>) : {}
+  } catch { return {} }
+}
+
+const trailUrlKey = (url: string) => {
+  try {
+    const u = new URL(url)
+    u.hash = ''
+    return u.toString().replace(/\/$/, '').toLowerCase()
+  } catch { return url.toLowerCase() }
+}
+
+const trailLink = (url: string, title?: string): TrailLink | null => {
+  if (!/^https?:\/\//i.test(url)) return null
+  let host = ''
+  try { host = new URL(url).host.replace(/^www\./, '') } catch { host = url }
+  return { url, title: (title ?? '').trim() || host || url, host }
+}
+
+/** The tool activity between two pieces of prose. Search and page-read calls
+ *  become source pills that open in a new tab; any other calls stay collapsed
+ *  in a compact summary. A page read that is already covered by a search
+ *  result in the same section is shown only once. */
 function ToolTrail({ calls }: { calls: TrailCall[] }) {
   const [open, setOpen] = useState(false)
-  const summary = summarizeToolCalls(calls)
+  const seen = new Set<string>()
+  const searches: { query: string; provider: string; links: TrailLink[] }[] = []
+  const reads: TrailLink[] = []
+  const other: TrailCall[] = []
+  for (const call of calls) {
+    if (call.name === 'search' && !call.error && call.result) {
+      const parsed = parseSearchEvidence(call.result)
+      const fallback = String(trailArgs(call.arguments).query ?? '')
+      if (!parsed.sources.length && !parsed.query && !fallback) { other.push(call); continue }
+      const links: TrailLink[] = []
+      for (const source of parsed.sources) {
+        const key = trailUrlKey(source.url)
+        if (seen.has(key)) continue
+        seen.add(key)
+        const link = trailLink(source.url, source.title)
+        if (link) links.push(link)
+      }
+      searches.push({ query: parsed.query || fallback, provider: parsed.provider, links })
+    } else if (call.name === 'fetch_page' && !call.error && call.result) {
+      const page = parsePageExcerpt(call.result)
+      if (!page) { other.push(call); continue }
+      const key = trailUrlKey(page.url)
+      if (!seen.has(key)) {
+        seen.add(key)
+        const link = trailLink(page.url, page.title)
+        if (link) reads.push(link)
+      }
+    } else {
+      other.push(call)
+    }
+  }
+  const hasEvidence = searches.length > 0 || reads.length > 0
+  const summary = summarizeToolCalls(other.length ? other : calls)
   const Icon = TOOL_KIND_ICON[summary.clauses[0]?.kind ?? 'other'] ?? Wrench
   return (
-    <div className="my-2">
-      <button
-        type="button"
-        aria-expanded={open}
-        onClick={() => setOpen(!open)}
-        title={open ? 'Hide the tool calls behind this text' : 'Show the tool calls behind this text'}
-        className="inline-flex max-w-full items-center gap-2 rounded-lg px-2 py-1 text-xs text-mu transition-colors hover:bg-surf hover:text-tx focus-visible:bg-surf focus-visible:text-tx"
-      >
-        <Icon size={14} className="shrink-0" aria-hidden="true" />
-        <span className="truncate">{summary.title}</span>
-        <ChevronRight size={13} className={cx('ml-1 shrink-0 transition-transform', open && 'rotate-90')} />
-      </button>
-      {open && (
-        <div className="ml-3 mt-1 space-y-0.5 border-l border-bor pl-3">
-          {calls.map((call, i) => {
-            const [head, desc] = toolNode(toolStep(call.name, call.arguments ?? '', call.result), call.name)
-            const RowIcon = callIcon(call)
-            return (
-              <div key={`${call.name}-${i}`} className="flex items-start gap-2 py-0.5 text-xs">
-                <RowIcon size={13} className={cx('mt-0.5 shrink-0', call.error ? 'text-er' : 'text-mu')} aria-hidden="true" />
-                <span className={cx('min-w-0 break-words text-tx', call.error && 'text-er')}>{head}</span>
-                {desc && <span className={cx('min-w-0 break-words text-mu', call.error && 'text-er')}>{desc}</span>}
-              </div>
-            )
-          })}
+    <div className="my-3 space-y-2 rounded-xl bg-surf/45 p-3">
+      {searches.map((search, i) => (
+        <div key={`search-${i}`} className="space-y-2">
+          <div className="flex items-center gap-1.5 text-xs font-medium text-tx">
+            <Search size={13} className="shrink-0 text-mu" aria-hidden="true" />
+            <span className="min-w-0 truncate">Searched “{search.query || 'the web'}”</span>
+            {search.provider && <span className="shrink-0 font-normal text-mu">· {search.provider}</span>}
+            {search.links.length > 0 && <span className="shrink-0 font-normal text-mu">· {search.links.length} result{search.links.length === 1 ? '' : 's'}</span>}
+          </div>
+          {search.links.length > 0 && (
+            <div className="flex flex-wrap gap-1.5">
+              {search.links.map((link) => (
+                <a
+                  key={link.url}
+                  href={link.url}
+                  target="_blank"
+                  rel="noopener noreferrer nofollow"
+                  title={`${link.title}\n${link.url}`}
+                  className="inline-flex max-w-[min(100%,20rem)] items-center gap-1.5 rounded-full border border-bor/80 bg-bg/55 px-2.5 py-1 text-xs text-tx transition-colors hover:border-ac/40 hover:bg-surf"
+                >
+                  <span className="truncate">{link.title}</span>
+                  <span className="shrink-0 text-[10px] text-mu">{link.host}</span>
+                </a>
+              ))}
+            </div>
+          )}
+        </div>
+      ))}
+      {reads.map((link) => (
+        <div key={`read-${link.url}`} className="space-y-1.5">
+          <a
+            href={link.url}
+            target="_blank"
+            rel="noopener noreferrer nofollow"
+            title={`Open ${link.url} in a new tab`}
+            className="flex min-w-0 items-center gap-1.5 text-xs text-mu transition-colors hover:text-tx"
+          >
+            <FileText size={13} className="shrink-0" aria-hidden="true" />
+            <span className="min-w-0 truncate">Read <span className="underline decoration-bor underline-offset-2">{link.url}</span></span>
+            <ExternalLink size={11} className="shrink-0" aria-hidden="true" />
+          </a>
+          <div>
+            <a
+              href={link.url}
+              target="_blank"
+              rel="noopener noreferrer nofollow"
+              title={`${link.title}\n${link.url}`}
+              className="inline-flex max-w-[min(100%,20rem)] items-center gap-1.5 rounded-full border border-bor/80 bg-bg/55 px-2.5 py-1 text-xs text-tx transition-colors hover:border-ac/40 hover:bg-surf"
+            >
+              <span className="truncate">{link.title}</span>
+              <span className="shrink-0 text-[10px] text-mu">{link.host}</span>
+            </a>
+          </div>
+        </div>
+      ))}
+      {(!hasEvidence || other.length > 0) && (
+        <div>
+          <button
+            type="button"
+            aria-expanded={open}
+            onClick={() => setOpen(!open)}
+            title={open ? 'Hide the tool calls behind this text' : 'Show the tool calls behind this text'}
+            className="inline-flex max-w-full items-center gap-2 rounded-lg px-2 py-1.5 text-xs text-mu transition-colors hover:bg-surf hover:text-tx focus-visible:bg-surf focus-visible:text-tx"
+          >
+            <Icon size={14} className="shrink-0" aria-hidden="true" />
+            <span className="truncate">{summary.title}</span>
+            <ChevronRight size={13} className={cx('ml-1 shrink-0 transition-transform', open && 'rotate-90')} />
+          </button>
+          {open && (
+            <div className="ml-3 mt-1 space-y-0.5 border-l border-bor pl-3">
+              {(other.length ? other : calls).map((call, i) => {
+                const [head, desc] = toolNode(toolStep(call.name, call.arguments ?? '', call.result), call.name)
+                const RowIcon = callIcon(call)
+                return (
+                  <div key={`${call.name}-${i}`} className="flex items-start gap-2 py-1 text-xs">
+                    <RowIcon size={13} className={cx('mt-0.5 shrink-0', call.error ? 'text-er' : 'text-mu')} aria-hidden="true" />
+                    <span className={cx('min-w-0 break-words text-tx', call.error && 'text-er')}>{head}</span>
+                    {desc && <span className={cx('min-w-0 break-words text-mu', call.error && 'text-er')}>{desc}</span>}
+                  </div>
+                )
+              })}
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -460,11 +575,74 @@ function applySearchHighlights(el: HTMLElement | null, query?: string, open?: bo
   walk(el)
 }
 
+const EFFORT_LABELS: Record<string, string> = { none: 'None', minimal: 'Minimal', low: 'Low', medium: 'Medium', high: 'High', xhigh: 'Extra high', max: 'Max', auto: 'Auto' }
+
+function effortText(effort?: string) {
+  if (!effort) return ''
+  return EFFORT_LABELS[effort] ?? effort.replace(/[-_]/g, ' ').replace(/^./, (c) => c.toUpperCase())
+}
+
+/** Header text for a reply: model name (or slug), optional endpoint and the
+ *  thinking level. Old replies fall back to their saved byline, but never show
+ *  a research/type suffix there. */
+function replyTitle(m: Msg, style: ReplyModelLabel, eps: Ep[]) {
+  const parts = String(m.by ?? '').split(' · ').map((part) => part.trim()).filter(Boolean)
+  const epName = m.epName || parts[0] || ''
+  const modelId = m.model || parts[1] || ''
+  if (!modelId) return m.by || epName
+  const ep = eps.find((e) => e.name === epName && (e.model === modelId || e.models?.includes(modelId)))
+  const name = m.modelLabel || (ep ? modelNameOf(ep, modelId) : '') || modelId
+  const base = style.startsWith('slug') ? modelId : name
+  const withEndpoint = style.endsWith('endpoint') && epName && epName !== base ? ` · ${epName}` : ''
+  const effort = effortText(m.effort)
+  return `${base}${effort ? ` (${effort})` : ''}${withEndpoint}`
+}
+
+function replyTokenCount(m: Msg) {
+  if (typeof m.tokens === 'number') return m.tokens
+  const final = [...(m.log ?? [])].reverse().find((a) => a.tin != null || a.tout != null || a.contextTin != null || a.contextTout != null)
+  if (!final) return 0
+  return (final.tin ?? final.contextTin ?? 0) + (final.tout ?? final.contextTout ?? 0)
+}
+
+function replyDuration(m: Msg) {
+  if (m.took && m.took > 0) return m.took
+  const logged = (m.log ?? []).reduce((ms, a) => ms + Math.max(0, a.ms ?? 0), 0)
+  if (logged > 0) return logged
+  return (m.toolRounds ?? []).reduce((ms, round) => ms + round.calls.reduce((inner, call) => inner + Math.max(0, call.ms ?? 0), 0), 0)
+}
+
+/** A pasted-text attachment in a sent message: a short inline preview that
+ *  opens the same full-screen viewer used by pasted-text cards in the composer. */
+function PastedChip({ a }: { a: { name: string; text?: string } }) {
+  const [open, setOpen] = useState(false)
+  if (!a.text) return <Chip icon={Paperclip}>{a.name}</Chip>
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        aria-label={`Preview ${a.name} full screen`}
+        title={`Open ${a.name} full screen`}
+        className="flex max-w-[min(100%,22rem)] items-center gap-2 rounded-lg bg-surf px-2.5 py-1.5 text-left text-xs text-mu transition-colors hover:bg-hov hover:text-tx"
+      >
+        <FileText size={13} className="shrink-0" aria-hidden="true" />
+        <span className="min-w-0">
+          <span className="block truncate font-medium text-tx">{a.name}</span>
+          <span className="mt-0.5 line-clamp-2 break-words">{a.text}</span>
+        </span>
+      </button>
+      {open && <TextLightbox text={a.text} title={a.name} close={() => setOpen(false)} />}
+    </>
+  )
+}
+
 const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWorkspaceId, cfg, searchQuery, searchOpen }: { m: Msg; last: boolean; onOpenWorkspace: (mid: string, workspaceId: string, filePath?: string) => void; onOpenResearch: (mid: string) => void; selectedWorkspaceId?: string | null; cfg: (t: string) => void; searchQuery?: string; searchOpen?: boolean }) {
   // Granular subscriptions: a streamed chunk only changes `chats`, so these
   // slices stay referentially stable and this message does not re-render
   // unless its own `m` prop (or one of these) actually changed.
   const prefs = useS((s) => s.prefs)
+  const eps = useS((s) => s.eps)
   const streamFade = prefs.streamFade
   const streamMd = prefs.streamMd
   const logDetail = prefs.logDetail ?? 'standard'
@@ -510,6 +688,13 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
   const [srcClaim, setSrcClaim] = useState<string | null>(null)
   const searchPrefs = useS((s) => s.search)
   const sources = useMemo(() => collectMessageSources(m.toolRounds), [m.toolRounds])
+  const replyStats = prefs.replyStats ?? DEFAULT_REPLY_STATS
+  const replyTokens = replyTokenCount(m)
+  const replyTime = replyDuration(m)
+  const showSpeed = replyStats.includes('tps') && m.tps != null
+  const showTokens = replyStats.includes('tokens') && replyTokens > 0
+  const showTime = replyStats.includes('time') && replyTime > 0
+  const title = replyTitle(m, prefs.replyModelLabel ?? 'name', eps)
   const displayText = m.toolFinal ?? m.t
   // While the live streamed text is on screen this output is not rendered, so
   // skip the whole-text linkify pass that would otherwise rerun per chunk.
@@ -597,7 +782,9 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
       <div id={`msg-${m.id}`} data-msg-role="user" className={cx('ml-auto max-w-[85%] space-y-2 rounded-xl p-1', flash && 'ring-2 ring-ac')}>
         <div className="flex flex-wrap items-center justify-end gap-1.5">
           {prefs.showTimestamps && m.at != null && <time dateTime={new Date(m.at).toISOString()} title={formatMsgDateTime(m.at)} className="text-xs text-mu">{formatMsgTime(m.at)}</time>}
-          {m.att?.map((a, i) => <Chip key={`${i}-${a.name}`} icon={Paperclip}>{a.name}</Chip>)}
+          {m.att?.map((a, i) => a.source === 'paste' && a.text
+            ? <PastedChip key={`${i}-${a.name}`} a={a} />
+            : <Chip key={`${i}-${a.name}`} icon={Paperclip}>{a.name}</Chip>)}
         </div>
         {m.t && <UserText m={m} searchQuery={searchQuery} searchOpen={searchOpen} />}
       </div>
@@ -608,7 +795,7 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
           which model answered must not make the saved steps unreachable. */}
       {(prefs.showBy || (m.log && prefs.showLog) || (prefs.showTimestamps && m.at != null)) && (
         <div className="flex flex-wrap items-center gap-2 text-sm text-mu">
-          {prefs.showBy && <span className={cx('inline-flex items-center gap-1.5', m.err && 'text-er')}>{m.err ? <TriangleAlert size={14} /> : <Cpu size={14} />}{m.by}</span>}
+          {prefs.showBy && <span className={cx('inline-flex items-center gap-1.5', m.err && 'text-er')}>{m.err ? <TriangleAlert size={14} /> : <Cpu size={14} />}{title}</span>}
           {m.log && prefs.showLog && (
             <button onClick={() => setLog(!log)} className="inline-flex items-center gap-1.5 rounded-md px-1.5 py-0.5 hover:bg-surf hover:text-tx">
           <ListOrdered size={14} />Process to answer
@@ -809,7 +996,7 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
                   {liveChunks && liveChunks.length ? (
                     streamingTrail ? (
                       streamingSegments!.map((seg, i) => (
-                        <div key={`live-seg-${i}`} className={i ? 'mt-4' : undefined}>
+                        <div key={`live-seg-${i}`} className={i ? 'mt-3' : undefined}>
                           {seg.text && <Md t={seg.text} cites={cites} />}
                           {seg.calls.length > 0 && <ToolTrail calls={seg.calls} />}
                         </div>
@@ -829,7 +1016,7 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
                     ))
                   ) : hasTrail ? (
                     segments!.map((seg, i) => (
-                      <div key={`seg-${i}`} className={i ? 'mt-4' : undefined}>
+                      <div key={`seg-${i}`} className={i ? 'mt-3' : undefined}>
                         {seg.text && <Md t={searchPrefs?.citeStyle === 'off' ? stripCitations(seg.text) : linkifyCitations(seg.text, sources)} cites={cites} />}
                         {seg.calls.length > 0 && <ToolTrail calls={seg.calls} />}
                       </div>
@@ -914,8 +1101,14 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
           claim={srcClaim}
         />
       )}
+      {!m.err && (showSpeed || showTokens || showTime) && (
+        <div aria-label="Reply details" className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-mu">
+          {showSpeed && <span title="Generation speed">{m.tps!.toLocaleString(undefined, { maximumFractionDigits: 1 })} tok/s</span>}
+          {showTokens && <span title="Total input and output tokens">{replyTokens.toLocaleString()} tokens</span>}
+          {showTime && <span title="Total response time">{fmtDuration(replyTime)}</span>}
+        </div>
+      )}
       {(m.toolRounds ?? []).length > 0 && <MessageActions calls={(m.toolRounds ?? []).flatMap((round) => round.calls)} />}
-      {prefs.showTps && m.tps != null && !m.err && <div className="text-xs text-mu">{m.by} · {m.tps.toLocaleString()} tokens/s</div>}
       <div className={cx('flex flex-wrap items-center gap-0.5 transition-opacity', prefs.alwaysShowActions || (m.alts && m.alts.length > 1) || (m.fork && m.fork.paths.length > 0) ? '' : 'opacity-100 md:opacity-0 md:group-hover:opacity-100 md:focus-within:opacity-100')}>
         {m.alts && m.alts.length > 1 && !busy && (
           <>

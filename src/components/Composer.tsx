@@ -8,7 +8,7 @@ import { composerWidth } from '../layout'
 import { can, readAtts, ocrImage, fetchPage } from '../engine'
 import { fitDoc } from '../docs'
 import { bannerOf, armMention, isPill, mentionsOf, stripMention, tokenizeMentions, type Mention, type Seg as MentionSeg } from '../mentions'
-import { Btn, Item, Menu, Pop, Seg, RangeSlider, ImageLightbox, cx, type Ic } from './ui'
+import { Btn, Item, Menu, Pop, Seg, RangeSlider, ImageLightbox, TextLightbox, cx, type Ic } from './ui'
 import { SortableList } from './dnd'
 import { MentionBanner, MentionInfo, QuoteBanner } from './Mention'
 import { Notice } from './Extra'
@@ -408,6 +408,7 @@ export function Composer({ cfg, quote, onClearQuote }: { cfg: (t: string) => voi
   const byAttId = new Map(att.map((a) => [attId(a), a] as const))
   const [ocrStatus, setOcrStatus] = useState('')
   const [zoomed, setZoomed] = useState<{ src: string; alt: string } | null>(null)
+  const [textPreview, setTextPreview] = useState<{ title: string; text: string } | null>(null)
   const [urlOpen, setUrlOpen] = useState(false)
   const [urlVal, setUrlVal] = useState('')
   const [urlBusy, setUrlBusy] = useState(false)
@@ -645,6 +646,22 @@ export function Composer({ cfg, quote, onClearQuote }: { cfg: (t: string) => voi
                     <GripVertical size={12} />
                   </button>
                 )
+                if (a.source === 'paste' && a.text) {
+                  return (
+                    <div onPointerDown={hp.onPointerDown} title={`${a.name} · click to preview`} className="group/preview relative flex h-[6.5rem] w-64 cursor-grab flex-col overflow-hidden rounded-lg bg-hov p-2 ring-1 ring-hov">
+                      <button type="button" aria-label={`Preview ${a.name} full screen`} onClick={() => setTextPreview({ title: a.name, text: a.text ?? '' })} className="min-h-0 flex-1 overflow-hidden rounded-sm bg-bg/55 px-2 py-1 text-left">
+                        <span className="line-clamp-3 whitespace-pre-wrap break-words font-mono text-[11px] leading-4 text-mu">{a.text}</span>
+                      </button>
+                      <div className="mt-1 flex min-w-0 items-center gap-1 text-[11px] text-mu">
+                        {handle('!bg-transparent !text-mu hover:!text-tx')}
+                        <span className="min-w-0 flex-1 truncate text-tx" title={a.name}>{a.name}</span>
+                        <span className="shrink-0">{a.size}</span>
+                        <Btn sm icon={Pencil} title="Edit pasted text in the composer" onClick={(e) => { e.stopPropagation(); editPasted(a) }} onPointerDown={(e) => e.stopPropagation()} />
+                        <Btn sm icon={X} title={`Remove ${a.name}`} onClick={remove} />
+                      </div>
+                    </div>
+                  )
+                }
                 if (a.kind === 'img' && a.data) {
                   const src = `data:${a.mime || 'image/*'};base64,${a.data}`
                   return (
@@ -684,6 +701,7 @@ export function Composer({ cfg, quote, onClearQuote }: { cfg: (t: string) => voi
               </p>
             )}
             {zoomed && <ImageLightbox src={zoomed.src} alt={zoomed.alt} close={() => setZoomed(null)} />}
+            {textPreview && <TextLightbox text={textPreview.text} title={textPreview.title} close={() => setTextPreview(null)} />}
           </div>
         )}
         {urlOpen && (

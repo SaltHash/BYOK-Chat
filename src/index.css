@@ -450,11 +450,11 @@ html[data-codewrap] .code-lines .code-line > code { flex: 1 1 auto; min-width: 0
    saved step and the tool call it caused sit on the same path instead of in
    two unrelated rows. The line stops at the first and last dot. */
 .process-tree { position:relative; }
-.process-node { position:relative; padding:.3rem 0 .3rem 1.15rem; }
+.process-node { position:relative; padding:.5rem 0 .5rem 1.15rem; }
 .process-node::before { content:''; position:absolute; left:4px; top:0; bottom:0; width:1px; background:color-mix(in srgb, var(--mu) 30%, transparent); }
-.process-node:first-child::before { top:.68rem; }
-.process-node:last-child::before { bottom:auto; height:.68rem; }
-.process-dot, .process-ring, .process-x { position:absolute; left:0; top:.68rem; box-sizing:border-box; width:9px; height:9px; border-radius:50%; }
+.process-node:first-child::before { top:.88rem; }
+.process-node:last-child::before { bottom:auto; height:.88rem; }
+.process-dot, .process-ring, .process-x { position:absolute; left:0; top:.88rem; box-sizing:border-box; width:9px; height:9px; border-radius:50%; }
 /* Completed nodes are opaque dots. The inner shadow is the panel's own
    surface colour and masks the rail behind the dot, so the hairline never
    shows through a finished step; the outer halo keeps it readable. */
@@ -477,7 +477,7 @@ html[data-codewrap] .code-lines .code-line > code { flex: 1 1 auto; min-width: 0
    on all four sides instead of floating short of it. Arms and ring share one
    solid, unblended error colour and one 1.5px weight, so the mark reads as a
    single glyph rather than a cross inside a differently drawn circle. */
-.process-x { width:11px; height:11px; left:-1px; top:calc(.68rem - 1px); background:var(--surf); --cross:var(--er); }
+.process-x { width:11px; height:11px; left:-1px; top:calc(.88rem - 1px); background:var(--surf); --cross:var(--er); }
 /* Arms run the full diameter and the ring is painted last, on top, so the
    cross bleeds under the stroke instead of stopping at its inner edge: the
    four tips meet the ring with no gap at any zoom or pixel ratio. Each arm is
