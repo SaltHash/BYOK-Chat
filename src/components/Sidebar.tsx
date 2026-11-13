@@ -255,7 +255,7 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
   const lib: [string, string, typeof Server, number][] = [
     ['eps', 'Endpoints', Server, s.eps.length],
     ['pls', 'Playlists', ListMusic, s.pls.length],
-    ['prompts', 'Prompts', ScrollText, s.prompts.length],
+    ['prompts', 'Qualities', ScrollText, s.prompts.length],
     ['cmds', 'Commands', Terminal, s.cmds.filter((c) => c.on).length],
     ['tools', 'Tools', Wrench, Object.values(s.tools).filter(Boolean).length],
     ['memory', 'Memory', Bookmark, s.memories.length],
@@ -614,45 +614,6 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
           </div>
         )}
         {!!pinned.length && <div><div className="px-2.5 pb-1 text-xs font-medium text-mu">Pinned</div><div className="side-rows">{rows(pinned, 'pinned')}</div></div>}
-        {!!marks.length && (
-          <div>
-            <div className="flex items-center justify-between px-2.5 pb-1 text-xs font-medium text-mu">
-              <span>Bookmarks</span>
-              <span className="tabular-nums">{marks.length}</span>
-            </div>
-            <div className="side-rows">
-              {(marksAll ? marks : marks.slice(0, 4)).map((b) => (
-                <div key={b.msgId} className="group flex items-center rounded-lg pr-1 text-sm hover:bg-surf">
-                  <button onClick={() => jump(b.chatId, b.msgId)} title={`${b.chatTitle}: ${b.text}`} className="side-item flex min-w-0 flex-1 items-start gap-2 px-2.5 text-left">
-                    <Bookmark size={14} className="mt-0.5 shrink-0 text-ac" aria-hidden="true" />
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate text-xs font-medium">{b.chatTitle}</span>
-                      <span className="mt-0.5 block truncate text-xs text-mu">{b.text || 'Empty message'}</span>
-                    </span>
-                  </button>
-                  <button onClick={() => useS.getState().bookmarkMsg(b.msgId)} aria-label={`Remove bookmark from ${b.chatTitle}`} title="Remove bookmark" className="hidden size-7 shrink-0 place-items-center rounded-md text-mu hover:bg-hov hover:text-tx group-hover:grid group-focus-within:grid max-md:grid"><X size={13} /></button>
-                </div>
-              ))}
-            </div>
-            {marks.length > 4 && (
-              <button onClick={() => setMarksAll((v) => !v)} aria-expanded={marksAll} className="mt-0.5 w-full rounded-lg px-2.5 py-1.5 text-left text-xs font-medium text-mu hover:bg-surf hover:text-tx">
-                {marksAll ? 'Show less' : `Show all (${marks.length})`}
-              </button>
-            )}
-          </div>
-        )}
-        <div className="flex flex-col rounded-lg" style={{ maxHeight: tempMaxH }}>
-          <div className="shrink-0 px-2.5 pb-1 text-xs font-medium text-mu">Temporary chats</div>
-          <div className="side-rows min-h-0 overflow-y-auto">
-            {tempVisible.map((c) => <Row key={c.id} c={c} mv={mv} del={del} dnd={null} container="temporary" index={0} shift={shiftHeld} onNavigate={onNavigate} time={timeLeft(c)} />)}
-            {!temporary.length && <p className="px-2.5 py-1 text-sm text-mu">Nothing here yet.</p>}
-          </div>
-          {(tempMore > 0 || tempOpen) && (
-            <button onClick={() => setTempOpen((v) => !v)} aria-expanded={tempOpen} className="mt-0.5 shrink-0 rounded-lg px-2.5 py-1.5 text-left text-xs font-medium text-mu hover:bg-surf hover:text-tx">
-              {tempOpen ? 'Show less' : `Show more (${tempMore})`}
-            </button>
-          )}
-        </div>
         <div className="flex items-center justify-between px-2.5 text-xs font-medium text-mu">
           <span>Projects</span>
           <button aria-label="New project" title="New project" onClick={() => setNewModal(true)} className="grid size-6 place-items-center rounded-md hover:text-tx"><FolderPlus size={14} /></button>
@@ -692,6 +653,45 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
           <div className="px-2.5 pb-1 text-xs font-medium text-mu">Recent</div>
           <div className="side-rows">{rows(free, '')}</div>
           {!free.length && <p className="px-2.5 py-1 text-sm text-mu">{!s.chats.length ? 'No chats yet.' : k ? 'No chats match.' : 'Nothing here. Drop a chat to unfile it.'}</p>}
+        </div>
+        {!!marks.length && (
+          <div>
+            <div className="flex items-center justify-between px-2.5 pb-1 text-xs font-medium text-mu">
+              <span>Bookmarks</span>
+              <span className="tabular-nums">{marks.length}</span>
+            </div>
+            <div className="side-rows">
+              {(marksAll ? marks : marks.slice(0, 4)).map((b) => (
+                <div key={b.msgId} className="group flex items-center rounded-lg pr-1 text-sm hover:bg-surf">
+                  <button onClick={() => jump(b.chatId, b.msgId)} title={`${b.chatTitle}: ${b.text}`} className="side-item flex min-w-0 flex-1 items-start gap-2 px-2.5 text-left">
+                    <Bookmark size={14} className="mt-0.5 shrink-0 text-ac" aria-hidden="true" />
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-xs font-medium">{b.chatTitle}</span>
+                      <span className="mt-0.5 block truncate text-xs text-mu">{b.text || 'Empty message'}</span>
+                    </span>
+                  </button>
+                  <button onClick={() => useS.getState().bookmarkMsg(b.msgId)} aria-label={`Remove bookmark from ${b.chatTitle}`} title="Remove bookmark" className="hidden size-7 shrink-0 place-items-center rounded-md text-mu hover:bg-hov hover:text-tx group-hover:grid group-focus-within:grid max-md:grid"><X size={13} /></button>
+                </div>
+              ))}
+            </div>
+            {marks.length > 4 && (
+              <button onClick={() => setMarksAll((v) => !v)} aria-expanded={marksAll} className="mt-0.5 w-full rounded-lg px-2.5 py-1.5 text-left text-xs font-medium text-mu hover:bg-surf hover:text-tx">
+                {marksAll ? 'Show less' : `Show all (${marks.length})`}
+              </button>
+            )}
+          </div>
+        )}
+        <div className="flex flex-col rounded-lg" style={{ maxHeight: tempMaxH }}>
+          <div className="shrink-0 px-2.5 pb-1 text-xs font-medium text-mu">Temporary chats</div>
+          <div className="side-rows min-h-0 overflow-y-auto">
+            {tempVisible.map((c) => <Row key={c.id} c={c} mv={mv} del={del} dnd={null} container="temporary" index={0} shift={shiftHeld} onNavigate={onNavigate} time={timeLeft(c)} />)}
+            {!temporary.length && <p className="px-2.5 py-1 text-sm text-mu">Nothing here yet.</p>}
+          </div>
+          {(tempMore > 0 || tempOpen) && (
+            <button onClick={() => setTempOpen((v) => !v)} aria-expanded={tempOpen} className="mt-0.5 shrink-0 rounded-lg px-2.5 py-1.5 text-left text-xs font-medium text-mu hover:bg-surf hover:text-tx">
+              {tempOpen ? 'Show less' : `Show more (${tempMore})`}
+            </button>
+          )}
         </div>
         </>)}
         </>

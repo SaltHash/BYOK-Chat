@@ -1,7 +1,7 @@
 import {
   SlidersHorizontal, Server, ScrollText, Sparkles, ListMusic, Terminal,
   FolderOpen, Wrench, Brain, PanelRight, Palette as PaletteIcon, Keyboard,
-  TrendingUp, Database, FlaskConical, MessagesSquare, Plug, Volume2, Layers,
+  TrendingUp, Database, FlaskConical, MessagesSquare, Plug, Volume2,
 } from 'lucide-react'
 import type { Ic } from './components/ui'
 import { FEATURE_TABS, featOn, type FeatureId } from './store'
@@ -15,7 +15,7 @@ import { FEATURE_TABS, featOn, type FeatureId } from './store'
 export type SettingsTabId =
   | 'features' | 'eps' | 'prompts' | 'skills' | 'pls' | 'cmds'
   | 'workspace' | 'tools' | 'mcp' | 'memory' | 'widgets' | 'look' | 'chats'
-  | 'voice' | 'keys' | 'stats' | 'data' | 'adv' | 'profiles'
+  | 'voice' | 'keys' | 'stats' | 'data' | 'adv'
 
 /** Tabs hidden while their owning feature is disabled. Lives here (not in
  *  Settings.tsx) so the command palette can filter tabs without pulling the
@@ -30,9 +30,8 @@ export const visibleTabs = (features?: Record<FeatureId, boolean>) => {
 
 export const SETTINGS_TABS: [SettingsTabId, string, Ic][] = [
   ['features', 'Features', SlidersHorizontal],
-  ['profiles', 'Profiles', Layers],
   ['eps', 'Endpoints', Server],
-  ['prompts', 'Prompts', ScrollText],
+  ['prompts', 'Qualities', ScrollText],
   ['skills', 'Skills', Sparkles],
   ['pls', 'Playlists', ListMusic],
   ['cmds', 'Commands', Terminal],
@@ -52,9 +51,8 @@ export const SETTINGS_TABS: [SettingsTabId, string, Ic][] = [
 
 export const TAB_KEYWORDS: Record<SettingsTabId, string> = {
   features: 'features toggles enable disable library advanced',
-  profiles: 'profiles presets bundles setups ways of working model prompt tools access mode permissions project binding apply update snapshot',
   eps: 'endpoints models providers api keys connections model aliases base url preset credentials pricing test helper classification title effort auto recall aihubmix openrouter requesty portkey litellm bifrost',
-  prompts: 'prompts system instructions global',
+  prompts: 'qualities qualities favorites favourite personality tone instant concise playful sophisticated thorough reasoning effort skills safety global system prompt instructions style',
   skills: 'skills instructions custom builtin extra tasks',
   pls: 'playlists routes groups ordered fastest cheapest classifier routing performance',
   cmds: 'commands slash input template run on playlist',
@@ -75,7 +73,7 @@ export const TAB_KEYWORDS: Record<SettingsTabId, string> = {
 /** Navigation groups preserve tab ids and deep links while organizing by task. */
 export const SETTINGS_GROUPS: { label: string; tabs: SettingsTabId[] }[] = [
   { label: 'Chat', tabs: ['chats', 'prompts', 'cmds', 'voice', 'keys'] },
-  { label: 'Models & providers', tabs: ['profiles', 'eps', 'pls'] },
+  { label: 'Models & providers', tabs: ['eps', 'pls'] },
   { label: 'Tools & research', tabs: ['tools', 'skills', 'mcp', 'memory', 'workspace'] },
   { label: 'Personalize', tabs: ['look', 'widgets', 'features'] },
   { label: 'Data & advanced', tabs: ['stats', 'data', 'adv'] },
@@ -92,20 +90,14 @@ export type SettingLink = {
 /** Every individually addressable setting/section. `cfg("tab#anchor")` opens
  *  the tab and scrolls to the anchor; unknown anchors still open the tab. */
 export const SETTING_LINKS: SettingLink[] = [
-  // Profiles — one entry per concept, not per saved record (those are actions).
-  { tab: 'profiles', anchor: 'profiles', title: 'Profiles', keywords: 'profiles presets bundles setups model prompt tools access apply' },
-  { tab: 'profiles', anchor: 'profiles-save', title: 'Save the current setup as a profile', keywords: 'save profile current setup snapshot capture' },
-  { tab: 'profiles', anchor: 'profiles-list', title: 'Saved profiles', keywords: 'saved profiles apply update rename delete list' },
-  { tab: 'profiles', anchor: 'profiles-projects', title: 'Project profile binding', keywords: 'project profile bind open automatic apply workspace' },
   // Features — one per feature toggle.
-  { tab: 'features', anchor: 'feature-prompts', title: 'Feature: Prompts', keywords: 'feature prompts toggle system' },
+  { tab: 'features', anchor: 'feature-prompts', title: 'Feature: Qualities', keywords: 'feature qualities prompts toggle system' },
   { tab: 'features', anchor: 'feature-skills', title: 'Feature: Skills', keywords: 'feature skills toggle' },
   { tab: 'features', anchor: 'feature-tools', title: 'Feature: Tools', keywords: 'feature tools toggle' },
   { tab: 'features', anchor: 'feature-playlists', title: 'Feature: Playlists', keywords: 'feature playlists toggle routes' },
   { tab: 'features', anchor: 'feature-commands', title: 'Feature: Commands', keywords: 'feature commands toggle slash' },
   { tab: 'features', anchor: 'feature-stats', title: 'Feature: Stats', keywords: 'feature stats toggle totals' },
   { tab: 'features', anchor: 'feature-memory', title: 'Feature: Memory', keywords: 'feature memory toggle' },
-  { tab: 'features', anchor: 'feature-profiles', title: 'Feature: Profiles', keywords: 'feature profiles toggle presets' },
   { tab: 'features', anchor: 'feature-widgets', title: 'Feature: Widgets', keywords: 'feature widgets toggle panel' },
   { tab: 'features', anchor: 'feature-shortcuts', title: 'Feature: Shortcuts', keywords: 'feature shortcuts toggle keyboard' },
   { tab: 'features', anchor: 'feature-library', title: 'Feature: Library', keywords: 'feature library toggle sidebar' },
@@ -124,8 +116,9 @@ export const SETTING_LINKS: SettingLink[] = [
   { tab: 'eps', anchor: 'model-pricing', title: 'Model pricing', keywords: 'pricing input output cost per million detected' },
   { tab: 'eps', anchor: 'test-connection', title: 'Test endpoint connections', keywords: 'test connection reachable all endpoints' },
 
-  // Prompts
-  { tab: 'prompts', anchor: 'global-prompt', title: 'Global system prompt', keywords: 'global system prompt every message qualities tone concise warm direct curious practical playful' },
+  // Qualities
+  { tab: 'prompts', anchor: 'global-prompt', title: 'Global system prompt', keywords: 'global system prompt every message qualities tone instant concise playful sophisticated thorough warm direct curious practical deep reasoning quick reasoning no skills cautious no tools' },
+  { tab: 'prompts', anchor: 'qualities', title: 'Qualities', keywords: 'qualities favorites favourite personality tone style reasoning effort skills safety' },
   { tab: 'prompts', anchor: 'add-prompt', title: 'Add prompt', keywords: 'add prompt new reusable' },
 
   // Skills

@@ -47,16 +47,16 @@ given request needs. Model traffic goes straight to the provider, or through
 
 `src/store.ts` is the heart of the project and the file most changes touch. It
 is a single Zustand store, `useS`, holding everything the app knows: endpoints
-and model selection, chats and their transcripts, prompts, playlists, commands,
-profiles, projects, workspaces, memory, MCP servers, skills, usage history,
-sharing records, settings and appearance. There is no second state container;
+and model selection, chats and their transcripts, prompts, qualities,
+playlists, commands, projects, workspaces, memory, MCP servers, skills, usage
+history, sharing records, settings and appearance. There is no second state container;
 components read slices through selectors (`useS(useShallow(...))`) and call
 store actions to change anything.
 
 **State is grouped by feature.** The type `S` near the top of `store.ts` is the
 authoritative list. The groups worth knowing:
 
-- Model layer: `eps`, `sel`, `favs`, `pls`, `prompts`, `cmds`, `profiles`,
+- Model layer: `eps`, `sel`, `favs`, `pls`, `prompts`, `cmds`, `globalPrompt`,
   `params`, `effort`, `routeStats`.
 - Conversations: `chats`, `chat`, `drafts`, `draft`, `queued`, `busyChats`,
   `runJournal`, `doneChats`, `undo`, plus per-message pin/bookmark/version data.
@@ -77,7 +77,7 @@ authoritative list. The groups worth knowing:
 `regenAt`) to branching (`branch`, `variant`, `gotoPath`) is a store action.
 Replies go through `send(value, attachments)`, which returns whether a run
 started; `stop` and `stopAll` abort per-chat `AbortController`s; `resumeRun` and
-`resumeOrphanedRuns` continue a reply whose tab closed. Research, profiles,
+`resumeOrphanedRuns` continue a reply whose tab closed. Research,
 project context, memory, tool policy (`alwaysAllowTool`), storage maintenance
 (`compactStorage`, `compactChat`) and usage history all live here too.
 
@@ -107,7 +107,7 @@ the persisted shape changes, and keep pure logic in a sibling module with a
 
 1. The composer calls `send`, which plans the request: model, system prompt,
    tools, memory recall, attachments, pinned reply and context budget.
-2. Playlist routing and profiles narrow the endpoint candidates; failures fall
+2. Playlist routing narrows the endpoint candidates; failures fall
    through to the next endpoint, with one retry for transient errors.
 3. `engine.wire` turns the transcript into provider wire messages, and
    `engine.stream` opens the SSE stream through the provider adapter.

@@ -183,7 +183,9 @@ export function Seg<T extends string>({ v, set, opts, label }: { v: T; set: (v: 
 }
 
 const IN = 'w-full rounded-lg bg-bg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ac/40'
-export const Field = ({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) => (
+export const Field = ({ label, hint, children, row }: { label: string; hint?: string; children: ReactNode; /** Put a compact control to the right of its label instead of below it. */ row?: boolean }) => row ? (
+  <div className="flex flex-wrap items-center gap-x-4 gap-y-2"><span className="flex min-w-0 flex-1 items-center gap-1.5 text-sm font-medium">{label}{hint && <HelpTip text={hint} label={`Help: ${label}`} />}</span><div className="w-full max-w-full shrink-0 sm:w-64">{children}</div></div>
+) : (
   <div className="space-y-1.5"><span className="flex items-center gap-1.5 text-sm font-medium">{label}{hint && <HelpTip text={hint} label={`Help: ${label}`} />}</span>{children}</div>
 )
 export const Input = ({ value, set, ...p }: { value: string | number; set: (v: string) => void } & Omit<InputHTMLAttributes<HTMLInputElement>, 'value' | 'onChange'>) => (

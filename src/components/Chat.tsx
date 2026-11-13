@@ -195,9 +195,9 @@ function ToolTrail({ calls }: { calls: TrailCall[] }) {
         title={open ? 'Hide the tool calls behind this text' : 'Show the tool calls behind this text'}
         className="inline-flex max-w-full items-center gap-2 rounded-lg px-2 py-1 text-xs text-mu transition-colors hover:bg-surf hover:text-tx focus-visible:bg-surf focus-visible:text-tx"
       >
-        <ChevronRight size={13} className={cx('shrink-0 transition-transform', open && 'rotate-90')} />
         <Icon size={14} className="shrink-0" aria-hidden="true" />
         <span className="truncate">{summary.title}</span>
+        <ChevronRight size={13} className={cx('ml-1 shrink-0 transition-transform', open && 'rotate-90')} />
       </button>
       {open && (
         <div className="ml-3 mt-1 space-y-0.5 border-l border-bor pl-3">
@@ -788,13 +788,38 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
           // tool run sits between the two pieces, the way it happened. Replies
           // with artifacts keep the whole-text path, which places them inline.
           const segments = blocks ? null : splitToolTrail(displayText, m.toolRounds)
-          const interleaved = !!segments && segments.some((s) => s.text) && segments.some((s) => s.calls.length)
+          const hasTrail = !!segments?.some((s) => s.calls.length)
+          // A tool run is visible while it happens, not only once the reply is
+          // saved: calls already streamed but not yet committed to toolRounds
+          // render as a pending run, and committed rounds are split out of the
+          // live text so the trail keeps its place between the writing before
+          // and after it.
+          const knownCallIds = new Set((m.toolRounds ?? []).flatMap((r) => r.calls.map((c) => c.id)))
+          const pendingCalls = ((live ?? []) as { id?: string; name?: string; arguments?: string; result?: string; error?: boolean }[])
+            .filter((c) => !!c.name && (!c.id || !knownCallIds.has(c.id)))
+          const streamText = liveChunks?.length ? liveChunks.join('') : ''
+          const streamingSegments = liveChunks?.length ? splitToolTrail(streamText, m.toolRounds) : null
+          const streamingTrail = !!streamingSegments?.some((s) => s.calls.length)
+          const lastRoundCalls = (m.toolRounds ?? [])[(m.toolRounds ?? []).length - 1]?.calls ?? []
+          const waitingTrail = !streamingTrail && !!liveChunks?.length ? (pendingCalls.length ? pendingCalls : busy ? lastRoundCalls : []) : []
           return (
             <>
-              {m.t && (
+              {(m.t || hasTrail || streamingTrail || waitingTrail.length > 0) && (
                 <div ref={contentRef} className="inline">
                   {liveChunks && liveChunks.length ? (
-                    streamMd ? <StreamedMd chunks={liveChunks} fade={streamFade} /> : <StreamedText chunks={liveChunks} fade={streamFade} />
+                    streamingTrail ? (
+                      streamingSegments!.map((seg, i) => (
+                        <div key={`live-seg-${i}`} className={i ? 'mt-4' : undefined}>
+                          {seg.text && <Md t={seg.text} cites={cites} />}
+                          {seg.calls.length > 0 && <ToolTrail calls={seg.calls} />}
+                        </div>
+                      ))
+                    ) : (
+                      <>
+                        {streamMd ? <StreamedMd chunks={liveChunks} fade={streamFade} /> : <StreamedText chunks={liveChunks} fade={streamFade} />}
+                        {waitingTrail.length > 0 && <ToolTrail calls={waitingTrail as TrailCall[]} />}
+                      </>
+                    )
                   ) : blocks ? (
                     blocks.map((b, i) => (
                       <div key={i} className={b.specs ? 'my-3' : undefined}>
@@ -802,7 +827,7 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
                         {b.specs ? <ArtifactList specs={b.specs} /> : null}
                       </div>
                     ))
-                  ) : interleaved ? (
+                  ) : hasTrail ? (
                     segments!.map((seg, i) => (
                       <div key={`seg-${i}`} className={i ? 'mt-4' : undefined}>
                         {seg.text && <Md t={searchPrefs?.citeStyle === 'off' ? stripCitations(seg.text) : linkifyCitations(seg.text, sources)} cites={cites} />}
@@ -1108,15 +1133,34 @@ export function Chat({ side, toggle, cfg, pal }: { side: boolean; toggle: () => 
   // keep its last message clear of it and fade out just above it.
   const composerRef = useRef<HTMLDivElement>(null)
   const [composerH, setComposerH] = useState(0)
+  // The composer can grow after its first paint (toolbar, context meter,
+  // attachments): measure once more on the next tick so a missed resize never
+  // leaves the transcript's bottom clearance too small, which hid the end of a
+  // reply behind the composer with no extra scroll available.
+  useLayoutEffect(() => {
+    const el = composerRef.current
+    if (!el) return
+    const measure = () => setComposerH((prev) => { const h = el.offsetHeight; return h && h !== prev ? h : prev })
+    measure()
+    // The context meter and toolbar can settle a beat after the chat renders.
+    const timers = [0, 120, 500, 1200].map((ms) => window.setTimeout(measure, ms))
+    return () => timers.forEach((t) => window.clearTimeout(t))
+  }, [s.chat, empty])
   useLayoutEffect(() => {
     const el = composerRef.current
     if (!el) return
     const f = () => setComposerH(el.offsetHeight)
-    f()
     const ro = new ResizeObserver(f)
     ro.observe(el)
     return () => ro.disconnect()
   }, [])
+  // The composer grows as it is typed into. Keep the transcript pinned to the
+  // end when it does, and reserve enough room above it that the last rows sit
+  // clear of the composer and its fade instead of ending half-faded with no
+  // further scroll available.
+  useEffect(() => {
+    if (stick.current) followBottom.call()
+  }, [composerH, followBottom])
   const glass = s.prefs.glassComposer !== false
   const [wide, setWide] = useState(() => typeof matchMedia === 'function' && matchMedia('(min-width: 640px)').matches)
   useEffect(() => {
@@ -1361,7 +1405,7 @@ export function Chat({ side, toggle, cfg, pal }: { side: boolean; toggle: () => 
               </div>
             </nav>
           )}
-          <div ref={box} onScroll={(e) => { if (quote) setQuote(null); onScrollBox(e) }} onMouseUp={captureQuote} className="absolute inset-0 overflow-y-auto overflow-x-auto" style={glass ? { paddingBottom: composerH + (empty ? 32 : 0) } : { paddingBottom: composerH + (empty ? 32 : 0), WebkitMaskImage: `linear-gradient(to bottom, black calc(100% - ${composerH + 32}px), rgba(0,0,0,0.1) calc(100% - ${composerH}px))`, maskImage: `linear-gradient(to bottom, black calc(100% - ${composerH + 32}px), rgba(0,0,0,0.1) calc(100% - ${composerH}px))` }}>
+          <div ref={box} onScroll={(e) => { if (quote) setQuote(null); onScrollBox(e) }} onMouseUp={captureQuote} className="absolute inset-0 overflow-y-auto overflow-x-auto" style={glass ? { paddingBottom: composerH + (empty ? 32 : 56) } : { paddingBottom: composerH + (empty ? 32 : 56), WebkitMaskImage: `linear-gradient(to bottom, black calc(100% - ${composerH + 32}px), rgba(0,0,0,0.1) calc(100% - ${composerH}px))`, maskImage: `linear-gradient(to bottom, black calc(100% - ${composerH + 32}px), rgba(0,0,0,0.1) calc(100% - ${composerH}px))` }}>
             {c && c.msgs.length ? (
               <div className="mx-auto flex flex-col" style={{ maxWidth: CHAT_WIDTH[s.prefs.chatWidth], padding: 'var(--ui-chat-pad-y) var(--ui-chat-pad-x)', rowGap: 'var(--ui-msg-gap)' }}>
                 {windowFrom > 0 && (

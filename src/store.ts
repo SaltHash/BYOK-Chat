@@ -7,7 +7,6 @@ import { DEFAULT_TOOL_APPROVAL, cancelToolApprovals, needsToolApproval, normTool
 import { answerUserQuestion, cancelUserQuestions, clearOrphanQuestions, normalizeQuestionInput, queueOrphanQuestion, requestUserQuestion, useQuestions } from './questions'
 import { continueNote, normRunJournal, type RunEntry, type RunJournal } from './runJournal'
 import { forkAt as forkTree, switchTo as switchTree, type Fork } from './conversationTree'
-import { captureProfile, freshProfileName, normProfiles, profileMatches, profilePatch, type Profile } from './profiles'
 import { withCompaction, shouldCompact, selectCompactionMessages, transcriptFor, compactionSystemPrompt, compactionAsk, compactionOutputTokens, compactionInputChars, compactionAnchor, compactionDetail, isHandoff, type CompactionRecord } from './compaction'
 import { normMcpServers, mcpBindings, callMcpTool, toolParameters, type McpServer, type McpTool } from './mcp'
 import { attachmentAppendix, projectFileBlock, uniqueAttachmentNames, anonymizeAttachmentNames, realPromptNames, promptNameOf } from './attachments'
@@ -23,7 +22,7 @@ export type { ResearchState, ResearchTierId, ResearchPlan, ResearchPlanStep, Res
 import { collectMessageSources, citationCoverage, citationRule, createCiteIds, mergeSources } from './citations'
 import { appendHint, getErrorCode, classifyModelError, type ErrorCode } from './errors'
 import { toggleBookmark } from './bookmarks'
-import { celebrate, normGlobalPrompt, type GlobalPrompt } from './flair'
+import { celebrate, normGlobalPrompt, normQualityFavs, DEFAULT_QUALITY_FAVS, type GlobalPrompt } from './flair'
 // Set by workspace writes; read once when a reply ends to decide on the completion cue.
 let workspaceWritesPending = false
 /* Guards the awaited vision-OCR pass inside send(): the chat is not marked
@@ -79,7 +78,7 @@ export type Chat = { id: string; title: string; pin?: boolean; started?: boolean
 /** An optional context file attached to a project: name and size for display,
  *  plus the extracted text the AI may consult. Text is capped at import time. */
 export type ProjectFile = { id: string; name: string; size: string; mime?: string; text: string }
-export type Project = { id: string; name: string; open: boolean; createdAt?: number; context?: ProjectFile[]; /** When false, workspace files stay per chat; otherwise (default) the project's chats share one workspace. */ shareWorkspaces?: boolean; /** Profile applied automatically when this project is opened. */ profile?: string }
+export type Project = { id: string; name: string; open: boolean; createdAt?: number; context?: ProjectFile[]; /** When false, workspace files stay per chat; otherwise (default) the project's chats share one workspace. */ shareWorkspaces?: boolean }
 export type Folder = Project
 /**
  * The workspace a chat's replies should target, with project sharing applied:
@@ -126,9 +125,9 @@ export const normFeatureOrder = (v: any): FeatureId[] => {
 
 /* Feature kill-switches. A disabled feature must not be used by the AI or the
    program in any capacity until turned back on. `library` is off by default. */
-export type FeatureId = 'prompts' | 'skills' | 'tools' | 'playlists' | 'commands' | 'stats' | 'memory' | 'profiles' | 'widgets' | 'shortcuts' | 'library' | 'advanced' | 'workspace' | 'mcp' | 'voice'
+export type FeatureId = 'prompts' | 'skills' | 'tools' | 'playlists' | 'commands' | 'stats' | 'memory' | 'widgets' | 'shortcuts' | 'library' | 'advanced' | 'workspace' | 'mcp' | 'voice'
 export const FEATURES: [FeatureId, string, string][] = [
-  ['prompts', 'Prompts', 'Per-chat system prompts and the global system prompt. Off hides the prompt picker everywhere.'],
+  ['prompts', 'Qualities', 'Global and per-chat system prompts, plus reusable reply qualities. Off hides the prompt picker everywhere.'],
   ['skills', 'Skills', 'Extra instructions the AI can use for specific tasks.'],
   ['tools', 'Tools', 'Every model tool: @-mentions, web search, workspace files. The AI cannot call any tool while off.'],
   ['mcp', 'MCP servers', 'External tool servers over the Model Context Protocol. Each server has its own switch; turning this off disconnects all of them.'],
@@ -137,20 +136,19 @@ export const FEATURES: [FeatureId, string, string][] = [
   ['commands', 'Commands', 'Slash commands, their templates, and the home-screen command shortcuts.'],
   ['stats', 'Stats', 'Token, message, and cost totals. Turning off asks whether to delete existing totals.'],
   ['memory', 'Memory', 'Stored memories and the memory tool. Turning off asks whether to delete all memories.'],
-  ['profiles', 'Profiles', 'Saved setups that switch model, prompt, tools and access policy together. Off hides profiles, the header switcher and project bindings.'],
   ['widgets', 'Widgets', 'The side widget panel and every widget inside it.'],
   ['shortcuts', 'Shortcuts', 'Every keyboard shortcut, plus the shortcut cheat-sheet widget.'],
   ['library', 'Library', 'The sidebar shortcut list below your chats.'],
   ['workspace', 'Workspace', 'Workspace file panel and workspace settings.'],
   ['advanced', 'Advanced', 'Debugging aids: verbose errors, hidden tools, system prompt, payloads and token counts.'],
 ]
-export const DEFAULT_FEATURES: Record<FeatureId, boolean> = { prompts: true, skills: true, tools: true, playlists: true, commands: true, stats: true, memory: true, profiles: true, widgets: true, shortcuts: true, library: false, advanced: false, workspace: true, mcp: true, voice: true }
-export const LIBRARY_ITEMS: [string, string][] = [['eps', 'Endpoints'], ['pls', 'Playlists'], ['prompts', 'Prompts'], ['cmds', 'Commands'], ['tools', 'Tools'], ['memory', 'Memory'], ['widgets', 'Widgets']]
+export const DEFAULT_FEATURES: Record<FeatureId, boolean> = { prompts: true, skills: true, tools: true, playlists: true, commands: true, stats: true, memory: true, widgets: true, shortcuts: true, library: false, advanced: false, workspace: true, mcp: true, voice: true }
+export const LIBRARY_ITEMS: [string, string][] = [['eps', 'Endpoints'], ['pls', 'Playlists'], ['prompts', 'Qualities'], ['cmds', 'Commands'], ['tools', 'Tools'], ['memory', 'Memory'], ['widgets', 'Widgets']]
 export const DEFAULT_LIBRARY_SHOW: Record<string, boolean> = { eps: true, pls: true, prompts: true, cmds: true, tools: true, memory: true, widgets: true }
 /** Widgets that belong to a feature and must go dark with it. */
 export const FEATURE_WIDGETS: Partial<Record<FeatureId, string[]>> = { prompts: ['prompts'], shortcuts: ['keys'], stats: ['usage', 'cost', 'last'] }
 /** Settings tabs hidden while their feature is off. */
-export const FEATURE_TABS: Partial<Record<FeatureId, string[]>> = { prompts: ['prompts'], skills: ['skills'], tools: ['tools'], playlists: ['pls'], commands: ['cmds'], stats: ['stats'], memory: ['memory'], profiles: ['profiles'], widgets: ['widgets'], shortcuts: ['keys'], advanced: ['adv'], workspace: ['workspace'], mcp: ['mcp'], voice: ['voice'] }
+export const FEATURE_TABS: Partial<Record<FeatureId, string[]>> = { prompts: ['prompts'], skills: ['skills'], tools: ['tools'], playlists: ['pls'], commands: ['cmds'], stats: ['stats'], memory: ['memory'], widgets: ['widgets'], shortcuts: ['keys'], advanced: ['adv'], workspace: ['workspace'], mcp: ['mcp'], voice: ['voice'] }
 export const featOn = (s: { features?: Record<FeatureId, boolean> } | null | undefined, f: FeatureId): boolean => s?.features?.[f] ?? DEFAULT_FEATURES[f]
 /** Whether a widget may render: widgets feature on, its owning feature on, and itself enabled. */
 export const widgetOn = (s: { features?: Record<FeatureId, boolean>; widgets: Record<string, boolean> }, id: string): boolean => {
@@ -488,7 +486,7 @@ export const normPromptRecall = (v: unknown): PromptRecallMode =>
 export type LogDetail = 'compact' | 'standard' | 'verbose'
 export const normLogDetail = (v: unknown): LogDetail => v === 'compact' || v === 'verbose' ? v : 'standard'
 
-export const DEFAULT_PREFS: S['prefs'] = { showBy: true, showLog: true, showTps: false, enterSends: true, sendWhileBusy: 'queue', autoTitle: true, temporaryByDefault: false, seasonal: true, cues: false, showModelPricing: false, showContextMeter: true, customSearch: true, stylePreset: 'modern', density: 'comfortable', uiSpacing: {}, showTimestamps: false, alwaysShowActions: false, titleEp: '', titleModel: '', effortEp: '', effortModel: '', recallEp: '', recallModel: '', tempHours: 3, archiveDays: 60, startup: 'recent', tempShow: 2, tempShowStreaming: true, tempShowDone: true, draftSurvive: 'both', fontBody: 'system', fontMono: 'system', fontHeader: 'system', modelPrimary: 'name', modelSecondary: 'none', paletteMax: 320, chatWidth: 'standard', settingsWidth: 1024, settingsHeight: 780, modelPickerHeight: 480, favoritesSection: true, hideFavoritesInProviders: true, collapsedProviders: [], sidebarWidth: 288, widgetWidth: 320, workspaceWidth: 0.4, workspaceSplit: 0.2,  modalBlur: 12, settingsOpacity: 55, streamFade: 0.3, streamMd: true, remoteImages: false, glassComposer: true, glassBlur: 14, glassOpacity: 80, showDisabledFeatures: false, proxyMode: 'auto', textScale: 100, codeWrap: false, reduceTransparency: false, promptRecall: 'empty', highContrast: false, hideFavoriteProvider: false, logDetail: 'standard', logTiming: true, logModels: true, codeLines: false, codeMaxHeight: 0, pinContext: true, pinContextPercent: 50, keepUsageHistory: true, compactAuto: true, compactAt: 80 }
+export const DEFAULT_PREFS: S['prefs'] = { showBy: true, showLog: true, showTps: false, enterSends: true, sendWhileBusy: 'queue', autoTitle: true, temporaryByDefault: false, seasonal: true, cues: false, showModelPricing: false, showContextMeter: true, customSearch: true, stylePreset: 'modern', density: 'comfortable', uiSpacing: {}, showTimestamps: false, alwaysShowActions: false, titleEp: '', titleModel: '', compactEp: '', compactModel: '', effortEp: '', effortModel: '', recallEp: '', recallModel: '', tempHours: 3, archiveDays: 60, startup: 'recent', tempShow: 2, tempShowStreaming: true, tempShowDone: true, draftSurvive: 'both', fontBody: 'system', fontMono: 'system', fontHeader: 'system', modelPrimary: 'name', modelSecondary: 'none', paletteMax: 320, chatWidth: 'standard', settingsWidth: 1024, settingsHeight: 780, modelPickerHeight: 480, favoritesSection: true, hideFavoritesInProviders: true, collapsedProviders: [], sidebarWidth: 288, widgetWidth: 320, workspaceWidth: 0.4, workspaceSplit: 0.2,  modalBlur: 12, settingsOpacity: 55, streamFade: 0.3, streamMd: true, remoteImages: false, glassComposer: true, glassBlur: 14, glassOpacity: 80, showDisabledFeatures: false, proxyMode: 'auto', textScale: 100, codeWrap: false, reduceTransparency: false, promptRecall: 'empty', highContrast: false, hideFavoriteProvider: false, qualityFavs: [...DEFAULT_QUALITY_FAVS], logDetail: 'standard', logTiming: true, logModels: true, codeLines: false, codeMaxHeight: 0, pinContext: true, pinContextPercent: 50, keepUsageHistory: true, compactAuto: true, compactAt: 80 }
 export const DEFAULT_PARAMS: S['params'] = { def: true, temp: 0.7, topp: 1, max: 4096, maxToolRounds: 8, highToolsUnlocked: false }
 export const DEFAULT_WIDGET_PREFS: S['widgetPrefs'] = { usageGroup: 'endpoint', usageMode: 'success', usageFormat: '{in}/{out}', usageTotal: false, usagePeriod: 'all', lastSpeed: true, timeUnit: 'auto', widgetOrder: WIDGETS.map(([k]) => k), shortcuts: KEYS.map(([k]) => k), contextLimit: 128000, showDisabledEndpoints: true, scratchRows: 6, snippetLimit: 20, costDecimals: 4, activePromptsOnly: false, charsPerToken: 4, hideDoneTodos: false }
 const SEARCH_VALID_PROVIDERS: SearchProvider[] = SEARCH_PROVIDERS.map(([id]) => id)
@@ -632,7 +630,7 @@ type S = {
   customDarkTheme: CustomTheme
   customLightTheme: CustomTheme
   setupDone: boolean
-  prefs: { showBy: boolean; showLog: boolean; showTps: boolean; enterSends: boolean; autoTitle: boolean; temporaryByDefault: boolean; seasonal?: boolean; cues?: boolean; showModelPricing: boolean; showContextMeter: boolean; customSearch?: boolean; /** Hide the provider name beside starred models in the picker's Favorites section. */ hideFavoriteProvider?: boolean; /** How much detail the Process-to-answer panel shows per step. */ logDetail?: LogDetail; /** Show each step's duration in the process log. */ logTiming?: boolean; /** Show the model beside each step in the process log. */ logModels?: boolean; /** Show line numbers in code blocks. */ codeLines?: boolean; /** Max code-block height in pixels before scrolling (0 = no cap). */ codeMaxHeight?: number; /** Include the pinned reply in the model context. */ pinContext?: boolean; /** Maximum slice of the context window the pinned reply may use (5–50%). */ pinContextPercent?: number; /** Replace older turns with a model-written handoff when the context nears the limit. */ compactAuto?: boolean; /** Context share at which auto-compaction starts (5–100, in 5% steps). */ compactAt?: number; /** Queue a message sent while the same chat is replying, or require a stop first. */ sendWhileBusy?: 'queue' | 'stop'; titleEp: string; titleModel?: string; effortEp: string; effortModel?: string; recallEp: string; recallModel?: string; tempHours: number; /** Days before an archived chat is deleted; the top slider value means never. */ archiveDays?: number; startup?: StartupMode; tempShow?: number; /** Keep temporary chats that are still replying listed past the temporary-chats-shown limit. */ tempShowStreaming?: boolean; /** Keep temporary chats whose reply finished in the background listed until they are opened. */ tempShowDone?: boolean; draftSurvive?: 'off' | 'new' | 'chats' | 'both'; fontBody: string; fontMono: string; fontHeader: string; modelPrimary: 'id' | 'name'; modelSecondary: 'none' | 'provider' | 'id' | 'name'; modelDisplay?: 'none' | 'name' | 'provider' | 'both'; paletteMax: number; chatWidth: 'narrow' | 'standard' | 'wide'; settingsWidth: number; settingsHeight: number; modelPickerHeight: number; /** Show a Favorites section at the top of the model picker. */ favoritesSection?: boolean; /** Hide starred models from their normal provider groups. */ hideFavoritesInProviders?: boolean; /** Endpoint ids whose provider groups are collapsed in the picker. */ collapsedProviders?: string[]; sidebarWidth?: number; widgetWidth?: number; workspaceWidth?: number; workspaceSplit?: number; modalBlur: number; settingsOpacity: number; routingMode?: RoutingMode; streamFade: number; streamMd: boolean; remoteImages?: boolean; glassComposer?: boolean; /** Composer glass backdrop blur in pixels (0–40). */ glassBlur?: number; /** Composer glass surface opacity percent (0–100). */ glassOpacity?: number; /** Keep settings for disabled features visible, marked off, instead of hiding them. */ showDisabledFeatures?: boolean; proxyMode?: 'auto' | 'always' | 'off';  stylePreset: StylePreset; density: Density; uiSpacing?: SpacingOverrides; showTimestamps?: boolean; alwaysShowActions?: boolean; /** Root font-size percent (50–200, 100 = unchanged). */ textScale?: number; /** Soft-wrap long lines inside code blocks instead of scrolling sideways. */ codeWrap?: boolean; /** Disable glass, blur and dropped shadows (flat, opaque surfaces). */ reduceTransparency?: boolean; /** When ↑/↓ recall sent prompts; 'off' also stops recording them. */ promptRecall?: PromptRecallMode; /** Raise muted-text and border contrast beyond the theme's values. */ highContrast?: boolean; /** Keep every attempt in a permanent ledger so usage survives deleting, archiving or expiring its chat. Off keeps only the attempts still on saved chats. */ keepUsageHistory?: boolean }
+  prefs: { showBy: boolean; showLog: boolean; showTps: boolean; enterSends: boolean; autoTitle: boolean; temporaryByDefault: boolean; seasonal?: boolean; cues?: boolean; showModelPricing: boolean; showContextMeter: boolean; customSearch?: boolean; /** Hide the provider name beside starred models in the picker's Favorites section. */ hideFavoriteProvider?: boolean; /** Qualities pinned in the composer's quick switcher; `global` is the global prompt row. */ qualityFavs?: string[]; /** How much detail the Process-to-answer panel shows per step. */ logDetail?: LogDetail; /** Show each step's duration in the process log. */ logTiming?: boolean; /** Show the model beside each step in the process log. */ logModels?: boolean; /** Show line numbers in code blocks. */ codeLines?: boolean; /** Max code-block height in pixels before scrolling (0 = no cap). */ codeMaxHeight?: number; /** Include the pinned reply in the model context. */ pinContext?: boolean; /** Maximum slice of the context window the pinned reply may use (5–50%). */ pinContextPercent?: number; /** Replace older turns with a model-written handoff when the context nears the limit. */ compactAuto?: boolean; /** Context share at which auto-compaction starts (5–100, in 5% steps). */ compactAt?: number; /** Queue a message sent while the same chat is replying, or require a stop first. */ sendWhileBusy?: 'queue' | 'stop'; titleEp: string; titleModel?: string; compactEp?: string; compactModel?: string; effortEp: string; effortModel?: string; recallEp: string; recallModel?: string; tempHours: number; /** Days before an archived chat is deleted; the top slider value means never. */ archiveDays?: number; startup?: StartupMode; tempShow?: number; /** Keep temporary chats that are still replying listed past the temporary-chats-shown limit. */ tempShowStreaming?: boolean; /** Keep temporary chats whose reply finished in the background listed until they are opened. */ tempShowDone?: boolean; draftSurvive?: 'off' | 'new' | 'chats' | 'both'; fontBody: string; fontMono: string; fontHeader: string; modelPrimary: 'id' | 'name'; modelSecondary: 'none' | 'provider' | 'id' | 'name'; modelDisplay?: 'none' | 'name' | 'provider' | 'both'; paletteMax: number; chatWidth: 'narrow' | 'standard' | 'wide'; settingsWidth: number; settingsHeight: number; modelPickerHeight: number; /** Show a Favorites section at the top of the model picker. */ favoritesSection?: boolean; /** Hide starred models from their normal provider groups. */ hideFavoritesInProviders?: boolean; /** Endpoint ids whose provider groups are collapsed in the picker. */ collapsedProviders?: string[]; sidebarWidth?: number; widgetWidth?: number; workspaceWidth?: number; workspaceSplit?: number; modalBlur: number; settingsOpacity: number; routingMode?: RoutingMode; streamFade: number; streamMd: boolean; remoteImages?: boolean; glassComposer?: boolean; /** Composer glass backdrop blur in pixels (0–40). */ glassBlur?: number; /** Composer glass surface opacity percent (0–100). */ glassOpacity?: number; /** Keep settings for disabled features visible, marked off, instead of hiding them. */ showDisabledFeatures?: boolean; proxyMode?: 'auto' | 'always' | 'off';  stylePreset: StylePreset; density: Density; uiSpacing?: SpacingOverrides; showTimestamps?: boolean; alwaysShowActions?: boolean; /** Root font-size percent (50–200, 100 = unchanged). */ textScale?: number; /** Soft-wrap long lines inside code blocks instead of scrolling sideways. */ codeWrap?: boolean; /** Disable glass, blur and dropped shadows (flat, opaque surfaces). */ reduceTransparency?: boolean; /** When ↑/↓ recall sent prompts; 'off' also stops recording them. */ promptRecall?: PromptRecallMode; /** Raise muted-text and border contrast beyond the theme's values. */ highContrast?: boolean; /** Keep every attempt in a permanent ledger so usage survives deleting, archiving or expiring its chat. Off keeps only the attempts still on saved chats. */ keepUsageHistory?: boolean }
   widgets: Record<string, boolean>; widgetPrefs: { usageGroup: 'endpoint' | 'model'; usageMode: 'success' | 'tokens'; usageFormat: string; usageTotal: boolean; usagePeriod: 'session' | 'day' | 'week' | 'month' | 'custom' | 'all'; usageFrom?: string; usageTo?: string; lastSpeed: boolean; timeUnit: 'ms' | 's' | 'auto'; widgetOrder: string[]; shortcuts: string[]; contextLimit: number; showDisabledEndpoints: boolean; scratchRows: number; snippetLimit: number; costDecimals: number; activePromptsOnly: boolean; charsPerToken: number; hideDoneTodos: boolean }; rail: boolean; pad: string; snips: string[]
   params: { def: boolean; temp: number; topp: number; max: number; maxToolRounds: number; highToolsUnlocked: boolean }; effort: Record<string, string>
   workspacePrefs: WorkspacePrefs
@@ -652,11 +650,6 @@ type S = {
   gistToken: string
   memories: Memory[]; memoryPrefs: MemoryPrefs
   docPrefs: DocPrefs
-  /** Named bundles of model, prompt, tools and access policy. */
-  profiles: Profile[]
-  /** Last applied profile id. The active profile is derived by matching the
-   *  live settings, so a manual edit simply stops matching. */
-  profile: string
   projects: Project[]; price: { in: number; out: number }; todos: { id: string; t: string; done: boolean }[]
   /** Project whose overview fills the main area. Session-scoped: chat view
    *  wins whenever a chat is open, and it resets on every reload. */
@@ -755,17 +748,7 @@ type S = {
   /** Expand + highlight a project and show its overview in the main area. */
   openProject: (id: string) => void
   moveChat: (id: string, project: string) => void
-  /** Save the current model, sampling, prompt, tools and access policy as a
-   *  named profile. Returns the new id. */
-  saveProfile: (name?: string) => string
-  /** Replace a profile with the current setup, keeping its name and creation time. */
-  updateProfile: (id: string) => void
-  renameProfile: (id: string, name: string) => void
-  applyProfile: (id: string) => void
-  delProfile: (id: string) => void
-  /** Bind a profile to a project; opening the project applies it. */
-  bindProjectProfile: (projectId: string, profileId: string) => void
-  /** Stop asking for this tool under Standard access, including the active profile. */
+  /** Stop asking for this tool under Standard access. */
   alwaysAllowTool: (name: string) => void
   /** Turn a temporary chat permanent (keeps its messages, drops the expiry). */
   promoteChat: (id: string) => void
@@ -880,10 +863,11 @@ export const previewSysFor = (msgId: string): string | null => {
 }
 
 /* Centralized helper models: one model shared by playlist classification,
- * title generation, effort auto-detection, and memory recall. Each task reads
- * its own ref (see prefs.titleEp/titleModel, memoryPrefs.classifierEp/
- * classifierModel, prefs.effortEp/effortModel, prefs.recallEp/recallModel);
- * the Endpoints tab sets all four at once. */
+ * title generation, effort auto-detection, memory recall and context handoff.
+ * Each task reads its own ref (see prefs.titleEp/titleModel, memoryPrefs.
+ * classifierEp/classifierModel, prefs.effortEp/effortModel, prefs.recallEp/
+ * recallModel, prefs.compactEp/compactModel); the Endpoints tab sets all five
+ * at once. Page summaries keep their own model flow in search settings. */
 export const helperRef = (ep: string, model?: string) => (ep ? `${ep}::${model ?? ''}` : '')
 export const splitHelperRef = (ref: string): [string, string] => {
   const i = ref.indexOf('::')
@@ -925,6 +909,14 @@ export const recallClassifierOf = (s: { eps: Ep[]; prefs: { recallEp: string; re
   }
   return pick(s.prefs?.recallEp, s.prefs?.recallModel) ?? pick(s.memoryPrefs.classifierEp, s.memoryPrefs.classifierModel)
 }
+/** Resolve the configured context-handoff writer, if usable. Empty keeps the
+ *  replying model, which is the historical behaviour. */
+export const compactionModelOf = (s: { eps: Ep[]; prefs: { compactEp?: string; compactModel?: string } }): Ep | undefined => {
+  if (!s.prefs?.compactEp) return undefined
+  const found = s.eps.find((e) => e.id === s.prefs.compactEp && usable(e))
+  if (!found) return undefined
+  return { ...found, model: s.prefs.compactModel && modelsOf(found).includes(s.prefs.compactModel) ? s.prefs.compactModel : found.model }
+}
 /** Lowest thinking level a model supports, or '' when none is known.
  * Classifier calls use this so background routing stays cheap. */
 const EFFORT_RANK: Record<string, number> = { none: 0, minimal: 1, low: 2, medium: 3, high: 4, xhigh: 5, max: 6 }
@@ -932,6 +924,11 @@ export const lowestEffortOf = (e: Ep): string => {
   const levels = e.modelEfforts?.[e.model] ?? []
   if (!levels.length) return ''
   return [...levels].sort((a, b) => (EFFORT_RANK[a.toLowerCase()] ?? 50) - (EFFORT_RANK[b.toLowerCase()] ?? 50))[0] ?? ''
+}
+export const highestEffortOf = (e: Ep): string => {
+  const levels = e.modelEfforts?.[e.model] ?? []
+  if (!levels.length) return ''
+  return [...levels].sort((a, b) => (EFFORT_RANK[b.toLowerCase()] ?? 50) - (EFFORT_RANK[a.toLowerCase()] ?? 50))[0] ?? ''
 }
 /* Ask the effort-detection model to pick one of `levels` for the request.
  * Strict JSON only: {"effort":"<one available level>"}. Returns '' when
@@ -1138,7 +1135,7 @@ export const useS = create<S>()(
         if (!chat) return null
         const um = [...chat.msgs].reverse().find((m) => m.r === 'user') ?? { id: 'compaction', r: 'user' as const, t: '' }
         const p = plan(st, um)
-        const ep = opts.ep && usable(opts.ep) ? opts.ep : p.cand[0]
+        const ep = compactionModelOf(st) ?? (opts.ep && usable(opts.ep) ? opts.ep : p.cand[0])
         if (!ep) {
           opts.log?.push({ n: 'Context compaction', m: '', err: 'No usable endpoint could write a handoff; older messages will be trimmed instead.', at: Date.now() })
           return null
@@ -2407,7 +2404,11 @@ export const useS = create<S>()(
             // Effort is classified once per model: a retry must not re-bill
             // the helper classification call.
             let effort = effortCache.get(e.model) ?? get().effort[e.model] ?? ''
-            if (effort === 'auto') {
+            // A quality can pin reasoning for this reply. It wins over the
+            // stored per-model choice and skips the auto classifier, because
+            // the user has already made that decision.
+            if (p.effects.effort) effort = p.effects.effort === 'lowest' ? lowestEffortOf(e) : highestEffortOf(e)
+            else if (effort === 'auto') {
               const levels = e.modelEfforts?.[e.model] ?? []
               const picked = await classifyEffort(um.full ?? um.t, levels)
               if (picked.level) {
@@ -2450,7 +2451,7 @@ export const useS = create<S>()(
                 const g = get(), GF = g.features ?? DEFAULT_FEATURES
                 // The composer lock can turn every schema off; keeping the
                 // per-tool switches intact means choosing Full restores them.
-                const toolsAllowed = GF.tools && normToolMode(g.toolMode) !== 'off'
+                const toolsAllowed = GF.tools && !p.effects.toolsOff && normToolMode(g.toolMode) !== 'off'
                 const base: Record<string, boolean> = toolsAllowed ? { ...g.tools, memory: memOn } : {}
                 // MCP tools are registered at reply time with their own names;
                 // the per-server switch already decided whether they exist.
@@ -2460,7 +2461,7 @@ export const useS = create<S>()(
                 // Code execution is likewise its own opt-in switch.
                 if (toolsAllowed && normCodeRun(g.codeRun).on) base.run_code = true
                 // use_skill is a hidden model capability (not listed in Settings → Tools).
-                if (toolsAllowed && featOn(get(), 'skills') && (p.skills ?? []).length) base[SKILL_TOOL_NAME] = true
+                if (toolsAllowed && !p.effects.skillsOff && featOn(get(), 'skills') && (p.skills ?? []).length) base[SKILL_TOOL_NAME] = true
                 return base
               })(), (t) => {
                 txt += t
@@ -2778,7 +2779,7 @@ export const useS = create<S>()(
         sel: null, favs: [], pr: 'general', globalPrompt: { on: true, text: GENERAL_PROMPT_TEXT, qualities: [] }, features: { ...DEFAULT_FEATURES }, featureOrder: FEATURES.map(([id]) => id), libraryShow: { ...DEFAULT_LIBRARY_SHOW }, themeMode: 'dark', themeDark: 'plum', themeLight: 'paper', customDarkColors: { ...DEFAULT_CUSTOM_COLORS }, customLightColors: { ...DEFAULT_CUSTOM_LIGHT_COLORS }, customDarkTheme: { ...DEFAULT_CUSTOM_DARK_THEME }, customLightTheme: { ...DEFAULT_CUSTOM_LIGHT_THEME }, setupDone: false, prefs: { ...DEFAULT_PREFS },
         stats: ZERO(), keys: Object.fromEntries(KEYS.map(([k, , d]) => [k, d])), gistToken: '',
         usage: initialLedger.rows, usageTitles: initialLedger.titles,
-        profiles: [], profile: '', projects: [], activeProject: '', price: { in: 0, out: 0 }, todos: [],
+        projects: [], activeProject: '', price: { in: 0, out: 0 }, todos: [],
         routeStats: {}, shares: [], flashMsg: null,
         draft: '', busy: false, busyChats: {}, runJournal: {}, doneChats: {}, queued: {}, notice: null, undo: null,
         /* Workspace (first-class entity) */
@@ -2802,6 +2803,7 @@ export const useS = create<S>()(
             if (s.prefs.titleEp === id) n.prefs = { ...s.prefs, titleEp: '', titleModel: '' }
             if (s.prefs.effortEp === id) n.prefs = { ...(n.prefs ?? s.prefs), effortEp: '', effortModel: '' }
             if (s.prefs.recallEp === id) n.prefs = { ...(n.prefs ?? s.prefs), recallEp: '', recallModel: '' }
+            if (s.prefs.compactEp === id) n.prefs = { ...(n.prefs ?? s.prefs), compactEp: '', compactModel: '' }
             if (s.memoryPrefs.classifierEp === id) n.memoryPrefs = { ...s.memoryPrefs, classifierEp: '', classifierModel: '' }
             // The page-summary model is picked from the same endpoint list, so
             // a deleted endpoint must not leave a dangling reference.
@@ -3442,47 +3444,8 @@ export const useS = create<S>()(
         delProject: (id) => set((s) => ({ projects: s.projects.filter((f) => f.id !== id), chats: s.chats.map((c) => (c.project === id ? { ...c, project: undefined } : c)), ...(s.activeProject === id ? { activeProject: '' } : {}) })),
         setProjectContext: (id, files) => set((s) => ({ projects: s.projects.map((f) => (f.id === id ? { ...f, context: files.length ? files : undefined } : f)) })),
         setProjectShareWorkspaces: (id, on) => set((s) => ({ projects: s.projects.map((f) => (f.id === id ? { ...f, shareWorkspaces: on } : f)) })),
-        saveProfile: (name) => {
-          const s = get()
-          if (!featOn(s, 'profiles')) return ''
-          const p = captureProfile(s, (name ?? '').trim() || freshProfileName(s.profiles), { id: uid() })
-          set({ profiles: [...s.profiles, p], profile: p.id, notice: { t: `Saved “${p.name}” from the current setup.` } })
-          return p.id
-        },
-        updateProfile: (id) => {
-          const s = get(), old = s.profiles.find((x) => x.id === id)
-          if (!old || !featOn(s, 'profiles')) return
-          const p = captureProfile(s, old.name, { id, createdAt: old.createdAt })
-          set({ profiles: s.profiles.map((x) => (x.id === id ? p : x)), profile: p.id, notice: { t: `Updated “${p.name}”.` } })
-        },
-        renameProfile: (id, name) => set((s) => ({ profiles: s.profiles.map((p) => (p.id === id ? { ...p, name: name.trim().slice(0, 60) || p.name, updatedAt: Date.now() } : p)) })),
-        applyProfile: (id) => {
-          const s = get(), p = s.profiles.find((x) => x.id === id)
-          if (!p || !featOn(s, 'profiles')) return
-          set({ ...profilePatch(p), profile: p.id, notice: { t: `Applied “${p.name}”.` } })
-        },
-        delProfile: (id) => set((s) => ({
-          profiles: s.profiles.filter((p) => p.id !== id),
-          ...(s.profile === id ? { profile: '' } : {}),
-          projects: s.projects.map((f) => (f.profile === id ? { ...f, profile: undefined } : f)),
-        })),
-        bindProjectProfile: (pid, profileId) => set((s) => ({ projects: s.projects.map((f) => (f.id === pid ? { ...f, profile: profileId || undefined } : f)) })),
-        alwaysAllowTool: (name) => {
-          const s = get()
-          const active = featOn(s, 'profiles') ? s.profiles.find((p) => profileMatches(s, p)) : undefined
-          set({
-            toolApproval: { ...s.toolApproval, [name]: false },
-            // Keep the active profile matching: an "always allow" answer is a
-            // policy change, not a drift that should silently detach the profile.
-            ...(active ? { profiles: s.profiles.map((p) => (p.id === active.id ? { ...p, toolApproval: { ...p.toolApproval, [name]: false }, updatedAt: Date.now() } : p)) } : {}),
-          })
-        },
-        openProject: (id) => {
-          set((s) => ({ activeProject: id, chat: '', projects: s.projects.map((f) => (f.id === id ? { ...f, open: true } : f)) }))
-          // Entering a project also enters the way of working bound to it.
-          const bound = get().projects.find((f) => f.id === id)?.profile
-          if (bound) get().applyProfile(bound)
-        },
+        alwaysAllowTool: (name) => set((s) => ({ toolApproval: { ...s.toolApproval, [name]: false } })),
+        openProject: (id) => set((s) => ({ activeProject: id, chat: '', projects: s.projects.map((f) => (f.id === id ? { ...f, open: true } : f)) })),
         moveChat: (id, project) => set((s) => ({ chats: s.chats.map((c) => (c.id === id ? { ...c, project: project || undefined } : c)) })),
         promoteChat: (id) => set((s) => ({ chats: s.chats.map((c) => (c.id === id ? { ...c, temporary: false, expiresAt: undefined } : c)) })),
         /* Branching does not copy the chat. The path being read is kept as an
@@ -3587,7 +3550,7 @@ export const useS = create<S>()(
         if (p.prefs && p.prefs.showTps === undefined) p.prefs.showTps = false
         p.prefs = { ...p.prefs, hideFavoriteProvider: p.prefs?.hideFavoriteProvider === true, logDetail: normLogDetail(p.prefs?.logDetail), logTiming: p.prefs?.logTiming !== false, logModels: p.prefs?.logModels !== false, codeLines: p.prefs?.codeLines === true, codeMaxHeight: typeof p.prefs?.codeMaxHeight === 'number' && Number.isFinite(p.prefs.codeMaxHeight) ? Math.max(0, Math.min(1200, Math.round(p.prefs.codeMaxHeight))) : 0, pinContext: p.prefs?.pinContext !== false, pinContextPercent: typeof p.prefs?.pinContextPercent === 'number' && Number.isFinite(p.prefs.pinContextPercent) ? Math.max(5, Math.min(50, Math.round(p.prefs.pinContextPercent))) : 50, tempHours: p.prefs?.tempHours ?? 3, archiveDays: normArchiveDays(p.prefs?.archiveDays), startup: normStartup(p.prefs?.startup), tempShow: Number.isInteger(p.prefs?.tempShow) ? Math.max(0, Math.min(6, p.prefs.tempShow)) : 2, tempShowStreaming: p.prefs?.tempShowStreaming !== false, tempShowDone: p.prefs?.tempShowDone !== false, draftSurvive: ['off', 'new', 'chats', 'both'].includes(p.prefs?.draftSurvive) ? p.prefs.draftSurvive : 'both', fontBody: p.prefs?.fontBody ?? 'system', fontMono: p.prefs?.fontMono ?? 'system', fontHeader: p.prefs?.fontHeader ?? 'system', modelPrimary: p.prefs?.modelPrimary ?? ({ none: 'id', name: 'name', provider: 'id', both: 'name' } as const)[(p.prefs?.modelDisplay as string) ?? 'both'] ?? 'name', modelSecondary: p.prefs?.modelSecondary ?? ({ none: 'none', name: 'none', provider: 'provider', both: 'provider' } as const)[(p.prefs?.modelDisplay as string) ?? 'both'] ?? 'none', paletteMax: p.prefs?.paletteMax ?? 320, chatWidth: p.prefs?.chatWidth ?? 'standard', settingsWidth: p.prefs?.settingsWidth ?? 1024, settingsHeight: p.prefs?.settingsHeight ?? 780, modelPickerHeight: p.prefs?.modelPickerHeight ?? 480, showModelPricing: p.prefs?.showModelPricing ?? false, showContextMeter: p.prefs?.showContextMeter ?? true, titleEp: p.prefs?.titleEp ?? '', titleModel: p.prefs?.titleModel ?? '', effortEp: p.prefs?.effortEp ?? '', effortModel: p.prefs?.effortModel ?? '', recallEp: p.prefs?.recallEp ?? '', recallModel: p.prefs?.recallModel ?? '', routingMode: ['ordered', 'fastest', 'cheapest'].includes(p.prefs?.routingMode) ? p.prefs.routingMode : 'ordered', sidebarWidth: p.prefs?.sidebarWidth ?? 288, widgetWidth: p.prefs?.widgetWidth ?? 320, workspaceWidth: typeof p.prefs?.workspaceWidth === 'number' && p.prefs.workspaceWidth <= 1 ? p.prefs.workspaceWidth : 0.4, workspaceSplit: typeof p.prefs?.workspaceSplit === 'number' ? p.prefs.workspaceSplit : 0.2, modalBlur: p.prefs?.modalBlur ?? 12, settingsOpacity: p.prefs?.settingsOpacity ?? 55, temporaryByDefault: p.prefs?.temporaryByDefault ?? false, streamFade: typeof p.prefs?.streamFade === 'number' && p.prefs.streamFade >= 0 && p.prefs.streamFade <= 1 ? p.prefs.streamFade : 0.3, streamMd: p.prefs?.streamMd ?? true, proxyMode: p.prefs?.proxyMode === 'always' || p.prefs?.proxyMode === 'off' ? p.prefs.proxyMode : 'auto', glassComposer: p.prefs?.glassComposer ?? true, glassBlur: typeof p.prefs?.glassBlur === 'number' && Number.isFinite(p.prefs.glassBlur) ? Math.max(0, Math.min(40, Math.round(p.prefs.glassBlur))) : 14, glassOpacity: typeof p.prefs?.glassOpacity === 'number' && Number.isFinite(p.prefs.glassOpacity) ? Math.max(0, Math.min(100, Math.round(p.prefs.glassOpacity))) : 80, showDisabledFeatures: p.prefs?.showDisabledFeatures === true, stylePreset: normStylePreset(p.prefs?.stylePreset), density: normDensity(p.prefs?.density), uiSpacing: normSpacing(p.prefs?.uiSpacing), showTimestamps: p.prefs?.showTimestamps === true, alwaysShowActions: p.prefs?.alwaysShowActions === true, textScale: typeof p.prefs?.textScale === 'number' && Number.isFinite(p.prefs.textScale) ? Math.round(Math.min(200, Math.max(50, p.prefs.textScale))) : 100, codeWrap: p.prefs?.codeWrap === true, reduceTransparency: p.prefs?.reduceTransparency === true, promptRecall: normPromptRecall(p.prefs?.promptRecall), highContrast: p.prefs?.highContrast === true }
         p.favs = Array.isArray(p.favs) ? [...new Set(p.favs.filter((x: unknown) => typeof x === 'string' && x.includes('::')))] : []
-        p.prefs = { ...p.prefs, favoritesSection: p.prefs?.favoritesSection !== false, hideFavoritesInProviders: p.prefs?.hideFavoritesInProviders !== false, collapsedProviders: Array.isArray(p.prefs?.collapsedProviders) ? p.prefs.collapsedProviders.filter((x: unknown) => typeof x === 'string') : [] }
+        p.prefs = { ...p.prefs, qualityFavs: normQualityFavs(p.prefs?.qualityFavs), favoritesSection: p.prefs?.favoritesSection !== false, hideFavoritesInProviders: p.prefs?.hideFavoritesInProviders !== false, collapsedProviders: Array.isArray(p.prefs?.collapsedProviders) ? p.prefs.collapsedProviders.filter((x: unknown) => typeof x === 'string') : [] }
         // Image backgrounds were removed; drop their persisted settings.
         if (p.prefs && typeof p.prefs === 'object') {
           const legacy = p.prefs as Record<string, unknown>
@@ -3609,11 +3572,6 @@ export const useS = create<S>()(
         // Older builds remembered consent per tool; the prompt is shared now,
         // so any saved "do not ask" answer carries over to the one flag.
         p.toolConsent = p.toolConsent === true || (!!p.toolConsent && typeof p.toolConsent === 'object' && Object.values(p.toolConsent).some((v) => v === true))
-        // Profiles are settings, never credentials: only the fields a profile
-        // owns survive, and a bound project cannot point at a deleted profile.
-        p.profiles = normProfiles(p.profiles)
-        p.profile = p.profiles.some((x: Profile) => x.id === p.profile) ? p.profile : ''
-        if (Array.isArray(p.projects)) p.projects = p.projects.map((f: Project) => (f?.profile && !p.profiles.some((x: Profile) => x.id === f.profile) ? { ...f, profile: undefined } : f))
         p.runJournal = normRunJournal(p.runJournal)
         p.mcps = normMcpServers(p.mcps)
         p.imageGen = normImageGen(p.imageGen)

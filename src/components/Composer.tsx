@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperti
 import { useShallow } from 'zustand/react/shallow'
 import { Plus, FileUp, FileText, ArrowUp, Square, CornerDownRight, ChevronRight, ListMusic, ListPlus, Cpu, ScrollText, Settings, Search, BookOpen, X, TriangleAlert, Wrench, Link as LinkIcon, ScanText, Loader2, Mic, Star, GripVertical, Check, Globe } from 'lucide-react'
 import { useS, usable, modelsOf, modelNameOf, featOn, normDocs, normSearch, fetchOptsOf, effortClassifierOf, helperRef, splitHelperRef, toggleFavRef, type Att, type Ep } from '../store'
+import { DEFAULT_QUALITY_FAVS, PROMPT_QUALITIES, normQualities, normQualityFavs, type PromptQuality } from '../flair'
 import { CI, orderTools } from '../meta'
 import { composerWidth } from '../layout'
 import { can, readAtts, ocrImage, fetchPage } from '../engine'
@@ -822,10 +823,19 @@ export function Composer({ cfg, quote, onClearQuote }: { cfg: (t: string) => voi
             )
           }}>{(close) => <ModelMenu close={close} cfg={cfg} />}</Pop>
           {featOn(s, 'prompts') && <Pop up onOpenChange={setMenusOpen} trigger={(o) => (
-            <button className={chip}><ScrollText size={16} /><span className="max-w-20 truncate sm:max-w-32">{pr ? pr.name : 'No prompt'}</span><ChevronRight size={14} className={cx('transition-transform', o && 'rotate-90')} /></button>
+            <button className={chip} title={normQualities(s.globalPrompt?.qualities).length ? `${normQualities(s.globalPrompt?.qualities).length} qualities on` : undefined}><ScrollText size={16} /><span className="max-w-20 truncate sm:max-w-32">{pr ? pr.name : 'No prompt'}</span>{(() => { const n = normQualities(s.globalPrompt?.qualities).length; return n ? <span className="inline-flex items-center gap-0.5 text-xs text-mu"><Star size={11} />{n}</span> : null })()}<ChevronRight size={14} className={cx('transition-transform', o && 'rotate-90')} /></button>
           )}>
             {(close) => {
               const g = s.globalPrompt ?? { on: false, text: '', qualities: [] }
+              const activeQualities = normQualities(g.qualities)
+              const favQualities = normQualityFavs(s.prefs.qualityFavs ?? DEFAULT_QUALITY_FAVS)
+                .filter((id) => id !== 'global')
+                .map((id) => PROMPT_QUALITIES.find((q) => q.id === id))
+                .filter((q): q is (typeof PROMPT_QUALITIES)[number] => !!q)
+              const toggleQuality = (id: PromptQuality) => {
+                const next = activeQualities.includes(id) ? activeQualities.filter((x) => x !== id) : [...activeQualities, id]
+                s.patch({ globalPrompt: { ...g, qualities: next } })
+              }
               return (
                 <>
                   {/* The global prompt is part of the same stack as the named
@@ -838,12 +848,20 @@ export function Composer({ cfg, quote, onClearQuote }: { cfg: (t: string) => voi
                     onClick={() => s.patch({ globalPrompt: { ...g, on: !g.on } })}
                     title={g.on ? 'Turn the global system prompt off for every chat' : 'Add the global system prompt to every chat'}
                   >Global system prompt</Item>
+                  {/* Qualities the user pinned in Settings, one switch each, so
+                      changing the reply's behaviour never needs a trip to
+                      Settings. The base prompt row above stays separate. */}
+                  {favQualities.length > 0 && <div className="px-2.5 pb-1 pt-2 text-xs font-medium text-mu">Qualities</div>}
+                  {favQualities.map((q) => {
+                    const on = activeQualities.includes(q.id)
+                    return <Item key={q.id} icon={Star} on={on} toggle={{ on, set: () => toggleQuality(q.id), label: q.label }} onClick={() => toggleQuality(q.id)} title={q.desc}>{q.label}</Item>
+                  })}
                   {/* The global prompt stacks on top of the named prompts rather
                       than being one of them, so a rule separates it. */}
                   <div role="separator" aria-hidden="true" className="mx-1 my-1.5 border-t border-bor/60" />
                   <Item icon={X} on={!s.pr} onClick={() => { s.patch({ pr: '' }); close() }}>No override</Item>
                   {s.prompts.map((p) => <Item key={p.id} icon={ScrollText} on={s.pr === p.id} onClick={() => { s.patch({ pr: p.id }); close() }}>{p.name}</Item>)}
-                  <Item icon={Settings} onClick={() => { close(); cfg('prompts') }}>Manage…</Item>
+                  <Item icon={Settings} onClick={() => { close(); cfg('prompts#qualities') }}>Manage qualities…</Item>
                 </>
               )
             }}

@@ -63,8 +63,8 @@ export const tierOf = (id: unknown, _agentRounds?: unknown): ResearchTier =>
 /* ---- Plan ---- */
 
 export type ResearchPlanStepKind = 'search' | 'analyze' | 'report' | 'other'
-/** `items` are the concrete research directions under a step, numbered the way
- * the plan card renders them ((1), (2), (a), …). */
+/** `items` are the concrete research directions under a step. The plan card
+ * numbers them itself; sub-details inside an item may still use (a), (b), (c). */
 export type ResearchPlanStep = { id: string; kind: ResearchPlanStepKind; label: string; items: string[] }
 export type ResearchQuestion = { id: string; question: string; options: string[] }
 export type ResearchAnswer = { question: string; answer: string }
@@ -79,11 +79,11 @@ export type ResearchPlan = { title: string; intro: string; steps: ResearchPlanSt
 export const PLAN_INTRO = 'Here’s my plan to tackle that topic. You can reply with changes, or click the list below to edit it manually.'
 
 /** The plan JSON shape + rules for the planning prompt. */
-const PLAN_SHAPE = '{"title":"<short topic title, 2-7 words>","intro":"<one short sentence naming the goal>","steps":[{"kind":"search","label":"<2-4 word label>","items":["(1) ...","(2) ..."]},{"kind":"analyze","label":"Analyze Results","items":["(4) ..."]},{"kind":"report","label":"Create Report","items":["(5) ..."]}],"questions":[{"question":"<something only the user can answer>","options":["<short choice>","<short choice>"]}]}'
+const PLAN_SHAPE = '{"title":"<short topic title, 2-7 words>","intro":"<one short sentence naming the goal>","steps":[{"kind":"search","label":"<2-4 word label>","items":["<concrete direction>","<concrete direction>"]},{"kind":"analyze","label":"Analyze Results","items":["<concrete direction>"]},{"kind":"report","label":"Create Report","items":["<concrete direction>"]}],"questions":[{"question":"<something only the user can answer>","options":["<short choice>","<short choice>"]}]}'
 const PLAN_RULES = [
   'Rules:',
   '- 3 to 5 steps. The first step has kind "search" and covers looking things up on the web; include one kind "analyze" step and finish with one kind "report" step.',
-  '- Number the search items (1), (2), (3) … in order and use (a), (b), (c) for sub-details inside an item (for example a parenthetical list of specifics to gather).',
+  '- The plan card numbers items for you: write each item as plain prose with no leading number, bullet or "(1)" marker. Use (a), (b), (c) only for sub-details inside an item (for example a parenthetical list of specifics to gather).',
   '- Items must be concrete directions (what to look up, which data to gather, which criteria to compare), never platitudes.',
   '- 3 to 8 items on the main search step; 1 to 3 items on the other steps.',
   '- Keep labels to four words or fewer. Do not use markdown, citations, or the word "step".',
@@ -253,15 +253,15 @@ export function fallbackPlan(query: string): ResearchPlan {
     intro: 'A default plan, because the planning reply could not be read.',
     steps: [
       { id: 'p1', kind: 'search', label: 'Find sources', items: [
-        `(1) Search for authoritative, recent sources on ${topic}.`,
-        '(2) Prefer primary sources, official documentation, and expert commentary over aggregators.',
-        '(3) Read the most relevant pages and extract the concrete facts each one supports.',
+        `Search for authoritative, recent sources on ${topic}.`,
+        'Prefer primary sources, official documentation, and expert commentary over aggregators.',
+        'Read the most relevant pages and extract the concrete facts each one supports.',
       ] },
       { id: 'p2', kind: 'analyze', label: 'Compare findings', items: [
-        '(4) Cross-check each load-bearing claim against a second independent source and note any disagreements.',
+        'Cross-check each load-bearing claim against a second independent source and note any disagreements.',
       ] },
       { id: 'p3', kind: 'report', label: 'Write report', items: [
-        '(5) Write a cited report with a summary, key findings, evidence, limitations, and a sources note.',
+        'Write a cited report with a summary, key findings, evidence, limitations, and a sources note.',
       ] },
     ],
   }

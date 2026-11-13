@@ -22,7 +22,7 @@ export function detectAvailableCategories(j: Record<string, unknown>, themes: Re
       || (typeof j.theme === 'string' && (j.theme as string) in themes) || o(j.customColors) || o(j.prefs),
     features: o(j.features) || Array.isArray(j.featureOrder) || o(j.libraryShow) || o(j.advanced),
     tools: o(j.tools) || o(j.search) || typeof j.toolMode === 'string' || o(j.toolApproval) || Array.isArray(j.mcps) || o(j.imageGen) || o(j.codeRun),
-    tuning: o(j.params) || o(j.effort) || o(j.workspacePrefs) || o(j.docPrefs) || o(j.voicePrefs) || Array.isArray(j.profiles),
+    tuning: o(j.params) || o(j.effort) || o(j.workspacePrefs) || o(j.docPrefs) || o(j.voicePrefs),
     widgets: o(j.widgets) || o(j.widgetPrefs),
     stats: o(j.stats) || o(j.routeStats),
     chats: Array.isArray(j.chats) || Array.isArray(j.todos) || Array.isArray(j.snips) || Array.isArray(j.projects) || Array.isArray(j.folders) || typeof j.pad === 'string',
@@ -40,7 +40,6 @@ type ExportState = {
   features: unknown; featureOrder: unknown; libraryShow: unknown; advanced: unknown
   tools: unknown; toolMode: unknown; toolApproval: unknown; search: { keys: Record<string, string> }; mcps: unknown; imageGen: unknown; codeRun: unknown
   params: unknown; effort: unknown; workspacePrefs: unknown; docPrefs: unknown; voicePrefs: unknown
-  profiles: unknown; profile: unknown
   widgets: unknown; widgetPrefs: unknown; stats: unknown; routeStats: unknown
   chats: unknown; projects: unknown; chat: unknown; todos: unknown; snips: unknown; pad: unknown
 }
@@ -120,7 +119,7 @@ export function buildExportPayload(
     data.imageGen = s.imageGen
     data.codeRun = s.codeRun
   }
-  if (exports.tuning) { data.params = s.params; data.effort = s.effort; data.workspacePrefs = s.workspacePrefs; data.docPrefs = s.docPrefs; data.voicePrefs = s.voicePrefs; data.profiles = s.profiles; data.profile = s.profile }
+  if (exports.tuning) { data.params = s.params; data.effort = s.effort; data.workspacePrefs = s.workspacePrefs; data.docPrefs = s.docPrefs; data.voicePrefs = s.voicePrefs }
   if (exports.widgets) { data.widgets = s.widgets; data.widgetPrefs = s.widgetPrefs }
   if (exports.stats) data.stats = s.stats
   if (exports.stats) data.routeStats = s.routeStats

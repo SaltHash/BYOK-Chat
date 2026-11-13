@@ -56,13 +56,18 @@ function PlanStepRow({ step, last }: { step: ResearchPlanStep; last: boolean }) 
       <Icon size={18} className="absolute left-0 top-0.5 text-mu" />
       <div className="text-sm font-medium">{step.label}</div>
       {step.items.length > 0 && (
-        <ul className="mt-1 space-y-0.5">
-          {step.items.map((it, i) => <li key={i} className="text-xs leading-relaxed text-mu">{it}</li>)}
-        </ul>
+        <ol className="mt-1 list-decimal space-y-1 pl-4 marker:text-mu">
+          {step.items.map((it, i) => <li key={i} className="text-xs leading-relaxed text-mu">{planItemText(it)}</li>)}
+        </ol>
       )}
     </li>
   )
 }
+
+/** Older plans (and models that ignore the prompt) prefix each direction with
+ *  its own "(1)"/"1." number. The list now numbers itself, so the hand-typed
+ *  marker is dropped to avoid showing "1. (1) …" after an edit round-trip. */
+const planItemText = (item: string) => item.replace(/^\s*(?:\(\d+\)|\d+[.)])\s*/, '')
 
 /** The estimate shown on the plan card before the run starts: three quiet
  *  facts instead of a sentence of figures. The number is a token budget for
@@ -318,8 +323,8 @@ export function ResearchPlanCard({ msg }: { msg: Msg }) {
               <span className="ml-2">{liveDraft?.title ? 'Drafting the research plan…' : rs.scope ? `Getting context · ${rs.scope} ${rs.scope === 1 ? 'search' : 'searches'}…` : 'Generating research plan…'}</span>
             </p>
             {!!liveDraft?.steps.length && (
-              <ol className="space-y-1">
-                {liveDraft.steps.map((label, i) => <li key={`${label}-${i}`} className="text-xs leading-relaxed text-mu">{i + 1}. {label}</li>)}
+              <ol className="list-decimal space-y-1 pl-4 marker:text-mu">
+                {liveDraft.steps.map((label, i) => <li key={`${label}-${i}`} className="text-xs leading-relaxed text-mu">{label}</li>)}
               </ol>
             )}
           </div>

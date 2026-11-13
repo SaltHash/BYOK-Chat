@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
-import { Search, Plus, MessageSquare, Settings, Palette as Pi, Cpu, ScrollText, Download, PanelRight, Server, Trash2, Type, Maximize2, Sparkles, Wrench, Keyboard, FolderOpen, SlidersHorizontal, Brain, ListMusic, Terminal, TrendingUp, Database, FlaskConical, Library, Eraser, Activity, Square, Layers } from 'lucide-react'
+import { Search, Plus, MessageSquare, Settings, Palette as Pi, Cpu, ScrollText, Download, PanelRight, Server, Trash2, Type, Maximize2, Sparkles, Wrench, Keyboard, FolderOpen, SlidersHorizontal, Brain, ListMusic, Terminal, TrendingUp, Database, FlaskConical, Library, Eraser, Activity, Square } from 'lucide-react'
 import { useS, THEMES, themePatch, modelsOf, modelNameOf, exportChat, featOn, FEATURES, LIBRARY_ITEMS, type FeatureId } from '../store'
 import { nextThemePatch, stepModelSelection, stepPromptSelection } from '../selection'
 import { SETTINGS_TABS, SETTING_LINKS, TAB_KEYWORDS, visibleTabs } from '../settingsCatalog'
@@ -18,7 +18,7 @@ const TAB_FEATURE: Record<string, FeatureId> = {
 
 const FEATURE_ICON: Record<string, Ic> = {
   prompts: ScrollText, skills: Sparkles, tools: Wrench, playlists: ListMusic, commands: Terminal,
-  stats: TrendingUp, memory: Brain, profiles: Layers, widgets: PanelRight, shortcuts: Keyboard, library: Library,
+  stats: TrendingUp, memory: Brain, widgets: PanelRight, shortcuts: Keyboard, library: Library,
   workspace: FolderOpen, advanced: FlaskConical,
 }
 
@@ -27,7 +27,7 @@ export function Palette({ close, cfg, toggleSide }: { close: () => void; cfg: (t
      keystrokes, streaming text updates and widget state no longer re-render it. */
   const s = useS(useShallow((st) => ({
     chats: st.chats, skills: st.skills, eps: st.eps, pls: st.pls, prompts: st.prompts, cmds: st.cmds, pr: st.pr,
-    features: st.features, prefs: st.prefs, sel: st.sel, rail: st.rail, tools: st.tools, busyChats: st.busyChats, profiles: st.profiles,
+    features: st.features, prefs: st.prefs, sel: st.sel, rail: st.rail, tools: st.tools, busyChats: st.busyChats,
     themeMode: st.themeMode, themeLight: st.themeLight, themeDark: st.themeDark,
     newChat: st.newChat, patch: st.patch, add: st.add,
   })))
@@ -50,11 +50,6 @@ export function Palette({ close, cfg, toggleSide }: { close: () => void; cfg: (t
     ...s.chats.map((c) => action(MessageSquare, c.title, 'Chat', `chat conversation ${c.title}`, () => s.patch({ chat: c.id }))),
     ...s.eps.flatMap((e) => modelsOf(e).map((model) => action(Cpu, modelNameOf(e, model), e.name, `model ${modelNameOf(e, model)} ${model} ${e.name} provider endpoint switch select`, () => s.patch({ sel: { k: 'ep', id: e.id, model } })))),
     ...(featOn(s, 'playlists') ? s.pls.map((p) => action(Cpu, p.name, 'Playlist', `playlist model route ${p.name}`, () => s.patch({ sel: { k: 'pl', id: p.id } }))) : []),
-    ...(featOn(s, 'profiles') ? [
-      ...s.profiles.map((p) => action(Layers, `Profile: ${p.name}`, 'Profile', `profile preset bundle ${p.name} apply switch model prompt tools access`, () => useS.getState().applyProfile(p.id))),
-      action(Layers, 'Save current setup as a profile', 'Action', 'profile save capture current model prompt tools access policy', () => useS.getState().saveProfile()),
-      action(Layers, 'Manage profiles', 'Setting', 'profiles presets bundles ways of working list edit delete project binding', () => cfg('profiles')),
-    ] : []),
     action(Server, 'Add endpoint', 'Action', 'provider model connection api', () => { s.add('eps'); cfg('eps#add-endpoint') }),
     action(Settings, 'Open settings', 'Action', 'preferences configure options', () => cfg('eps')),
     action(Settings, 'Close settings', 'Action', 'dismiss settings', () => cfg('')),

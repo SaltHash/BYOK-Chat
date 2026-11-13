@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-const { PROMPT_QUALITIES, normQualities, normGlobalPrompt, qualityPrompt, seasonalLine, seasonalLines, greetingFor, flairLine, TEMPORARY_FLAIR } = await import('./flair.ts')
+const { PROMPT_QUALITIES, normQualities, normGlobalPrompt, qualityPrompt, qualityEffects, normQualityFavs, DEFAULT_QUALITY_FAVS, seasonalLine, seasonalLines, greetingFor, flairLine, TEMPORARY_FLAIR } = await import('./flair.ts')
 
 const at = (y, m, d) => new Date(y, m - 1, d, 12)
 
@@ -95,7 +95,7 @@ test('quality ids are unique and have short prompt text', () => {
   assert.equal(new Set(ids).size, ids.length)
   for (const q of PROMPT_QUALITIES) {
     assert.ok(q.label.trim(), `${q.id} needs a label`)
-    assert.ok(q.text.trim(), `${q.id} needs prompt text`)
+    assert.ok(q.text.trim() || q.effect, `${q.id} needs prompt text or an effect`)
     assert.ok(!q.text.includes('—'), `${q.id} must not use an em dash`)
   }
 })
@@ -122,5 +122,20 @@ test('quality prompt appends only selected qualities and keeps the base authorit
   assert.match(text, /- Warm: /)
   assert.match(text, /- Practical: /)
   assert.ok(!text.includes('- Concise: '))
-  assert.match(text, /do not override the other instructions/)
+  assert.match(text, /never override the other instructions/)
+  assert.equal(qualityPrompt(['no-skills', 'no-tools']), '', 'effect-only qualities add no prompt text')
+})
+
+test('quality effects describe the run, not just the wording', () => {
+  assert.deepEqual(qualityEffects([]), {})
+  assert.deepEqual(qualityEffects(['deep-reasoning']), { effort: 'highest' })
+  assert.deepEqual(qualityEffects(['quick-reasoning']), { effort: 'lowest' })
+  assert.deepEqual(qualityEffects(['no-skills', 'no-tools', 'cautious']), { skillsOff: true, toolsOff: true })
+  assert.deepEqual(qualityEffects(['quick-reasoning', 'deep-reasoning']), { effort: 'highest' })
+})
+
+test('composer favourites default to the five starter switches and reject junk', () => {
+  assert.deepEqual(normQualityFavs(undefined), DEFAULT_QUALITY_FAVS)
+  assert.deepEqual(normQualityFavs(['global', 'concise', 'concise', 'gone']), ['global', 'concise'])
+  assert.deepEqual(normQualityFavs([]), [], 'unpinning everything is respected')
 })

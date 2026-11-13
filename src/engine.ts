@@ -504,7 +504,7 @@ export const TOOL_REGISTRY: Record<string, ToolSpec> = {
     const destinations: Record<string, [string, string]> = {
       chat: ['Chat', '#chat'], home: ['Chat', '#chat'], 'new chat': ['Chat', '#chat'],
       settings: ['Settings', '#settings/eps'], endpoints: ['Endpoints', '#settings/eps'], models: ['Endpoints', '#settings/eps'], providers: ['Endpoints', '#settings/eps'],
-      prompts: ['Prompts', '#settings/prompts'], playlists: ['Playlists', '#settings/pls'], routes: ['Playlists', '#settings/pls'], commands: ['Commands', '#settings/cmds'],
+      prompts: ['Qualities', '#settings/prompts'], playlists: ['Playlists', '#settings/pls'], routes: ['Playlists', '#settings/pls'], commands: ['Commands', '#settings/cmds'],
       tools: ['Tools', '#settings/tools'], memory: ['Memory', '#settings/memory'], widgets: ['Widgets', '#settings/widgets'], stats: ['Stats', '#settings/stats'], usage: ['Stats', '#settings/stats'],
       shortcuts: ['Shortcuts', '#settings/keys'], keyboard: ['Shortcuts', '#settings/keys'], appearance: ['Appearance', '#settings/look'], theme: ['Appearance · Theme', '#settings/look'], colors: ['Appearance · Theme', '#settings/look'], fonts: ['Appearance · Fonts', '#settings/look'],
       data: ['Data controls', '#settings/data'], privacy: ['Data controls', '#settings/data'],

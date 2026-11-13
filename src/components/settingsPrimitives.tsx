@@ -17,7 +17,7 @@ export function Anchor({ id, children }: { id: string; children: ReactNode }) {
 const INFO: Record<string, string> = {
   features: 'Disabled features are hidden and unavailable.',
   eps: 'Model APIs you connect with your own key.',
-  prompts: 'Reusable prompts for a chat, plus one optional global prompt.',
+  prompts: 'One global system prompt, named qualities you can combine, and reusable chat prompts.',
   skills: 'Extra instructions for specific tasks.',
   pls: 'Ordered model lists; earlier entries are tried first.',
   cmds: 'Slash commands that apply a prompt and template to your input.',
@@ -35,11 +35,10 @@ const INFO: Record<string, string> = {
  *  together. */
 export function Section({ title, desc, children }: { title: string; desc?: string; children: ReactNode }) {
   return (
-    <section className="space-y-3">
-      <div className="border-b border-bor pb-1.5">
-        <h3 className="flex items-center gap-1.5 text-sm font-semibold tracking-wide text-tx">{title}{desc && <HelpTip text={desc} label={`About ${title}`} />}</h3>
-      </div>
-      {children}
+    <section>
+      <h3 className="flex items-center gap-1.5 pb-2 pt-1 text-xs font-medium text-mu">{title}{desc && <HelpTip text={desc} label={`About ${title}`} />}</h3>
+      {/* Hairlines between rows instead of a card per setting. */}
+      <div className="divide-y divide-bor">{children}</div>
     </section>
   )
 }
@@ -47,17 +46,14 @@ export function Section({ title, desc, children }: { title: string; desc?: strin
 export function Panel({ id, k, n, add, children }: { id: string; k?: Kind; n?: number; add?: string; children: ReactNode }) {
   const a = useS((s) => s.add)
   const t = SETTINGS_TABS.find((x) => x[0] === id)!
-  const I = t[2]
   return (
-    <div className="space-y-5">
-      <div className="flex items-start gap-3 pr-10">
-        <div className="flex-1">
-          <h2 className="flex items-center gap-2 text-lg font-semibold"><I size={20} className="text-ac" />{t[1]}{INFO[id] && <HelpTip text={INFO[id]} label={`About ${t[1]}`} />}</h2>
-        </div>
-        {k && <Btn v="solid" icon={Plus} onClick={() => a(k)}>{add}</Btn>}
+    <div className="space-y-8">
+      <div className="flex items-start gap-3">
+        <h2 className="flex flex-1 items-center gap-1.5 text-[15px] font-semibold">{t[1]}{INFO[id] && <HelpTip text={INFO[id]} label={`About ${t[1]}`} />}</h2>
+        {k && <Btn v="soft" icon={Plus} onClick={() => a(k)}>{add}</Btn>}
       </div>
-      <div className="space-y-3">
-        {n === 0 && <p className="rounded-xl bg-surf p-6 text-center text-sm text-mu">{id === 'eps' ? 'No endpoints yet. Add one above to get started.' : 'Nothing here yet.'}</p>}
+      <div className="space-y-8">
+        {n === 0 && <p className="py-8 text-center text-sm text-mu">{id === 'eps' ? 'No endpoints yet. Add one above to get started.' : 'Nothing here yet.'}</p>}
         {children}
       </div>
     </div>

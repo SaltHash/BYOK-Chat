@@ -352,6 +352,18 @@ html[data-codewrap] .code-lines .code-line > code { flex: 1 1 auto; min-width: 0
    `[role="dialog"] > div` rule also framed every first-level div inside
    nested dialogs, which put borders on ordinary modal content. */
 .edge-border, .modal-panel { border: 1px solid var(--edge); }
+
+/* Settings reads as one flat panel: rows separated by hairlines instead of a
+   stack of cards. Top-level blocks in a tab keep their own layout but lose the
+   card chrome, so bespoke controls (colour swatches, theme grids) still stand
+   on their own. */
+.settings-root section .divide-y > [data-anchor] > .rounded-xl.bg-surf,
+.settings-root section .divide-y > .rounded-xl.bg-surf {
+  background: transparent;
+  border-radius: 0;
+  padding-left: 0;
+  padding-right: 0;
+}
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
   .glass-composer { background: var(--surf); }
 }

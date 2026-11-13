@@ -41,7 +41,8 @@ function ContextBar({ limit, cpt, busy }: { limit: number; cpt: number; busy: bo
   const global = useS((s) => s.globalPrompt)
   const prompt = useS((s) => s.prompts.find((p) => p.id === s.pr)?.text ?? '')
   const [working, setWorking] = useState(false)
-  const sysLen = (global?.on ? global.text + ((global.qualities?.length ?? 0) ? '\n\n' + qualityPrompt(global.qualities) : '') : '') + prompt
+  const qPrompt = (global?.qualities?.length ?? 0) ? qualityPrompt(global.qualities) : ''
+  const sysLen = [(global?.on ? global.text : ''), qPrompt].filter(Boolean).join('\n\n') + prompt
   const used = estimateHistoryTokens(withCompaction(msgs ?? [], compact), sysLen, cpt)
   const max = Math.max(1, limit)
   const pct = Math.max(0, Math.min(100, used / max * 100))

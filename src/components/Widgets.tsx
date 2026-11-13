@@ -43,7 +43,8 @@ const ContextMeterWidget = memo(({ handle }: WidgetProps) => {
   // actually moves (the whole-chat selector below stays off the text path).
   const tokens = useS((s) => {
     const global = s.globalPrompt
-    const sysLen = (global?.on ? global.text + ((global.qualities?.length ?? 0) ? '\n\n' + qualityPrompt(global.qualities) : '') : '') + (s.prompts.find((p) => p.id === s.pr)?.text ?? '')
+    const qPrompt = (global?.qualities?.length ?? 0) ? qualityPrompt(global.qualities) : ''
+    const sysLen = [(global?.on ? global.text : ''), qPrompt].filter(Boolean).join('\n\n') + (s.prompts.find((p) => p.id === s.pr)?.text ?? '')
     const msgs = s.chats.find((c) => c.id === s.chat)?.msgs ?? []
     return estimateHistoryTokens(msgs, sysLen, Math.max(1, s.widgetPrefs?.charsPerToken ?? 4))
   })

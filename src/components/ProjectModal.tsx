@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react'
 import { FileUp, FileText, X, Folder } from 'lucide-react'
-import { useS, featOn, type Project, type ProjectFile } from '../store'
+import { useS, type Project, type ProjectFile } from '../store'
 import { Btn, HelpTip, Modal, Toggle, cx } from './ui'
 
 /* Optional project context files are stored with their extracted text inline
@@ -29,9 +29,6 @@ export function ProjectModal({ close, project }: { close: () => void; project?: 
   const [name, setName] = useState(project?.name ?? '')
   const [files, setFiles] = useState<ProjectFile[]>(project?.context ?? [])
   const [shareWs, setShareWs] = useState(project?.shareWorkspaces !== false)
-  const [profile, setProfile] = useState(project?.profile ?? '')
-  const profiles = useS((s) => s.profiles)
-  const profilesOn = useS((s) => featOn(s, 'profiles'))
   const [over, setOver] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
   const add = async (list: FileList | File[]) => {
@@ -48,11 +45,9 @@ export function ProjectModal({ close, project }: { close: () => void; project?: 
       s.renameProject(project.id, finalName)
       s.setProjectContext(project.id, files)
       s.setProjectShareWorkspaces(project.id, shareWs)
-      s.bindProjectProfile(project.id, profile)
     } else {
       const id = s.addProject(finalName, files)
       s.setProjectShareWorkspaces(id, shareWs)
-      if (profilesOn) s.bindProjectProfile(id, profile)
       s.openProject(id)
     }
     close()
@@ -91,15 +86,6 @@ export function ProjectModal({ close, project }: { close: () => void; project?: 
             </ul>
           )}
         </div>
-        {profilesOn && profiles.length > 0 && (
-          <label className="block text-sm">
-            <span className="mb-1 flex items-center gap-1.5 text-xs font-medium text-mu">Profile<HelpTip text="Applied automatically whenever this project is opened: model, prompt, tools and access policy switch together." label="Help: Project profile" /></span>
-            <select value={profile} onChange={(e) => setProfile(e.target.value)} className="h-9 w-full rounded-lg bg-surf px-2 text-sm outline-none focus:ring-2 focus:ring-ac/40">
-              <option value="">No profile</option>
-              {profiles.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-            </select>
-          </label>
-        )}
         <div className="flex items-center justify-between gap-3 rounded-xl bg-surf p-3">
           <div className="min-w-0">
             <div className="flex items-center gap-1.5 text-sm font-medium">Share workspace across chats<HelpTip text="Lets every chat in this project write to the same workspace. Projects never share workspaces with each other." label="Help: Share workspace across chats" /></div>

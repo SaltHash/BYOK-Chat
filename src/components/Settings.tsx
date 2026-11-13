@@ -7,11 +7,10 @@ import { findDuplicatePairs, mergeMemory } from '../recall'
 import { TOOL_REGISTRY, can, stream } from '../engine'
 import { CI, TOOLS, WIDGETS, KEYS, orderTools } from '../meta'
 import { SETTINGS_TABS, SETTINGS_GROUPS, visibleTabs, searchSettings, splitSettingTarget, settingDomId } from '../settingsCatalog'
-import { PROMPT_QUALITIES, type GlobalPrompt } from '../flair'
+import { PROMPT_QUALITIES, normQualityFavs, type GlobalPrompt, type PromptQuality } from '../flair'
 import { PROMPT_VARS } from '../promptVars'
 import { DataTab, KeysTab, TestRow, TestAllEndpoints } from './Extra'
 import { ToolAccessCard } from './ToolAccess'
-import { ProfilesTab } from './Profiles'
 import { Btn, Field, Input, Area, Sel, SearchSelect, Toggle, Seg, RangeSlider, Checkbox, HelpTip, Modal, Surface, Chip, Item, Confirm, cx, useMenuNav, type Ic } from './ui'
 import { Anchor, Panel, Section } from './settingsPrimitives'
 import { SortableList, useFlipAnimate, type SortHandleProps, type SortItemApi } from './dnd'
@@ -141,19 +140,19 @@ export function Card({ icon: I, title, sub, help, right, open0, handle, children
     return () => window.removeEventListener('byok:anchor', onRequest)
   }, [anchorKey])
   return (
-    <Surface padded={false}>
-      <div className="flex items-center gap-3 p-3">
+    <div>
+      <div className="flex items-center gap-3 py-3">
         {handle && <span {...handle} title="Drag to reorder" className="dnd-handle -mr-1 cursor-grab text-mu"><GripVertical size={16} /></span>}
-        <div role={hasBody ? 'button' : undefined} tabIndex={hasBody ? 0 : undefined} onClick={hasBody ? () => setO(!o) : undefined} onKeyDown={hasBody ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setO(!o) } } : undefined} className={cx('flex min-w-0 flex-1 items-center gap-3 text-left', hasBody && 'cursor-pointer')}>
-          <span className={cx('grid size-9 shrink-0 place-items-center rounded-lg bg-hov', muted ? 'text-mu' : 'text-ac')}><I size={18} className={muted ? 'opacity-60' : undefined} /></span>
-          <span className="min-w-0"><span className="block truncate font-medium">{title}</span>{sub && <span className="block truncate text-sm text-mu">{sub}</span>}</span>
+        <div role={hasBody ? 'button' : undefined} tabIndex={hasBody ? 0 : undefined} onClick={hasBody ? () => setO(!o) : undefined} onKeyDown={hasBody ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setO(!o) } } : undefined} className={cx('flex min-w-0 flex-1 items-center gap-2.5 text-left', hasBody && 'cursor-pointer')}>
+          <I size={16} className={cx('shrink-0', muted ? 'text-mu/60' : 'text-mu')} />
+          <span className="min-w-0"><span className="block truncate text-sm font-medium">{title}</span>{sub && <span className="block truncate text-xs text-mu">{sub}</span>}</span>
         </div>
         {help && <HelpTip text={help} label={`About ${typeof title === 'string' ? title : 'this setting'}`} />}
         {right}
         {hasBody && <Btn sm icon={ChevronRight} title={o ? 'Collapse' : 'Expand'} onClick={() => setO(!o)} className={cx('transition-transform', o && 'rotate-90')} />}
       </div>
-      {hasBody && o && <div className="space-y-4 px-3 pb-4">{children}</div>}
-    </Surface>
+      {hasBody && o && <div className="space-y-4 pb-4">{children}</div>}
+    </div>
   )
 }
 
@@ -500,12 +499,16 @@ function FeaturesTab() {
 function HelperModels() {
   const s = useSConfig()
   const [open, setOpen] = useState(false)
-  const clsRef = helperRef(s.memoryPrefs.classifierEp, s.memoryPrefs.classifierModel)
-  const titleRef = helperRef(s.prefs.titleEp, s.prefs.titleModel)
-  const effRef = helperRef(s.prefs.effortEp, s.prefs.effortModel)
-  const recallRef = helperRef(s.prefs.recallEp, s.prefs.recallModel)
-  const mixed = !(clsRef === titleRef && titleRef === effRef && effRef === recallRef)
-  const main = mixed ? '__mixed__' : clsRef
+  const refs = {
+    cls: helperRef(s.memoryPrefs.classifierEp, s.memoryPrefs.classifierModel),
+    eff: helperRef(s.prefs.effortEp, s.prefs.effortModel),
+    recall: helperRef(s.prefs.recallEp, s.prefs.recallModel),
+    title: helperRef(s.prefs.titleEp, s.prefs.titleModel),
+    compact: helperRef(s.prefs.compactEp ?? '', s.prefs.compactModel),
+  }
+  const unique = new Set(Object.values(refs))
+  const mixed = unique.size > 1
+  const main = mixed ? '__mixed__' : refs.cls
   const refLabel = (ref: string) => {
     if (!ref) return 'None'
     const [id, model] = splitHelperRef(ref)
@@ -519,49 +522,74 @@ function HelperModels() {
     ...(mixed ? [['__mixed__', 'Mixed'] as [string, string]] : []),
     ...s.eps.flatMap((e) => modelsOf(e).map((m) => [`${e.id}::${m}`, `${e.name} · ${modelNameOf(e, m)}`] as [string, string])),
   ]
-  const setAll = (ref: string) => {
-    if (ref === '__mixed__') return
-    const [ep, model] = splitHelperRef(ref)
-    s.patch({ prefs: { ...s.prefs, titleEp: ep, titleModel: model, effortEp: ep, effortModel: model, recallEp: ep, recallModel: model }, memoryPrefs: { ...s.memoryPrefs, classifierEp: ep, classifierModel: model } })
-  }
-  const setOne = (which: 'cls' | 'title' | 'eff' | 'recall', ref: string) => {
-    const [ep, model] = splitHelperRef(ref)
-    if (which === 'cls') s.patch({ memoryPrefs: { ...s.memoryPrefs, classifierEp: ep, classifierModel: model } })
-    else if (which === 'title') s.patch({ prefs: { ...s.prefs, titleEp: ep, titleModel: model } })
-    else if (which === 'recall') s.patch({ prefs: { ...s.prefs, recallEp: ep, recallModel: model } })
-    else s.patch({ prefs: { ...s.prefs, effortEp: ep, effortModel: model } })
-  }
   const singleOpts: [string, string][] = [
     ['', 'None'],
     ...s.eps.flatMap((e) => modelsOf(e).map((m) => [`${e.id}::${m}`, `${e.name} · ${modelNameOf(e, m)}`] as [string, string])),
   ]
+  const setAll = (ref: string) => {
+    if (ref === '__mixed__') return
+    const [ep, model] = splitHelperRef(ref)
+    s.patch({ prefs: { ...s.prefs, titleEp: ep, titleModel: model, effortEp: ep, effortModel: model, recallEp: ep, recallModel: model, compactEp: ep, compactModel: model }, memoryPrefs: { ...s.memoryPrefs, classifierEp: ep, classifierModel: model } })
+  }
+  const setOne = (which: 'cls' | 'title' | 'eff' | 'recall' | 'compact', ref: string) => {
+    const [ep, model] = splitHelperRef(ref)
+    if (which === 'cls') s.patch({ memoryPrefs: { ...s.memoryPrefs, classifierEp: ep, classifierModel: model } })
+    else if (which === 'title') s.patch({ prefs: { ...s.prefs, titleEp: ep, titleModel: model } })
+    else if (which === 'recall') s.patch({ prefs: { ...s.prefs, recallEp: ep, recallModel: model } })
+    else if (which === 'compact') s.patch({ prefs: { ...s.prefs, compactEp: ep, compactModel: model } })
+    else s.patch({ prefs: { ...s.prefs, effortEp: ep, effortModel: model } })
+  }
+  const row = (label: string, hint: string, ref: string, set: (v: string) => void) => (
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-1.5 text-sm font-medium">{label}<HelpTip text={hint} label={`Help: ${label}`} /></div>
+        {!ref && <p className="mt-0.5 text-xs text-mu">Uses the replying model</p>}
+      </div>
+      <div className="w-full shrink-0 sm:w-60"><Sel value={ref} set={set} opts={singleOpts} /></div>
+    </div>
+  )
   return (
     <Anchor id="helper-models">
-    <Surface>
-      <button type="button" onClick={() => setOpen(!open)} aria-expanded={open} className="flex w-full items-center gap-2 text-left">
-        <Cpu size={18} className="shrink-0 text-ac" />
-        <span className="min-w-0 flex-1"><span className="block font-medium">Helper models</span></span>
-        <ChevronRight size={16} aria-hidden="true" className={cx('shrink-0 text-mu transition-transform', open && 'rotate-90')} />
-      </button>
-      <div className="mt-3">
-        <Field label="Model for all helpers" hint="One model for playlist classification, chat-title generation, automatic effort detection, and memory recall. Expand below to set each one individually.">
-          <Sel value={main} set={setAll} opts={opts} />
-        </Field>
-        {opts.find(([k]) => k === main)?.[1] === undefined && <p className="text-xs text-mu">Current: {refLabel(main)}</p>}
-      </div>
-      {open && (
-        <div className="mt-3 space-y-3 rounded-xl bg-bg p-3">
-          <Field label="Classification model" hint="Picks the best model in a playlist for each request. Playlists with their own classifier keep using it."><Sel value={clsRef} set={(v) => setOne('cls', v)} opts={singleOpts} /></Field>
-          <Field label="Title generation model" hint="Names new chats. None uses the model that answered."><Sel value={titleRef} set={(v) => setOne('title', v)} opts={singleOpts} /></Field>
-          <Field label="Effort detection model" hint="Chooses how hard the model thinks when a model is set to Auto."><Sel value={effRef} set={(v) => setOne('eff', v)} opts={singleOpts} /></Field>
-          <Field label="Memory recall model" hint="Chooses which saved memories matter for each reply. Empty falls back to the classification model."><Sel value={recallRef} set={(v) => setOne('recall', v)} opts={singleOpts} /></Field>
+      <Surface>
+        <button type="button" onClick={() => setOpen(!open)} aria-expanded={open} className="flex w-full items-center gap-2 text-left">
+          <Cpu size={18} className="shrink-0 text-ac" />
+          <span className="min-w-0 flex-1"><span className="block font-medium">Helper models</span><span className="block text-xs text-mu">Small background tasks that route, label and compact a reply</span></span>
+          <ChevronRight size={16} aria-hidden="true" className={cx('shrink-0 text-mu transition-transform', open && 'rotate-90')} />
+        </button>
+        <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2">
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-1.5 text-sm font-medium">Model for all helpers<HelpTip text="One model for every helper task listed below. Set it to None and expand the list to choose each task separately." label="Help: Model for all helpers" /></div>
+            <p className="mt-0.5 text-xs text-mu">{main === '__mixed__' ? 'Different models per task' : main ? 'Same model for every helper task' : 'Each task uses the replying model'}</p>
+          </div>
+          <div className="w-full shrink-0 sm:w-60"><Sel value={main} set={setAll} opts={opts} /></div>
         </div>
-      )}
-    </Surface>
+        {mixed && <p className="mt-2 text-xs text-mu">Current: {Object.entries(refs).map(([k, r]) => `${k === 'cls' ? 'routing' : k === 'eff' ? 'effort' : k === 'recall' ? 'recall' : k === 'title' ? 'titles' : 'handoff'}: ${refLabel(r)}`).join(' · ')}</p>}
+        {open && (
+          <div className="mt-5 space-y-6 border-t border-bor pt-5">
+            <div className="space-y-4">
+              <div>
+                <p className="text-sm font-medium">Decision helpers</p>
+                <p className="text-xs text-mu">Fast, cheap models are enough: they choose a route, a reasoning level or a memory, and never write the answer.</p>
+              </div>
+              {row('Model routing', 'Chooses the best model in a playlist for each request. Playlists with their own classifier keep using it; empty falls back to the replying model.', refs.cls, (v) => setOne('cls', v))}
+              {row('Reasoning level', 'Chooses how hard the model thinks when a model is set to Auto.', refs.eff, (v) => setOne('eff', v))}
+              {row('Memory recall', 'Chooses which saved memories matter for each reply. Empty falls back to the routing model.', refs.recall, (v) => setOne('recall', v))}
+            </div>
+            <div className="space-y-4">
+              <div>
+                <p className="text-sm font-medium">Writing helpers</p>
+                <p className="text-xs text-mu">These produce text the user sees, so a stronger model is worth it. Empty uses the model that answered.</p>
+              </div>
+              {row('Chat titles', 'Names new chats from the first exchange.', refs.title, (v) => setOne('title', v))}
+              {row('Context handoff', 'Writes the summary that replaces older messages when a chat nears its context limit.', refs.compact, (v) => setOne('compact', v))}
+            </div>
+            <p className="text-xs text-mu">Page summaries have their own model and fallback flow in Tools → Page reader.</p>
+          </div>
+        )}
+      </Surface>
     </Anchor>
   )
 }
-
 /* Paste a copied cURL command, inspect what was understood, then create the
  * endpoint. Discovery runs after the endpoint exists, so a slow or blocked
  * model list never prevents the provider from being added. */
@@ -743,7 +771,7 @@ function Eps() {
               <Field label="Models" hint="Press Enter to add the next row. Every row uses this endpoint and API key.">
                 <ModelsEditor e={e} update={u} />
               </Field>
-              <Anchor id="model-behavior"><Field label="Model behavior" hint="Playlist mode groups this endpoint's models into a single playlist entry and tries them in order.">
+              <Anchor id="model-behavior"><Field label="Model behavior" hint="Playlist mode groups this endpoint's models into a single playlist entry and tries them in order." row>
                 <Seg v={e.modelsMode ?? 'separate'} set={(modelsMode) => u({ modelsMode })} opts={[["separate", "Separate models"], ["playlist", "Treat as playlist"]]} />
               </Field></Anchor>
               </section></Anchor>
@@ -754,7 +782,7 @@ function Eps() {
                   <button onClick={() => setShow(show === e.id ? '' : e.id)} aria-label={show === e.id ? 'Hide API key' : 'Show API key'} title={show === e.id ? 'Hide API key' : 'Show API key'} className="absolute right-2 top-1/2 -translate-y-1/2 text-mu hover:text-tx">{show === e.id ? <EyeOff size={16} /> : <Eye size={16} />}</button>
                 </div>
               </Field>
-              {!provider && <Field label="Auth method" hint="How the key is sent. Custom endpoints use this; named presets keep their own auth scheme.">
+              {!provider && <Field label="Auth method" hint="How the key is sent. Custom endpoints use this; named presets keep their own auth scheme." row>
                 <Sel value={endpointAuthOf(e)} set={(v) => u({ auth: v as EndpointAuth })} opts={ENDPOINT_AUTH_OPTIONS} placeholder="Choose auth" />
               </Field>}
               <Field label="Extra headers" hint="Optional. One Name: value per line. Sent with chat and model-list requests. Auth headers here override the auth method.">
@@ -763,11 +791,11 @@ function Eps() {
               </section></Anchor>
               <Anchor id="advanced-connection"><details open={advanced.includes(e.id)} onToggle={(ev) => { const isOpen = ev.currentTarget.open; setAdvanced(current => isOpen ? [...new Set([...current, e.id])] : current.filter(id => id !== e.id)) }} className="rounded-xl bg-bg px-3"><summary className="flex cursor-pointer list-none items-center gap-2 py-3 text-sm font-medium text-mu"><span>Advanced connection settings</span><ChevronRight size={16} aria-hidden="true" className={cx('transition-transform', advanced.includes(e.id) && 'rotate-90')} /></summary><div className="space-y-3 pb-3">
                 <Field label="Base URL" hint="The app adds the API path to this URL automatically."><Input value={e.url} set={(v) => { const match = presetForUrl(v); u({ url: v, ...(match ? { preset: match[0], endpointId: match[1][2], endpointFilter: match[1][3] } : { preset: '', endpointId: '', endpointFilter: 'author' }) }) }} placeholder="https://…/v1" /></Field>
-                <Field label="API format"><Seg label="API format" v={e.type} set={(v) => u({ type: v })} opts={[[ 'openai', 'OpenAI-compatible'], ['anthropic', 'Anthropic Messages']]} /></Field>
+                <Field label="API format" row><Seg label="API format" v={e.type} set={(v) => u({ type: v })} opts={[[ 'openai', 'OpenAI-compatible'], ['anthropic', 'Anthropic Messages']]} /></Field>
                 <Field label="Endpoint ID" hint="Used to limit OpenRouter catalog suggestions to this brand or hosting provider."><Input value={e.endpointId ?? presetForUrl(e.url)?.[1][2] ?? ''} set={(endpointId) => u({ endpointId, endpointFilter: catalogPrefs(endpointId) })} placeholder="e.g. anthropic" /></Field>
                 {provider?.accountScoped && <Field label="Account ID" hint="Cloudflare account-scoped APIs put this in the base URL. Find it in the Cloudflare dashboard; it is stored in this browser with the key."><Input value={e.accountId ?? ''} set={(accountId) => u({ accountId })} placeholder="Cloudflare account ID" /></Field>}
                 {provider?.gatewayHeader && <Field label={provider.gatewayHeader.label} hint={`Sent as the ${provider.gatewayHeader.header} header. Workers AI models (${provider.gatewayHeader.modelPrefix ?? '@cf/'}) require an AI Gateway.`}><Input value={e.gatewayId ?? ''} set={(gatewayId) => u({ gatewayId })} placeholder="Optional AI Gateway id" /></Field>}
-                <Field label="Request routing" hint="Auto tries the provider directly and relays through this app's server only when the browser blocks it (CORS). Always relay sends every provider request through this server — it works for any provider, but the server sees the key in transit (it is never stored or logged). Direct only never relays.">
+                <Field label="Request routing" hint="Auto tries the provider directly and relays through this app's server only when the browser blocks it (CORS). Always relay sends every provider request through this server — it works for any provider, but the server sees the key in transit (it is never stored or logged). Direct only never relays." row>
                   <Seg label="Request routing" v={(s.prefs.proxyMode ?? 'auto') as 'auto' | 'always' | 'off'} set={(v) => s.patch({ prefs: { ...s.prefs, proxyMode: v } })} opts={[['auto', 'Auto'], ['always', 'Always relay'], ['off', 'Direct only']]} />
                 </Field>
               </div></details></Anchor>
@@ -844,54 +872,120 @@ function Eps() {
  * help tooltip instead of insert buttons. */
 const PROMPT_VAR_HINT = `${PROMPT_VARS.map((v) => `{${v.id}} — ${v.desc}`).join(' · ')}`
 
-function Prompts() {
+function QualitiesTab() {
   const { prompts, upd, patch, globalPrompt } = useSConfig()
+  const prefs = useS((s) => s.prefs)
   const g = globalPrompt ?? { on: false, text: '', qualities: [] }
   const qualities = g.qualities ?? []
   const setG = (v: Partial<GlobalPrompt>) => patch({ globalPrompt: { ...g, ...v } })
+  const favs = normQualityFavs(prefs.qualityFavs)
+  const isFav = (id: string) => favs.includes(id)
+  const toggleFav = (id: string) => {
+    const next = isFav(id) ? favs.filter((x) => x !== id) : [...favs, id]
+    patch({ prefs: { ...prefs, qualityFavs: next } })
+  }
+  const toggleQuality = (id: PromptQuality) => {
+    const on = qualities.includes(id)
+    setG({ qualities: on ? qualities.filter((x) => x !== id) : [...qualities, id] })
+  }
+  const activeCount = qualities.length + (g.on ? 1 : 0)
   return (
-    <Panel id="prompts" k="prompts" n={prompts.length} add="Add prompt">
-      <Section title="Global prompt">
-      <Anchor id="global-prompt"><Card icon={ScrollText} title="Global system prompt" sub={g.on ? (g.text.trim() || qualities.length ? 'On · applies to every message in every chat' : 'On · no text yet') : 'Off'} muted={!g.on}>
-        <div className="flex items-center justify-between gap-3"><div className="flex items-center gap-1.5 text-sm font-medium">Apply to every message<HelpTip text="Runs alongside the selected per-chat prompt." label="Help: Apply global prompt" /></div><Toggle on={g.on} set={(on) => setG({ on })} label="Apply global prompt to every message" /></div>
-        <Field label="Or pick an existing prompt" hint="Copies its text into the global box.">
-          <Sel value="" set={(v) => { const p = prompts.find((x) => x.id === v); if (p) setG({ text: p.text }) }} opts={[['', 'Choose a prompt…'], ...prompts.map((p) => [p.id, p.name] as [string, string])]} />
-        </Field>
-        <Field label="Qualities" hint="Adds a short tone instruction after the base prompt. Pick any that fit; the base stays authoritative.">
-          <div className="flex flex-wrap gap-2">{PROMPT_QUALITIES.map((q) => {
-            const on = qualities.includes(q.id)
-            return <button key={q.id} type="button" aria-pressed={on} title={q.text} onClick={() => {
-              const next = on ? qualities.filter((id) => id !== q.id) : [...qualities, q.id]
-              setG({ qualities: next, ...(on ? {} : { on: true }) })
-            }} className={cx('inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-sm transition-colors', on ? 'border-ac/50 bg-ac/10 text-tx' : 'border-bor bg-surf text-mu hover:bg-hov hover:text-tx')}>
-              {on && <Check size={13} strokeWidth={3} className="text-ac" />}
-              {q.label}
-            </button>
-          })}</div>
-        </Field>
-        <Field label="Global system prompt" hint={`This is the base. Write one from scratch, or copy an existing prompt above. You can use {variable} placeholders, replaced with the current UTC values when the request is sent: ${PROMPT_VAR_HINT}`}><Area rows={6} value={g.text} set={(v) => setG({ text: v })} /></Field>
-        <div className="flex justify-end"><Btn v="soft" icon={CornerDownRight} onClick={() => setG({ on: true, text: GENERAL_PROMPT_TEXT, qualities: [] })}>Revert to default</Btn></div>
-      </Card></Anchor>
-      </Section>
-      <Section title="Chat prompts">
-      <SortableCards k="prompts" ids={prompts.map((x) => x.id)} label="Prompt" renderCard={(pid, handle) => {
-        const p = prompts.find((x) => x.id === pid)
-        if (!p) return null
-        return (
-        <Anchor key={pid} id={`prompt-${p.id}`}>
-        <Card handle={handle} icon={ScrollText} title={p.name} sub={p.text.slice(0, 70)}>
-          <Field label="Name"><Input value={p.name} set={(v) => upd('prompts', p.id, { name: v })} /></Field>
-          <Field label="System prompt" hint={`Sent as the system prompt when this prompt is selected. {variable} placeholders are replaced with the current UTC values when the request is sent: ${PROMPT_VAR_HINT}`}><Area rows={6} value={p.text} set={(v) => upd('prompts', p.id, { text: v })} /></Field>
-          <Acts k="prompts" id={p.id} />
-        </Card>
+    <Panel id="prompts">
+      <Section title="System prompt">
+        <Anchor id="global-prompt">
+          <div className="space-y-4 py-4">
+            <div className="flex flex-wrap items-start gap-3">
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-1.5 text-sm font-medium">Global system prompt<HelpTip text="Sent before every request, in addition to the selected chat prompt. It never replaces the chat prompt. Star it to switch it from the composer, and turn it off to keep the text without sending it." label="Help: Global system prompt" /></div>
+                <p className="mt-0.5 text-xs text-mu">{g.on ? 'On · applies to every message in every chat' : 'Off · the text below is kept but not sent'}{activeCount ? ` · ${activeCount} active ${activeCount === 1 ? 'setting' : 'settings'}` : ''}</p>
+              </div>
+              <button type="button" aria-pressed={isFav('global')} onClick={() => toggleFav('global')} title={isFav('global') ? 'Remove from the composer' : 'Pin to the composer for quick switching'} className={cx('grid size-9 shrink-0 place-items-center rounded-lg border transition-colors', isFav('global') ? 'border-ac/50 bg-ac/10 text-ac' : 'border-bor text-mu hover:bg-hov hover:text-tx')}><Star size={16} fill={isFav('global') ? 'currentColor' : 'none'} /></button>
+              <Toggle on={g.on} set={(on) => setG({ on })} label="Apply global prompt to every message" />
+            </div>
+            <Field label="Prompt text" hint={`The base instruction. Write one from scratch, copy a chat prompt below, or keep the default. You can use {variable} placeholders, replaced with the current UTC values when the request is sent: ${PROMPT_VAR_HINT}`}>
+              <Area rows={8} value={g.text} set={(v) => setG({ text: v })} />
+            </Field>
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="flex min-w-0 flex-1 items-center gap-2">
+                <span className="shrink-0 text-sm">Copy from</span>
+                <div className="w-64 max-w-full">
+                  <Sel value="" set={(v) => { const p = prompts.find((x) => x.id === v); if (p) setG({ text: p.text }) }} opts={[['', 'Choose a chat prompt…'], ...prompts.map((p) => [p.id, p.name] as [string, string])]} />
+                </div>
+              </div>
+              <Btn v="soft" icon={CornerDownRight} onClick={() => setG({ on: true, text: GENERAL_PROMPT_TEXT, qualities: [] })}>Revert to default</Btn>
+            </div>
+          </div>
         </Anchor>
-        )
-      }} />
+      </Section>
+
+      <Section title="Qualities" desc="Small behaviours that change how replies read, think or use tools. Pick any combination; favourites appear as switches in the composer.">
+        <Anchor id="qualities">
+          <div className="py-4">
+            <div className="mb-3 flex items-start gap-2 text-xs text-mu">
+              <Sparkles size={14} className="mt-px shrink-0" />
+              <p className="flex-1">Qualities are independent of the base prompt: a quality still applies when the global prompt is off. Reasoning and tool qualities also change how the request runs, not just what the model is told.</p>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {PROMPT_QUALITIES.map((q) => {
+                const on = qualities.includes(q.id)
+                const fav = isFav(q.id)
+                const effect = q.effect
+                return (
+                  <div
+                    key={q.id}
+                    role="switch"
+                    aria-checked={on}
+                    tabIndex={0}
+                    onClick={() => toggleQuality(q.id)}
+                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleQuality(q.id) } }}
+                    className={cx('flex cursor-pointer flex-col gap-2 rounded-xl border p-3.5 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ac/40', on ? 'border-ac/50 bg-ac/[0.06]' : 'border-bor bg-surf/40 hover:bg-hov/60')}
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className={cx('grid size-4 shrink-0 place-items-center rounded border transition-colors', on ? 'border-ac bg-ac text-white' : 'border-bor bg-bg')}>{on && <Check size={11} strokeWidth={3} />}</span>
+                      <span className="min-w-0 flex-1 truncate text-sm font-medium">{q.label}</span>
+                      <button type="button" aria-pressed={fav} aria-label={fav ? `Unpin ${q.label}` : `Pin ${q.label} to the composer`} onClick={(e) => { e.stopPropagation(); toggleFav(q.id) }} title={fav ? 'Pinned to the composer' : 'Pin to the composer'} className={cx('grid size-6 shrink-0 place-items-center rounded-md transition-colors hover:bg-hov', fav ? 'text-ac' : 'text-mu/70 hover:text-tx')}><Star size={14} fill={fav ? 'currentColor' : 'none'} /></button>
+                    </div>
+                    <p className="text-xs leading-relaxed text-mu">{q.desc}</p>
+                    {(effect?.effort || effect?.skillsOff || effect?.toolsOff) && (
+                      <div className="mt-auto flex flex-wrap gap-1.5 pt-0.5">
+                        {effect.effort && <span className="rounded-md bg-bg px-1.5 py-0.5 text-[11px] text-mu">{effect.effort === 'highest' ? 'Highest reasoning' : 'Lowest reasoning'}</span>}
+                        {effect.skillsOff && <span className="rounded-md bg-bg px-1.5 py-0.5 text-[11px] text-mu">Skills off</span>}
+                        {effect.toolsOff && <span className="rounded-md bg-bg px-1.5 py-0.5 text-[11px] text-mu">Tools off</span>}
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+        </Anchor>
+      </Section>
+
+      <Section title="Chat prompts">
+        <div className="flex items-center gap-3 py-3">
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-medium">Reusable prompts</p>
+            <p className="text-xs text-mu">A chat prompt replaces the global prompt for the chats where it is selected. Use qualities for changes that should apply everywhere.</p>
+          </div>
+          <Btn v="soft" icon={Plus} onClick={() => useS.getState().add('prompts')}>Add prompt</Btn>
+        </div>
+        <SortableCards k="prompts" ids={prompts.map((x) => x.id)} label="Prompt" renderCard={(pid, handle) => {
+          const p = prompts.find((x) => x.id === pid)
+          if (!p) return null
+          return (
+            <Anchor key={pid} id={`prompt-${p.id}`}>
+              <Card handle={handle} icon={ScrollText} title={p.name} sub={p.text.slice(0, 70)}>
+                <Field label="Name"><Input value={p.name} set={(v) => upd('prompts', p.id, { name: v })} /></Field>
+                <Field label="System prompt" hint={`Sent as the system prompt when this prompt is selected. {variable} placeholders are replaced with the current UTC values when the request is sent: ${PROMPT_VAR_HINT}`}><Area rows={6} value={p.text} set={(v) => upd('prompts', p.id, { text: v })} /></Field>
+                <Acts k="prompts" id={p.id} />
+              </Card>
+            </Anchor>
+          )
+        }} />
       </Section>
     </Panel>
   )
 }
-
 function Pls() {
   const { pls, eps, upd } = useSConfig()
   const routingMode = useS((s) => s.prefs.routingMode ?? 'ordered')
@@ -907,7 +1001,7 @@ function Pls() {
     <Panel id="pls" k="pls" n={pls.length} add="Add playlist">
       <Section title="Routing">
       <Anchor id="routing-mode"><Card icon={Route} title="Routing mode" sub="How multi-model requests try models">
-        <Field label="Candidate order" hint="Ordered tries list order. Fastest tries the quickest-measured models first (new models go first until measured). Cheapest tries the lowest input price first (models without a price go last). A playlist classifier, when set, still picks first; the mode orders the rest.">
+        <Field label="Candidate order" hint="Ordered tries list order. Fastest tries the quickest-measured models first (new models go first until measured). Cheapest tries the lowest input price first (models without a price go last). A playlist classifier, when set, still picks first; the mode orders the rest." row>
           <Seg v={routingMode} set={(v) => useS.getState().patch({ prefs: { ...useS.getState().prefs, routingMode: v as typeof routingMode } })} opts={[['ordered', 'Ordered'], ['fastest', 'Fastest'], ['cheapest', 'Cheapest']]} />
         </Field>
         <div className="space-y-1">
@@ -960,10 +1054,10 @@ function Pls() {
             </Field>
             <div className="space-y-3 rounded-xl bg-bg p-3">
               <Anchor id="classifier-routing"><div className="flex items-center gap-2 text-sm font-medium"><Route size={16} className="text-ac" />Classifier routing</div></Anchor>
-              <Field label="Classifier endpoint" hint="Picks which model in this playlist answers each request. Replies that don't pick a model from this list are ignored. Empty uses the helper classification model from Endpoints when one is set, otherwise list order.">
+              <Field label="Classifier endpoint" hint="Picks which model in this playlist answers each request. Replies that don't pick a model from this list are ignored. Empty uses the helper classification model from Endpoints when one is set, otherwise list order." row>
                 <Sel value={p.cls} set={(v) => u({ cls: v })} opts={[[ '', useS.getState().memoryPrefs.classifierEp ? 'None, use helper model' : 'None, use list order'], ...eps.map((e) => [e.id, e.name] as [string, string])]} />
               </Field>
-              {p.cls && eps.find((e) => e.id === p.cls) && <Field label="Classifier model"><Sel value={p.clsModel ?? ""} set={(v) => u({ clsModel: v })} opts={[["", "Default model"], ...modelsOf(eps.find((e) => e.id === p.cls)!).map((model) => [model, modelNameOf(eps.find((e) => e.id === p.cls)!, model) + " · " + model] as [string, string])]} /></Field>}
+              {p.cls && eps.find((e) => e.id === p.cls) && <Field label="Classifier model" row><Sel value={p.clsModel ?? ""} set={(v) => u({ clsModel: v })} opts={[["", "Default model"], ...modelsOf(eps.find((e) => e.id === p.cls)!).map((model) => [model, modelNameOf(eps.find((e) => e.id === p.cls)!, model) + " · " + model] as [string, string])]} /></Field>}
               <Field label="Routing instructions"><Area rows={3} value={p.rule} set={(v) => u({ rule: v })} /></Field>
             </div>
             <Acts k="pls" id={p.id} />
@@ -993,10 +1087,10 @@ function Cmds() {
               <Field label="Description"><Input value={c.desc} set={(v) => u({ desc: v })} /></Field>
               <Field label="Argument hint" hint="Shown after the command name in the / menu, e.g. <topic> or [language]. This is guidance only; it is not sent to the model."><Input value={c.args ?? ''} set={(v) => u({ args: v })} placeholder="<topic>" /></Field>
             </div>
-            <Field label="Input type"><Seg v={c.in} set={(v) => u({ in: v })} opts={[['text', 'Text', CI.text], ['image', 'Image', CI.image], ['image+text', 'Image + text', CI['image+text']], ['doc', 'Document', CI.doc]]} /></Field>
+            <Field label="Input type" row><Seg v={c.in} set={(v) => u({ in: v })} opts={[['text', 'Text', CI.text], ['image', 'Image', CI.image], ['image+text', 'Image + text', CI['image+text']], ['doc', 'Document', CI.doc]]} /></Field>
             <Field label="System prompt" hint={`Sent as the system prompt when the command runs. {variable} placeholders are replaced with the current UTC values when the request is sent: ${PROMPT_VAR_HINT}`}><Area value={c.sys} set={(v) => u({ sys: v })} /></Field>
             <Field label="Message template" hint="{{input}} is replaced by the text typed after the command."><Area rows={3} value={c.tpl} set={(v) => u({ tpl: v })} /></Field>
-            <Field label="Run on" hint="The first endpoint that accepts the input type is used; the rest are fallbacks.">
+            <Field label="Run on" hint="The first endpoint that accepts the input type is used; the rest are fallbacks." row>
               <Sel value={c.pl} set={(v) => u({ pl: v })} opts={[['', 'Any enabled endpoint, in list order'], ...pls.map((p) => [p.id, 'Playlist: ' + p.name] as [string, string])]} />
             </Field>
             <Acts k="cmds" id={c.id} />
@@ -1062,25 +1156,25 @@ function DocumentsSettings() {
       <div className="flex items-center justify-between gap-3"><div className="flex items-center gap-1.5 text-sm font-medium">Extract PDF text<HelpTip text="Reads the text layer of PDFs; scanned pages still need OCR or a vision endpoint." label="Help: Extract PDF text" /></div><Toggle on={d.pdfText} set={(pdfText) => set({ pdfText })} label="Extract PDF text" /></div>
       <div className="flex items-center justify-between gap-3"><div className="flex items-center gap-1.5 text-sm font-medium">Read Office documents<HelpTip text="Extracts text from Office files. Legacy .doc, .xls and .ppt files still need conversion." label="Help: Read Office documents" /></div><Toggle on={d.office} set={(office) => set({ office })} label="Read Office documents" /></div>
       <div className="flex items-center justify-between gap-3"><div className="flex items-center gap-1.5 text-sm font-medium">Unpack archives<HelpTip text="Expands .zip and .gz attachments and pairs matching transcript files." label="Help: Unpack archives" /></div><Toggle on={d.archives} set={(archives) => set({ archives })} label="Unpack archives" /></div>
-      <Field label="Image text extraction (OCR)" hint="Auto transcribes images only when the answering model can't read images itself. Always transcribes every image. Uses the vision endpoint below.">
+      <Field label="Image text extraction (OCR)" hint="Auto transcribes images only when the answering model can't read images itself. Always transcribes every image. Uses the vision endpoint below." row>
         <Seg v={d.ocr} set={(ocr) => set({ ocr })} opts={[['off', 'Off'], ['auto', 'Auto'], ['always', 'Always']]} />
       </Field>
       <Anchor id="ocr">
       {d.ocr !== 'off' && (
         <div className="space-y-3">
-          <Field label="OCR vision endpoint"><Sel value={d.ocrEp} set={(ocrEp) => set({ ocrEp, ocrModel: '' })} opts={[['', 'First vision-capable endpoint'], ...visionEps.map((e) => [e.id, e.name] as [string, string])]} /></Field>
-          {ocrEp && <Field label="OCR model"><Sel value={d.ocrModel} set={(ocrModel) => set({ ocrModel })} opts={[['', 'Endpoint default'], ...modelsOf(ocrEp).map((m) => [m, m] as [string, string])]} /></Field>}
+          <Field label="OCR vision endpoint" row><Sel value={d.ocrEp} set={(ocrEp) => set({ ocrEp, ocrModel: '' })} opts={[['', 'First vision-capable endpoint'], ...visionEps.map((e) => [e.id, e.name] as [string, string])]} /></Field>
+          {ocrEp && <Field label="OCR model" row><Sel value={d.ocrModel} set={(ocrModel) => set({ ocrModel })} opts={[['', 'Endpoint default'], ...modelsOf(ocrEp).map((m) => [m, m] as [string, string])]} /></Field>}
           {!visionEps.length && <p className="text-xs text-er">No usable vision-capable endpoint yet. Add one in Settings → Endpoints for OCR to work.</p>}
         </div>
       )}
       </Anchor>
       <Anchor id="per-file-chars">
-      <Field label="Text per document" hint="Character budget for each extracted document. The message-wide text budget still applies.">
+      <Field label="Text per document" hint="Character budget for each extracted document. The message-wide text budget still applies." row>
         <Sel value={String(d.perFileChars)} set={(v) => set({ perFileChars: Number(v) })} opts={[['15000', '15k characters'], ['30000', '30k characters'], ['60000', '60k characters'], ['100000', '100k characters'], ['200000', '200k characters (max)']]} />
       </Field>
       </Anchor>
       <Anchor id="total-file-chars">
-      <Field label="Text across all files" hint="Combined character budget for this message's attachments and pasted pages. Raise it for a large-context model; lower it to keep requests small. When a file exceeds its own limit, the opening and conclusion are kept and the omission is marked.">
+      <Field label="Text across all files" hint="Combined character budget for this message's attachments and pasted pages. Raise it for a large-context model; lower it to keep requests small. When a file exceeds its own limit, the opening and conclusion are kept and the omission is marked." row>
         <Sel value={String(d.totalChars)} set={(v) => set({ totalChars: Number(v) })} opts={[['100000', '100k characters'], ['250000', '250k characters'], ['500000', '500k characters (default)'], ['750000', '750k characters'], ['1000000', '1M characters']]} />
       </Field>
       </Anchor>
@@ -1100,17 +1194,17 @@ function ImageGenCard() {
     <Anchor id="image-generation">
       <Card icon={ImageIcon} title="Image generation" sub={g.on ? `@generate_image · On${ep ? ` · ${ep.name}${g.model ? ` · ${g.model}` : ''}` : ' · no OpenAI-compatible endpoint'}` : '@generate_image · Off'} help="Generates images with an OpenAI-compatible endpoint." muted={!g.on} open0={g.on && !eps.length} right={<Toggle on={g.on} set={(on) => set({ on })} label="Allow image generation" />}>
         {!eps.length && <p role="status" className="rounded-lg bg-er/10 px-3 py-2 text-xs text-er">No enabled OpenAI-compatible endpoint is available. Add one in Endpoints first.</p>}
-        <Field label="Image endpoint" hint="Which endpoint receives the image request. Empty uses the first usable OpenAI-compatible endpoint.">
+        <Field label="Image endpoint" hint="Which endpoint receives the image request. Empty uses the first usable OpenAI-compatible endpoint." row>
           <Sel value={g.ep && s.eps.some((e) => e.id === g.ep) ? g.ep : ''} set={(id) => set({ ep: id })} opts={[['', eps[0] ? `First usable · ${eps[0].name}` : 'First usable OpenAI-compatible'], ...s.eps.filter((e) => e.type === 'openai').map((e) => [e.id, `${e.name}${e.on ? '' : ' (disabled)'}`] as [string, string])]} />
         </Field>
         <Field label="Image model" hint="Model id for the image endpoint, for example gpt-image-1, dall-e-3, or a Flux model served by a compatible API. Empty uses the endpoint's default model.">
           <Input value={g.model} set={(model) => set({ model })} placeholder={ep?.model ? `Default: ${ep.model}` : 'e.g. gpt-image-1'} />
         </Field>
         <div className="grid gap-3 sm:grid-cols-2">
-          <Field label="Size" hint="Sizes the endpoint accepts. Unsupported sizes fail with the provider's own message.">
+          <Field label="Size" hint="Sizes the endpoint accepts. Unsupported sizes fail with the provider's own message." row>
             <Sel value={g.size} set={(size) => set({ size })} opts={IMAGE_SIZES} />
           </Field>
-          <Field label="Images per call" hint="How many images one request generates. 1-4.">
+          <Field label="Images per call" hint="How many images one request generates. 1-4." row>
             <Sel value={String(g.count)} set={(v) => set({ count: Number(v) })} opts={[['1', '1'], ['2', '2'], ['3', '3'], ['4', '4']]} />
           </Field>
         </div>
@@ -1140,7 +1234,7 @@ function CodeRunCard() {
           </Field>
         </Anchor>
         <Anchor id="code-output">
-          <Field label="Output limit" hint="Maximum characters of stdout and result kept from a run. Longer output is truncated with a notice.">
+          <Field label="Output limit" hint="Maximum characters of stdout and result kept from a run. Longer output is truncated with a notice." row>
             <Sel value={String(c.maxOutput)} set={(v) => set({ maxOutput: Number(v) })} opts={[['5000', '5k characters'], ['20000', '20k characters'], ['50000', '50k characters'], [String(CODE_OUTPUT_MAX), '100k characters (max)']]} />
           </Field>
         </Anchor>
@@ -1321,7 +1415,7 @@ function Tools() {
           </div></Anchor>}
           {k === 'search' && <div className="space-y-3 rounded-xl bg-bg p-3">
             <Anchor id="search-provider">
-            <Field label="API provider" hint="Your searches run through this provider with your own key below. The results ground the reply and become its sources. Jina AI works without a key at a lower rate limit. The Google, OpenAI and Anthropic options use a fixed small model with that vendor's built-in web search, so they can cost more than a search-only API.">
+            <Field label="API provider" hint="Your searches run through this provider with your own key below. The results ground the reply and become its sources. Jina AI works without a key at a lower rate limit. The Google, OpenAI and Anthropic options use a fixed small model with that vendor's built-in web search, so they can cost more than a search-only API." row>
               <Sel value={search.provider} set={(provider) => { setShowSearchKey(false); setSearch({ provider: provider as typeof search.provider }) }} opts={SEARCH_PROVIDERS.map(([id, label]) => [id, label] as [string, string])} />
             </Field>
             </Anchor>
@@ -1352,19 +1446,19 @@ function Tools() {
             </Field>
             </Anchor>
             <Anchor id="search-retries">
-            <Field label="Retries" hint="Bounded retries for transient failures (429/5xx/timeouts). Permanent errors are never retried.">
+            <Field label="Retries" hint="Bounded retries for transient failures (429/5xx/timeouts). Permanent errors are never retried." row>
               <Sel value={String(search.maxRetries)} set={(v) => setSearch({ maxRetries: Number(v) })} opts={[['0', '0 · none'], ['1', '1'], ['2', '2'], ['3', '3'], ['4', '4 · max']]} />
             </Field>
             </Anchor>
             <Anchor id="search-retry-delay">
-            <Field label="Retry base delay" hint="Base backoff between retries (doubles each attempt, capped at 4s).">
+            <Field label="Retry base delay" hint="Base backoff between retries (doubles each attempt, capped at 4s)." row>
               <Sel value={String(search.retryBaseMs)} set={(v) => setSearch({ retryBaseMs: Number(v) })} opts={[['50', '50ms'], ['100', '100ms'], ['300', '300ms'], ['500', '500ms'], ['1000', '1s'], ['2000', '2s · max']]} />
             </Field>
             </Anchor>
             <Anchor id="citations">
             <div className="space-y-3 rounded-xl bg-surf p-3">
               <div className="text-sm font-medium">Sources & transparency</div>
-              <Field label="Inline citations" hint="Off hides [S1] markers in replies (Sources list stays below the reply). Pills jump to the Sources list below the reply (description first, Open button inside). Links render as plain markdown links.">
+              <Field label="Inline citations" hint="Off hides [S1] markers in replies (Sources list stays below the reply). Pills jump to the Sources list below the reply (description first, Open button inside). Links render as plain markdown links." row>
                 <Seg v={search.citeStyle} set={(citeStyle) => setSearch({ citeStyle })} opts={[['off', 'Off'], ['pills', 'Pills'], ['links', 'Links']]} />
               </Field>
               <div className="flex items-center justify-between gap-3"><div className="flex items-center gap-1.5 text-sm font-medium">Expand Sources by default<HelpTip text="Shows the source list open on grounded replies." label="Help: Expand Sources by default" /></div><Toggle on={search.sourcesOpen} set={(sourcesOpen) => setSearch({ sourcesOpen })} label="Expand Sources by default" /></div>
@@ -1377,7 +1471,7 @@ function Tools() {
             <div className="flex items-center justify-between gap-3"><div className="flex items-center gap-1.5 text-sm font-medium">Page reader<HelpTip text="Lets the model open a search result and read the full page." label="Help: Page reader" /></div><Toggle on={search.reader} set={(reader) => setSearch({ reader })} label="Page reader" /></div>
             </Anchor>
             <Anchor id="reader-api">
-            <Field label="Page reader API" hint="Which service reads a page when the model opens a search result. Every provider that supports page extraction is a first-class choice; direct fetch needs no key. Pick a different service than your search API to use a separate provider and key.">
+            <Field label="Page reader API" hint="Which service reads a page when the model opens a search result. Every provider that supports page extraction is a first-class choice; direct fetch needs no key. Pick a different service than your search API to use a separate provider and key." row>
               <Sel value={search.readerProvider} set={(readerProvider) => setSearch({ readerProvider: readerProvider as typeof search.readerProvider })} opts={READER_PROVIDERS.map(([id, label]) => [id, label] as [string, string])} />
             </Field>
             </Anchor>
@@ -1404,19 +1498,19 @@ function Tools() {
             </Anchor>
             {search.readerSummary && <>
               <Anchor id="reader-summary-mode">
-              <Field label="Summary model" hint="Use one exact model, or a model flow: an endpoint's models in order, or an entire playlist, until one works.">
+              <Field label="Summary model" hint="Use one exact model, or a model flow: an endpoint's models in order, or an entire playlist, until one works." row>
                 <Seg v={search.readerSummaryFlow ? 'flow' : 'picked'} set={(v) => setSearch({ readerSummaryFlow: v === 'flow' })} opts={[['picked', 'Picked model'], ['flow', 'Model flow']]} />
               </Field>
               </Anchor>
               {search.readerSummaryFlow ? (
                 <Anchor id="reader-summary-endpoint">
-                <Field label="Summary flow source" hint="The flow tries every model in this source in order: an endpoint's default model first, then the rest of its models — or every entry of a playlist. A model that fails is skipped for the rest of the reply; if every model fails, the raw page text is used.">
+                <Field label="Summary flow source" hint="The flow tries every model in this source in order: an endpoint's default model first, then the rest of its models — or every entry of a playlist. A model that fails is skipped for the rest of the reply; if every model fails, the raw page text is used." row>
                   <Sel value={summaryFlowRef} set={setSummaryFlowRef} opts={summaryEpOpts} />
                 </Field>
                 </Anchor>
               ) : (
                 <Anchor id="reader-summary-model">
-                <Field label="Summary model" hint="The exact model that writes the summary. Pick the endpoint and the model id; there is no silent fallback, and a failed summary uses the raw page instead.">
+                <Field label="Summary model" hint="The exact model that writes the summary. Pick the endpoint and the model id; there is no silent fallback, and a failed summary uses the raw page instead." row>
                   <Sel value={summaryRef} set={setSummaryRef} opts={summaryOpts} />
                 </Field>
                 </Anchor>
@@ -1438,12 +1532,12 @@ function Tools() {
             </Field>
             </Anchor>
             <Anchor id="fetch-retries">
-            <Field label="Page retries" hint="Bounded retries for transient failures (429/5xx/timeouts). Permanent errors are never retried.">
+            <Field label="Page retries" hint="Bounded retries for transient failures (429/5xx/timeouts). Permanent errors are never retried." row>
               <Sel value={String(search.fetchMaxRetries)} set={(v) => setSearch({ fetchMaxRetries: Number(v) })} opts={[['0', '0 · none'], ['1', '1'], ['2', '2'], ['3', '3'], ['4', '4 · max']]} />
             </Field>
             </Anchor>
             <Anchor id="fetch-retry-delay">
-            <Field label="Page retry base delay" hint="Base backoff between page retries (doubles each attempt, capped at 4s).">
+            <Field label="Page retry base delay" hint="Base backoff between page retries (doubles each attempt, capped at 4s)." row>
               <Sel value={String(search.fetchRetryBaseMs)} set={(v) => setSearch({ fetchRetryBaseMs: Number(v) })} opts={[['50', '50ms'], ['100', '100ms'], ['300', '300ms'], ['500', '500ms'], ['1000', '1s'], ['2000', '2s · max']]} />
             </Field>
             </Anchor>
@@ -1581,7 +1675,7 @@ function VoiceTab() {
       <Card icon={AudioLines} title="Dictation" sub={canDictate ? 'Microphone button in the composer' : 'Not supported in this browser'} muted={!canDictate}>
         <p className="text-sm">Press the microphone beside Send and speak. The transcript stays editable before you send.</p>
         {!canDictate && <p role="status" className="rounded-lg bg-er/10 px-3 py-2 text-xs text-er">This browser does not offer SpeechRecognition. Try Chrome, Edge, or Safari for dictation.</p>}
-        <Field label="Dictation language" hint="Language the microphone should expect. Browser default follows your system language.">
+        <Field label="Dictation language" hint="Language the microphone should expect. Browser default follows your system language." row>
           <Sel value={v.dictLang} set={(dictLang) => set({ dictLang })} opts={VOICE_LANGS} />
         </Field>
       </Card>
@@ -1592,7 +1686,7 @@ function VoiceTab() {
       <Card icon={Volume2} title="Read aloud" sub={canSpeak ? (v.autoRead ? 'On · reads every new reply' : 'Button on each reply') : 'Not supported in this browser'} muted={!canSpeak}>
         <p className="text-sm">A speaker button on every reply reads it aloud with the browser\u2019s speech synthesis. Code blocks and links are skipped; only the prose is spoken.</p>
         {!canSpeak && <p role="status" className="rounded-lg bg-er/10 px-3 py-2 text-xs text-er">This browser does not offer speechSynthesis, so read-aloud is unavailable.</p>}
-        <Field label="Speaking language" hint="Voice used for read-aloud. Browser default picks the system voice.">
+        <Field label="Speaking language" hint="Voice used for read-aloud. Browser default picks the system voice." row>
           <Sel value={v.speakLang} set={(speakLang) => set({ speakLang })} opts={VOICE_LANGS} />
         </Field>
         <div className="space-y-2">
@@ -1726,7 +1820,7 @@ function MemoryTab() {
         <Toggle on={!!s.toolApproval.memory} set={(v) => s.patch({ toolApproval: { ...s.toolApproval, memory: v } })} label="Require approval for memory writes" />
       </div>
       <Anchor id="memory-mode">
-      <Field label="Memory mode" hint="Intentional stores explicit remember requests. Balanced also stores important disclosures. Aggressive includes smaller details and preferences.">
+      <Field label="Memory mode" hint="Intentional stores explicit remember requests. Balanced also stores important disclosures. Aggressive includes smaller details and preferences." row>
         <Seg v={mp.intent} set={(intent) => setPrefs({ intent })} opts={[["intentional", "Intentional"], ["balanced", "Balanced"], ["aggressive", "Aggressive"]]} />
       </Field>
       </Anchor>
@@ -1737,12 +1831,12 @@ function MemoryTab() {
       </div>
       </Anchor>
       <Anchor id="recall-method">
-      <Field label="Recall method" hint="Local rank picks memories on this device with no model calls (fast, free, offline). Classifier call asks a model to choose, and costs a request per reply.">
+      <Field label="Recall method" hint="Local rank picks memories on this device with no model calls (fast, free, offline). Classifier call asks a model to choose, and costs a request per reply." row>
         <Seg v={mp.method ?? 'local'} set={(method) => setPrefs({ method })} opts={[["local", "Local rank"], ["classifier", "Classifier call"]]} />
       </Field>
       </Anchor>
       <Anchor id="recall-mode">
-      <Field label="Recall mode" hint="Holistic sends every memory. Contextual and Specific rank to the most relevant ones.">
+      <Field label="Recall mode" hint="Holistic sends every memory. Contextual and Specific rank to the most relevant ones." row>
         <Seg v={mp.recall} set={(recall) => setPrefs({ recall })} opts={[["holistic", "Holistic"], ["contextual", "Contextual"], ["specific", "Specific"]]} />
       </Field>
       </Anchor>
@@ -1829,14 +1923,14 @@ function WidgetsTab() {
           <div className={blocked ? 'pointer-events-none opacity-50' : ''}>
           <p className="text-sm text-mu">Shown in the panel at the right of the chat. Open or close that panel with the panel button in the chat header.</p>
           {k === 'usage' && <Anchor id="usage-settings"><div className="space-y-3 rounded-xl bg-bg p-3">
-            <Field label="Group usage"><Seg v={wp.usageGroup} set={(usageGroup) => setWp({ usageGroup })} opts={[["endpoint", "Endpoint totals"], ["model", "Individual models"]]} /></Field>
-            <Field label="Show"><Seg v={wp.usageMode} set={(usageMode) => setWp({ usageMode })} opts={[["success", "OK / fails"], ["tokens", "Tokens"]]} /></Field>
+            <Field label="Group usage" row><Seg v={wp.usageGroup} set={(usageGroup) => setWp({ usageGroup })} opts={[["endpoint", "Endpoint totals"], ["model", "Individual models"]]} /></Field>
+            <Field label="Show" row><Seg v={wp.usageMode} set={(usageMode) => setWp({ usageMode })} opts={[["success", "OK / fails"], ["tokens", "Tokens"]]} /></Field>
             {wp.usageMode === 'tokens' && <Field label="Token format" hint="Use {in} and {out} where input and output totals should appear."><Input value={wp.usageFormat} set={(usageFormat) => setWp({ usageFormat })} /></Field>}
-            <Field label="Usage period"><Seg v={wp.usagePeriod} set={(usagePeriod) => setWp({ usagePeriod })} opts={USAGE_PERIODS} /></Field>
+            <Field label="Usage period" row><Seg v={wp.usagePeriod} set={(usagePeriod) => setWp({ usagePeriod })} opts={USAGE_PERIODS} /></Field>
             {wp.usagePeriod === 'custom' && <div className="grid grid-cols-2 gap-2"><Field label="From"><Input type="date" value={wp.usageFrom ?? ''} set={(usageFrom) => setWp({ usageFrom })} /></Field><Field label="Through"><Input type="date" value={wp.usageTo ?? ''} set={(usageTo) => setWp({ usageTo })} /></Field></div>}
             <Checkbox checked={wp.usageTotal} set={(usageTotal) => setWp({ usageTotal })} label="Show total across models and endpoints" />
           </div></Anchor>}
-          {k === 'last' && <Anchor id="last-settings"><div className="space-y-3"><div className="rounded-xl bg-bg p-3"><Checkbox checked={wp.lastSpeed} set={(lastSpeed) => setWp({ lastSpeed })} label="Show response speed" /></div><Field label="Time unit"><Seg v={wp.timeUnit} set={(timeUnit) => setWp({ timeUnit })} opts={[["auto", "Auto"], ["ms", "Milliseconds"], ["s", "Seconds"]]} /></Field></div></Anchor>}
+          {k === 'last' && <Anchor id="last-settings"><div className="space-y-3"><div className="rounded-xl bg-bg p-3"><Checkbox checked={wp.lastSpeed} set={(lastSpeed) => setWp({ lastSpeed })} label="Show response speed" /></div><Field label="Time unit" row><Seg v={wp.timeUnit} set={(timeUnit) => setWp({ timeUnit })} opts={[["auto", "Auto"], ["ms", "Milliseconds"], ["s", "Seconds"]]} /></Field></div></Anchor>}
           {k === 'keys' && <Anchor id="shortcut-list"><div className="grid gap-2 rounded-xl bg-bg p-3 sm:grid-cols-2">{KEYS.map(([id, label]) => <Checkbox key={id} checked={wp.shortcuts.includes(id)} set={(checked) => setWp({ shortcuts: checked ? [...wp.shortcuts, id] : wp.shortcuts.filter((x) => x !== id) })} label={label} />)}</div></Anchor>}
           {k === 'eps' && <Anchor id="show-disabled"><div className="rounded-xl bg-bg p-3"><Checkbox checked={wp.showDisabledEndpoints} set={(showDisabledEndpoints) => setWp({ showDisabledEndpoints })} label="Show disabled endpoints" /></div></Anchor>}
           {k === 'pad' && <Anchor id="scratch-rows"><Field label="Visible note height" hint="Number of text rows before scrolling."><Input type="number" min="2" max="20" value={wp.scratchRows} set={(v) => setWp({ scratchRows: Math.min(20, Math.max(2, Number(v) || 6)) })} /></Field></Anchor>}
@@ -1879,8 +1973,8 @@ type PrefToggle = 'showBy' | 'showLog' | 'showTps' | 'enterSends' | 'autoTitle' 
 function prefRow(s: ReturnType<typeof useSConfig>, anchor: string, k: PrefToggle, t: string, d: string) {
   return (
     <Anchor id={anchor}>
-    <div className="flex items-center gap-3 rounded-xl bg-surf p-3">
-      <div className="flex flex-1 items-center gap-2 text-sm font-medium">{t}<HelpTip text={d} label={`Help: ${t}`} /></div>
+    <div className="flex items-center gap-3 py-3">
+      <div className="flex flex-1 items-center gap-2 text-sm">{t}<HelpTip text={d} label={`Help: ${t}`} /></div>
       <Toggle on={k === 'seasonal' ? s.prefs[k] !== false : !!s.prefs[k]} set={(v) => s.patch({ prefs: { ...s.prefs, [k]: v } })} label={t} />
     </div>
     </Anchor>
@@ -1898,15 +1992,15 @@ function Look() {
   const row = (anchor: string, k: PrefToggle, t: string, d: string) => prefRow(s, anchor, k, t, d)
   return (
     <Panel id="look">
-      <Section title="Appearance" desc="Theme, colors and the small flourishes.">
+      <Section title="Theme and color" desc="Theme, colors and the small flourishes.">
       <Anchor id="appearance-mode">
-      <div className="rounded-xl bg-surf p-3 space-y-2">
-        <div className="text-sm font-medium">Appearance mode</div>
-        <div className="mt-1"><Seg v={s.themeMode} set={(themeMode) => s.patch({ themeMode })} opts={[['dark', 'Dark'], ['light', 'Light']]} /></div>
+      <div className="flex flex-wrap items-center gap-3 py-3">
+        <div className="flex-1 text-sm font-medium">Theme</div>
+        <Seg v={s.themeMode} set={(themeMode) => s.patch({ themeMode })} opts={[['dark', 'Dark'], ['light', 'Light']]} />
       </div>
       </Anchor>
       <Anchor id="theme-picker">
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
         {[...(s.themeMode === 'light' ? LIGHT_THEMES : DARK_THEMES), 'custom'].map((k) => {
           const n = THEMES[k as keyof typeof THEMES]
           const active = (s.themeMode === 'light' ? s.themeLight : s.themeDark) === k
@@ -2230,8 +2324,8 @@ function AdvancedTab() {
   const setA = (p: Partial<typeof a>) => s.patch({ advanced: { ...a, ...p } })
   const row = (anchor: string, k: 'verboseErrors' | 'showHiddenTools' | 'showSystemPrompt' | 'showToolPayloads' | 'showTokenCounts' | 'showModelParams', t: string, d: string) => (
     <Anchor id={anchor}>
-    <div className="flex items-center gap-3 rounded-xl bg-surf p-3">
-      <div className="flex flex-1 items-center gap-2 text-sm font-medium">{t}<HelpTip text={d} label={`Help: ${t}`} /></div>
+    <div className="flex items-center gap-3 py-3">
+      <div className="flex flex-1 items-center gap-2 text-sm">{t}<HelpTip text={d} label={`Help: ${t}`} /></div>
       <Toggle on={a[k]} set={(v) => setA({ [k]: v })} label={t} />
     </div>
     </Anchor>
@@ -2262,7 +2356,7 @@ function WorkspaceTab() {
     <Panel id="workspace">
       <Section title="Panel" desc="How the workspace side panel behaves.">
       <div className="space-y-3">
-        <Anchor id="default-view"><Field label="Default view"><Seg v={wp.defaultView ?? 'pinned'} set={(defaultView) => set({ defaultView: defaultView as typeof wp.defaultView })} opts={[['pinned', 'Pinned'], ['latest', 'Latest']]} /></Field></Anchor>
+        <Anchor id="default-view"><Field label="Default view" row><Seg v={wp.defaultView ?? 'pinned'} set={(defaultView) => set({ defaultView: defaultView as typeof wp.defaultView })} opts={[['pinned', 'Pinned'], ['latest', 'Latest']]} /></Field></Anchor>
         <Anchor id="auto-open"><div className="flex items-center justify-between gap-3"><div><div className="text-sm font-medium">Auto-open panel</div><div className="text-xs text-mu">Open the side panel when the AI starts writing files.</div></div><Toggle on={wp.autoOpen ?? true} set={(autoOpen) => set({ autoOpen })} label="Auto-open panel" /></div></Anchor>
         <Anchor id="auto-follow"><div className="flex items-center justify-between gap-3"><div><div className="text-sm font-medium">Auto-follow file</div><div className="text-xs text-mu">Select the file the AI is writing automatically.</div></div><Toggle on={wp.autoFollow ?? true} set={(autoFollow) => set({ autoFollow })} label="Auto-follow file" /></div></Anchor>
       </div>
@@ -2464,7 +2558,7 @@ function Chats() {
   )
 }
 
-const VIEWS: Record<string, () => ReactNode> = { features: FeaturesTab, profiles: ProfilesTab, eps: Eps, prompts: Prompts, skills: SkillsTab, pls: Pls, cmds: Cmds, workspace: WorkspaceTab, tools: Tools, mcp: McpTab, memory: MemoryTab, widgets: WidgetsTab, look: Look, chats: Chats, voice: VoiceTab, keys: KeysTab, data: DataTab, adv: AdvancedTab }
+const VIEWS: Record<string, () => ReactNode> = { features: FeaturesTab, eps: Eps, prompts: QualitiesTab, skills: SkillsTab, pls: Pls, cmds: Cmds, workspace: WorkspaceTab, tools: Tools, mcp: McpTab, memory: MemoryTab, widgets: WidgetsTab, look: Look, chats: Chats, voice: VoiceTab, keys: KeysTab, data: DataTab, adv: AdvancedTab }
 
 export function Settings({ tab, setTab }: { tab: string; setTab: (t: string) => void }) {
   const features = useS((s) => s.features)
@@ -2505,24 +2599,46 @@ export function Settings({ tab, setTab }: { tab: string; setTab: (t: string) => 
   }, [setTab])
   return (
     <Modal close={() => setTab('')} blur={false} opacity={settingsOpacity} labelledBy="settings-title">
-      <div style={{ width: `min(${settingsWidth}px, 100%)`, height: `min(${settingsHeight}px, 92dvh)` }} className="settings-root modal-panel flex overflow-hidden rounded-2xl bg-bg">
-        <span id="settings-title" className="sr-only">Settings</span>
-        <nav aria-label="Settings sections" className="hidden w-56 shrink-0 flex-col border-r border-bor bg-side p-3 sm:flex">
-          <h2 className="px-3 pb-3 text-lg font-semibold">Settings</h2>
-          <input aria-label="Search settings" value={query} onChange={e => setQuery(e.target.value)} placeholder="Search settings" className="mb-3 w-full rounded-lg bg-surf px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ac/40" />
-          <div className="min-h-0 flex-1 space-y-3 overflow-y-auto">
-            {query.trim() ? results.map(result => <button key={result.target} onClick={() => openResult(result.target)} className="block w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-surf"><span className="block">{result.title}</span><span className="block text-xs text-mu">{result.section}</span></button>) : navGroups.map(group => <div key={group.label}><h3 className="px-3 pb-1 text-xs font-medium text-mu">{group.label}</h3>{group.tabs.map(id => { const entry = SETTINGS_TABS.find(([k]) => k === id)!; const [k, l, I] = entry; const off = !tabs.some(([visible]) => visible === k); return <button key={k} onClick={() => setTab(k)} aria-current={active === k ? 'page' : undefined} className={cx('flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm', active === k ? 'bg-hov' : 'text-mu hover:bg-surf hover:text-tx')}><I size={16} /><span className="min-w-0 flex-1">{l}</span>{off && <span className="text-xs">Off</span>}</button> })}</div>)}
-            {query.trim() && !results.length && <p className="px-3 py-2 text-sm text-mu">No settings found.</p>}
+      <div style={{ width: `min(${settingsWidth}px, 100%)`, height: `min(${settingsHeight}px, 92dvh)` }} className="settings-root modal-panel flex flex-col overflow-hidden rounded-xl bg-bg">
+        <div className="flex h-12 shrink-0 items-center justify-between border-b border-bor px-4">
+          <h2 id="settings-title" className="text-sm font-semibold">Settings</h2>
+          <button type="button" aria-label="Close settings" title="Close settings" onClick={() => setTab('')} className="grid size-7 place-items-center rounded-md text-mu transition-colors hover:bg-hov hover:text-tx"><X size={16} /></button>
+        </div>
+        <div className="flex min-h-0 flex-1">
+        <nav aria-label="Settings sections" className="hidden w-52 shrink-0 flex-col border-r border-bor p-2.5 sm:flex">
+          <label className="relative mb-2 block">
+            <Search size={14} aria-hidden="true" className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-mu" />
+            <input aria-label="Search settings" value={query} onChange={e => setQuery(e.target.value)} placeholder="Search" className="w-full rounded-md bg-surf py-1.5 pl-8 pr-2.5 text-sm outline-none placeholder:text-mu focus:ring-2 focus:ring-ac/40" />
+          </label>
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            {query.trim() ? (<>
+              {results.map(result => <button key={result.target} onClick={() => openResult(result.target)} className="block w-full rounded-md px-2 py-1.5 text-left text-sm hover:bg-surf"><span className="block">{result.title}</span><span className="block text-xs text-mu">{result.section}</span></button>)}
+              {!results.length && <p className="px-2 py-2 text-sm text-mu">No settings found.</p>}
+            </>) : navGroups.map((group, gi) => (
+              <div key={group.label} className={cx(gi > 0 && 'mt-1.5 border-t border-bor pt-1.5')}>
+                {group.tabs.map(id => {
+                  const [k, l, I] = SETTINGS_TABS.find(([x]) => x === id)!
+                  const off = !tabs.some(([visible]) => visible === k)
+                  return <button key={k} onClick={() => setTab(k)} aria-current={active === k ? 'page' : undefined} className={cx('flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left text-sm transition-colors', active === k ? 'bg-hov text-tx' : 'text-mu hover:bg-surf hover:text-tx')}><I size={16} className="shrink-0" /><span className="min-w-0 flex-1 truncate">{l}</span>{off && <span className="text-xs">Off</span>}</button>
+                })}
+              </div>
+            ))}
           </div>
         </nav>
         <div className="relative min-w-0 flex-1">
-          <div className="absolute right-3 top-3 z-30"><Btn icon={X} title="Close settings" onClick={() => setTab('')} /></div>
-          <div className="h-full overflow-y-auto p-4 sm:p-6">
-            <div className="mb-4 space-y-2 pr-12 sm:hidden"><h2 id="settings-mobile-title" className="text-lg font-semibold">Settings</h2><input aria-label="Search settings" value={query} onChange={e => setQuery(e.target.value)} placeholder="Search settings" className="w-full rounded-lg bg-surf px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ac/40" />{query.trim() ? <div className="max-h-48 overflow-y-auto rounded-lg bg-surf">{results.map(result => <button key={result.target} onClick={() => openResult(result.target)} className="block w-full px-3 py-2 text-left text-sm hover:bg-hov">{result.title}<span className="ml-2 text-xs text-mu">{result.section}</span></button>)}{!results.length && <p className="p-3 text-sm text-mu">No settings found.</p>}</div> : <SearchSelect ariaLabel="Settings section" value={active} set={setTab} opts={SETTINGS_TABS.filter(([k]) => showOff || tabs.some(([v]) => v === k)).map(([k, l]) => [k, `${l}${tabs.some(([v]) => v === k) ? '' : ' (off)'}`] as [string, string])} />}</div>
+          <div className="h-full overflow-x-hidden overflow-y-auto px-4 py-4 sm:px-8 sm:py-5">
+            <div className="mb-4 space-y-2 sm:hidden">
+              <label className="relative block">
+                <Search size={14} aria-hidden="true" className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-mu" />
+                <input aria-label="Search settings" value={query} onChange={e => setQuery(e.target.value)} placeholder="Search settings" className="w-full rounded-md bg-surf py-2 pl-8 pr-3 text-sm outline-none placeholder:text-mu focus:ring-2 focus:ring-ac/40" />
+              </label>
+              {query.trim() ? <div className="max-h-48 overflow-y-auto rounded-md border border-bor">{results.map(result => <button key={result.target} onClick={() => openResult(result.target)} className="block w-full px-3 py-2 text-left text-sm hover:bg-hov">{result.title}<span className="ml-2 text-xs text-mu">{result.section}</span></button>)}{!results.length && <p className="p-3 text-sm text-mu">No settings found.</p>}</div> : <SearchSelect ariaLabel="Settings section" value={active} set={setTab} opts={SETTINGS_TABS.filter(([k]) => showOff || tabs.some(([v]) => v === k)).map(([k, l]) => [k, `${l}${tabs.some(([v]) => v === k) ? '' : ' (off)'}`] as [string, string])} />}
+            </div>
             {disabledFeature ? <div className="space-y-3"><h2 className="text-lg font-semibold">{featureLabel} is off</h2><p className="text-sm text-mu">Turn it on in Features to use its settings.</p><Btn v="soft" onClick={() => setTab(`features#feature-${disabledFeature}`)}>Open Features</Btn></div> : active === 'stats'
               ? <Suspense fallback={<div role="status" className="py-10 text-center text-sm text-mu">Loading stats…</div>}><UsageStats onOpenChat={(chatId, messageId) => { useS.getState().patch({ chat: chatId, flashMsg: messageId, activeProject: '' }); setTab('') }} /></Suspense>
               : <ErrorBoundary compact title="These settings could not render"><V /></ErrorBoundary>}
           </div>
+        </div>
         </div>
       </div>
     </Modal>

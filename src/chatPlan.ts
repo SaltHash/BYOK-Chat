@@ -2,7 +2,7 @@ import { TOOLS } from './meta'
 import { can } from './engine'
 import { enabledSkills, normSkills, composeSystemPrompt } from './skills'
 import { modelsOf, usable } from './models'
-import { qualityPrompt, type GlobalPrompt } from './flair'
+import { qualityEffects, qualityPrompt, type GlobalPrompt, type QualityEffect } from './flair'
 import { applyPromptVars, dateContext } from './promptVars'
 import type { Ep, Pl, Cmd, Msg, Notice, FeatureId } from './store'
 import type { ToolMode } from './toolApprovals'
@@ -65,22 +65,26 @@ export function planRequest(s: PlanState, um: Msg, defaultFeatures: Record<Featu
   // User-facing prompt text may use {variable} placeholders (e.g. {date});
   // they are resolved here, once, right before the request is built.
   const scoped = F.prompts ? applyPromptVars(cmd?.sys || s.prompts.find((x) => x.id === s.pr)?.text || (pl && !cmd ? pl.sys : '') || '') : ''
-  const globalSys = F.prompts && s.globalPrompt?.on
-    ? [applyPromptVars(s.globalPrompt.text.trim()), qualityPrompt(s.globalPrompt.qualities)].filter(Boolean).join('\n\n')
+  // Qualities are independent of the base prompt toggle: the composer offers
+  // them as their own switches, so they still apply when the long base text is
+  // switched off. The base text itself rides along only while it is on.
+  const effects: QualityEffect = F.prompts ? qualityEffects(s.globalPrompt?.qualities) : {}
+  const globalSys = F.prompts
+    ? [(s.globalPrompt?.on ? applyPromptVars(s.globalPrompt.text.trim()) : ''), qualityPrompt(s.globalPrompt?.qualities)].filter(Boolean).join('\n\n')
     : ''
   // The date context rides along with every prompt so the model always knows
   // which day it is, even when the user wrote no prompt at all.
   const baseSys = [dateContext(), globalSys, scoped].filter(Boolean).join('\n\n')
-  const enabledTools = F.tools && s.toolMode !== 'off' ? TOOLS.filter(([name]) => s.tools[name] === true).map(([name]) => name) : []
+  const enabledTools = F.tools && !effects.toolsOff && s.toolMode !== 'off' ? TOOLS.filter(([name]) => s.tools[name] === true).map(([name]) => name) : []
   const widgetTools = enabledTools.some((name) => name === 'prompt_chip' || name === 'inline_poll')
   const widgetSys = widgetTools ? 'Follow-up chips and choice cards are rendered by the interface after your reply. Never mention them in your prose, never say that you added follow-up options, and never tell the user to click or fill them.' : ''
   const toolSys = enabledTools.length ? `${baseSys}${baseSys ? '\n\n' : ''}You may use the enabled tools when needed to answer the user. Call a tool for requests that need its actual result, then base your answer on the returned result.${widgetSys ? ` ${widgetSys}` : ''}` : baseSys
-  const skills = F.skills ? enabledSkills(normSkills(s.skills).skills) : []
+  const skills = F.skills && !effects.skillsOff ? enabledSkills(normSkills(s.skills).skills) : []
   const sys = composeSystemPrompt(toolSys, skills)
   let err: Notice = null
   if (!s.eps.length) err = { t: 'You have not added a model endpoint yet. Open Settings → Endpoints, choose a provider preset, paste your API key and the model id, then press Test connection. After that, send your message again.', tab: 'eps', label: 'Add an endpoint' }
   else if (!ready.length) err = { t: ex ? `${tgt} is disabled or incomplete. An endpoint must be enabled and have a base URL and a model id.` : `No endpoint in ${tgt} is ready. Enable one and make sure it has a base URL and a model id.`, tab: pl ? 'pls' : 'eps', label: 'Fix endpoints' }
   else if (!cand.length) err = { t: `Not sent: no ready endpoint in ${tgt} can process ${need.map((n) => (n === 'img' ? 'images' : n === 'media' ? 'audio or video' : 'PDFs')).join(' and ')}. Your attachments are still in the message box. Choose a compatible endpoint or model.`, tab: 'eps', label: 'Open endpoints' }
   else if (s.sel && !sel && (s.sel.k === 'ep' || F.playlists)) err = { t: `The selected ${s.sel.k === 'pl' ? 'playlist' : 'endpoint'} is no longer available. Choose another model${s.sel.k === 'pl' ? ' or playlist' : ''}, then send again.`, tab: s.sel.k === 'pl' ? 'pls' : 'eps', label: 'Fix selection' }
-  return { cmd, pl, ex, sys, cand, err, tgt, skills }
+  return { cmd, pl, ex, sys, cand, err, tgt, skills, effects }
 }
