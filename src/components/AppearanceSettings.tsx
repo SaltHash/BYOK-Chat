@@ -43,7 +43,7 @@ function FontPicker({ value, set, options }: { value: string; set: (v: string) =
         <ChevronDown size={14} className={cx('shrink-0 transition-transform', open && 'rotate-180')} />
       </button>
       {open && (
-        <div className="menu-surface absolute right-0 z-30 mt-1 w-64 max-w-[min(16rem,80vw)] rounded-xl bg-surf p-1.5 shadow-xl">
+        <div className="menu-surface absolute right-0 z-30 mt-1 w-64 max-w-[min(16rem,80vw)] rounded-xl bg-surf p-1.5">
           <input
             autoFocus
             value={query}

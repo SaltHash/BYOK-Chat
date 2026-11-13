@@ -122,7 +122,7 @@ html[data-style=floating][data-flat] .panel-shell { box-shadow: none; }
  * to useThemeCss so the inline custom property is the single source. */
 html[data-flat] .glass-composer { background: var(--surf); -webkit-backdrop-filter: none; backdrop-filter: none; }
 html[data-flat] .dnd-overlay, html[data-flat] .dnd-lift { filter: none; }
-html[data-flat] .menu-surface { box-shadow: none; }
+html[data-flat] .menu-surface, html[data-flat] .popup-shadow { box-shadow: none; }
 
 /* High-contrast (`data-contrast`): push muted text and hairline borders well
  * above their theme values by mixing each toward the foreground colour. Works
@@ -241,20 +241,30 @@ html[data-codewrap] .code-lines .code-line > code { flex: 1 1 auto; min-width: 0
 
 /* One dropdown surface for every menu: settings, composer, chat actions,
    context, sidebar and the workspace revision picker. `--menu-shadow` is
-   available for a local override; flat mode removes the shadow. */
-:root { --menu-shadow: 0 18px 44px rgb(0 0 0 / 42%), 0 5px 14px rgb(0 0 0 / 22%); }
+   available for a local override; flat mode removes the shadow. Dark themes
+   keep a lifted but softer edge; light themes need a much lighter cast. */
+:root { --menu-shadow: 0 16px 38px rgb(0 0 0 / 34%), 0 4px 12px rgb(0 0 0 / 16%); }
+:root[data-t=paper], :root[data-t=sage], :root[data-t=frost], :root[data-t=sunset],
+:root[data-t=custom][style*="color-scheme: light"], :root[data-t=custom][style*="color-scheme:light"] {
+  --menu-shadow: 0 12px 30px rgb(0 0 0 / 12%), 0 3px 8px rgb(0 0 0 / 7%);
+}
 .menu-surface {
   border: 1px solid color-mix(in srgb, var(--mu) 36%, var(--bor));
   box-shadow: var(--menu-shadow);
 }
-/* Settings text fields read as filled controls, not outlined boxes. */
-.settings-root :is(input:not([type]), input[type="text"], input[type="search"], input[type="number"], input[type="password"], input[type="url"], input[type="email"], input[type="date"], input[type="time"], input[type="datetime-local"], textarea) {
+/* Hover cards and chart tooltips are popups too, so they share the softer
+   elevation instead of carrying their own utility shadow. */
+.popup-shadow { box-shadow: var(--menu-shadow); }
+/* Text fields are filled controls everywhere, in dialogs and in the normal
+   page: no outline, one solid surface colour, and a slightly brighter hover.
+   The unlayered rule wins over utility backgrounds, so every field matches. */
+:is(input:not([type]), input[type="text"], input[type="search"], input[type="number"], input[type="password"], input[type="url"], input[type="email"], input[type="date"], input[type="time"], input[type="datetime-local"], textarea) {
   border: 0;
   background-color: var(--surf);
   color: var(--tx);
   transition: background-color 120ms ease;
 }
-.settings-root :is(input:not([type]), input[type="text"], input[type="search"], input[type="number"], input[type="password"], input[type="url"], input[type="email"], input[type="date"], input[type="time"], input[type="datetime-local"], textarea):hover {
+:is(input:not([type]), input[type="text"], input[type="search"], input[type="number"], input[type="password"], input[type="url"], input[type="email"], input[type="date"], input[type="time"], input[type="datetime-local"], textarea):not(:disabled):hover {
   background-color: var(--hov);
 }
 

@@ -892,14 +892,31 @@ export function Composer({ cfg, quote, onClearQuote }: { cfg: (t: string) => voi
                     onClick={() => s.patch({ globalPrompt: { ...g, on: !g.on } })}
                     title={g.on ? 'Turn the global system prompt off for every chat' : 'Add the global system prompt to every chat'}
                   >Global system prompt</Item>
-                  {/* Qualities the user pinned in Settings, one switch each, so
+                  {/* Qualities the user pinned in Settings, as compact pills, so
                       changing the reply's behaviour never needs a trip to
                       Settings. The base prompt row above stays separate. */}
-                  {favQualities.length > 0 && <div className="px-2.5 pb-1 pt-2 text-xs font-medium text-mu">Qualities</div>}
-                  {favQualities.map((q) => {
-                    const on = activeQualities.includes(q.id)
-                    return <Item key={q.id} icon={Star} on={on} toggle={{ on, set: () => toggleQuality(q.id), label: q.label }} onClick={() => toggleQuality(q.id)} title={q.desc}>{q.label}</Item>
-                  })}
+                  {favQualities.length > 0 && (
+                    <>
+                      <div className="px-2.5 pb-1.5 pt-2 text-xs font-medium text-mu">Qualities</div>
+                      <div className="flex flex-wrap gap-1.5 px-1 pb-1">
+                        {favQualities.map((q) => {
+                          const on = activeQualities.includes(q.id)
+                          return (
+                            <button
+                              key={q.id}
+                              type="button"
+                              aria-pressed={on}
+                              onClick={() => toggleQuality(q.id)}
+                              title={q.desc}
+                              className={cx('rounded-full px-2.5 py-1 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ac/40', on ? 'bg-ac text-acx' : 'bg-hov text-mu hover:bg-mu/20 hover:text-tx')}
+                            >
+                              {q.label}
+                            </button>
+                          )
+                        })}
+                      </div>
+                    </>
+                  )}
                   {/* The global prompt stacks on top of the named prompts rather
                       than being one of them, so a rule separates it. */}
                   <div role="separator" aria-hidden="true" className="mx-1 my-1.5 border-t border-bor/60" />

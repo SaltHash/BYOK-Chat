@@ -206,7 +206,7 @@ function StackedBars({ buckets, series, valueOf, exact, height = 176, title, pin
           })}
         </svg>
         {hover != null && hovered && (
-          <div className={cx('pointer-events-none absolute top-1 z-10 w-56 rounded-lg border border-bor bg-surf/95 p-2 text-[11px] shadow-lg backdrop-blur', hover < buckets.length / 2 ? 'right-1' : 'left-1')}>
+          <div className={cx('popup-shadow pointer-events-none absolute top-1 z-10 w-56 rounded-lg border border-bor bg-surf/95 p-2 text-[11px] backdrop-blur', hover < buckets.length / 2 ? 'right-1' : 'left-1')}>
             <div className="flex items-baseline justify-between gap-2">
               <span className="font-medium">{formatDateTime(hovered.start)}</span>
               {unitLabel && <span className="shrink-0 text-mu">{unitLabel}</span>}

@@ -91,7 +91,7 @@ export function ColorPicker({ value, onChange, label, role = 'accent', theme }: 
           role="dialog"
           aria-label={`${label} picker`}
           style={{ left: pos.left, top: pos.top }}
-          className="menu-surface fixed z-[80] w-[264px] space-y-3 rounded-xl bg-bg p-3 text-tx shadow-2xl"
+          className="menu-surface fixed z-[80] w-[264px] space-y-3 rounded-xl bg-bg p-3 text-tx"
         >
           <div className="flex items-center justify-between">
             <span className="text-xs font-medium">{label}</span>
