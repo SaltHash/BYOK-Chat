@@ -29,8 +29,11 @@
 }
 
 /* Style presets. `modern` is the original look; the other three change only
-   corner radii and elevation, never colours, fonts or layout. */
-:root {
+   corner radii and elevation, never colours, fonts or layout. `modern` is
+   listed beside :root so the preview card for it keeps the modern radii and
+   shadows: a plain [data-style] element would otherwise inherit whatever
+   preset the app is currently using. */
+:root, [data-style=modern] {
   --r-sm: 0.25rem; --r-md: 0.375rem; --r-lg: 0.5rem; --r-xl: 0.75rem; --r-2xl: 1rem; --r-3xl: 1.5rem;
   --sh-sm: 0 1px 2px 0 rgb(0 0 0 / 5%);
   --sh-md: 0 4px 6px -1px rgb(0 0 0 / 10%), 0 2px 4px -2px rgb(0 0 0 / 10%);
