@@ -19,6 +19,7 @@ import { quoteForSend } from '../quote'
 import { isLargePaste } from '../paste'
 
 const chip = 'flex h-9 min-w-0 items-center gap-2 rounded-lg px-2.5 text-sm text-mu hover:bg-hov hover:text-tx'
+const IDLE_PLACEHOLDERS = ["What's on your mind", 'Ask me anything', 'Start with a question']
 
 /* The Stop glyph is a solid square. Lucide's Square is stroke-only, so it read
  * as an outlined control next to the filled Send arrow. */
@@ -606,7 +607,10 @@ export function Composer({ cfg, quote, onClearQuote }: { cfg: (t: string) => voi
     if (typed?.kind === 'research') { pending.current = 'end'; s.patch({ draft: typed.query ?? '' }); ta.current?.focus(); return }
     if (typed?.kind === 'search' && typed.m) { pending.current = 'end'; s.patch({ draft: stripMention(v, typed.m) }); ta.current?.focus() }
   }
-  const placeholder = quote ? 'Write a reply to the quoted text…' : armed === 'search' ? 'What should I search for?' : armed === 'research' ? 'What should I research?' : s.eps.some(usable) ? (featOn(s, 'commands') && featOn(s, 'tools') ? 'Message, / for commands, @ for search' : featOn(s, 'commands') ? 'Message, / for commands' : featOn(s, 'tools') ? 'Message, @ for search' : 'Message') : 'Add a model endpoint to start (press Send for a walkthrough)'
+  // Three idle greetings, picked per chat so the box feels alive without the
+  // text flickering on every render or keystroke.
+  const idle = IDLE_PLACEHOLDERS[[...s.chat].reduce((h, ch) => h + ch.charCodeAt(0), 0) % IDLE_PLACEHOLDERS.length]
+  const placeholder = quote ? 'Write a reply to the quoted text…' : armed === 'search' ? 'What should I search for?' : armed === 'research' ? 'What should I research?' : s.eps.some(usable) ? idle : 'Add a model endpoint to start (press Send for a walkthrough)'
   return (
     <div className="w-full self-center">
       <div className="mx-auto w-full" style={{ maxWidth: composerWidth(s.prefs.chatWidth), paddingLeft: 'var(--ui-chat-pad-x)', paddingRight: 'var(--ui-chat-pad-x)' }}>
