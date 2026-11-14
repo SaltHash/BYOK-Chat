@@ -51,6 +51,14 @@ void hydrateDurable((p) => useS.setState(p as Parameters<typeof useS.setState>[0
     ;(window as Window & { __byokReady?: boolean }).__byokReady = true
     window.dispatchEvent(new Event('byok:ready'))
     createRoot(document.getElementById('root')!).render(<ErrorBoundary><App /></ErrorBoundary>)
+    // Settings is its own ~45 kB (gzipped) chunk; fetching and parsing it on
+    // the click is what made the panel take up to a second to appear. Warm it
+    // once the app is interactive so the first open is immediate. Best-effort:
+    // a failure is ignored here and the real load retries on demand.
+    const warmSettings = () => { void import('./components/Settings').catch(() => {}) }
+    const idle = (window as Window & { requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number }).requestIdleCallback
+    if (idle) idle(warmSettings, { timeout: 4000 })
+    else setTimeout(warmSettings, 2000)
   })
   .catch(() => {
     // Do not mount a fresh empty store or start sync after failed recovery.

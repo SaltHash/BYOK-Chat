@@ -707,7 +707,9 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
       </div>
       )}
       <div className="flex items-center gap-1">
-        <Btn icon={Settings} className="flex-1 justify-start" onClick={() => cfg('eps')}>Settings</Btn>
+        {/* Warm the settings chunk on intent, so a click made before the idle
+            preload finishes still opens the panel without a fetch. */}
+        <Btn icon={Settings} className="flex-1 justify-start" onPointerEnter={() => { void import('./Settings').catch(() => {}) }} onClick={() => cfg('eps')}>Settings</Btn>
         <span ref={themeTriggerRef} className="inline-flex"><Btn icon={Palette} title={`Theme: ${THEMES[themeKeyOf(s)]} · Shift-click to cycle`} aria-haspopup="menu" aria-expanded={!!themeMenu} onClick={(e) => {
           // Shift-click keeps the old gesture: cycle to the next theme.
           if (e.shiftKey) { s.patch(s.themeMode === 'light' ? { themeLight: thNext as typeof s.themeLight } : { themeDark: thNext as typeof s.themeDark }); return }
