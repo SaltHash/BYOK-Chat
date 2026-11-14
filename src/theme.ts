@@ -336,6 +336,26 @@ export function customPalette(opts: CustomPaletteOptions): Record<CustomPaletteK
   const side = light ? tint(background, 0.025, 0.055) : lift(background, 0.04, 0.09)
   const surf = light ? tint(background, 0.055, 0.12) : lift(background, 0.09, 0.2)
   const hov = light ? tint(surf, 0.035, 0.06) : lift(background, 0.145, 0.3)
+  /* Lifting a surface toward white, or deepening it toward the text, bleeds
+   * chroma out of it: as the contrast slider rose the sidebar, panels, hover
+   * and code blocks drifted toward grey. Give a share of that chroma back in
+   * step with the slider. It is zero at 0% (a surface there must be exactly
+   * the canvas), and a neutral canvas has no hue to strengthen. */
+  const chromaBoost = 0.22 * reach
+  const tinted = (color: string) => {
+    if (chromaBoost <= 0) return color
+    const o = hexToOklch(color)
+    if (o.c < 0.002) return color
+    // Add chroma only while it stays in gamut: clipping a channel would drag
+    // lightness down and skew the surface ladder the contrast slider builds.
+    let c = Math.min(0.24, o.c * (1 + chromaBoost))
+    for (let i = 0; i < 4; i++) {
+      const hex = oklchToHex({ ...o, c })
+      if (Math.abs(oklchLightness(hex) - o.l) < 0.0008) return hex
+      c *= 0.82
+    }
+    return color
+  }
   // Code blocks sink below the canvas (dark themes) or shade away from it
   // (light themes); the header is the midpoint between the block and the
   // canvas, so it stays a readable band even when panels sit near white.
@@ -363,16 +383,16 @@ export function customPalette(opts: CustomPaletteOptions): Record<CustomPaletteK
 
   const out: Record<CustomPaletteKey, string> = {
     bg: background,
-    side,
-    surf,
-    hov,
+    side: tinted(side),
+    surf: tinted(surf),
+    hov: tinted(hov),
     tx: text,
     mu,
     ac: accent,
     acx: inkOn(accent),
     er,
-    code,
-    codeh,
+    code: tinted(code),
+    codeh: tinted(codeh),
     c2: syntax[0],
     c3: syntax[1],
     c4: syntax[2],

@@ -103,6 +103,9 @@ test('contrast 50 is the balanced default, 0 is genuinely flat, and 100 separate
   assert.ok(oklchLightness(light.surf) < oklchLightness(light.side), 'panels step further from the light canvas than the sidebar')
   assert.ok(oklchLightness(light.bg) - oklchLightness(light.side) < oklchLightness(light.bg) - oklchLightness(light.surf), 'the light sidebar is the smallest step')
   assert.ok(hexToHsl(high.surf).l > hexToHsl(balanced.surf).l, 'higher contrast separates further')
+  // Surfaces lose chroma as they move away from the canvas; they must keep the
+  // theme's tint instead of reading grey at high contrast.
+  assert.ok(hexToOklch(high.side).c > hexToOklch(high.bg).c, 'the sidebar keeps the canvas tint at full contrast')
   assert.ok(Math.abs(hexToHsl(high.mu).l - hexToHsl(high.tx).l) < Math.abs(hexToHsl(balanced.mu).l - hexToHsl(balanced.tx).l), 'muted text moves toward the text colour')
 })
 
