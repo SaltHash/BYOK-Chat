@@ -157,6 +157,30 @@ html[data-contrast] { --mu: color-mix(in oklch, var(--mu) 45%, var(--tx)); --bor
   background: var(--code);
   box-shadow: inset -1px 0 0 color-mix(in srgb, var(--bor) 60%, transparent);
 }
+/* One copy control per line, stuck to the right edge of the scroll viewport
+ * so it stays reachable while a long line is scrolled sideways. It overlays
+ * the line without taking layout space. */
+.code-line-end { position: sticky; right: 8px; flex: none; width: 0; height: 0; }
+.line-copy {
+  position: absolute;
+  top: 0;
+  right: 0;
+  display: inline-flex;
+  align-items: center;
+  height: 1.25rem;
+  padding: 0 0.35rem;
+  border: 1px solid var(--bor);
+  border-radius: 0.375rem;
+  background: var(--surf);
+  color: var(--tx);
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.35);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.1s;
+}
+.code-line:hover .line-copy,
+.line-copy:focus-visible { opacity: 1; pointer-events: auto; }
+
 .code-lines .code-line > code {
   flex: 1 0 auto;
   background: none;

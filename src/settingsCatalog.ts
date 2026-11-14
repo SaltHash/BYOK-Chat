@@ -31,7 +31,7 @@ export const visibleTabs = (features?: Record<FeatureId, boolean>) => {
 export const SETTINGS_TABS: [SettingsTabId, string, Ic][] = [
   ['features', 'Features', SlidersHorizontal],
   ['eps', 'Endpoints', Server],
-  ['prompts', 'Qualities', ScrollText],
+  ['prompts', 'Prompts & Qualities', ScrollText],
   ['skills', 'Skills', Sparkles],
   ['pls', 'Playlists', ListMusic],
   ['cmds', 'Commands', Terminal],

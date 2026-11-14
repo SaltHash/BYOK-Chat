@@ -180,6 +180,7 @@ const hastJsx = (n: any, key: number): ReactNode =>
 
 function Code({ lang, code, node, children, bare }: { lang: string; code: string; node?: any; children: ReactNode; bare?: boolean }) {
   const [ok, setOk] = useState(false)
+  const [copiedLine, setCopiedLine] = useState<number | null>(null)
   const lineNumbers = useS((s) => s.prefs.codeLines === true)
   const maxHeight = useS((s) => s.prefs.codeMaxHeight ?? 0)
   if (bare) {
@@ -191,7 +192,10 @@ function Code({ lang, code, node, children, bare }: { lang: string; code: string
    * they can never scroll apart: one bar for both axes. A very long block keeps
    * its own scrollbar instead of stretching the whole transcript. */
   const total = code ? code.split('\n').length : 0
-  const rows = lineNumbers && node ? splitLines(node.children ?? []) : null
+  const sourceLines = code ? code.split('\n') : []
+  // Rows are always split: each one carries its own hover copy control, and
+  // the gutter is simply left off when line numbers are disabled.
+  const rows = node ? splitLines(node.children ?? []) : null
   // The highlighted tree can carry a trailing newline the copied text drops;
   // keep the gutter to exactly the logical line count of `code`.
   if (rows) {
@@ -200,7 +204,7 @@ function Code({ lang, code, node, children, bare }: { lang: string; code: string
   }
   return (
     <div className="my-4 overflow-hidden rounded-xl bg-code">
-      <div className="code-head flex items-center justify-between bg-codeh px-4 py-2 text-xs">
+      <div className="code-head flex items-center justify-between bg-side px-4 py-2 text-xs">
         <span className="font-medium text-mu">{lang || 'text'}</span>
         <button onClick={() => { const p = navigator.clipboard?.writeText(code); if (!p) return; void p.then(() => { setOk(true); setTimeout(() => setOk(false), 1200) }).catch(() => {}) }} className="inline-flex items-center gap-1.5 text-mu hover:text-tx">
           {ok ? <Check size={13} /> : <Copy size={13} />}{ok ? 'Copied' : 'Copy'}
@@ -210,12 +214,27 @@ function Code({ lang, code, node, children, bare }: { lang: string; code: string
         {rows ? (
           <div
             className="code-lines font-mono text-sm leading-6"
-            style={{ '--code-gutter': `calc(${String(Math.max(total, 1)).length}ch + 1.35rem)` } as any}
+            style={{ '--code-gutter': lineNumbers ? `calc(${String(Math.max(total, 1)).length}ch + 1.35rem)` : '0px' } as any}
           >
             {rows.map((line, i) => (
               <div key={i} className="code-line">
-                <span aria-hidden="true" className="code-num select-none text-mu/60">{i + 1}</span>
+                {lineNumbers && <span aria-hidden="true" className="code-num select-none text-mu/60">{i + 1}</span>}
                 <code className="code-src">{line.map(hastJsx)}</code>
+                <span className="code-line-end">
+                  <button
+                    type="button"
+                    title="Copy this line"
+                    aria-label={`Copy line ${i + 1}`}
+                    onClick={() => {
+                      const p = navigator.clipboard?.writeText(sourceLines[i] ?? '')
+                      if (!p) return
+                      void p.then(() => { setCopiedLine(i); setTimeout(() => setCopiedLine((cur) => (cur === i ? null : cur)), 1200) }).catch(() => {})
+                    }}
+                    className="line-copy"
+                  >
+                    {copiedLine === i ? <Check size={12} /> : <Copy size={12} />}
+                  </button>
+                </span>
               </div>
             ))}
           </div>

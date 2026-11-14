@@ -19,7 +19,7 @@ import { quoteForSend } from '../quote'
 import { isLargePaste } from '../paste'
 
 const chip = 'flex h-9 min-w-0 items-center gap-2 rounded-lg px-2.5 text-sm text-mu hover:bg-hov hover:text-tx'
-const IDLE_PLACEHOLDERS = ["What's on your mind", 'Ask me anything', 'Start with a question']
+const IDLE_PLACEHOLDERS = ["What's on your mind?", 'Ask me anything', 'Start with a question']
 
 /* The Stop glyph is a solid square. Lucide's Square is stroke-only, so it read
  * as an outlined control next to the filled Send arrow. */
