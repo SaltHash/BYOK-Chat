@@ -2220,8 +2220,15 @@ export function Settings({ tab, setTab }: { tab: string; setTab: (t: string) => 
               {results.map(result => <button key={result.target} onClick={() => openResult(result.target)} className="block w-full rounded-md px-2 py-1.5 text-left text-sm hover:bg-surf"><span className="block">{result.title}</span><span className="block text-xs text-mu">{result.section}</span></button>)}
               {!results.length && <p className="px-2 py-2 text-sm text-mu">No settings found.</p>}
             </>) : navGroups.map((group, gi) => (
-              <div key={group.label} className={cx(gi > 0 && 'mt-2 border-t border-bor pt-2')}>
-                <div className="px-2 pb-1 text-xs font-medium text-mu">{group.label}</div>
+              <div
+                key={group.label || `group-${gi}`}
+                className={cx(group.label
+                  // A heading and separator only once there is a labelled group
+                  // above; the unlabelled first group is separated by margin.
+                  ? (navGroups.slice(0, gi).some((g) => g.label) ? 'mt-2 border-t border-bor pt-2' : 'pt-1')
+                  : 'pb-1.5')}
+              >
+                {group.label && <div className="px-2 pb-1 text-xs font-medium text-mu">{group.label}</div>}
                 {group.tabs.map(id => {
                   const [k, l, I] = SETTINGS_TABS.find(([x]) => x === id)!
                   const off = !tabs.some(([visible]) => visible === k)

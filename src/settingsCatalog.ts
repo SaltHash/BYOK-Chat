@@ -75,9 +75,12 @@ export const TAB_KEYWORDS: Record<SettingsTabId, string> = {
  *  app looks and what its replies do; the rest are additions and system.
  *  Every tab belongs to exactly one group (a test enforces it). */
 export const SETTINGS_GROUPS: { label: string; tabs: SettingsTabId[] }[] = [
+  // An empty label renders without a heading or separator: Features is the
+  // switchboard that gates the rest, so it sits on its own above the groups.
+  { label: '', tabs: ['features'] },
   { label: 'Essentials', tabs: ['look', 'chats', 'prompts', 'eps', 'tools'] },
   { label: 'More', tabs: ['pls', 'skills', 'cmds', 'voice', 'mcp', 'memory', 'workspace', 'widgets'] },
-  { label: 'System', tabs: ['features', 'keys', 'stats', 'data', 'adv'] },
+  { label: 'System', tabs: ['keys', 'stats', 'data', 'adv'] },
 ]
 
 export type SettingLink = {
