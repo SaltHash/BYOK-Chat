@@ -8,7 +8,7 @@ import rehypeRaw from 'rehype-raw'
 import rehypeSanitize, { defaultSchema } from 'rehype-sanitize'
 import rehypeHighlight from 'rehype-highlight'
 import { common } from 'lowlight'
-import { Check, Copy, ImageOff } from 'lucide-react'
+import { Check, Copy, FileText, ImageOff } from 'lucide-react'
 import { cx, ZoomableImage } from './ui'
 import { loadChunk } from '../chunkLoad'
 import { useS } from '../store'
@@ -39,8 +39,12 @@ const fix = (t: string) =>
     .replace(/\\\(([\s\S]*?)\\\)/g, (_, m) => '$$' + m + '$$')                              // \( x \) -> inline math
     .replace(/\\\[([\s\S]*?)\\\]/g, (_, m) => '\n\n$$\n' + m.trim() + '\n$$\n\n')             // \[ x \] -> display math
     .replace(/\$(?=\d[\d,]*(?:\.\d+)?(?:\s|$|[.,;:!?)\]]))/g, '\\$')                          // "$5 and $10" is money, not math
-    .split(MATH).map((q, j) => (j % 2 ? q : q
-      .replace(/\^([^\s^]+)\^/g, '<sup>$1</sup>')                                          // Pandoc superscript
+          .split(MATH).map((q, j) => (j % 2 ? q : q
+        // A bare attachment citation such as [file-1] (or [file-1.pdf]) is not
+        // a markdown link, so it would otherwise render as plain brackets. It
+        // becomes a link-shaped marker the `a` renderer turns into a file pill.
+        .replace(/(?<!!)\[(file-\d+(?:\.[a-z0-9]+)?)\](?!\(|\s*:)/gi, '[$1](#file-cite:$1)')
+        .replace(/\^([^\s^]+)\^/g, '<sup>$1</sup>')                                          // Pandoc superscript
       .replace(/(?<!~)~([^\s~]+)~(?!~)/g, '<sub>$1</sub>'))).join(''))).join('')           // Pandoc subscript
 
 const pre = (src: string) => src.split(FENCE).map((p, i) => (i % 2 ? p : fix(defs(p)))).join('')
@@ -286,6 +290,20 @@ const makeC = (bare: boolean, cites?: CiteMap): any => ({
   input: ({ type, checked }: any) => (type === 'checkbox'
     ? <span role="checkbox" aria-label="Task complete" aria-checked={!!checked} aria-disabled="true" className={cx('mr-2 inline-grid size-4 translate-y-0.5 place-items-center rounded border', checked ? 'border-ac bg-ac text-acx' : 'border-mu/60 bg-bg text-transparent')}>{checked && <Check size={12} strokeWidth={3} />}</span> : null),
   a: ({ node, href, children, ...p }: any) => {
+    // Attachment citations ([file-1], [file-2.pdf]) render as their own pill:
+    // neutral surface, file icon, no link behaviour and no source styling.
+    if (typeof href === 'string' && href.startsWith('#file-cite:')) {
+      const name = decodeURIComponent(href.slice('#file-cite:'.length))
+      return (
+        <span
+          title={`Attached file: ${name}`}
+          className="mx-0.5 inline-flex items-baseline gap-1 rounded-md border border-bor bg-hov px-1.5 align-baseline text-xs font-medium leading-5 text-tx"
+        >
+          <FileText size={11} className="shrink-0 translate-y-px text-mu" aria-hidden="true" />
+          {name}
+        </span>
+      )
+    }
     // Citation links ([S1] pointing at a known source) render as pills that
     // jump to the Sources entry below (description first); the entry itself
     // carries the Open-website button. Everything else stays a normal link.
