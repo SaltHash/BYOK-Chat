@@ -8,9 +8,11 @@ test('settings groups contain every existing tab exactly once', () => {
   assert.deepEqual([...ids].sort(), SETTINGS_TABS.map(([id]) => id).sort())
 })
 
-test('settings navigation leads with the chat sections', () => {
-  assert.equal(SETTINGS_GROUPS[0].label, 'Chat')
-  assert.deepEqual(SETTINGS_GROUPS[0].tabs, ['chats', 'prompts', 'cmds', 'voice', 'keys'])
+test('settings navigation groups frequent customization first, then additions and system', () => {
+  assert.equal(SETTINGS_GROUPS.length, 3)
+  assert.equal(SETTINGS_GROUPS[0].label, 'Essentials')
+  assert.deepEqual(SETTINGS_GROUPS[0].tabs, ['look', 'chats', 'prompts', 'eps', 'tools'])
+  assert.deepEqual(SETTINGS_GROUPS.map((group) => group.label), ['Essentials', 'More', 'System'])
 })
 
 test('settings search ranks an exact section above its settings', () => {
