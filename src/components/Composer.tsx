@@ -20,7 +20,7 @@ import { isLargePaste } from '../paste'
 const chip = 'flex h-9 min-w-0 items-center gap-2 rounded-lg px-2.5 text-sm text-mu hover:bg-hov hover:text-tx'
 const IDLE_PLACEHOLDERS = [
   'What would you like to explore?',
-  "What's something you'd love to solve?",
+  'How can I help you today?',
   'Where would you like to start?',
 ]
 
