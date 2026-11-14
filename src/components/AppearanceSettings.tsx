@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { ChevronDown, Moon, Sun } from 'lucide-react'
+import { Check, ChevronDown, Moon, Star, Sun, X } from 'lucide-react'
 import {
   useSConfig, THEMES, DARK_THEMES, LIGHT_THEMES, THEME_COLOR_KEYS, THEME_COLOR_LABELS, THEME_COLORS,
   defaultCustomTheme, customThemeColors, normCustomTheme, splitHelperRef, modelNameOf,
@@ -219,7 +219,7 @@ export function AppearanceSettings() {
                     <i className="h-6 flex-1 rounded-lg bg-surf shadow-md" />
                     <i className="h-6 w-3 shrink-0 rounded-2xl bg-ac/40" />
                   </span>
-                  <span className="flex items-center justify-between gap-1 font-medium">{STYLE_PRESETS[id].label}{active && <span className="text-ac">✓</span>}</span>
+                  <span className="flex items-center justify-between gap-1 font-medium">{STYLE_PRESETS[id].label}{active && <Check size={13} className="shrink-0 text-ac" aria-hidden="true" />}</span>
                   <span className="block text-xs font-normal leading-4 text-mu">{STYLE_PRESETS[id].description}</span>
                 </button>
               )
@@ -296,9 +296,9 @@ export function AppearanceSettings() {
               const e = s.eps.find((x) => x.id === id)
               return (
                 <div key={ref} className="flex items-center gap-2 rounded-lg bg-surf px-2.5 py-2 text-sm">
-                  <span className="text-ac">★</span>
+                  <Star size={13} className="shrink-0 fill-current text-ac" aria-hidden="true" />
                   <span className="min-w-0 flex-1 truncate">{e ? `${e.name} · ${modelNameOf(e, model)}` : 'Removed endpoint'}</span>
-                  <button type="button" onClick={() => s.patch({ favs: (s.favs ?? []).filter((x) => x !== ref) })} title="Remove from favorites" aria-label="Remove from favorites" className="grid size-6 shrink-0 place-items-center rounded-md text-mu hover:bg-hov hover:text-tx">×</button>
+                  <button type="button" onClick={() => s.patch({ favs: (s.favs ?? []).filter((x) => x !== ref) })} title="Remove from favorites" aria-label="Remove from favorites" className="grid size-6 shrink-0 place-items-center rounded-md text-mu hover:bg-hov hover:text-tx"><X size={14} /></button>
                 </div>
               )
             })}

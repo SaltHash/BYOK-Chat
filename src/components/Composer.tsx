@@ -704,7 +704,7 @@ export function Composer({ cfg, quote, onClearQuote }: { cfg: (t: string) => voi
                       <button type="button" aria-label={`View ${a.name} full screen`} title="Click to enlarge" onClick={() => setZoomed({ src, alt: a.name })} className="min-h-0 flex-1 overflow-hidden rounded-sm">
                         <img src={src} alt={a.name} draggable={false} className="h-full w-full object-contain p-1" />
                       </button>
-                      <span className="truncate px-1 text-xs text-mu" title={a.name}>{a.text ? '✓ ' : ''}{a.name}</span>
+                      <span className="flex items-center gap-0.5 truncate px-1 text-xs text-mu" title={a.name}>{a.text && <Check size={11} className="shrink-0 text-ac" aria-hidden="true" />}{a.name}</span>
                       {handle('absolute left-1 top-1')}
                       {!a.text ? (
                         <button aria-label={`Transcribe text from ${a.name}`} title="Transcribe image text with a vision model" onClick={() => { void ocrOne(a) }} disabled={ocrBusy != null} className="absolute bottom-6 left-1 grid size-5 place-items-center rounded-full bg-black/70 text-white opacity-100 transition-opacity md:opacity-0 md:group-hover/preview:opacity-100 md:focus:opacity-100 disabled:opacity-40">
@@ -722,7 +722,7 @@ export function Composer({ cfg, quote, onClearQuote }: { cfg: (t: string) => voi
                 return (
                   <div onPointerDown={hp.onPointerDown} title={bad(a) ? 'The selected model cannot process this file' : `${a.name}${a.source ? ` · ${a.source}` : ''}${a.pages ? ` · ${a.pages} pages` : ''}${a.text ? ` · ${Math.round(a.text.length / 1024)} KB text` : ''}`} className={cx('inline-flex items-center gap-1.5 rounded-lg bg-hov py-1 pl-2 pr-1 text-xs', bad(a) && 'text-er')}>
                     {handle('!bg-transparent !text-mu hover:!text-tx')}
-                    {bad(a) ? <TriangleAlert size={13} /> : <FileText size={13} />}{a.text && a.kind !== 'txt' ? '✓ ' : ''}{a.name}<span className="text-mu">{a.size}</span>
+                    {bad(a) ? <TriangleAlert size={13} /> : <FileText size={13} />}{a.text && a.kind !== 'txt' && <Check size={12} className="shrink-0 text-ac" aria-hidden="true" />}{a.name}<span className="text-mu">{a.size}</span>
                     {a.source === 'paste' && <Btn sm icon={Pencil} title="Edit pasted text in the composer" onClick={(e) => { e.stopPropagation(); editPasted(a) }} onPointerDown={(e) => e.stopPropagation()} />}
                     <Btn sm icon={X} title={`Remove ${a.name}`} onClick={remove} />
                   </div>
