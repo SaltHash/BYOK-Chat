@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import { useShallow } from 'zustand/react/shallow'
-import { Info, X, Server, Play, MessageSquare, Keyboard, RotateCcw, Download, Upload, FileText, Trash2, CircleCheck, CircleX, Gauge, ShieldCheck, DatabaseBackup, GitMerge, CalendarDays, RefreshCw, ArchiveRestore } from 'lucide-react'
+import { X, Server, Play, MessageSquare, Keyboard, RotateCcw, Download, Upload, FileText, Trash2, CircleCheck, CircleX, Gauge, ShieldCheck, DatabaseBackup, GitMerge, CalendarDays, RefreshCw, ArchiveRestore } from 'lucide-react'
 import { useS, dl, BLANK, THEMES, themePatch, DEFAULT_FEATURES, DEFAULT_PREFS, DEFAULT_PARAMS, DEFAULT_WIDGET_PREFS, DEFAULT_CUSTOM_DARK_THEME, DEFAULT_CUSTOM_LIGHT_THEME, normCustomTheme, modelsOf, modelNameOf, normSearch, normAdvanced, normFeatureOrder, normDocs, featOn, errText, storageUsage, QUOTA_FLAG, type Ep, type Kind, type FeatureId } from '../store'
 import { normSkills } from '../skills'
 import { normMcpServers } from '../mcp'
@@ -20,21 +20,6 @@ import { readSyncConflicts, dismissSyncConflict, clearSyncConflicts, conflictCha
 import { encryptBackup, decryptBackup, isEncryptedBackup } from '../storage/backupCrypto'
 import { SyncBox } from './SyncBox'
 import { DEVICE_SYNC_ENABLED } from '../storage/syncRuntime'
-
-export function Notice({ cfg }: { cfg: (t: string) => void }) {
-  const n = useS((s) => s.notice), patch = useS((s) => s.patch), undoDelete = useS((s) => s.undoDelete)
-  if (!n) return null
-  return (
-    <div role={n.undo ? 'alert' : 'status'} aria-live={n.undo ? 'assertive' : 'polite'} className="mb-2 flex flex-wrap items-start gap-2 rounded-xl bg-surf p-3 text-sm max-sm:flex-col">
-      <Info size={18} className="mt-0.5 shrink-0 text-ac" />
-      <p className="min-w-0 flex-1 break-words leading-6">{n.t}</p>
-      {n.href && <a href={n.href} target="_blank" rel="noreferrer" className="inline-flex h-9 shrink-0 items-center rounded-lg bg-hov px-3 text-sm font-medium hover:opacity-80">{n.label ?? 'Open link'}</a>}
-      {n.tab && <Btn v="soft" onClick={() => { patch({ notice: null }); cfg(n.tab!) }}>{n.label ?? 'Open settings'}</Btn>}
-      {n.undo && <Btn v="soft" onClick={() => undoDelete()}>Undo</Btn>}
-      <Btn sm icon={X} title="Dismiss" onClick={() => patch({ notice: null })} />
-    </div>
-  )
-}
 
 export function Tutorial({ cfg }: { cfg: (t: string) => void }) {
   const { eps, add } = useS(useShallow((s) => ({ eps: s.eps, add: s.add })))

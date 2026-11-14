@@ -10,6 +10,7 @@ import { nextThemePatch, stepModelSelection, stepPromptSelection } from './selec
 import { Sidebar } from './components/Sidebar'
 import { Chat } from './components/Chat'
 import { Welcome } from './components/Welcome'
+import { Notice } from './components/Toast'
 
 /* Settings, the command palette, the widget rail and the share view are all
  * opened on demand. Loading them lazily keeps their editors, charts and share
@@ -271,6 +272,7 @@ export default function App() {
       )}
       {!setupDone && <Welcome addEndpoint={() => { const s = useS.getState(); if (!s.eps.length) s.add('eps'); setCfg('eps') }} close={() => {}} />}
       </div>
+      <Notice cfg={setCfg} />
     </>
   )
 }

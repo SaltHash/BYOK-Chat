@@ -11,7 +11,6 @@ import { bannerOf, armMention, isPill, mentionsOf, stripMention, tokenizeMention
 import { Btn, Item, Menu, Pop, Seg, RangeSlider, ImageLightbox, TextLightbox, cx, type Ic } from './ui'
 import { SortableList } from './dnd'
 import { MentionBanner, MentionInfo, QuoteBanner } from './Mention'
-import { Notice } from './Extra'
 import { ToolAccessButton, ToolApprovalPrompt, QuestionPrompt } from './ToolAccess'
 import { dictationAvailable, startDictation, stopSpeaking, normVoice, type Dictation } from '../voice'
 import { getPromptHistory, pushPromptHistory } from '../promptHistory'
@@ -614,7 +613,6 @@ export function Composer({ cfg, quote, onClearQuote }: { cfg: (t: string) => voi
   return (
     <div className="w-full self-center">
       <div className="mx-auto w-full" style={{ maxWidth: composerWidth(s.prefs.chatWidth), paddingLeft: 'var(--ui-chat-pad-x)', paddingRight: 'var(--ui-chat-pad-x)' }}>
-      <Notice cfg={cfg} />
       {revert && revert.chat === s.chat && (
         <div className="mb-2 flex items-center gap-2 rounded-xl border border-bor bg-surf px-3 py-2 text-xs text-mu">
           <Undo2 size={13} className="shrink-0 text-ac" aria-hidden="true" />
