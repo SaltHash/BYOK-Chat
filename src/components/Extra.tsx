@@ -20,6 +20,13 @@ import { readSyncConflicts, dismissSyncConflict, clearSyncConflicts, conflictCha
 import { encryptBackup, decryptBackup, isEncryptedBackup } from '../storage/backupCrypto'
 import { SyncBox } from './SyncBox'
 import { DEVICE_SYNC_ENABLED } from '../storage/syncRuntime'
+import { runPool, withDeadline } from '../concurrency'
+
+/* A connection test is a real (tiny) completion request. Four at a time makes
+ * a long endpoint list finish quickly without tripping per-key rate limits,
+ * and a 30 s deadline keeps one silent provider from trapping the whole run. */
+const TEST_PARALLEL = 4
+const TEST_TIMEOUT_MS = 30_000
 
 export function Tutorial({ cfg }: { cfg: (t: string) => void }) {
   const { eps, add } = useS(useShallow((s) => ({ eps: s.eps, add: s.add })))
@@ -67,16 +74,19 @@ export function TestRow({ e }: { e: Ep }) {
   }
   const run = async () => {
     const models = modelsOf(e)
-    setR(models.map((model) => ({ model, s: 'run', t: 'Testing…' })))
-    for (const model of models) {
+    // Each model is its own request. Starting them together means one slow
+    // model no longer holds back the ones after it; rows fill in as they land.
+    setR(models.map((model) => ({ model, s: 'run', t: 'Waiting…' })))
+    await runPool(models, TEST_PARALLEL, async (model) => {
+      setR((rows) => rows.map((r) => r.model === model ? { ...r, t: 'Testing…' } : r))
       const t0 = Date.now()
       try {
-        const x = await testEp({ ...e, model })
+        const x = await withDeadline(testEp({ ...e, model }), TEST_TIMEOUT_MS, e.name || 'The endpoint')
         setR((rows) => rows.map((r) => r.model === model ? { ...r, s: 'ok', t: `Reachable in ${Date.now() - t0} ms. Reply: ${x.slice(0, 40)}` } : r))
       } catch (x: any) {
-        setR((rows) => rows.map((r) => r.model === model ? { ...r, s: 'err', t: errText(e, x.message) } : r))
+        setR((rows) => rows.map((r) => r.model === model ? { ...r, s: 'err', t: errText(e, x?.message ?? String(x)) } : r))
       }
-    }
+    })
   }
   return (
     <div className="space-y-2">
@@ -104,21 +114,27 @@ export function TestAllEndpoints({ eps }: { eps: Ep[] }) {
     if (!all.length || running) return
     setRunning(true)
     setRows(all.map(({ e, model, key }) => ({ key, endpoint: e.name, model, s: 'run', t: 'Waiting…' })))
-    for (const { e, model, key } of all) {
-      setRows((items) => items.map((x) => x.key === key ? { ...x, t: 'Testing…' } : x))
-      const t0 = Date.now()
-      try {
-        const answer = await testEp({ ...e, model })
-        setRows((items) => items.map((x) => x.key === key ? { ...x, s: 'ok', t: `Reachable in ${Date.now() - t0} ms. Reply: ${answer.slice(0, 40)}` } : x))
-      } catch (x: any) {
-        setRows((items) => items.map((row) => row.key === key ? { ...row, s: 'err', t: errText(e, x?.message ?? x) } : row))
-      }
+    try {
+      // Every model of every endpoint goes through one bounded pool: the first
+      // four start immediately, the rest start as slots free up, so a dead
+      // endpoint costs one timeout rather than the whole run.
+      await runPool(all, TEST_PARALLEL, async ({ e, model, key }) => {
+        setRows((items) => items.map((x) => x.key === key ? { ...x, t: 'Testing…' } : x))
+        const t0 = Date.now()
+        try {
+          const answer = await withDeadline(testEp({ ...e, model }), TEST_TIMEOUT_MS, e.name || 'The endpoint')
+          setRows((items) => items.map((x) => x.key === key ? { ...x, s: 'ok', t: `Reachable in ${Date.now() - t0} ms. Reply: ${answer.slice(0, 40)}` } : x))
+        } catch (x: any) {
+          setRows((items) => items.map((row) => row.key === key ? { ...row, s: 'err', t: errText(e, x?.message ?? x) } : row))
+        }
+      })
+    } finally {
+      setRunning(false)
     }
-    setRunning(false)
   }
   return <div className="space-y-2 rounded-xl bg-surf p-3">
     <div className="flex flex-wrap items-center gap-3">
-      <Btn v="soft" icon={Play} disabled={running || !eps.some((e) => modelsOf(e).length)} onClick={run}>Test all endpoints</Btn>
+      <Btn v="soft" icon={Play} disabled={running || !eps.some((e) => modelsOf(e).length)} onClick={run}>{running ? `Testing ${rows.filter((x) => x.s !== 'run').length}/${rows.length}…` : 'Test all endpoints'}</Btn>
     </div>
     {rows.map((x) => <div key={x.key} className={cx('flex items-start gap-2 text-sm', x.s === 'err' ? 'text-er' : x.s === 'ok' ? 'text-ac' : 'text-mu')}>
       {x.s === 'err' ? <CircleX size={14} className="mt-0.5 shrink-0" /> : x.s === 'ok' ? <CircleCheck size={14} className="mt-0.5 shrink-0" /> : null}
