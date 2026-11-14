@@ -297,6 +297,7 @@ async function pushLocked(body, id, secret, backend) {
       seq: nextSeq,
       baseSeq: nextSeq,
       keepChats: !chatsDisabled,
+      chatStore,
     })
     if (chatStore && chatOps) await applyChatOps(backend, id, chatOps, nextSeq, at)
     return {
@@ -431,6 +432,12 @@ export async function handleSyncPull(req, backend) {
   const full = since == null || since === 0 || since > seq || since < baseSeq
   if (full) {
     const snapshot = await backend.snapshot(id)
+    // A snapshot written before the storage split can still hold conversations
+    // with file bytes, tool arguments and tool results, and a slot that never
+    // opted into the chat store must not hand them to a linking device. The
+    // same policy the push path enforces applies here; an encrypted payload is
+    // opaque to the server and is shaped by the client after it decrypts.
+    const payload = sanitizePayload(snapshot?.payload ?? {}, row.chatStore === true)
     // Deltas start at the snapshot's base; chat rows are never compacted, so a
     // device that is only behind the settings base still gets just the chats
     // it is missing.
@@ -439,7 +446,7 @@ export async function handleSyncPull(req, backend) {
     return {
       ...common,
       full: true,
-      payload: snapshot?.payload ?? {},
+      payload,
       ...(changes.deltas.length ? { deltas: changes.deltas } : {}),
       ...(changes.chats.length ? { chats: changes.chats } : {}),
       ...(changes.messages.length ? { messages: changes.messages } : {}),

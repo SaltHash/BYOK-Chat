@@ -127,6 +127,15 @@ export function getSyncShapeOptions(): SyncShapeOptions {
   return { chats: getSyncChats(), includeKeys: getSyncKeys() }
 }
 
+/** A snapshot written before the storage split (or by an older build) can still
+ *  carry conversations with file bytes and tool payloads, and an encrypted one
+ *  is opaque to the server. Shape every pulled snapshot exactly like an upload
+ *  before it is merged, so a linking device never takes on data the slot is not
+ *  allowed to store. */
+export function shapePulledSnapshot(data: SyncData): SyncData {
+  return shapeSyncData(data, getSyncShapeOptions())
+}
+
 /** Whether background automatic push/pull should run. Manual sync works with
  *  or without this, so it only gates the timers. */
 export const autoSyncEnabled = (): boolean => DEVICE_SYNC_ENABLED && !!getSyncToken() && getAutoSync()
@@ -258,6 +267,7 @@ export async function fetchRemote(token = getSyncToken()): Promise<{ data: SyncD
   for (const raw of r.deltas ?? []) data = applySyncDelta(data, await decryptDelta(raw, token))
   const rows = await rowsDeltaOf(r, token)
   if (rows) data = applySyncDelta(data, rows)
+  data = shapePulledSnapshot(data)
   return { data, updatedAt: r.updatedAt, backend: r.backend, seq: Number(r.seq) || 0 }
 }
 
@@ -286,6 +296,9 @@ export async function pullAndMerge(token = getSyncToken()): Promise<{ data: Sync
     let remote = toSyncData(payload)
     for (const raw of r.deltas ?? []) remote = applySyncDelta(remote, await decryptDelta(raw, token))
     if (rows) remote = applySyncDelta(remote, rows)
+    // Older builds uploaded whole conversations with their attachments; strip
+    // them before this device merges or baselines the remote state.
+    remote = shapePulledSnapshot(remote)
     const local = readLocalData()
     recordSyncConflicts(detectChatConflicts(local.chats, remote.chats))
     data = mergeSyncData(local, remote, 'merge')

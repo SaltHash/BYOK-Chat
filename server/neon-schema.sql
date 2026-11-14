@@ -24,6 +24,8 @@ create table if not exists public.sync_states (
   seq bigint not null default 0,
   base_seq bigint not null default 0,
   deltas jsonb not null default '[]'::jsonb,
+  -- Whether this slot may hold conversations. Off unless the device opted in.
+  chat_store boolean not null default false,
   updated_at timestamptz not null default now(),
   created_at timestamptz not null default now()
 );
@@ -31,6 +33,7 @@ create table if not exists public.sync_states (
 alter table public.sync_states add column if not exists seq bigint not null default 0;
 alter table public.sync_states add column if not exists base_seq bigint not null default 0;
 alter table public.sync_states add column if not exists deltas jsonb not null default '[]'::jsonb;
+alter table public.sync_states add column if not exists chat_store boolean not null default false;
 
 alter table public.sync_states enable row level security;
 

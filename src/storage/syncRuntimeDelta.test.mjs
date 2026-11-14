@@ -1,11 +1,11 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { handleSyncPush, handleSyncPull, parseToken } from '../../server/sync.mjs'
-import { memStore } from '../../server/syncStore.mjs'
-import { encryptSyncDelta } from './sync.ts'
+import { memStore, sha256Hex } from '../../server/syncStore.mjs'
+import { encryptSyncDelta, encryptSyncPayload } from './sync.ts'
 import { encryptChatPush } from './chatSync.ts'
 import { normSearch, searchKeyOf, useS } from '../store.ts'
-import { getSyncToken, pullAndMerge, pushNow, resetSyncBaseline, setSyncChats, setSyncToken } from './syncRuntime.ts'
+import { getSyncToken, pullAndMerge, pushNow, resetSyncBaseline, setSyncChats, setSyncToken, shapePulledSnapshot } from './syncRuntime.ts'
 
 /* Drive the real runtime against the real sync handlers with fetch routed to
  * an in-memory backend. This covers the wiring the pure delta tests cannot:
@@ -272,6 +272,59 @@ test('a slot cleared by a server restart is re-seeded instead of failing forever
     const row = await backend.get(id)
     assert.ok(row.payload, 'the re-seeded slot must hold a complete snapshot')
     assert.deepEqual(row.deltas, [])
+  } finally {
+    restore()
+    setSyncChats(false)
+    setSyncToken(previousToken)
+    resetSyncBaseline()
+  }
+})
+
+test('a legacy snapshot is shaped like an upload before it is merged', async () => {
+  const backend = memStore()
+  const restore = installFetch(backend)
+  const previousToken = getSyncToken()
+  try {
+    setSyncToken(TOKEN_E)
+    setSyncChats(false)
+    resetSyncBaseline()
+    const { id, secret } = parseToken(TOKEN_E)
+    // A slot written before the storage split still holds the old envelope,
+    // whole conversation and attachment bytes included.
+    const legacy = {
+      v: 4,
+      storeVersion: 18,
+      settings: { themeMode: 'dark' },
+      chats: [{ id: 'old', title: 'Legacy', msgs: [{ id: 'm1', r: 'user', t: 'old text', at: 1, att: [{ name: 'a.png', kind: 'img', data: 'BYTES' }] }] }],
+      workspaces: {},
+      selectedRevision: {},
+    }
+    await backend.putFull({
+      id, secretHash: sha256Hex(secret), payload: await encryptSyncPayload(legacy, TOKEN_E),
+      storeVersion: 18, exportVersion: 4, seq: 1, baseSeq: 1, keepChats: true, chatStore: false,
+    })
+    useS.setState({ chats: [], workspaces: {}, selectedRevision: {}, chat: '' })
+
+    const pulled = await pullAndMerge(TOKEN_E)
+    assert.equal(pulled.data.settings.themeMode, 'dark')
+    // The server cannot inspect the envelope, so the client applies the policy
+    // after decrypting it: no conversation arrives from a slot that never
+    // opted into storing one.
+    assert.deepEqual(pulled.data.chats, [])
+    assert.deepEqual(useS.getState().chats, [])
+
+    // With the opt-in on the transcript may arrive, but never the file bytes or
+    // the tool payloads.
+    setSyncChats(true)
+    const shaped = shapePulledSnapshot({
+      settings: {},
+      chats: [{ id: 'old', msgs: [{ id: 'm1', t: 'text', att: [{ name: 'a.png', kind: 'img', data: 'BYTES' }], toolRounds: [{ calls: [{ name: 'search', result: 'OUT' }] }] }] }],
+      workspaces: {},
+      selectedRevision: {},
+    })
+    assert.equal(shaped.chats[0].msgs[0].t, 'text')
+    assert.equal(shaped.chats[0].msgs[0].att[0].data, undefined)
+    assert.equal(shaped.chats[0].msgs[0].toolRounds[0].calls[0].result, undefined)
   } finally {
     restore()
     setSyncChats(false)

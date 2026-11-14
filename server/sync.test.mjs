@@ -318,6 +318,52 @@ test('a chat delete becomes a tombstone and its message rows are reclaimed', asy
   assert.deepEqual(pulled.chats.map((c) => [c.chatId, c.deleted]), [['c1', true]])
 })
 
+test('a pulled plaintext snapshot is stripped of files and tool payloads', async () => {
+  const legacy = {
+    v: 4,
+    storeVersion: 18,
+    settings: { themeMode: 'dark' },
+    chats: [{
+      id: 'c1', title: 'Old chat',
+      msgs: [{
+        id: 'm1', r: 'user', t: 'keep this text', at: 1,
+        att: [{ name: 'a.png', kind: 'img', data: 'BASE64BYTES', text: 'extracted' }],
+        toolRounds: [{ text: 'ran a tool', calls: [{ name: 'search', arguments: '{"q":"x"}', result: 'TOOL OUTPUT' }] }],
+        full: 'RAW REQUEST BODY',
+      }],
+    }],
+    workspaces: { w1: { revisions: [] } },
+    selectedRevision: { w1: 'r1' },
+  }
+  const id = 'p'.repeat(16)
+  const token = tokenFor(id)
+  const secretHash = sha256Hex(parseToken(token).secret)
+  const seed = (backend, chatStore) => backend.putFull({
+    id, secretHash, payload: legacy, storeVersion: 18, exportVersion: 4, seq: 1, baseSeq: 1, keepChats: true, chatStore,
+  })
+
+  // A slot that opted into the chat store keeps the transcript, without the
+  // attachment bytes, tool arguments, tool results or request plumbing.
+  const on = memStore()
+  await seed(on, true)
+  const pulled = await handleSyncPull(pullReq(token), on)
+  const msg = pulled.payload.chats[0].msgs[0]
+  assert.equal(msg.t, 'keep this text')
+  assert.deepEqual(msg.att, [{ name: 'a.png', kind: 'img' }])
+  assert.deepEqual(msg.toolRounds[0].calls, [{ name: 'search' }])
+  assert.equal(msg.full, undefined)
+
+  // A slot without the opt-in (including every pre-split row) hands out no
+  // conversations at all, but its settings still arrive.
+  const off = memStore()
+  await seed(off, false)
+  const stripped = await handleSyncPull(pullReq(token), off)
+  assert.deepEqual(stripped.payload.chats, [])
+  assert.deepEqual(stripped.payload.workspaces, {})
+  assert.deepEqual(stripped.payload.selectedRevision, {})
+  assert.equal(stripped.payload.settings.themeMode, 'dark')
+})
+
 test('a full push compacts the log and resets the base sequence', async () => {
   const backend = memStore()
   const token = tokenFor('e'.repeat(16))

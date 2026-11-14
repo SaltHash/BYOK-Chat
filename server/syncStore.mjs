@@ -59,6 +59,7 @@ function newRecord(fields) {
     exportVersion: 4,
     seq: 0,
     baseSeq: 0,
+    chatStore: false,
     updatedAt: Date.now(),
     chats: new Map(),
     messages: new Map(),
@@ -89,6 +90,7 @@ export function memStore() {
         baseSeq: row.baseSeq,
         updatedAt: row.updatedAt,
         deltaCount: row.deltas.length,
+        chatStore: row.chatStore === true,
       }
     },
     async snapshot(id) {
@@ -122,7 +124,7 @@ export function memStore() {
       while (mem.size > MEM_MAX_ROWS || (memBytes > MEM_MAX_BYTES && mem.size > 1)) forget(mem.keys().next().value)
       return next
     },
-    async putFull({ id, secretHash, payload, storeVersion, exportVersion, seq, baseSeq, keepChats }) {
+    async putFull({ id, secretHash, payload, storeVersion, exportVersion, seq, baseSeq, keepChats, chatStore }) {
       const previous = mem.get(id)?.row
       const next = newRecord({
         id,
@@ -132,6 +134,7 @@ export function memStore() {
         exportVersion,
         seq,
         baseSeq,
+        chatStore: chatStore === true,
         updatedAt: Date.now(),
         deltas: [],
         chats: keepChats ? (previous?.chats ?? new Map()) : new Map(),
@@ -266,8 +269,9 @@ async function neonStore(env = process.env) {
    * the cached promise so the next request retries. */
   const ensure = () => {
     if (!ready) ready = (async () => {
-      await sql`create table if not exists sync_states (id text primary key, secret_hash text not null, payload jsonb not null default '{}'::jsonb, store_version integer not null default 18, export_version integer not null default 4, updated_at timestamptz not null default now(), created_at timestamptz not null default now())`
+      await sql`create table if not exists sync_states (id text primary key, secret_hash text not null, payload jsonb not null default '{}'::jsonb, store_version integer not null default 18, export_version integer not null default 4, chat_store boolean not null default false, updated_at timestamptz not null default now(), created_at timestamptz not null default now())`
       await sql`alter table sync_states add column if not exists seq bigint not null default 0`
+      await sql`alter table sync_states add column if not exists chat_store boolean not null default false`
       await sql`alter table sync_states add column if not exists base_seq bigint not null default 0`
       await sql`alter table sync_states add column if not exists deltas jsonb not null default '[]'::jsonb`
       await sql`create table if not exists sync_snapshots (id text primary key, payload jsonb not null default '{}'::jsonb)`
@@ -295,13 +299,14 @@ async function neonStore(env = process.env) {
     baseSeq: Number(r.base_seq) || 0,
     updatedAt: Number(r.updated_ms) || 0,
     deltaCount: Number(r.delta_count) || 0,
+    chatStore: r.chat_store === true,
   } : null
 
   neonClient = {
     kind: 'neon',
     async get(id) {
       await ensure()
-      const rows = await sql`select id, secret_hash, store_version, export_version, seq, base_seq, deltas, payload, extract(epoch from updated_at) * 1000 as updated_ms from sync_states where id = ${id} limit 1`
+      const rows = await sql`select id, secret_hash, store_version, export_version, seq, base_seq, deltas, payload, chat_store, extract(epoch from updated_at) * 1000 as updated_ms from sync_states where id = ${id} limit 1`
       const r = rows[0]
       if (!r) return null
       let deltas = r.deltas
@@ -315,7 +320,7 @@ async function neonStore(env = process.env) {
     },
     async meta(id) {
       await ensure()
-      const rows = await sql`select id, secret_hash, store_version, export_version, seq, base_seq, extract(epoch from updated_at) * 1000 as updated_ms, coalesce((select count(*) from sync_deltas d where d.id = sync_states.id), 0) as delta_count from sync_states where id = ${id} limit 1`
+      const rows = await sql`select id, secret_hash, store_version, export_version, seq, base_seq, chat_store, extract(epoch from updated_at) * 1000 as updated_ms, coalesce((select count(*) from sync_deltas d where d.id = sync_states.id), 0) as delta_count from sync_states where id = ${id} limit 1`
       return metaOf(rows[0])
     },
     async snapshot(id) {
@@ -361,13 +366,14 @@ async function neonStore(env = process.env) {
         messages: messages.map((r) => ({ chatId: r.chat_id, id: r.msg_id, body: r.body ?? {}, ord: Number(r.ord) || 0, seq: Number(r.seq) || 0, at: Number(r.at) || 0, deleted: r.deleted === true })),
       }
     },
-    async putFull({ id, secretHash, payload, storeVersion, exportVersion, seq, baseSeq, keepChats }) {
+    async putFull({ id, secretHash, payload, storeVersion, exportVersion, seq, baseSeq, keepChats, chatStore }) {
       await ensure()
-      await sql`insert into sync_states (id, secret_hash, payload, store_version, export_version, seq, base_seq, deltas, updated_at)
-        values (${id}, ${secretHash}, '{}'::jsonb, ${storeVersion ?? 18}, ${exportVersion ?? 4}, ${seq ?? 0}, ${baseSeq ?? seq ?? 0}, '[]'::jsonb, now())
+      await sql`insert into sync_states (id, secret_hash, payload, store_version, export_version, seq, base_seq, deltas, chat_store, updated_at)
+        values (${id}, ${secretHash}, '{}'::jsonb, ${storeVersion ?? 18}, ${exportVersion ?? 4}, ${seq ?? 0}, ${baseSeq ?? seq ?? 0}, '[]'::jsonb, ${chatStore === true}, now())
         on conflict (id) do update set secret_hash = excluded.secret_hash, payload = '{}'::jsonb,
           store_version = excluded.store_version, export_version = excluded.export_version,
-          seq = excluded.seq, base_seq = excluded.base_seq, deltas = '[]'::jsonb, updated_at = now()`
+          seq = excluded.seq, base_seq = excluded.base_seq, deltas = '[]'::jsonb,
+          chat_store = excluded.chat_store, updated_at = now()`
       await sql`insert into sync_snapshots (id, payload) values (${id}, ${JSON.stringify(payload ?? {})}::jsonb)
         on conflict (id) do update set payload = excluded.payload`
       await sql`delete from sync_deltas where id = ${id}`
