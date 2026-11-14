@@ -969,16 +969,19 @@ export function Composer({ cfg, quote, onClearQuote }: { cfg: (t: string) => voi
               <Mic size={18} />
             </button>
           )}
-          {queueMode && <Btn icon={StopIcon} v="soft" onClick={s.stop} title="Stop this reply" className="rounded-full" />}
           <ToolAccessButton cfg={cfg} />
-          <Btn
-            icon={streaming && !queueMode ? StopIcon : queueMode ? ListPlus : ArrowUp}
-            v={streaming || ready ? 'solid' : 'soft'}
-            onClick={streaming && !queueMode ? s.stop : submit}
-            title={streaming && !queueMode ? 'Stop' : queueMode ? 'Queue this message' : 'Send'}
-            disabled={queueMode && !ready}
-            className="rounded-full"
-          />
+          {queueMode && <Btn icon={StopIcon} v="soft" onClick={s.stop} title="Stop this reply" className="rounded-full" />}
+          {/* While a reply streams, an empty composer has nothing to queue:
+              showing a disabled queue button next to Stop only adds noise. */}
+          {(!queueMode || ready) && (
+            <Btn
+              icon={streaming && !queueMode ? StopIcon : queueMode ? ListPlus : ArrowUp}
+              v={streaming || ready ? 'solid' : 'soft'}
+              onClick={streaming && !queueMode ? s.stop : submit}
+              title={streaming && !queueMode ? 'Stop' : queueMode ? 'Queue this message' : 'Send'}
+              className="rounded-full"
+            />
+          )}
         </div>
       </div>
       </div>
