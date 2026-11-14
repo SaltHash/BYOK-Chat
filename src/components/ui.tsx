@@ -142,7 +142,7 @@ export function Seg<T extends string>({ v, set, opts, label }: { v: T; set: (v: 
             else if (e.key === 'Home') { e.preventDefault(); set(opts[0][0]); requestAnimationFrame(() => ref.current?.querySelector<HTMLButtonElement>('[role="radio"]')?.focus()) }
             else if (e.key === 'End') { e.preventDefault(); const last = opts[opts.length - 1]; set(last[0]); requestAnimationFrame(() => ref.current?.querySelectorAll<HTMLButtonElement>('[role="radio"]')[opts.length - 1]?.focus()) }
           }}
-          className={cx('inline-flex min-h-7 items-center gap-1.5 rounded-md px-3 py-1.5 text-sm transition-colors focus-visible:ring-2 focus-visible:ring-ac/40', v === k ? 'bg-hov font-medium text-tx' : 'text-mu hover:text-tx')}
+          className={cx('inline-flex min-h-7 items-center gap-1.5 rounded-md border px-3 py-1.5 text-sm transition-colors focus-visible:ring-2 focus-visible:ring-ac/40', v === k ? 'border-tx/20 bg-hov font-medium text-tx' : 'border-transparent text-mu hover:text-tx')}
         >
           {I && <I size={14} />}{l}
         </button>
