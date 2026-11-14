@@ -961,7 +961,7 @@ function QualitiesTab() {
                     className={cx('flex cursor-pointer flex-col gap-2 rounded-xl border p-3.5 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ac/40', on ? 'border-ac/50 bg-ac/[0.06]' : 'border-bor bg-surf/40 hover:bg-hov/60')}
                   >
                     <div className="flex items-center gap-2">
-                      <span className={cx('grid size-4 shrink-0 place-items-center rounded border transition-colors', on ? 'border-ac bg-ac text-white' : 'border-bor bg-bg')}>{on && <Check size={11} strokeWidth={3} />}</span>
+                      <span className={cx('grid size-4 shrink-0 place-items-center rounded border transition-colors', on ? 'border-ac bg-ac text-acx' : 'border-bor bg-bg')}>{on && <Check size={11} strokeWidth={3} />}</span>
                       <span className="min-w-0 flex-1 truncate text-sm font-medium">{q.label}</span>
                       <button type="button" aria-label={`Move ${q.label} up`} disabled={qi === 0} onClick={(e) => { e.stopPropagation(); moveQuality(q.id, -1) }} title="Move up" className="grid size-6 shrink-0 place-items-center rounded-md text-mu/70 transition-colors hover:bg-hov hover:text-tx disabled:cursor-not-allowed disabled:opacity-25"><ArrowUp size={13} /></button>
                       <button type="button" aria-label={`Move ${q.label} down`} disabled={qi === qualityList.length - 1} onClick={(e) => { e.stopPropagation(); moveQuality(q.id, 1) }} title="Move down" className="grid size-6 shrink-0 place-items-center rounded-md text-mu/70 transition-colors hover:bg-hov hover:text-tx disabled:cursor-not-allowed disabled:opacity-25"><ArrowDown size={13} /></button>
