@@ -1,7 +1,7 @@
 import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { X, Plus, Trash2, ArrowUp, ArrowDown, CornerDownRight, ChevronDown, ChevronRight, Eye, EyeOff, Play, ShieldCheck, Shield, Download, Check, CircleCheck, CircleX, Cpu, Route, GripVertical, Server, ListMusic, ScrollText, Terminal, Wrench, Palette, FolderOpen, PanelRight, TrendingUp, Keyboard, Search, Brain, Pencil, Sparkles, RotateCcw, SlidersHorizontal, FlaskConical, Library, Database, Lock, LockOpen, LayoutTemplate, Share2, Plug, Image as ImageIcon, Volume2, AudioLines, Code2, Star } from 'lucide-react'
 import { modelListEdit } from '../models'
-import { useS, useSConfig, PRE, BLANK, THEMES, DARK_THEMES, LIGHT_THEMES, THEME_COLOR_KEYS, THEME_COLOR_LABELS, THEME_COLORS, defaultCustomTheme, customThemeColors, normCustomTheme, SEARCH_PROVIDERS, READER_PROVIDERS, FEATURES, LIBRARY_ITEMS, FEATURE_TABS, FEATURE_WIDGETS, DEFAULT_LIBRARY_SHOW, DEFAULT_ADVANCED, featOn, normSearch, normAdvanced, normLogDetail, normDocs, usable, modelsOf, modelNameOf, helperRef, splitHelperRef, favRef, toggleFavRef, effortClassifierOf, TOOL_ROUNDS_DEFAULT, TOOL_ROUNDS_MIN, TOOL_ROUNDS_BASE_MAX, TOOL_ROUNDS_MAX, toolRoundLimitOf, isToolRoundsUnlimited, GENERAL_PROMPT_TEXT, STARTUP_MODES, normStartup, PROMPT_RECALL_MODES, normPromptRecall, uid, REPLY_METRICS, DEFAULT_REPLY_STATS, type PromptRecallMode, type ReplyMetric, type ReplyModelLabel, type Kind, type FeatureId, type DocPrefs, type ModelPrice } from '../store'
+import { useS, useSConfig, PRE, BLANK, THEMES, DARK_THEMES, LIGHT_THEMES, THEME_COLOR_KEYS, THEME_COLOR_LABELS, THEME_COLORS, defaultCustomTheme, customThemeColors, normCustomTheme, SEARCH_PROVIDERS, READER_PROVIDERS, FEATURES, LIBRARY_ITEMS, FEATURE_TABS, FEATURE_WIDGETS, DEFAULT_LIBRARY_SHOW, DEFAULT_ADVANCED, featOn, normSearch, normAdvanced, normLogDetail, normDocs, usable, modelsOf, modelNameOf, helperRef, splitHelperRef, favRef, toggleFavRef, effortClassifierOf, TOOL_ROUNDS_DEFAULT, TOOL_ROUNDS_MIN, TOOL_ROUNDS_BASE_MAX, TOOL_ROUNDS_MAX, toolRoundLimitOf, isToolRoundsUnlimited, GENERAL_PROMPT_TEXT, STARTUP_MODES, normStartup, PROMPT_RECALL_MODES, normPromptRecall, uid, REPLY_METRICS, DEFAULT_REPLY_STATS, HELPER_TASKS, helperAutoEffort, type HelperTask, type PromptRecallMode, type ReplyMetric, type ReplyModelLabel, type Kind, type FeatureId, type DocPrefs, type ModelPrice } from '../store'
 import { normSkills, resolveSkill, validateCustomSkill, enabledSkills, BUILTIN_SKILLS, SKILL_TOOL_NAME, type SkillState } from '../skills'
 import { findDuplicatePairs, mergeMemory } from '../recall'
 import { TOOL_REGISTRY, can, stream } from '../engine'
@@ -480,6 +480,14 @@ function FeaturesTab() {
   )
 }
 
+const HELPER_EFFORT_LABELS: Record<string, string> = { none: 'None', minimal: 'Minimal', low: 'Low', medium: 'Medium', high: 'High', xhigh: 'Extra high', max: 'Max' }
+const HELPER_EFFORT_ORDER = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']
+const helperEffortLabel = (level: string): string => HELPER_EFFORT_LABELS[level.toLowerCase()] ?? level.replace(/[-_]/g, ' ').replace(/^./, (c) => c.toUpperCase())
+const helperEffortRank = (level: string): number => {
+  const i = HELPER_EFFORT_ORDER.indexOf(level.toLowerCase())
+  return i < 0 ? HELPER_EFFORT_ORDER.length : i
+}
+
 function HelperModels() {
   const s = useSConfig()
   const refs = {
@@ -488,6 +496,50 @@ function HelperModels() {
     recall: helperRef(s.prefs.recallEp, s.prefs.recallModel),
     title: helperRef(s.prefs.titleEp, s.prefs.titleModel),
     compact: helperRef(s.prefs.compactEp ?? '', s.prefs.compactModel),
+  }
+  const efforts = s.prefs.helperEffort ?? {}
+  /* The endpoint a helper ref points at, with its model resolved the same way
+   * the helper call resolves it. */
+  const helperEp = (ref: string) => {
+    const [id, model] = splitHelperRef(ref)
+    const e = s.eps.find((x) => x.id === id)
+    return e ? { ...e, model: model && modelsOf(e).includes(model) ? model : e.model } : undefined
+  }
+  /* The reasoning levels each helper's own model reports. A model that reports
+   * none can only run at whatever its provider defaults to. */
+  const levelsOf = (ref: string): string[] => {
+    const e = helperEp(ref)
+    if (!e) return []
+    return [...new Set((e.modelEfforts?.[e.model] ?? []).filter((l): l is string => typeof l === 'string' && !!l))].sort((a, b) => helperEffortRank(a) - helperEffortRank(b))
+  }
+  const autoLabel = (task: HelperTask, ref: string): string => {
+    const e = helperEp(ref)
+    const auto = e ? helperAutoEffort(task, e) : ''
+    return auto ? `Automatic · ${helperEffortLabel(auto)}` : 'Automatic'
+  }
+  const effortOpts = (task: HelperTask, ref: string): [string, string][] => [
+    ['', autoLabel(task, ref)],
+    ...levelsOf(ref).map((l) => [l, helperEffortLabel(l)] as [string, string]),
+  ]
+  /* A level the helper's model does not report is treated as automatic at call
+   * time, so the row shows it as automatic too. */
+  const storedEffort = (task: HelperTask): string => {
+    const raw = efforts[task] ?? ''
+    return raw && levelsOf(refs[task]).some((l) => l.toLowerCase() === raw.toLowerCase()) ? raw : ''
+  }
+  const bulkLevels = [...new Set(HELPER_TASKS.flatMap((t) => levelsOf(refs[t])))].sort((a, b) => helperEffortRank(a) - helperEffortRank(b))
+  /* The bulk row reads the stored choices, not what each row ends up showing:
+   * a level some helper cannot take is still the level that was chosen, and
+   * that helper's own row explains that it falls back to automatic. */
+  const chosen = (task: HelperTask): string => efforts[task] ?? ''
+  const bulkEffort = HELPER_TASKS.every((t) => chosen(t) === chosen('cls')) ? chosen('cls') : '__mixed__'
+  const setEffort = (task: HelperTask, level: string) => s.patch({ prefs: { ...s.prefs, helperEffort: { ...efforts, [task]: level } } })
+  const bulkOpts: [string, string][] = [['', 'Automatic'], ...(bulkEffort === '__mixed__' ? [['__mixed__', 'Mixed'] as [string, string]] : []), ...bulkLevels.map((l) => [l, helperEffortLabel(l)] as [string, string])]
+  const setAllEfforts = (level: string) => {
+    if (level === '__mixed__') return
+    const next: Partial<Record<HelperTask, string>> = {}
+    for (const t of HELPER_TASKS) next[t] = level
+    s.patch({ prefs: { ...s.prefs, helperEffort: next } })
   }
   const unique = new Set(Object.values(refs))
   const mixed = unique.size > 1
@@ -522,13 +574,23 @@ function HelperModels() {
     else if (which === 'compact') s.patch({ prefs: { ...s.prefs, compactEp: ep, compactModel: model } })
     else s.patch({ prefs: { ...s.prefs, effortEp: ep, effortModel: model } })
   }
-  const row = (label: string, ref: string, set: (v: string) => void) => (
-    <SettingRow label={label}><div className="w-60 max-w-full"><Sel value={ref} set={set} opts={singleOpts} inline /></div></SettingRow>
+  const row = (label: string, task: HelperTask, ref: string, set: (v: string) => void) => (
+    <SettingRow label={label}>
+      <div className="flex w-60 max-w-full flex-col items-end gap-1">
+        <Sel value={ref} set={set} opts={singleOpts} inline />
+        <div className="flex items-center gap-1.5">
+          <span className="text-xs text-mu">Reasoning</span>
+          <Sel value={storedEffort(task)} set={(v) => setEffort(task, v)} opts={effortOpts(task, ref)} inline />
+        </div>
+      </div>
+    </SettingRow>
   )
   return (
     <Anchor id="helper-models">
       <div className="py-1">
         <SettingRow label="Model for all helpers"><div className="w-60 max-w-full"><Sel value={main} set={setAll} opts={opts} inline /></div></SettingRow>
+        <SettingRow label="Reasoning level for all helpers"><div className="w-60 max-w-full"><Sel value={bulkEffort} set={setAllEfforts} opts={bulkOpts} inline /></div></SettingRow>
+        <p className="pb-2 text-xs text-mu">A helper whose model does not offer the level runs at its automatic level.</p>
         <details className="group" open>
           <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-4 py-3 text-sm [&::-webkit-details-marker]:hidden">
             <span>Per-task models</span>
@@ -537,14 +599,14 @@ function HelperModels() {
           <div className="space-y-4 pb-3">
             <div className="space-y-1">
               <p className="px-0 text-xs font-medium text-mu">Decision helpers</p>
-              {row('Model routing', refs.cls, (v) => setOne('cls', v))}
-              {row('Reasoning level', refs.eff, (v) => setOne('eff', v))}
-              {row('Memory recall', refs.recall, (v) => setOne('recall', v))}
+              {row('Model routing', 'cls', refs.cls, (v) => setOne('cls', v))}
+              {row('Reasoning level', 'eff', refs.eff, (v) => setOne('eff', v))}
+              {row('Memory recall', 'recall', refs.recall, (v) => setOne('recall', v))}
             </div>
             <div className="space-y-1">
               <p className="px-0 text-xs font-medium text-mu">Writing helpers</p>
-              {row('Chat titles', refs.title, (v) => setOne('title', v))}
-              {row('Context handoff', refs.compact, (v) => setOne('compact', v))}
+              {row('Chat titles', 'title', refs.title, (v) => setOne('title', v))}
+              {row('Context handoff', 'compact', refs.compact, (v) => setOne('compact', v))}
             </div>
           </div>
         </details>

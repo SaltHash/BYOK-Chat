@@ -113,7 +113,7 @@ export const SETTING_LINKS: SettingLink[] = [
   { tab: 'features', anchor: 'feature-advanced', title: 'Feature: Advanced', keywords: 'feature advanced toggle debugging' },
 
   // Endpoints
-  { tab: 'eps', anchor: 'helper-models', title: 'Helper models', keywords: 'helper classification title effort auto detection mixed model memory recall' },
+  { tab: 'eps', anchor: 'helper-models', title: 'Helper models', keywords: 'helper classification title effort auto detection mixed model memory recall reasoning level thinking' },
   { tab: 'eps', anchor: 'add-endpoint', title: 'Add endpoint', keywords: 'add endpoint provider connection' },
   { tab: 'eps', anchor: 'models', title: 'Endpoint models', keywords: 'models preset picker catalog model id name effort' },
   { tab: 'eps', anchor: 'model-behavior', title: 'Model behavior (playlist mode)', keywords: 'playlist separate models mode behavior' },
