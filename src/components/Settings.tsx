@@ -2214,13 +2214,13 @@ export function Settings({ tab, setTab }: { tab: string; setTab: (t: string) => 
   }, [setTab])
   return (
     <Modal close={() => setTab('')} blur={false} opacity={settingsOpacity} labelledBy="settings-title">
-      <div style={{ width: `min(${settingsWidth}px, 100%)`, height: `min(${settingsHeight}px, 92dvh)` }} className="settings-root modal-panel flex flex-col overflow-hidden rounded-xl bg-bg">
+      <div style={{ width: `min(${settingsWidth}px, 100%)`, height: `min(${settingsHeight}px, 92dvh)` }} className="settings-root modal-panel flex flex-col overflow-hidden rounded-xl bg-side">
         <div className="flex h-12 shrink-0 items-center justify-between border-b border-bor px-4">
           <h2 id="settings-title" className="text-sm font-semibold">Settings</h2>
           <button type="button" aria-label="Close settings" title="Close settings" onClick={() => setTab('')} className="grid size-7 place-items-center rounded-md text-mu transition-colors hover:bg-hov hover:text-tx"><X size={16} /></button>
         </div>
         <div className="flex min-h-0 flex-1">
-        <nav aria-label="Settings sections" className="hidden w-52 shrink-0 flex-col border-r border-bor p-2.5 sm:flex">
+        <nav aria-label="Settings sections" className="hidden w-52 shrink-0 flex-col border-r border-bor bg-bg p-2.5 sm:flex">
           <label className="relative mb-2 block">
             <Search size={14} aria-hidden="true" className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-mu" />
             <input aria-label="Search settings" value={query} onChange={e => setQuery(e.target.value)} placeholder="Search" className="w-full rounded-md bg-surf py-1.5 pl-8 pr-2.5 text-sm outline-none placeholder:text-mu focus:ring-2 focus:ring-ac/40" />
