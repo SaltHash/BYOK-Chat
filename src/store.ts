@@ -523,7 +523,7 @@ export const normPromptRecall = (v: unknown): PromptRecallMode =>
 export type LogDetail = 'compact' | 'standard' | 'verbose'
 export const normLogDetail = (v: unknown): LogDetail => v === 'compact' || v === 'verbose' ? v : 'standard'
 
-export const DEFAULT_PREFS: S['prefs'] = { showBy: true, showLog: true, showTps: false, replyModelLabel: 'name', replyStats: [...DEFAULT_REPLY_STATS], enterSends: true, sendWhileBusy: 'queue', autoTitle: true, temporaryByDefault: false, seasonal: true, cues: false, showModelPricing: false, showContextMeter: true, customSearch: true, stylePreset: 'modern', density: 'comfortable', uiSpacing: {}, showTimestamps: false, alwaysShowActions: false, titleEp: '', titleModel: '', compactEp: '', compactModel: '', effortEp: '', effortModel: '', recallEp: '', recallModel: '', tempHours: 3, archiveDays: 60, startup: 'recent', tempShow: 2, tempShowStreaming: true, tempShowDone: true, draftSurvive: 'both', fontBody: 'system', fontMono: 'system', fontHeader: 'system', modelPrimary: 'name', modelSecondary: 'none', paletteMax: 320, chatWidth: 'standard', settingsWidth: 1024, settingsHeight: 780, modelPickerHeight: 480, favoritesSection: true, hideFavoritesInProviders: true, collapsedProviders: [], sidebarWidth: 288, widgetWidth: 320, workspaceWidth: 0.4, workspaceSplit: 0.2,  modalBlur: 12, settingsOpacity: 55, streamFade: 0.3, streamMd: true, remoteImages: false, glassComposer: true, glassBlur: 14, glassOpacity: 80, showDisabledFeatures: false, proxyMode: 'auto', textScale: 100, codeWrap: false, reduceTransparency: false, promptRecall: 'empty', highContrast: false, hideFavoriteProvider: false, qualityFavs: [...DEFAULT_QUALITY_FAVS], logDetail: 'standard', logTiming: true, logModels: true, codeLines: false, codeMaxHeight: 0, pinContext: true, pinContextPercent: 50, keepUsageHistory: true, compactAuto: true, compactAt: 80 }
+export const DEFAULT_PREFS: S['prefs'] = { showBy: true, showLog: true, showTps: false, replyModelLabel: 'name', replyStats: [...DEFAULT_REPLY_STATS], enterSends: true, sendWhileBusy: 'queue', autoTitle: true, temporaryByDefault: false, seasonal: true, cues: false, showModelPricing: false, showContextMeter: true, customSearch: true, stylePreset: 'modern', density: 'comfortable', uiSpacing: {}, showTimestamps: false, alwaysShowActions: false, revertSend: false, titleEp: '', titleModel: '', compactEp: '', compactModel: '', effortEp: '', effortModel: '', recallEp: '', recallModel: '', tempHours: 3, archiveDays: 60, startup: 'recent', tempShow: 2, tempShowStreaming: true, tempShowDone: true, draftSurvive: 'both', fontBody: 'system', fontMono: 'system', fontHeader: 'system', modelPrimary: 'name', modelSecondary: 'none', paletteMax: 320, chatWidth: 'standard', settingsWidth: 1024, settingsHeight: 780, modelPickerHeight: 480, favoritesSection: true, hideFavoritesInProviders: true, collapsedProviders: [], sidebarWidth: 288, widgetWidth: 320, workspaceWidth: 0.4, workspaceSplit: 0.2,  modalBlur: 12, settingsOpacity: 55, streamFade: 0.3, streamMd: true, remoteImages: false, glassComposer: true, glassBlur: 14, glassOpacity: 80, showDisabledFeatures: false, proxyMode: 'auto', textScale: 100, codeWrap: false, reduceTransparency: false, promptRecall: 'empty', highContrast: false, hideFavoriteProvider: false, qualityFavs: [...DEFAULT_QUALITY_FAVS], logDetail: 'standard', logTiming: true, logModels: true, codeLines: false, codeMaxHeight: 0, pinContext: true, pinContextPercent: 50, keepUsageHistory: true, compactAuto: true, compactAt: 80 }
 export const DEFAULT_PARAMS: S['params'] = { def: true, temp: 0.7, topp: 1, max: 4096, maxToolRounds: 8, highToolsUnlocked: false }
 export const DEFAULT_WIDGET_PREFS: S['widgetPrefs'] = { usageGroup: 'endpoint', usageMode: 'success', usageFormat: '{in}/{out}', usageTotal: false, usagePeriod: 'all', lastSpeed: true, timeUnit: 'auto', widgetOrder: WIDGETS.map(([k]) => k), shortcuts: KEYS.map(([k]) => k), contextLimit: 128000, showDisabledEndpoints: true, scratchRows: 6, snippetLimit: 20, costDecimals: 4, activePromptsOnly: false, charsPerToken: 4, hideDoneTodos: false }
 const SEARCH_VALID_PROVIDERS: SearchProvider[] = SEARCH_PROVIDERS.map(([id]) => id)
@@ -669,7 +669,7 @@ type S = {
   customDarkTheme: CustomTheme
   customLightTheme: CustomTheme
   setupDone: boolean
-  prefs: { showBy: boolean; showLog: boolean; showTps: boolean; /** Model name shown at the top of a reply, and whether its endpoint is appended. */ replyModelLabel?: ReplyModelLabel; /** Metric pills shown below a reply. */ replyStats?: ReplyMetric[]; enterSends: boolean; autoTitle: boolean; temporaryByDefault: boolean; seasonal?: boolean; cues?: boolean; showModelPricing: boolean; showContextMeter: boolean; customSearch?: boolean; /** Hide the provider name beside starred models in the picker's Favorites section. */ hideFavoriteProvider?: boolean; /** Qualities pinned in the composer's quick switcher; `global` is the global prompt row. */ qualityFavs?: string[]; /** How much detail the Process-to-answer panel shows per step. */ logDetail?: LogDetail; /** Show each step's duration in the process log. */ logTiming?: boolean; /** Show the model beside each step in the process log. */ logModels?: boolean; /** Show line numbers in code blocks. */ codeLines?: boolean; /** Max code-block height in pixels before scrolling (0 = no cap). */ codeMaxHeight?: number; /** Include the pinned reply in the model context. */ pinContext?: boolean; /** Maximum slice of the context window the pinned reply may use (5–50%). */ pinContextPercent?: number; /** Replace older turns with a model-written handoff when the context nears the limit. */ compactAuto?: boolean; /** Context share at which auto-compaction starts (5–100, in 5% steps). */ compactAt?: number; /** Queue a message sent while the same chat is replying, or require a stop first. */ sendWhileBusy?: 'queue' | 'stop'; titleEp: string; titleModel?: string; compactEp?: string; compactModel?: string; effortEp: string; effortModel?: string; recallEp: string; recallModel?: string; tempHours: number; /** Days before an archived chat is deleted; the top slider value means never. */ archiveDays?: number; startup?: StartupMode; tempShow?: number; /** Keep temporary chats that are still replying listed past the temporary-chats-shown limit. */ tempShowStreaming?: boolean; /** Keep temporary chats whose reply finished in the background listed until they are opened. */ tempShowDone?: boolean; draftSurvive?: 'off' | 'new' | 'chats' | 'both'; fontBody: string; fontMono: string; fontHeader: string; modelPrimary: 'id' | 'name'; modelSecondary: 'none' | 'provider' | 'id' | 'name'; modelDisplay?: 'none' | 'name' | 'provider' | 'both'; paletteMax: number; chatWidth: 'narrow' | 'standard' | 'wide'; settingsWidth: number; settingsHeight: number; modelPickerHeight: number; /** Show a Favorites section at the top of the model picker. */ favoritesSection?: boolean; /** Hide starred models from their normal provider groups. */ hideFavoritesInProviders?: boolean; /** Endpoint ids whose provider groups are collapsed in the picker. */ collapsedProviders?: string[]; sidebarWidth?: number; widgetWidth?: number; workspaceWidth?: number; workspaceSplit?: number; modalBlur: number; settingsOpacity: number; routingMode?: RoutingMode; streamFade: number; streamMd: boolean; remoteImages?: boolean; glassComposer?: boolean; /** Composer glass backdrop blur in pixels (0–40). */ glassBlur?: number; /** Composer glass surface opacity percent (0–100). */ glassOpacity?: number; /** Keep settings for disabled features visible, marked off, instead of hiding them. */ showDisabledFeatures?: boolean; proxyMode?: 'auto' | 'always' | 'off';  stylePreset: StylePreset; density: Density; uiSpacing?: SpacingOverrides; showTimestamps?: boolean; alwaysShowActions?: boolean; /** Root font-size percent (50–200, 100 = unchanged). */ textScale?: number; /** Soft-wrap long lines inside code blocks instead of scrolling sideways. */ codeWrap?: boolean; /** Disable glass, blur and dropped shadows (flat, opaque surfaces). */ reduceTransparency?: boolean; /** When ↑/↓ recall sent prompts; 'off' also stops recording them. */ promptRecall?: PromptRecallMode; /** Raise muted-text and border contrast beyond the theme's values. */ highContrast?: boolean; /** Keep every attempt in a permanent ledger so usage survives deleting, archiving or expiring its chat. Off keeps only the attempts still on saved chats. */ keepUsageHistory?: boolean }
+  prefs: { showBy: boolean; showLog: boolean; showTps: boolean; /** Model name shown at the top of a reply, and whether its endpoint is appended. */ replyModelLabel?: ReplyModelLabel; /** Metric pills shown below a reply. */ replyStats?: ReplyMetric[]; enterSends: boolean; autoTitle: boolean; temporaryByDefault: boolean; seasonal?: boolean; cues?: boolean; showModelPricing: boolean; showContextMeter: boolean; customSearch?: boolean; /** Hide the provider name beside starred models in the picker's Favorites section. */ hideFavoriteProvider?: boolean; /** Qualities pinned in the composer's quick switcher; `global` is the global prompt row. */ qualityFavs?: string[]; /** How much detail the Process-to-answer panel shows per step. */ logDetail?: LogDetail; /** Show each step's duration in the process log. */ logTiming?: boolean; /** Show the model beside each step in the process log. */ logModels?: boolean; /** Show line numbers in code blocks. */ codeLines?: boolean; /** Max code-block height in pixels before scrolling (0 = no cap). */ codeMaxHeight?: number; /** Include the pinned reply in the model context. */ pinContext?: boolean; /** Maximum slice of the context window the pinned reply may use (5–50%). */ pinContextPercent?: number; /** Replace older turns with a model-written handoff when the context nears the limit. */ compactAuto?: boolean; /** Context share at which auto-compaction starts (5–100, in 5% steps). */ compactAt?: number; /** Queue a message sent while the same chat is replying, or require a stop first. */ sendWhileBusy?: 'queue' | 'stop'; titleEp: string; titleModel?: string; compactEp?: string; compactModel?: string; effortEp: string; effortModel?: string; recallEp: string; recallModel?: string; tempHours: number; /** Days before an archived chat is deleted; the top slider value means never. */ archiveDays?: number; startup?: StartupMode; tempShow?: number; /** Keep temporary chats that are still replying listed past the temporary-chats-shown limit. */ tempShowStreaming?: boolean; /** Keep temporary chats whose reply finished in the background listed until they are opened. */ tempShowDone?: boolean; draftSurvive?: 'off' | 'new' | 'chats' | 'both'; fontBody: string; fontMono: string; fontHeader: string; modelPrimary: 'id' | 'name'; modelSecondary: 'none' | 'provider' | 'id' | 'name'; modelDisplay?: 'none' | 'name' | 'provider' | 'both'; paletteMax: number; chatWidth: 'narrow' | 'standard' | 'wide'; settingsWidth: number; settingsHeight: number; modelPickerHeight: number; /** Show a Favorites section at the top of the model picker. */ favoritesSection?: boolean; /** Hide starred models from their normal provider groups. */ hideFavoritesInProviders?: boolean; /** Endpoint ids whose provider groups are collapsed in the picker. */ collapsedProviders?: string[]; sidebarWidth?: number; widgetWidth?: number; workspaceWidth?: number; workspaceSplit?: number; modalBlur: number; settingsOpacity: number; routingMode?: RoutingMode; streamFade: number; streamMd: boolean; remoteImages?: boolean; glassComposer?: boolean; /** Composer glass backdrop blur in pixels (0–40). */ glassBlur?: number; /** Composer glass surface opacity percent (0–100). */ glassOpacity?: number; /** Keep settings for disabled features visible, marked off, instead of hiding them. */ showDisabledFeatures?: boolean; proxyMode?: 'auto' | 'always' | 'off';  stylePreset: StylePreset; density: Density; uiSpacing?: SpacingOverrides; showTimestamps?: boolean; alwaysShowActions?: boolean; /** Turn the edit button on a user message into a revert-send button. */ revertSend?: boolean; /** Root font-size percent (50–200, 100 = unchanged). */ textScale?: number; /** Soft-wrap long lines inside code blocks instead of scrolling sideways. */ codeWrap?: boolean; /** Disable glass, blur and dropped shadows (flat, opaque surfaces). */ reduceTransparency?: boolean; /** When ↑/↓ recall sent prompts; 'off' also stops recording them. */ promptRecall?: PromptRecallMode; /** Raise muted-text and border contrast beyond the theme's values. */ highContrast?: boolean; /** Keep every attempt in a permanent ledger so usage survives deleting, archiving or expiring its chat. Off keeps only the attempts still on saved chats. */ keepUsageHistory?: boolean }
   widgets: Record<string, boolean>; widgetPrefs: { usageGroup: 'endpoint' | 'model'; usageMode: 'success' | 'tokens'; usageFormat: string; usageTotal: boolean; usagePeriod: 'session' | 'day' | 'week' | 'month' | 'custom' | 'all'; usageFrom?: string; usageTo?: string; lastSpeed: boolean; timeUnit: 'ms' | 's' | 'auto'; widgetOrder: string[]; shortcuts: string[]; contextLimit: number; showDisabledEndpoints: boolean; scratchRows: number; snippetLimit: number; costDecimals: number; activePromptsOnly: boolean; charsPerToken: number; hideDoneTodos: boolean }; rail: boolean; pad: string; snips: string[]
   params: { def: boolean; temp: number; topp: number; max: number; maxToolRounds: number; highToolsUnlocked: boolean }; effort: Record<string, string>
   workspacePrefs: WorkspacePrefs
@@ -700,6 +700,10 @@ type S = {
   /** The last permanently deleted chat, retained briefly so Undo is possible.
    *  Session-scoped: it is never persisted and expires with its timer. */
   undo: { chat: Chat; index: number; wasOpen: boolean; draft?: string } | null
+  /** Armed revert-send: which chat and message the composer text came from,
+   *  and the draft to restore on cancel. Session-scoped; sending drops every
+   *  message after `mid`. */
+  revert: { chat: string; mid: string; text: string; draft: string } | null
   /** Chat ids streaming a reply right now. `busy` is true while any of them
    *  runs, so per-chat controls read this map instead of the global flag. */
   busyChats: Record<string, true>
@@ -753,6 +757,11 @@ type S = {
   retryMsg: (id: string) => void
   delMsg: (id: string) => void
   editMsg: (id: string, t: string) => boolean
+  /** Put a user message back in the composer and mark the messages after it
+   *  for removal when it is sent. Returns false while that chat is replying. */
+  armRevert: (mid: string) => boolean
+  /** Disarm a revert and restore the draft that was in the composer before. */
+  cancelRevert: () => void
   chooseResearchTier: (mid: string, tier: ResearchTierId) => void
   startResearch: (mid: string) => void
   resumeResearch: (mid: string) => void
@@ -1047,7 +1056,7 @@ export const useS = create<S>()(
         if (survive === 'off') {
           const stale = Object.keys(s.drafts ?? {}).length > 0
           if (!hasChat && !hasDraft) return stale ? { ...n, drafts: {} } : n
-          if (hasChat && n.chat !== s.chat) return { ...n, ...(hasDraft ? {} : { draft: '' }), drafts: {}, newChatPending: (n.chat as string) ? null : n.newChatPending }
+          if (hasChat && n.chat !== s.chat) return { ...n, ...(hasDraft ? {} : { draft: '' }), drafts: {}, newChatPending: (n.chat as string) ? null : n.newChatPending, ...(s.revert && s.revert.chat !== (n.chat as string) ? { revert: null } : {}) }
           return hasDraft || stale ? { ...n, drafts: {} } : n
         }
         if (!hasChat && !hasDraft) return n
@@ -1063,7 +1072,7 @@ export const useS = create<S>()(
           // Opening a real chat (or materializing the pending one) ends the
           // pending new-chat state; only switching to nothing keeps it.
           if (s.chat && next.some((c) => c.id === s.chat)) drafts[s.chat] = ((hasDraft ? n.draft : s.draft) as string) ?? ''
-          return { ...n, draft: drafts[(n.chat as string) ?? ''] ?? '', drafts, newChatPending: (n.chat as string) ? null : n.newChatPending }
+          return { ...n, draft: drafts[(n.chat as string) ?? ''] ?? '', drafts, newChatPending: (n.chat as string) ? null : n.newChatPending, ...(s.revert && s.revert.chat !== (n.chat as string) ? { revert: null } : {}) }
         }
         return { ...n, drafts }
       }, replace)) as typeof baseSet
@@ -2818,7 +2827,7 @@ export const useS = create<S>()(
         usage: initialLedger.rows, usageTitles: initialLedger.titles,
         projects: [], activeProject: '', price: { in: 0, out: 0 }, todos: [],
         routeStats: {}, shares: [], flashMsg: null,
-        draft: '', busy: false, busyChats: {}, runJournal: {}, doneChats: {}, queued: {}, notice: null, undo: null,
+        draft: '', busy: false, busyChats: {}, runJournal: {}, doneChats: {}, queued: {}, notice: null, undo: null, revert: null,
         /* Workspace (first-class entity) */
         workspaces: {}, selectedRevision: {},            researchPanel: null,
 
@@ -2954,6 +2963,17 @@ export const useS = create<S>()(
 
         send: async (v, att) => {
           const s = get()
+          /* A reverted prompt is only destructive once it is actually sent:
+           * truncation happens in the same write that appends the new message,
+           * so a refused send never drops anything. */
+          const revertCut = (chat: Chat): Chat | null => {
+            const rev = get().revert
+            if (!rev || rev.chat !== chat.id) return null
+            const at = chat.msgs.findIndex((m) => m.id === rev.mid)
+            if (at < 0) return null
+            const anchor = chat.compact ? chat.msgs.findIndex((m) => m.id === chat.compact!.through) : -1
+            return { ...chat, msgs: chat.msgs.slice(0, at), ...(anchor >= at ? { compact: undefined } : {}) }
+          }
           // Busy is per chat: another chat streaming never blocks this one.
           if (sendPause.has(s.chat)) return false
           if (chatBusy(s, s.chat)) {
@@ -2996,14 +3016,16 @@ export const useS = create<S>()(
               // Materializes the pending new chat (or falls back to a plain
               // one when no side effect of `newChat` ever ran).
               const pending = !old && st.newChatPending
-              const base: Chat = old ?? { id: uid(), title: 'New chat', msgs: [], ...(pending ? { temporary: pending === 'temporary', expiresAt: pending === 'temporary' && st.prefs.tempHours > 0 ? Date.now() + st.prefs.tempHours * 3600000 : undefined, title: 'Temporary chat' } : {}), ...(old ? {} : st.activeProject ? { project: st.activeProject } : {}) }
+              // A reverted prompt replaces its own message and everything after it.
+              const cut = old ? revertCut(old) : null
+              const base: Chat = cut ?? old ?? { id: uid(), title: 'New chat', msgs: [], ...(pending ? { temporary: pending === 'temporary', expiresAt: pending === 'temporary' && st.prefs.tempHours > 0 ? Date.now() + st.prefs.tempHours * 3600000 : undefined, title: 'Temporary chat' } : {}), ...(old ? {} : st.activeProject ? { project: st.activeProject } : {}) }
               const next: Chat = { ...base, started: true, titleAuto: base.msgs.length ? base.titleAuto : st.prefs.autoTitle, title: base.msgs.length ? base.title : researchReq.query.slice(0, 40), msgs: [...base.msgs, um, { id: mid, r: 'assistant', t: '', at: Date.now(), by: '', log: [], research: rq }] }
               // The pending new chat's half-typed draft is spent once it becomes
               // a real chat: without this it would reappear in the composer the
               // next time a new-chat screen (or a project home) is opened.
               const drafts = { ...st.drafts }
               if (!old) delete drafts['']
-              return { chat: base.id, newChatPending: old ? st.newChatPending : null, chats: old ? st.chats.map((c) => (c.id === base.id ? next : c)) : [next, ...st.chats], drafts, notice: null }
+              return { chat: base.id, newChatPending: old ? st.newChatPending : null, chats: old ? st.chats.map((c) => (c.id === base.id ? next : c)) : [next, ...st.chats], drafts, notice: null, revert: st.revert && st.revert.chat === base.id ? null : st.revert }
             })
             return true
           }
@@ -3016,7 +3038,15 @@ export const useS = create<S>()(
               const um: Msg = { id: uid(), r: 'user', t: raw, at: Date.now(), att: namedAtt, full: raw }
               um.historyTokens = 0
               um.explicitTokens = est(raw)
-              set((st) => ({ chats: st.chats.map((c) => (c.id === pm.c.id ? { ...c, msgs: [...c.msgs, um] } : c)), notice: null }))
+              set((st) => ({
+                chats: st.chats.map((c) => {
+                  if (c.id !== pm.c.id) return c
+                  const cut = revertCut(c)
+                  return { ...(cut ?? c), msgs: [...(cut ?? c).msgs, um] }
+                }),
+                notice: null,
+                revert: st.revert && st.revert.chat === pm.c.id ? null : st.revert,
+              }))
               void planResearch(pm.m.id, um, pm.m.research!.query, pm.m.research!.tier ?? 'standard', raw)
               return true
             }
@@ -3086,7 +3116,11 @@ export const useS = create<S>()(
           // alongside in wire().
           um.fx = attachmentAppendix(files)
           um.full = full(body(cmd, text), um.ctx, um.fx)
-          const previous = s2.chats.find((c) => c.id === chatId)?.msgs ?? []
+          const previousChat = s2.chats.find((c) => c.id === chatId)
+          // A reverted prompt is planned against the transcript it will leave
+          // behind: everything after its message is dropped when it is sent.
+          const revAt = previousChat && s2.revert?.chat === previousChat.id ? previousChat.msgs.findIndex((m) => m.id === s2.revert!.mid) : -1
+          const previous = revAt >= 0 ? previousChat!.msgs.slice(0, revAt) : previousChat?.msgs ?? []
           const cpt = Math.min(10, Math.max(1, Number(s2.widgetPrefs?.charsPerToken) || 4))
           um.historyTokens = estimateHistoryTokens(previous, '', cpt)
           um.explicitTokens = est(um.full)
@@ -3095,13 +3129,15 @@ export const useS = create<S>()(
             // Materializes the pending new chat: the temporary flag and expiry
             // are decided here, at the first message, not before.
             const pending = !old && st.newChatPending
-            const base: Chat = old ?? { id: uid(), title: 'New chat', msgs: [], ...(pending ? { temporary: pending === 'temporary', expiresAt: pending === 'temporary' && st.prefs.tempHours > 0 ? Date.now() + st.prefs.tempHours * 3600000 : undefined, title: 'Temporary chat' } : {}), ...(old ? {} : st.activeProject ? { project: st.activeProject } : {}) }
+            // A reverted prompt replaces its own message and everything after it.
+            const cut = old ? revertCut(old) : null
+            const base: Chat = cut ?? old ?? { id: uid(), title: 'New chat', msgs: [], ...(pending ? { temporary: pending === 'temporary', expiresAt: pending === 'temporary' && st.prefs.tempHours > 0 ? Date.now() + st.prefs.tempHours * 3600000 : undefined, title: 'Temporary chat' } : {}), ...(old ? {} : st.activeProject ? { project: st.activeProject } : {}) }
             const next: Chat = { ...base, started: true, titleAuto: base.msgs.length ? base.titleAuto : st.prefs.autoTitle, title: base.msgs.length ? base.title : (raw || files[0]?.name || 'New chat').slice(0, 40), msgs: [...base.msgs, um] }
             // Sending from a new-chat screen (or a project home) consumes the
             // pending draft; only the chat that now holds the message keeps it.
             const drafts = { ...st.drafts }
             if (!old) delete drafts['']
-            return { chat: base.id, newChatPending: old ? st.newChatPending : null, chats: old ? st.chats.map((c) => (c.id === base.id ? next : c)) : [next, ...st.chats], drafts, notice: null, stats: featOn(st, 'stats') ? { ...st.stats, sent: st.stats.sent + 1, chats: st.stats.chats + (base.started ? 0 : 1) } : st.stats }
+            return { chat: base.id, newChatPending: old ? st.newChatPending : null, chats: old ? st.chats.map((c) => (c.id === base.id ? next : c)) : [next, ...st.chats], drafts, notice: null, revert: st.revert && st.revert.chat === base.id ? null : st.revert, stats: featOn(st, 'stats') ? { ...st.stats, sent: st.stats.sent + 1, chats: st.stats.chats + (base.started ? 0 : 1) } : st.stats }
           })
           void answer(um)
           return true
@@ -3377,6 +3413,24 @@ export const useS = create<S>()(
             chats: st.chats.map((x) => (x.id === c.id ? { ...x, msgs: x.msgs.map((m) => (m.id === mid && m.research && (m.research.status === 'running' || m.research.status === 'writing' || m.research.status === 'tier-pick' || m.research.status === 'planning' || m.research.status === 'questions' || m.research.status === 'plan') ? { ...m, research: { ...m.research, status: 'stopped', finishedAt: Date.now() } } : m)) } : x)),
           }))
         },
+        /* Revert-send: pull a user message back into the composer and mark
+         * every later message for removal. Nothing is deleted until the prompt
+         * is actually sent, so cancelling keeps the whole thread. */
+        armRevert: (mid) => {
+          const s = get(), c = s.chats.find((x) => x.id === s.chat)
+          const i = c ? c.msgs.findIndex((m) => m.id === mid) : -1
+          if (!c || i < 0 || c.msgs[i].r !== 'user') return false
+          if (chatBusy(s, c.id)) { set({ notice: { t: 'A reply is still in progress in this chat. Stop it first, then revert.' } }); return false }
+          // The old draft comes back on cancel; the message text replaces it in
+          // the composer while the revert is armed.
+          set({ revert: { chat: c.id, mid, text: c.msgs[i].t, draft: s.draft }, draft: c.msgs[i].t })
+          return true
+        },
+        cancelRevert: () => {
+          const s = get()
+          if (!s.revert) return
+          set({ revert: null, draft: s.revert.draft })
+        },
         editMsg: (id, t) => {
           const s = get(), c = s.chats.find((x) => x.id === s.chat), i = c ? c.msgs.findIndex((m) => m.id === id) : -1
           if (!c || i < 0) return false
@@ -3599,7 +3653,7 @@ export const useS = create<S>()(
           p.prefs.titleEp = ''
         }
         if (p.prefs && p.prefs.showTps === undefined) p.prefs.showTps = false
-        p.prefs = { ...p.prefs, hideFavoriteProvider: p.prefs?.hideFavoriteProvider === true, logDetail: normLogDetail(p.prefs?.logDetail), logTiming: p.prefs?.logTiming !== false, logModels: p.prefs?.logModels !== false, codeLines: p.prefs?.codeLines === true, codeMaxHeight: typeof p.prefs?.codeMaxHeight === 'number' && Number.isFinite(p.prefs.codeMaxHeight) ? Math.max(0, Math.min(1200, Math.round(p.prefs.codeMaxHeight))) : 0, pinContext: p.prefs?.pinContext !== false, pinContextPercent: typeof p.prefs?.pinContextPercent === 'number' && Number.isFinite(p.prefs.pinContextPercent) ? Math.max(5, Math.min(50, Math.round(p.prefs.pinContextPercent))) : 50, tempHours: p.prefs?.tempHours ?? 3, archiveDays: normArchiveDays(p.prefs?.archiveDays), startup: normStartup(p.prefs?.startup), tempShow: Number.isInteger(p.prefs?.tempShow) ? Math.max(0, Math.min(6, p.prefs.tempShow)) : 2, tempShowStreaming: p.prefs?.tempShowStreaming !== false, tempShowDone: p.prefs?.tempShowDone !== false, draftSurvive: ['off', 'new', 'chats', 'both'].includes(p.prefs?.draftSurvive) ? p.prefs.draftSurvive : 'both', fontBody: p.prefs?.fontBody ?? 'system', fontMono: p.prefs?.fontMono ?? 'system', fontHeader: p.prefs?.fontHeader ?? 'system', modelPrimary: p.prefs?.modelPrimary ?? ({ none: 'id', name: 'name', provider: 'id', both: 'name' } as const)[(p.prefs?.modelDisplay as string) ?? 'both'] ?? 'name', modelSecondary: p.prefs?.modelSecondary ?? ({ none: 'none', name: 'none', provider: 'provider', both: 'provider' } as const)[(p.prefs?.modelDisplay as string) ?? 'both'] ?? 'none', paletteMax: p.prefs?.paletteMax ?? 320, chatWidth: p.prefs?.chatWidth ?? 'standard', settingsWidth: p.prefs?.settingsWidth ?? 1024, settingsHeight: p.prefs?.settingsHeight ?? 780, modelPickerHeight: p.prefs?.modelPickerHeight ?? 480, showModelPricing: p.prefs?.showModelPricing ?? false, showContextMeter: p.prefs?.showContextMeter ?? true, replyModelLabel: ['name', 'slug', 'name-endpoint', 'slug-endpoint'].includes(p.prefs?.replyModelLabel) ? p.prefs.replyModelLabel : 'name', replyStats: Array.isArray(p.prefs?.replyStats) ? [...new Set(p.prefs.replyStats.filter((x: unknown): x is ReplyMetric => x === 'tps' || x === 'tokens' || x === 'time' || x === 'cost'))] : [...DEFAULT_REPLY_STATS], titleEp: p.prefs?.titleEp ?? '', titleModel: p.prefs?.titleModel ?? '', effortEp: p.prefs?.effortEp ?? '', effortModel: p.prefs?.effortModel ?? '', recallEp: p.prefs?.recallEp ?? '', recallModel: p.prefs?.recallModel ?? '', routingMode: ['ordered', 'fastest', 'cheapest'].includes(p.prefs?.routingMode) ? p.prefs.routingMode : 'ordered', sidebarWidth: p.prefs?.sidebarWidth ?? 288, widgetWidth: p.prefs?.widgetWidth ?? 320, workspaceWidth: typeof p.prefs?.workspaceWidth === 'number' && p.prefs.workspaceWidth <= 1 ? p.prefs.workspaceWidth : 0.4, workspaceSplit: typeof p.prefs?.workspaceSplit === 'number' ? p.prefs.workspaceSplit : 0.2, modalBlur: p.prefs?.modalBlur ?? 12, settingsOpacity: p.prefs?.settingsOpacity ?? 55, temporaryByDefault: p.prefs?.temporaryByDefault ?? false, streamFade: typeof p.prefs?.streamFade === 'number' && p.prefs.streamFade >= 0 && p.prefs.streamFade <= 1 ? p.prefs.streamFade : 0.3, streamMd: p.prefs?.streamMd ?? true, proxyMode: p.prefs?.proxyMode === 'always' || p.prefs?.proxyMode === 'off' ? p.prefs.proxyMode : 'auto', glassComposer: p.prefs?.glassComposer ?? true, glassBlur: typeof p.prefs?.glassBlur === 'number' && Number.isFinite(p.prefs.glassBlur) ? Math.max(0, Math.min(40, Math.round(p.prefs.glassBlur))) : 14, glassOpacity: typeof p.prefs?.glassOpacity === 'number' && Number.isFinite(p.prefs.glassOpacity) ? Math.max(0, Math.min(100, Math.round(p.prefs.glassOpacity))) : 80, showDisabledFeatures: p.prefs?.showDisabledFeatures === true, stylePreset: normStylePreset(p.prefs?.stylePreset), density: normDensity(p.prefs?.density), uiSpacing: normSpacing(p.prefs?.uiSpacing), showTimestamps: p.prefs?.showTimestamps === true, alwaysShowActions: p.prefs?.alwaysShowActions === true, textScale: typeof p.prefs?.textScale === 'number' && Number.isFinite(p.prefs.textScale) ? Math.round(Math.min(200, Math.max(50, p.prefs.textScale))) : 100, codeWrap: p.prefs?.codeWrap === true, reduceTransparency: p.prefs?.reduceTransparency === true, promptRecall: normPromptRecall(p.prefs?.promptRecall), highContrast: p.prefs?.highContrast === true }
+        p.prefs = { ...p.prefs, hideFavoriteProvider: p.prefs?.hideFavoriteProvider === true, revertSend: p.prefs?.revertSend === true, logDetail: normLogDetail(p.prefs?.logDetail), logTiming: p.prefs?.logTiming !== false, logModels: p.prefs?.logModels !== false, codeLines: p.prefs?.codeLines === true, codeMaxHeight: typeof p.prefs?.codeMaxHeight === 'number' && Number.isFinite(p.prefs.codeMaxHeight) ? Math.max(0, Math.min(1200, Math.round(p.prefs.codeMaxHeight))) : 0, pinContext: p.prefs?.pinContext !== false, pinContextPercent: typeof p.prefs?.pinContextPercent === 'number' && Number.isFinite(p.prefs.pinContextPercent) ? Math.max(5, Math.min(50, Math.round(p.prefs.pinContextPercent))) : 50, tempHours: p.prefs?.tempHours ?? 3, archiveDays: normArchiveDays(p.prefs?.archiveDays), startup: normStartup(p.prefs?.startup), tempShow: Number.isInteger(p.prefs?.tempShow) ? Math.max(0, Math.min(6, p.prefs.tempShow)) : 2, tempShowStreaming: p.prefs?.tempShowStreaming !== false, tempShowDone: p.prefs?.tempShowDone !== false, draftSurvive: ['off', 'new', 'chats', 'both'].includes(p.prefs?.draftSurvive) ? p.prefs.draftSurvive : 'both', fontBody: p.prefs?.fontBody ?? 'system', fontMono: p.prefs?.fontMono ?? 'system', fontHeader: p.prefs?.fontHeader ?? 'system', modelPrimary: p.prefs?.modelPrimary ?? ({ none: 'id', name: 'name', provider: 'id', both: 'name' } as const)[(p.prefs?.modelDisplay as string) ?? 'both'] ?? 'name', modelSecondary: p.prefs?.modelSecondary ?? ({ none: 'none', name: 'none', provider: 'provider', both: 'provider' } as const)[(p.prefs?.modelDisplay as string) ?? 'both'] ?? 'none', paletteMax: p.prefs?.paletteMax ?? 320, chatWidth: p.prefs?.chatWidth ?? 'standard', settingsWidth: p.prefs?.settingsWidth ?? 1024, settingsHeight: p.prefs?.settingsHeight ?? 780, modelPickerHeight: p.prefs?.modelPickerHeight ?? 480, showModelPricing: p.prefs?.showModelPricing ?? false, showContextMeter: p.prefs?.showContextMeter ?? true, replyModelLabel: ['name', 'slug', 'name-endpoint', 'slug-endpoint'].includes(p.prefs?.replyModelLabel) ? p.prefs.replyModelLabel : 'name', replyStats: Array.isArray(p.prefs?.replyStats) ? [...new Set(p.prefs.replyStats.filter((x: unknown): x is ReplyMetric => x === 'tps' || x === 'tokens' || x === 'time' || x === 'cost'))] : [...DEFAULT_REPLY_STATS], titleEp: p.prefs?.titleEp ?? '', titleModel: p.prefs?.titleModel ?? '', effortEp: p.prefs?.effortEp ?? '', effortModel: p.prefs?.effortModel ?? '', recallEp: p.prefs?.recallEp ?? '', recallModel: p.prefs?.recallModel ?? '', routingMode: ['ordered', 'fastest', 'cheapest'].includes(p.prefs?.routingMode) ? p.prefs.routingMode : 'ordered', sidebarWidth: p.prefs?.sidebarWidth ?? 288, widgetWidth: p.prefs?.widgetWidth ?? 320, workspaceWidth: typeof p.prefs?.workspaceWidth === 'number' && p.prefs.workspaceWidth <= 1 ? p.prefs.workspaceWidth : 0.4, workspaceSplit: typeof p.prefs?.workspaceSplit === 'number' ? p.prefs.workspaceSplit : 0.2, modalBlur: p.prefs?.modalBlur ?? 12, settingsOpacity: p.prefs?.settingsOpacity ?? 55, temporaryByDefault: p.prefs?.temporaryByDefault ?? false, streamFade: typeof p.prefs?.streamFade === 'number' && p.prefs.streamFade >= 0 && p.prefs.streamFade <= 1 ? p.prefs.streamFade : 0.3, streamMd: p.prefs?.streamMd ?? true, proxyMode: p.prefs?.proxyMode === 'always' || p.prefs?.proxyMode === 'off' ? p.prefs.proxyMode : 'auto', glassComposer: p.prefs?.glassComposer ?? true, glassBlur: typeof p.prefs?.glassBlur === 'number' && Number.isFinite(p.prefs.glassBlur) ? Math.max(0, Math.min(40, Math.round(p.prefs.glassBlur))) : 14, glassOpacity: typeof p.prefs?.glassOpacity === 'number' && Number.isFinite(p.prefs.glassOpacity) ? Math.max(0, Math.min(100, Math.round(p.prefs.glassOpacity))) : 80, showDisabledFeatures: p.prefs?.showDisabledFeatures === true, stylePreset: normStylePreset(p.prefs?.stylePreset), density: normDensity(p.prefs?.density), uiSpacing: normSpacing(p.prefs?.uiSpacing), showTimestamps: p.prefs?.showTimestamps === true, alwaysShowActions: p.prefs?.alwaysShowActions === true, textScale: typeof p.prefs?.textScale === 'number' && Number.isFinite(p.prefs.textScale) ? Math.round(Math.min(200, Math.max(50, p.prefs.textScale))) : 100, codeWrap: p.prefs?.codeWrap === true, reduceTransparency: p.prefs?.reduceTransparency === true, promptRecall: normPromptRecall(p.prefs?.promptRecall), highContrast: p.prefs?.highContrast === true }
         p.favs = Array.isArray(p.favs) ? [...new Set(p.favs.filter((x: unknown) => typeof x === 'string' && x.includes('::')))] : []
         p.prefs = { ...p.prefs, qualityFavs: normQualityFavs(p.prefs?.qualityFavs, (Array.isArray(p.qualities) ? p.qualities : DEFAULT_QUALITIES).map((q: Quality) => q.id)), favoritesSection: p.prefs?.favoritesSection !== false, hideFavoritesInProviders: p.prefs?.hideFavoritesInProviders !== false, collapsedProviders: Array.isArray(p.prefs?.collapsedProviders) ? p.prefs.collapsedProviders.filter((x: unknown) => typeof x === 'string') : [] }
         // Image backgrounds were removed; drop their persisted settings.
@@ -3788,10 +3842,10 @@ export const useS = create<S>()(
         }
         // The permanent usage ledger has its own storage key (storage/usageLedger.ts):
         // keeping it here would re-serialise the whole history on every save.
-        const { usage, usageTitles, undo, ...rest } = s
-        void usage; void usageTitles; void undo
+        const { usage, usageTitles, undo, revert, ...rest } = s
+        void usage; void usageTitles; void undo; void revert
         return {
-          ...rest, busy: false, busyChats: {}, doneChats: {}, queued: {}, draft: kept[s.chat ?? ''] ?? '', drafts: kept, notice: null, flashMsg: null, activeProject: '', undo: null,
+          ...rest, busy: false, busyChats: {}, doneChats: {}, queued: {}, draft: kept[s.chat ?? ''] ?? '', drafts: kept, notice: null, flashMsg: null, activeProject: '', undo: null, revert: null,
           // Per-chat memoized: only the chat that changed is re-mapped.
           chats: mapPersistChats(withoutExpiredTemps(s.chats)),
         }
@@ -3817,7 +3871,7 @@ useS.subscribe((s, prev) => {
  * chunk, so they are off the streaming render path entirely. Components that
  * need any of these fields must use their own selector. */
 export const useSConfig = () => useS(useShallow((s) => {
-  const { chats, drafts, busy, busyChats, runJournal, doneChats, queued, draft, notice, flashMsg, usage, usageTitles, undo, ...config } = s
-  void chats; void drafts; void busy; void busyChats; void doneChats; void queued; void draft; void notice; void flashMsg; void usage; void usageTitles; void undo
+  const { chats, drafts, busy, busyChats, runJournal, doneChats, queued, draft, notice, flashMsg, usage, usageTitles, undo, revert, ...config } = s
+  void chats; void drafts; void busy; void busyChats; void doneChats; void queued; void draft; void notice; void flashMsg; void usage; void usageTitles; void undo; void revert
   return config
 }))

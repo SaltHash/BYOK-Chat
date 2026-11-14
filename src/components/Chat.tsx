@@ -241,93 +241,92 @@ function ToolTrail({ calls }: { calls: TrailCall[] }) {
       other.push(call)
     }
   }
-  const hasEvidence = searches.length > 0 || reads.length > 0
+  const sourceCount = searches.reduce((n, search) => n + search.links.length, 0) + reads.length
   const summary = summarizeToolCalls(other.length ? other : calls)
   const Icon = TOOL_KIND_ICON[summary.clauses[0]?.kind ?? 'other'] ?? Wrench
   return (
     <div className="my-3 space-y-2">
-      {searches.map((search, i) => (
-        <div key={`search-${i}`} className="space-y-2">
-          <div className="flex items-center gap-1.5 text-xs font-medium text-tx">
-            <Search size={13} className="shrink-0 text-mu" aria-hidden="true" />
-            <span className="min-w-0 truncate">Searched “{search.query || 'the web'}”</span>
-            {search.provider && <span className="shrink-0 font-normal text-mu">· {search.provider}</span>}
-            {search.links.length > 0 && <span className="shrink-0 font-normal text-mu">· {search.links.length} result{search.links.length === 1 ? '' : 's'}</span>}
-          </div>
-          {search.links.length > 0 && (
-            <div className="flex flex-wrap gap-1.5">
-              {search.links.map((link) => (
+      {/* A collapsed trail is its summary line only: source pills and the
+          calls behind them belong to the expanded view. */}
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={() => setOpen(!open)}
+        title={open ? 'Hide the tool calls behind this text' : 'Show the tool calls behind this text'}
+        className="inline-flex max-w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-mu transition-colors hover:bg-surf hover:text-tx focus-visible:bg-surf focus-visible:text-tx"
+      >
+        <Icon size={14} className="shrink-0" aria-hidden="true" />
+        <span className="truncate">{summary.title}</span>
+        {sourceCount > 0 && <span className="shrink-0">· {sourceCount} source{sourceCount === 1 ? '' : 's'}</span>}
+        <ChevronRight size={13} className={cx('ml-1 shrink-0 transition-transform', open && 'rotate-90')} />
+      </button>
+      {open && (
+        <div className="ml-3 space-y-2 border-l border-bor pl-3">
+          {searches.map((search, i) => (
+            <div key={`search-${i}`} className="space-y-2">
+              <div className="flex items-center gap-1.5 text-xs font-medium text-tx">
+                <Search size={13} className="shrink-0 text-mu" aria-hidden="true" />
+                <span className="min-w-0 truncate">Searched “{search.query || 'the web'}”</span>
+                {search.provider && <span className="shrink-0 font-normal text-mu">· {search.provider}</span>}
+                {search.links.length > 0 && <span className="shrink-0 font-normal text-mu">· {search.links.length} result{search.links.length === 1 ? '' : 's'}</span>}
+              </div>
+              {search.links.length > 0 && (
+                <div className="flex flex-wrap gap-1.5">
+                  {search.links.map((link) => (
+                    <a
+                      key={link.url}
+                      href={link.url}
+                      target="_blank"
+                      rel="noopener noreferrer nofollow"
+                      title={`${link.title}\n${link.url}`}
+                      className="inline-flex max-w-[min(100%,20rem)] items-center gap-1.5 rounded-full border border-bor bg-surf px-2.5 py-1 text-xs text-tx transition-colors hover:border-ac/40 hover:bg-hov"
+                    >
+                      <span className="truncate">{link.title}</span>
+                      <span className="shrink-0 text-[10px] text-mu">{link.host}</span>
+                    </a>
+                  ))}
+                </div>
+              )}
+            </div>
+          ))}
+          {reads.map((link) => (
+            <div key={`read-${link.url}`} className="space-y-1.5">
+              <a
+                href={link.url}
+                target="_blank"
+                rel="noopener noreferrer nofollow"
+                title={`Open ${link.url} in a new tab`}
+                className="flex min-w-0 items-center gap-1.5 text-xs text-mu transition-colors hover:text-tx"
+              >
+                <FileText size={13} className="shrink-0" aria-hidden="true" />
+                <span className="min-w-0 truncate">Read <span className="underline decoration-bor underline-offset-2">{link.url}</span></span>
+                <ExternalLink size={11} className="shrink-0" aria-hidden="true" />
+              </a>
+              <div>
                 <a
-                  key={link.url}
                   href={link.url}
                   target="_blank"
                   rel="noopener noreferrer nofollow"
                   title={`${link.title}\n${link.url}`}
-                  className="inline-flex max-w-[min(100%,20rem)] items-center gap-1.5 rounded-full border border-bor/80 bg-bg/55 px-2.5 py-1 text-xs text-tx transition-colors hover:border-ac/40 hover:bg-surf"
+                  className="inline-flex max-w-[min(100%,20rem)] items-center gap-1.5 rounded-full border border-bor bg-surf px-2.5 py-1 text-xs text-tx transition-colors hover:border-ac/40 hover:bg-hov"
                 >
                   <span className="truncate">{link.title}</span>
                   <span className="shrink-0 text-[10px] text-mu">{link.host}</span>
                 </a>
-              ))}
+              </div>
             </div>
-          )}
-        </div>
-      ))}
-      {reads.map((link) => (
-        <div key={`read-${link.url}`} className="space-y-1.5">
-          <a
-            href={link.url}
-            target="_blank"
-            rel="noopener noreferrer nofollow"
-            title={`Open ${link.url} in a new tab`}
-            className="flex min-w-0 items-center gap-1.5 text-xs text-mu transition-colors hover:text-tx"
-          >
-            <FileText size={13} className="shrink-0" aria-hidden="true" />
-            <span className="min-w-0 truncate">Read <span className="underline decoration-bor underline-offset-2">{link.url}</span></span>
-            <ExternalLink size={11} className="shrink-0" aria-hidden="true" />
-          </a>
-          <div>
-            <a
-              href={link.url}
-              target="_blank"
-              rel="noopener noreferrer nofollow"
-              title={`${link.title}\n${link.url}`}
-              className="inline-flex max-w-[min(100%,20rem)] items-center gap-1.5 rounded-full border border-bor/80 bg-bg/55 px-2.5 py-1 text-xs text-tx transition-colors hover:border-ac/40 hover:bg-surf"
-            >
-              <span className="truncate">{link.title}</span>
-              <span className="shrink-0 text-[10px] text-mu">{link.host}</span>
-            </a>
-          </div>
-        </div>
-      ))}
-      {(!hasEvidence || other.length > 0) && (
-        <div>
-          <button
-            type="button"
-            aria-expanded={open}
-            onClick={() => setOpen(!open)}
-            title={open ? 'Hide the tool calls behind this text' : 'Show the tool calls behind this text'}
-            className="inline-flex max-w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-mu transition-colors hover:bg-surf hover:text-tx focus-visible:bg-surf focus-visible:text-tx"
-          >
-            <Icon size={14} className="shrink-0" aria-hidden="true" />
-            <span className="truncate">{summary.title}</span>
-            <ChevronRight size={13} className={cx('ml-1 shrink-0 transition-transform', open && 'rotate-90')} />
-          </button>
-          {open && (
-            <div className="ml-3 mt-1 space-y-0.5 border-l border-bor pl-3">
-              {(other.length ? other : calls).map((call, i) => {
-                const [head, desc] = toolNode(toolStep(call.name, call.arguments ?? '', call.result), call.name)
-                const RowIcon = callIcon(call)
-                return (
-                  <div key={`${call.name}-${i}`} className="flex items-start gap-2 py-1 text-xs">
-                    <RowIcon size={13} className={cx('mt-0.5 shrink-0', call.error ? 'text-er' : 'text-mu')} aria-hidden="true" />
-                    <span className={cx('min-w-0 break-words text-tx', call.error && 'text-er')}>{head}</span>
-                    {desc && <span className={cx('min-w-0 break-words text-mu', call.error && 'text-er')}>{desc}</span>}
-                  </div>
-                )
-              })}
-            </div>
-          )}
+          ))}
+          {other.length > 0 && other.map((call, i) => {
+            const [head, desc] = toolNode(toolStep(call.name, call.arguments ?? '', call.result), call.name)
+            const RowIcon = callIcon(call)
+            return (
+              <div key={`${call.name}-${i}`} className="flex items-start gap-2 py-1 text-xs">
+                <RowIcon size={13} className={cx('mt-0.5 shrink-0', call.error ? 'text-er' : 'text-mu')} aria-hidden="true" />
+                <span className={cx('min-w-0 break-words text-tx', call.error && 'text-er')}>{head}</span>
+                {desc && <span className={cx('min-w-0 break-words text-mu', call.error && 'text-er')}>{desc}</span>}
+              </div>
+            )
+          })}
         </div>
       )}
     </div>
@@ -1162,9 +1161,11 @@ export function Chat({ side, toggle, cfg, pal }: { side: boolean; toggle: () => 
   const s = useS(useShallow((st) => ({
     chats: st.chats, chat: st.chat, cmds: st.cmds, prefs: st.prefs, workspaces: st.workspaces,
     selectedRevision: st.selectedRevision, eps: st.eps, features: st.features, patch: st.patch, newChatPending: st.newChatPending,
-    projects: st.projects, activeProject: st.activeProject,
+    projects: st.projects, activeProject: st.activeProject, revert: st.revert,
   })))
   const c = s.chats.find((x) => x.id === s.chat)
+  // Messages a send from an armed revert would drop stay visible but fade.
+  const revertIdx = s.revert && s.revert.chat === s.chat && c ? c.msgs.findIndex((m) => m.id === s.revert!.mid) : -1
   // Project overview mode: a project opened from the sidebar fills the main
   // area until a chat is opened. A chat always wins over the overview, so
   // opening one clears the stale pointer.
@@ -1605,7 +1606,22 @@ export function Chat({ side, toggle, cfg, pal }: { side: boolean; toggle: () => 
                   </div>
                 )}
                 <PathSwitch anchor="" className="mx-auto" />
-                {c.msgs.slice(windowFrom).map((m, i) => <M key={m.id} m={m} cfg={cfg} last={windowFrom + i === c.msgs.length - 1} onOpenWorkspace={openWorkspace} onOpenResearch={openResearch} selectedWorkspaceId={workspacePanel?.mid === m.id ? selectedRevId : null} searchQuery={findQ} searchOpen={findOpen} />)}
+                {c.msgs.slice(windowFrom).map((m, i) => {
+                  const at = windowFrom + i
+                  if (revertIdx < 0 || at <= revertIdx) {
+                    return <M key={m.id} m={m} cfg={cfg} last={at === c.msgs.length - 1} onOpenWorkspace={openWorkspace} onOpenResearch={openResearch} selectedWorkspaceId={workspacePanel?.mid === m.id ? selectedRevId : null} searchQuery={findQ} searchOpen={findOpen} />
+                  }
+                  // A tint and reduced opacity, not an error colour: these
+                  // messages are still there until the reverted prompt is sent.
+                  return (
+                    <div key={m.id} className="rounded-xl bg-er/5 p-1">
+                      {at === revertIdx + 1 && <p className="px-1 pb-1 text-xs text-mu">Sending the reverted prompt removes this message and everything after it.</p>}
+                      <div className="opacity-50">
+                        <M m={m} cfg={cfg} last={at === c.msgs.length - 1} onOpenWorkspace={openWorkspace} onOpenResearch={openResearch} selectedWorkspaceId={workspacePanel?.mid === m.id ? selectedRevId : null} searchQuery={findQ} searchOpen={findOpen} />
+                      </div>
+                    </div>
+                  )
+                })}
                 {c.msgs[c.msgs.length - 1]?.r === 'user' && !busy && (
                   <div className="flex justify-center pt-2">
                     <button onClick={() => useS.getState().regen()} className="inline-flex min-h-9 items-center gap-2 rounded-full border border-bor bg-surf px-4 py-1.5 text-sm text-tx transition-colors hover:bg-hov focus-visible:ring-2 focus-visible:ring-ac">

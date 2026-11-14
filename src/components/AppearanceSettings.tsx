@@ -266,6 +266,7 @@ export function AppearanceSettings() {
       <Section title="Messages">
         {row('message-times', 'Message times', <Toggle on={!!s.prefs.showTimestamps} set={(showTimestamps) => s.patch({ prefs: { ...s.prefs, showTimestamps } })} label="Message times" />)}
         {row('message-actions', 'Always show message actions', <Toggle on={!!s.prefs.alwaysShowActions} set={(alwaysShowActions) => s.patch({ prefs: { ...s.prefs, alwaysShowActions } })} label="Always show message actions" />)}
+        {row('revert-send', 'Revert send button', <Toggle on={s.prefs.revertSend === true} set={(revertSend) => s.patch({ prefs: { ...s.prefs, revertSend } })} label="Revert send button" />)}
       </Section>
 
       <Section title="Model picker">

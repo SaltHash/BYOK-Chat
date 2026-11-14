@@ -123,3 +123,35 @@ test('attachment prompt names and truncation state survive persistence', () => {
   assert.equal(out[0].msgs[0].att[0].chars, 48000)
   assert.equal('text' in out[0].msgs[0].att[0], false)
 })
+
+test('persist mapper reuses the mapped array until the chats array changes', () => {
+  const map = createPersistMapper()
+  const a = { id: 'a', msgs: [{ id: 'm', r: 'user', t: 'x' }] }
+  const chats = [a]
+  const first = map(chats)
+  assert.equal(map(chats), first, 'a settings-only write keeps the same mapped array')
+  assert.notEqual(map([...chats]), first, 'a new chats array is mapped again')
+})
+
+test('a settings-only change writes the main record immediately and leaves chat rows alone', async () => {
+  const { spawnSync } = await import('node:child_process')
+  const script = `
+    globalThis.window = { addEventListener() {}, removeEventListener() {}, dispatchEvent() {} };
+    const values = new Map();
+    globalThis.localStorage = { getItem: k => values.get(k) ?? null, setItem: (k,v) => values.set(k,v), removeItem: k => values.delete(k), key: i => [...values.keys()][i] ?? null, get length() { return values.size } };
+    const { persistStorage, allowPersistWritesAfterBoot } = await import('./src/persistence.ts');
+    allowPersistWritesAfterBoot();
+    const chats = [{ id: 'a', msgs: [{ id: 'm', r: 'user', t: 'hi' }] }];
+    const workspaces = {};
+    persistStorage.setItem('byok.v1', { version: 26, state: { prefs: { showBy: true }, chats, workspaces } });
+    persistStorage.flush();
+    const shard = values.get('byok.v1:chat:a');
+    persistStorage.setItem('byok.v1', { version: 26, state: { prefs: { showBy: false }, chats, workspaces } });
+    const main = JSON.parse(values.get('byok.v1'));
+    if (main.state.prefs.showBy !== false) throw Error('settings were not written immediately');
+    if (values.get('byok.v1:chat:a') !== shard) throw Error('chat row was rewritten for a settings change');
+    if (persistStorage.hasPending()) throw Error('settings write waited for the coalescing window');
+  `
+  const result = spawnSync(process.execPath, ['--import', './tests/register-loader.mjs', '--input-type=module', '-e', script], { encoding: 'utf8' })
+  assert.equal(result.status, 0, result.stderr)
+})

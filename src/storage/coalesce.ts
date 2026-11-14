@@ -79,7 +79,7 @@ export function createWriteCoalescer<T>(write: (value: T) => void, options: Coal
 /** A `PersistStorage` that serializes and writes at most once per window.
  *  Coalescing happens before `JSON.stringify`, so the per-chunk cost drops
  *  from "stringify + write the whole app" to "hold a reference". */
-export type CoalescedPersistStorage<S> = PersistStorage<S> & { flush: () => void }
+export type CoalescedPersistStorage<S> = PersistStorage<S> & { flush: () => void; hasPending: () => boolean }
 
 export function createCoalescedPersistStorage<S>(storage: StateStorage, options: CoalescerOptions = {}): CoalescedPersistStorage<S> {
   type Entry = { name: string; value: StorageValue<S> }
@@ -106,6 +106,7 @@ export function createCoalescedPersistStorage<S>(storage: StateStorage, options:
       return storage.removeItem(name)
     },
     flush: () => coalescer.flush(),
+    hasPending: () => coalescer.peek() !== undefined,
   }
 }
 

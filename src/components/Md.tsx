@@ -1,5 +1,5 @@
 import { lazy, Suspense, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { Check, Copy, GitBranch, Pencil, Trash2 } from 'lucide-react'
+import { Check, Copy, GitBranch, Pencil, Trash2, Undo2 } from 'lucide-react'
 import { useS, featOn, type Msg } from '../store'
 import { tokenizeMentions, bannerOf, sentBodyText, isPill } from '../mentions'
 import { MentionChip, SentMentionBanner, SentQuoteBanner } from './Mention'
@@ -24,6 +24,8 @@ export function Md({ t, bare = false, cites, blocks = false, fadeFrom }: { t: st
 
 export function UserText({ m, searchQuery, searchOpen }: { m: Msg; searchQuery?: string; searchOpen?: boolean }) {
   const edit = useS((s) => s.editMsg)
+  const revertSend = useS((s) => s.prefs.revertSend === true)
+  const revertHere = useS((s) => s.revert?.mid === m.id)
   const branch = useS((s) => s.branch)
   const cmds = useS((s) => s.cmds)
   const tools = useS((s) => s.tools)
@@ -115,7 +117,9 @@ export function UserText({ m, searchQuery, searchOpen }: { m: Msg; searchQuery?:
         <Btn sm icon={copied ? Check : Copy} title="Copy" onClick={() => { void navigator.clipboard?.writeText(m.t).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1200) }).catch(() => {}) }} />
         <PathSwitch anchor={m.id} />
         <Btn sm icon={GitBranch} title="Start a new path from here — this thread stays reachable from the path arrows" onClick={() => branch(m.id)} />
-        <Btn sm icon={Pencil} title="Edit message" onClick={() => setEd(true)} />
+        {revertSend
+          ? <Btn sm icon={Undo2} className={cx(revertHere && 'text-ac')} title={revertHere ? 'Cancel revert' : 'Revert to this message — send it again to remove everything after it'} onClick={() => (revertHere ? useS.getState().cancelRevert() : useS.getState().armRevert(m.id))} />
+          : <Btn sm icon={Pencil} title="Edit message" onClick={() => setEd(true)} />}
         <Btn sm icon={Trash2} title="Delete" onClick={() => useS.getState().delMsg(m.id)} />
       </span>
     </div>

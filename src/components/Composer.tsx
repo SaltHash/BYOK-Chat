@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { useShallow } from 'zustand/react/shallow'
-import { Plus, FileUp, FileText, ArrowUp, Square, CornerDownRight, ChevronRight, ListMusic, ListPlus, Cpu, ScrollText, Settings, Search, BookOpen, X, TriangleAlert, Wrench, Link as LinkIcon, ScanText, Loader2, Mic, Star, GripVertical, Check, Globe, Pencil } from 'lucide-react'
+import { Plus, FileUp, FileText, ArrowUp, Square, CornerDownRight, ChevronRight, ListMusic, ListPlus, Cpu, ScrollText, Settings, Search, BookOpen, X, TriangleAlert, Wrench, Link as LinkIcon, ScanText, Loader2, Mic, Star, GripVertical, Check, Globe, Pencil, Undo2 } from 'lucide-react'
 import { useS, usable, modelsOf, modelNameOf, featOn, normDocs, normSearch, fetchOptsOf, effortClassifierOf, helperRef, splitHelperRef, toggleFavRef, type Att, type Ep } from '../store'
 import { DEFAULT_QUALITY_FAVS, normQualities, normQualityFavs, type PromptQuality } from '../flair'
 import { CI, orderTools } from '../meta'
@@ -280,6 +280,15 @@ export function Composer({ cfg, quote, onClearQuote }: { cfg: (t: string) => voi
   const histIdx = useRef<number | null>(null)
   const histDraft = useRef('')
   const v = s.draft
+  // Revert-send: while this chat has an armed revert, the draft came from one
+  // of its messages and sending will drop everything after that message.
+  const revert = useS((st) => st.revert)
+  const revertCount = useS((st) => {
+    if (!st.revert || st.revert.chat !== st.chat) return 0
+    const chat = st.chats.find((x) => x.id === st.chat)
+    const at = chat ? chat.msgs.findIndex((m) => m.id === st.revert!.mid) : -1
+    return at < 0 ? 0 : chat!.msgs.length - at
+  })
   // Streaming is per chat: a reply running in another chat leaves this
   // composer free to send, and Stop here cancels only this chat's reply.
   const streaming = !!s.busyChats?.[s.chat]
@@ -597,6 +606,21 @@ export function Composer({ cfg, quote, onClearQuote }: { cfg: (t: string) => voi
     <div className="w-full self-center">
       <div className="mx-auto w-full" style={{ maxWidth: composerWidth(s.prefs.chatWidth), paddingLeft: 'var(--ui-chat-pad-x)', paddingRight: 'var(--ui-chat-pad-x)' }}>
       <Notice cfg={cfg} />
+      {revert && revert.chat === s.chat && (
+        <div className="mb-2 flex items-center gap-2 rounded-xl border border-bor bg-surf px-3 py-2 text-xs text-mu">
+          <Undo2 size={13} className="shrink-0 text-ac" aria-hidden="true" />
+          <span className="min-w-0 flex-1">
+            Sending replaces this prompt{revertCount > 1 ? ` and removes the ${revertCount - 1} message${revertCount === 2 ? '' : 's'} after it` : ''}.
+          </span>
+          <button
+            type="button"
+            onClick={() => s.cancelRevert()}
+            className="shrink-0 rounded-md px-1.5 py-0.5 font-medium text-tx transition-colors hover:bg-hov focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ac/40"
+          >
+            Cancel
+          </button>
+        </div>
+      )}
       <ToolApprovalPrompt chatId={s.chat} />
       <QuestionPrompt chatId={s.chat} />
       <div ref={box} style={{ padding: 'var(--ui-composer-pad)', '--glass-blur': `${s.prefs.glassBlur ?? 14}px`, '--glass-opacity': `${s.prefs.glassOpacity ?? 80}%` } as CSSProperties} className={cx('composer-shell relative rounded-2xl transition-colors', s.prefs.glassComposer !== false ? 'glass-composer border border-hov hover:border-bor focus-within:border-bor shadow-lg shadow-black/10' : 'edge-border bg-surf hover:border-bor focus-within:border-bor')} data-lit={menusOpen || listening || typing ? '1' : undefined} onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); add(e.dataTransfer.files) }}>

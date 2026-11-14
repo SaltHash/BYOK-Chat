@@ -1,4 +1,4 @@
-import type { PersistStorage, StateStorage } from 'zustand/middleware'
+import type { PersistStorage, StateStorage, StorageValue } from 'zustand/middleware'
 import { extractCitedIds } from './citations'
 import { attachFlushOnHide, createCoalescedPersistStorage, type CoalescedPersistStorage } from './storage/coalesce'
 
@@ -187,13 +187,25 @@ export const pruneChatForPersist = <C extends PersistChat>(chat: C): C => ({
 /** Build the chat mapper used by `partialize`. One instance per store. */
 export const createPersistMapper = () => {
   const cache = new WeakMap<object, unknown>()
-  return <C extends PersistChat>(chats: C[]): C[] => chats.map((chat) => {
-    const hit = cache.get(chat)
-    if (hit !== undefined) return hit as C
-    const mapped = pruneChatForPersist(chat)
-    cache.set(chat, mapped)
+  /* The mapped array is reused while the store's chats array is the same
+   * reference. A settings-only write (a toggle, a keystroke in the draft)
+   * then hands persistence an identical chats array, which is what lets the
+   * settings fast path below skip serializing every chat. */
+  let lastInput: readonly unknown[] | null = null
+  let lastOutput: unknown[] | null = null
+  return <C extends PersistChat>(chats: C[]): C[] => {
+    if (lastInput === chats && lastOutput) return lastOutput as C[]
+    const mapped = chats.map((chat) => {
+      const hit = cache.get(chat)
+      if (hit !== undefined) return hit as C
+      const pruned = pruneChatForPersist(chat)
+      cache.set(chat, pruned)
+      return pruned
+    })
+    lastInput = chats
+    lastOutput = mapped
     return mapped
-  })
+  }
 }
 
 /* Temporary chats past their expiry are session-scoped by design. Drop them
@@ -395,8 +407,63 @@ export const PERSIST_WRITE_WINDOW_MS = 400
  *  persist). A write failure inside the window is reported through onError
  *  rather than thrown from a timer: storage being unavailable must never
  *  break the app. */
-export const persistStorage: CoalescedPersistStorage<any> = createCoalescedPersistStorage<any>(rawStorage, {
+/** Write only the non-chat part of a persist payload over the existing main
+ *  record, leaving every chat shard untouched. This is the settings delta: it
+ *  rewrites the small `byok.v1` row instead of serializing the transcript.
+ *  Returns false when the stored record is not sharded yet (or storage is
+ *  blocked), so the caller falls back to a full write. */
+function writeSettingsDelta(name: string, value: StorageValue<any>): boolean {
+  if (bootWritesBlocked) return false
+  try {
+    const raw = localStorage.getItem(name)
+    if (raw == null) return false
+    const parsed: any = JSON.parse(raw)
+    const envelope = parsed?.state && typeof parsed.state === 'object'
+    const previous: Record<string, any> = envelope ? parsed.state : parsed
+    if (!previous || previous.__byokSharded !== true) return false
+    const next: Record<string, any> = { ...(value.state as Record<string, any>) }
+    // Chats live in their own rows; the main record keeps only the id index and
+    // any id-less chats, and a settings-only change leaves both unchanged.
+    next.chats = Array.isArray(previous.chats) ? previous.chats : []
+    next.__byokSharded = true
+    next.__byokChatIds = Array.isArray(previous.__byokChatIds) ? previous.__byokChatIds : []
+    const out = envelope
+      ? { ...parsed, version: value.version ?? parsed.version, state: next }
+      : next
+    localStorage.setItem(name, JSON.stringify(out))
+    return true
+  } catch { return false }
+}
+
+const coalescedStorage: CoalescedPersistStorage<any> = createCoalescedPersistStorage<any>(rawStorage, {
   wait: PERSIST_WRITE_WINDOW_MS,
   onError: (x) => { reportStorageFailure(); if (isQuotaError(x)) { try { localStorage.setItem(QUOTA_FLAG, String(Date.now())) } catch { /* ignore */ } } },
 })
+
+/** The last value handed to persistence. Two writes are compared by reference:
+ *  a settings change leaves the chats and workspaces arrays untouched. */
+let lastPersistValue: StorageValue<any> | null = null
+
+/** zustand storage with quota-compaction fallback (single source for store
+ *  persist). Settings-only changes (prefs, drafts, a chosen model) write the
+ *  small main record immediately, so they do not wait out the coalescing
+ *  window or re-serialize the whole history. Chat changes keep the bounded
+ *  window and its pagehide flush. A pending write must always land first: it
+ *  can carry newer chat rows and older settings than the value arriving now. */
+export const persistStorage: CoalescedPersistStorage<any> = {
+  getItem: coalescedStorage.getItem,
+  setItem: (name, value) => {
+    const previous = lastPersistValue
+    lastPersistValue = value
+    const before = previous?.state as Record<string, any> | undefined
+    const now = value.state as Record<string, any> | undefined
+    const settingsOnly = !!before && !!now && before.chats === now.chats && before.workspaces === now.workspaces
+    if (name === 'byok.v1' && settingsOnly && !coalescedStorage.hasPending() && writeSettingsDelta(name, value)) return
+    coalescedStorage.setItem(name, value)
+  },
+  removeItem: coalescedStorage.removeItem,
+  flush: coalescedStorage.flush,
+  hasPending: coalescedStorage.hasPending,
+}
+
 attachFlushOnHide(persistStorage.flush)

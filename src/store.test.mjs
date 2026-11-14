@@ -129,3 +129,45 @@ test('a second permanent delete closes the previous undo window', () => {
   assert.deepEqual(s().chats.map((c) => c.id), ['b'])
   assert.equal(s().chat, 'b')
 })
+
+/* Revert-send loads a message back into the composer. Arming alone never
+ * touches the transcript, and cancelling restores the draft and every message. */
+test('revert send arms the composer and cancel restores the thread', async () => {
+  const s = () => useS.getState()
+  useS.setState({
+    chats: [{ id: 'a', title: 'A', msgs: [
+      { id: 'u1', r: 'user', t: 'first' },
+      { id: 'a1', r: 'assistant', t: 'reply' },
+      { id: 'u2', r: 'user', t: 'second' },
+    ] }],
+    chat: 'a', draft: '', drafts: {}, busy: false, busyChats: {}, notice: null, revert: null, eps: [],
+  })
+  s().patch({ draft: 'unsent' })
+  assert.equal(s().armRevert('u1'), true)
+  assert.equal(s().draft, 'first')
+  assert.equal(s().revert?.mid, 'u1')
+  assert.equal(s().chats[0].msgs.length, 3, 'arming does not delete anything')
+  // A refused send must not drop the messages either.
+  assert.equal(await s().send('first', []), false)
+  assert.equal(s().chats[0].msgs.length, 3)
+  assert.equal(s().revert?.mid, 'u1')
+  s().cancelRevert()
+  assert.equal(s().draft, 'unsent')
+  assert.equal(s().revert, null)
+  assert.equal(s().chats[0].msgs.length, 3)
+})
+
+test('switching chats disarms a revert without touching the transcript', () => {
+  const s = () => useS.getState()
+  useS.setState({
+    chats: [
+      { id: 'a', title: 'A', msgs: [{ id: 'u1', r: 'user', t: 'first' }] },
+      { id: 'b', title: 'B', msgs: [] },
+    ],
+    chat: 'a', draft: '', drafts: {}, busy: false, busyChats: {}, notice: null, revert: null,
+  })
+  assert.equal(s().armRevert('u1'), true)
+  s().patch({ chat: 'b' })
+  assert.equal(s().revert, null)
+  assert.equal(s().chats[0].msgs.length, 1)
+})
