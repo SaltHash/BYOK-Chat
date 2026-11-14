@@ -61,7 +61,10 @@ export function tokenizeMentions(v: string, o: MentionOpts): Seg[] {
       const name = v.slice(j + 1, k)
       const after = k < v.length ? v[k] : ''
       if (after && after !== '(' && !SPACE.test(after)) continue
-      if (name !== 'research' && !TOOLS.some(([id]) => id === name)) continue
+      // Only the two explicit research-style calls stay mentionable. Typing
+      // @tool is left as ordinary text: tools are the assistant's to choose,
+      // not a direct invocation the reader can force from the composer.
+      if (name !== 'search' && name !== 'research') continue
       const kind: MentionKind = name === 'search' ? 'search' : name === 'research' ? 'research' : 'tool'
       text(i, j)
       out.push({

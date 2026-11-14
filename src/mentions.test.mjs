@@ -30,23 +30,26 @@ test('slash commands only count at the very start', () => {
   assert.ok(segs.every((s) => s.kind === 'text'))
 })
 
-test('tokenizes tool mentions at word boundaries, with and without a call', () => {
-  const bare = m.tokenizeMentions('@date tomorrow', opts)
+test('search mentions are tokenized at word boundaries, with and without a call', () => {
+  const bare = m.tokenizeMentions('@search tomorrow', opts)
   assert.equal(bare[0].kind, 'mention')
-  assert.equal(bare[0].m.label, '@date')
-  assert.equal(bare[0].m.end, 5)
+  assert.equal(bare[0].m.label, '@search')
+  assert.equal(bare[0].m.end, 7)
   assert.equal(bare[1].text, ' tomorrow')
 
-  const call = m.tokenizeMentions('add it @calc(2*(3+4)) please', opts)
+  const call = m.tokenizeMentions('add it @search(2*(3+4)) please', opts)
   assert.equal(call[0].text, 'add it ')
   assert.equal(call[1].kind, 'mention')
-  assert.equal(call[1].m.label, '@calc')
+  assert.equal(call[1].m.label, '@search')
   assert.equal(call[2].text, '(2*(3+4)) please')
 })
 
-test('leaves unknown or unbound mentions as plain text', () => {
-  assert.ok(m.tokenizeMentions('@nope hello', opts).every((s) => s.kind === 'text'))
-  assert.ok(m.tokenizeMentions('mail@date', opts).every((s) => s.kind === 'text'))
+/* Tools are the assistant's to choose; the composer no longer turns @tool
+ * into a direct invocation. */
+test('other tool names stay ordinary text', () => {
+  for (const v of ['@date tomorrow', 'add it @calc(2*(3+4)) please', 'mail@date', '@nope hello']) {
+    assert.ok(m.tokenizeMentions(v, opts).every((s) => s.kind === 'text'), v)
+  }
 })
 
 test('search and research mentions are flagged for the banner', () => {
@@ -78,14 +81,21 @@ test('stripMention removes a whole call or a single space', () => {
   assert.equal(m.stripMention('@search(climate) hello', tok), 'hello')
   const [mid] = m.mentionsOf(m.tokenizeMentions('hi @search(climate) there', opts))
   assert.equal(m.stripMention('hi @search(climate) there', mid), 'hi there')
-  const [bare] = m.mentionsOf(m.tokenizeMentions('@date tomorrow', opts))
-  assert.equal(m.stripMention('@date tomorrow', bare), 'tomorrow')
-  const [nested] = m.mentionsOf(m.tokenizeMentions('@calc(2*(3+4))!', opts))
-  assert.equal(m.stripMention('@calc(2*(3+4))!', nested), '!')
+  const [bare] = m.mentionsOf(m.tokenizeMentions('@search tomorrow', opts))
+  assert.equal(m.stripMention('@search tomorrow', bare), 'tomorrow')
+  const [nested] = m.mentionsOf(m.tokenizeMentions('@search(2*(3+4))!', opts))
+  assert.equal(m.stripMention('@search(2*(3+4))!', nested), '!')
 })
 
-// '/help used @calc now' — the command pill runs 0..5 and '@calc' runs 11..16.
-const atomic = m.tokenizeMentions('/help used @calc now', opts)
+// '/help used @calc now' — a command pill and a tool pill from an older draft.
+// Tools are no longer mentionable, but stored drafts and sent messages can
+// still carry them, so the atomic pill rules must keep working.
+const atomic = [
+  { kind: 'mention', m: { kind: 'command', name: 'help', label: '/help', start: 0, end: 5, enabled: true, desc: '' } },
+  { kind: 'text', text: ' used ', start: 5, end: 11 },
+  { kind: 'mention', m: { kind: 'tool', name: 'calc', label: '@calc', start: 11, end: 16, enabled: true, desc: '' } },
+  { kind: 'text', text: ' now', start: 16, end: 20 },
+]
 
 test('arrow keys step over a whole pill instead of into it', () => {
   assert.deepEqual(m.pillEdit(atomic, 'ArrowLeft', 16, 16), { kind: 'caret', pos: 11 })

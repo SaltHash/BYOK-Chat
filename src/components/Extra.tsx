@@ -41,7 +41,7 @@ export function Tutorial({ cfg }: { cfg: (t: string) => void }) {
   const steps: [Ic, string, string][] = [
     [Server, 'Add an endpoint', 'Pick a provider preset or enter any base URL, then paste your API key and the model id. Keys are stored in this browser and only sent to the providers you choose (or relayed through this app’s own server when a provider blocks browser requests).'],
     [Play, 'Test it', 'Press Test connection on the endpoint. You will see whether it answers and how long it takes.'],
-    [MessageSquare, 'Send a message', 'Type below and press Enter. Type / for commands and @ for tools.'],
+    [MessageSquare, 'Send a message', 'Type below and press Enter. Type / for commands, @ for search or deep research.'],
   ]
   return (
     <div className="mx-auto flex w-full max-w-xl flex-col justify-center gap-6 px-4 py-6">

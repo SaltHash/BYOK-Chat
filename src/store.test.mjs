@@ -183,4 +183,5 @@ test('reply action defaults show the everyday buttons and hide the extras', () =
   assert.equal(DEFAULT_PREFS.showPinAction, false)
   assert.equal(DEFAULT_PREFS.showBookmarkAction, false)
   assert.equal(DEFAULT_PREFS.showBranchAction, false)
+  assert.equal(DEFAULT_PREFS.userMarkdown, true)
 })

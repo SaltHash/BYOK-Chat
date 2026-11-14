@@ -25,6 +25,7 @@ export function Md({ t, bare = false, cites, blocks = false, fadeFrom }: { t: st
 export function UserText({ m, searchQuery, searchOpen }: { m: Msg; searchQuery?: string; searchOpen?: boolean }) {
   const edit = useS((s) => s.editMsg)
   const revertSend = useS((s) => s.prefs.revertSend === true)
+  const userMarkdown = useS((s) => s.prefs.userMarkdown !== false)
   const revertHere = useS((s) => s.revert?.mid === m.id)
   const branch = useS((s) => s.branch)
   const cmds = useS((s) => s.cmds)
@@ -100,16 +101,16 @@ export function UserText({ m, searchQuery, searchOpen }: { m: Msg; searchQuery?:
         {quoted && <SentQuoteBanner text={quoted.quote} />}
         {sentBanner && <SentMentionBanner kind={sentBanner.kind} />}
         {(messageText || sentBanner) && (
-          <div ref={contentRef} className="whitespace-pre-wrap" style={{ padding: 'calc(var(--ui-composer-pad) - 2px) calc(var(--ui-composer-pad) + 4px)' }}>
+          <div ref={contentRef} className={cx((!userMarkdown || (hasMention && !sentBanner)) && 'whitespace-pre-wrap')} style={{ padding: 'calc(var(--ui-composer-pad) - 2px) calc(var(--ui-composer-pad) + 4px)' }}>
             {sentBanner
-              ? bodyText
+              ? userMarkdown ? <Md t={bodyText} /> : bodyText
               : hasMention
                 ? segs.map((sg, i) => sg.kind === 'text'
                   ? <span key={i}>{sg.text}</span>
                   : isPill(sg.m)
                     ? <MentionChip key={i} m={sg.m} cmds={cmds} />
                     : <span key={i}>{sg.m.label}</span>)
-                : messageText}
+                : userMarkdown ? <Md t={messageText} /> : messageText}
           </div>
         )}
       </div>

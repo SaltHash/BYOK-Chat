@@ -266,6 +266,7 @@ export function AppearanceSettings() {
       <Section title="Messages">
         {row('message-times', 'Message times', <Toggle on={!!s.prefs.showTimestamps} set={(showTimestamps) => s.patch({ prefs: { ...s.prefs, showTimestamps } })} label="Message times" />)}
         {row('message-actions', 'Always show message actions', <Toggle on={!!s.prefs.alwaysShowActions} set={(alwaysShowActions) => s.patch({ prefs: { ...s.prefs, alwaysShowActions } })} label="Always show message actions" />)}
+        {row('user-markdown', 'Markdown in your messages', <Toggle on={s.prefs.userMarkdown !== false} set={(userMarkdown) => s.patch({ prefs: { ...s.prefs, userMarkdown } })} label="Markdown in your messages" />)}
         {row('revert-send', 'Revert send button', <Toggle on={s.prefs.revertSend === true} set={(revertSend) => s.patch({ prefs: { ...s.prefs, revertSend } })} label="Revert send button" />)}
         {row('reply-picker', 'Response picker', <Toggle on={s.prefs.showReplyPicker !== false} set={(showReplyPicker) => s.patch({ prefs: { ...s.prefs, showReplyPicker } })} label="Response picker" />)}
         {row('reply-copy', 'Copy button', <Toggle on={s.prefs.showCopyAction !== false} set={(showCopyAction) => s.patch({ prefs: { ...s.prefs, showCopyAction } })} label="Copy button" />)}

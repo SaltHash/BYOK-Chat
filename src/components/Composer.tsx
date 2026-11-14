@@ -321,13 +321,16 @@ export function Composer({ cfg, quote, onClearQuote }: { cfg: (t: string) => voi
   const [armed, setArmed] = useState<'search' | 'research' | null>(null)
   const [active, setActive] = useState<{ i: number; m: Mention; left: number; top: number } | null>(null)
   const tw = v.match(/(?:^|\s)(@\w*)$/)?.[1]
+  // @ offers the two explicit research calls only. Individual tools are the
+  // assistant's to choose, so they are no longer invocable from the composer.
+  const mentionMenu = [
+    ...orderTools(s.tools).filter((t) => t[0] === 'search' && t[3].startsWith(tw?.toLowerCase() ?? '')).map((t) => ({ k: t[0], icon: t[2], label: t[3].split('(')[0], hint: t[4], pick: () => s.patch({ draft: v.slice(0, v.length - (tw?.length ?? 0)) + '@search(' }) })),
+    ...('@research'.startsWith(tw?.toLowerCase() ?? '') ? [{ k: 'deep_research', icon: BookOpen as Ic, label: '@research', hint: 'Start deep research: pick a depth, review the plan, then run', pick: () => s.patch({ draft: v.slice(0, v.length - (tw?.length ?? 0)) + '@research(' }) }] : []),
+  ]
   const menu: { k: string; icon: Ic; label: string; hint: string; pick: () => void }[] | null = /^\/\S*$/.test(v) && featOn(s, 'commands')
     ? s.cmds.filter((c) => c.on && c.name.startsWith(v.slice(1))).map((c) => ({ k: c.id, icon: CI[c.in], label: '/' + c.name, hint: `${c.desc || c.in}${c.args ? ` · /${c.name} ${c.args}` : ''}`, pick: () => s.patch({ draft: '/' + c.name + ' ' }) }))
-    : tw && featOn(s, 'tools') && s.toolMode !== 'off'
-      ? [
-        ...orderTools(s.tools).filter((t) => t[3].startsWith(tw.toLowerCase())).map((t) => ({ k: t[0], icon: t[2], label: t[3].split('(')[0], hint: s.tools[t[0]] ? t[4] : 'Off. Enable in Settings → Tools', pick: () => s.patch({ draft: v.slice(0, v.length - tw.length) + '@' + t[0] + (/^(calc|count|json|base64|search|fetch_page|random|hash)$/.test(t[0]) ? '(' : ' ') }) })),
-        ...('@research'.startsWith(tw.toLowerCase()) ? [{ k: 'deep_research', icon: BookOpen as Ic, label: '@research', hint: 'Start deep research: pick a depth, review the plan, then run', pick: () => s.patch({ draft: v.slice(0, v.length - tw.length) + '@research(' }) }] : []),
-      ]
+    : tw && featOn(s, 'tools') && s.toolMode !== 'off' && mentionMenu.length
+      ? mentionMenu
       : null
   const hl = Math.min(hi, Math.max((menu?.length ?? 1) - 1, 0))
   const segs = useMemo(() => tokenizeMentions(v, { cmds: s.cmds, tools: s.tools, commandsOn: featOn(s, 'commands'), toolsOn: featOn(s, 'tools') && s.toolMode !== 'off' }), [v, s.cmds, s.tools, s.features, s.toolMode])
@@ -603,7 +606,7 @@ export function Composer({ cfg, quote, onClearQuote }: { cfg: (t: string) => voi
     if (typed?.kind === 'research') { pending.current = 'end'; s.patch({ draft: typed.query ?? '' }); ta.current?.focus(); return }
     if (typed?.kind === 'search' && typed.m) { pending.current = 'end'; s.patch({ draft: stripMention(v, typed.m) }); ta.current?.focus() }
   }
-  const placeholder = quote ? 'Write a reply to the quoted text…' : armed === 'search' ? 'What should I search for?' : armed === 'research' ? 'What should I research?' : s.eps.some(usable) ? (featOn(s, 'commands') && featOn(s, 'tools') ? 'Message, / for commands, @ for tools' : featOn(s, 'commands') ? 'Message, / for commands' : featOn(s, 'tools') ? 'Message, @ for tools' : 'Message') : 'Add a model endpoint to start (press Send for a walkthrough)'
+  const placeholder = quote ? 'Write a reply to the quoted text…' : armed === 'search' ? 'What should I search for?' : armed === 'research' ? 'What should I research?' : s.eps.some(usable) ? (featOn(s, 'commands') && featOn(s, 'tools') ? 'Message, / for commands, @ for search' : featOn(s, 'commands') ? 'Message, / for commands' : featOn(s, 'tools') ? 'Message, @ for search' : 'Message') : 'Add a model endpoint to start (press Send for a walkthrough)'
   return (
     <div className="w-full self-center">
       <div className="mx-auto w-full" style={{ maxWidth: composerWidth(s.prefs.chatWidth), paddingLeft: 'var(--ui-chat-pad-x)', paddingRight: 'var(--ui-chat-pad-x)' }}>
