@@ -243,6 +243,14 @@ function ToolTrail({ calls }: { calls: TrailCall[] }) {
   }
   const sourceCount = searches.reduce((n, search) => n + search.links.length, 0) + reads.length
   const summary = summarizeToolCalls(other.length ? other : calls)
+  // The collapsed line counts the sources that actually came back, so the
+  // search clause reports that figure instead of the number of search calls.
+  const title = summary.clauses
+    .map((c, i) => {
+      const text = c.kind === 'search' && sourceCount > 0 ? `searched ${sourceCount} website${sourceCount === 1 ? '' : 's'}` : c.text
+      return i ? text : text.charAt(0).toUpperCase() + text.slice(1)
+    })
+    .join(', ')
   const Icon = TOOL_KIND_ICON[summary.clauses[0]?.kind ?? 'other'] ?? Wrench
   return (
     <div className="my-3 space-y-2">
@@ -256,8 +264,7 @@ function ToolTrail({ calls }: { calls: TrailCall[] }) {
         className="inline-flex max-w-full items-center gap-2 rounded-lg px-3 py-2 text-xs text-mu transition-colors hover:bg-surf hover:text-tx focus-visible:bg-surf focus-visible:text-tx"
       >
         <Icon size={14} className="shrink-0" aria-hidden="true" />
-        <span className="truncate">{summary.title}</span>
-        {sourceCount > 0 && <span className="shrink-0">· {sourceCount} source{sourceCount === 1 ? '' : 's'}</span>}
+        <span className="truncate">{title}</span>
         <ChevronRight size={13} className={cx('ml-1 shrink-0 transition-transform', open && 'rotate-90')} />
       </button>
       {open && (
