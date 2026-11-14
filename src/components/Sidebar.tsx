@@ -208,7 +208,6 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
     () => s.chats.filter((c) => (showArchived ? c.archived === true : c.archived !== true) && (!k || c.title.toLowerCase().includes(k) || c.msgs.some((m) => m.t.toLowerCase().includes(k)))),
     [s.chats, k, showArchived],
   )
-  const archivedCount = useMemo(() => s.chats.filter((c) => c.archived).length, [s.chats])
   // Chats blocked on a permission or a mid-turn question are a to-do list, not
   // history: they sit above Pinned in every normal view. Search keeps its own
   // ranked results, and the archive view stays archive-only.
@@ -569,7 +568,7 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
       <div role="group" aria-label="Chat filter" className="flex items-center gap-1 rounded-lg bg-surf p-0.5 text-xs">
         <button type="button" aria-pressed={!showArchived} onClick={() => setShowArchived(false)} className={cx('flex flex-1 items-center justify-center rounded-md px-2 py-1 text-center font-medium', !showArchived ? 'bg-hov text-tx' : 'text-mu hover:text-tx')}>Chats</button>
         <button type="button" aria-pressed={showArchived} onClick={() => setShowArchived(true)} title="Show chats moved out of the main list" className={cx('flex flex-1 items-center justify-center gap-1.5 rounded-md px-2 py-1 text-center font-medium', showArchived ? 'bg-hov text-tx' : 'text-mu hover:text-tx')}>
-          Archived{archivedCount ? <span className="text-[10px] opacity-70">{archivedCount}</span> : null}
+          Archived
         </button>
       </div>
       <nav ref={navRef} aria-label="Chats" data-dnd-scroll="" className="-mx-1 flex-1 space-y-3 overflow-y-auto px-1">
