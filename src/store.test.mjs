@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { useS } from './store.ts'
+import { DEFAULT_PREFS, useS } from './store.ts'
 
 const mk = (id) => ({ id, title: id, msgs: [] })
 const seed = () => useS.setState({ chats: [mk('a'), mk('b')], chat: 'a', draft: '', drafts: {} })
@@ -170,4 +170,17 @@ test('switching chats disarms a revert without touching the transcript', () => {
   s().patch({ chat: 'b' })
   assert.equal(s().revert, null)
   assert.equal(s().chats[0].msgs.length, 1)
+})
+
+/* Reply actions are opt-in only where they clutter the footer: pin, bookmark
+ * and new path start hidden, while the everyday picker, copy, retry and
+ * delete stay visible. */
+test('reply action defaults show the everyday buttons and hide the extras', () => {
+  assert.equal(DEFAULT_PREFS.showReplyPicker, true)
+  assert.equal(DEFAULT_PREFS.showCopyAction, true)
+  assert.equal(DEFAULT_PREFS.showRetryAction, true)
+  assert.equal(DEFAULT_PREFS.showDeleteAction, true)
+  assert.equal(DEFAULT_PREFS.showPinAction, false)
+  assert.equal(DEFAULT_PREFS.showBookmarkAction, false)
+  assert.equal(DEFAULT_PREFS.showBranchAction, false)
 })

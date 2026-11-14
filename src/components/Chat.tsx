@@ -1113,7 +1113,9 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
           </>
         )}
         {prefs.showCopyAction !== false && <Btn icon={ok ? Check : Copy} title="Copy with formatting — Shift-click for Markdown, Ctrl/Cmd-click for plain text" onClick={(e) => copyReply(e.shiftKey ? 'markdown' : e.ctrlKey || e.metaKey ? 'plain' : 'rich')} />}
-        {prefs.showPinAction === true && !m.err && !hideBody && (
+        {/* An already pinned reply keeps its unpin control even when the pin
+            button is turned off, so pinning is always reversible. */}
+        {(prefs.showPinAction === true || m.pin === true) && !m.err && !hideBody && (
           <Btn icon={m.pin ? PinOff : Pin} title={m.pin ? 'Unpin this reply (it stays in the model context until unpinned)' : 'Pin this reply (shown under the header and kept in the model context)'} className={m.pin ? 'text-ac' : undefined} onClick={() => useS.getState().pinMsg(m.id)} />
         )}
         {prefs.showBookmarkAction === true && !hideBody && !m.err && (
