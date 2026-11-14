@@ -20,7 +20,7 @@
  * messages, revisions or settings.
  */
 
-import { chatFingerprint, keepLocalAttemptLog, keepLocalChatLogs, mergeSelectedRevision, mergeSettings, mergeWorkspace, resolveChatPointer, type SyncData } from './syncMerge'
+import { chatFingerprint, keepLocalAttemptLog, keepLocalChatLogs, keepLocalProjectFileText, mergeSelectedRevision, mergeSettings, mergeWorkspace, resolveChatPointer, type SyncData } from './syncMerge'
 
 type Obj = Record<string, unknown>
 
@@ -191,6 +191,10 @@ export function computeSyncDelta(base: SyncBaseline, data: SyncData, at = Date.n
       const msgs = chatMessages(raw)
       const op: SyncChatOp = { id, meta: chatMeta(raw) }
       if (msgs.length) op.add = msgs
+      // The first sync of a chat must carry its order: the per-message rows
+      // store each message's position, and a receiver must be able to rebuild
+      // the conversation in the same order it was sent.
+      if (next.m.length) op.order = next.m
       ops.push(op)
       touched = true
       continue
@@ -213,13 +217,18 @@ export function computeSyncDelta(base: SyncBaseline, data: SyncData, at = Date.n
     }
     const removed = prev.m.filter((mid) => !currentSet.has(mid))
     if (added.length || updated.length || removed.length) {
+      // A message-only edit carries no chat metadata and no id order: the
+      // stored row already has both, and re-sending a long chat's id list on
+      // every edit is the largest avoidable cost of a small change. Adding or
+      // removing a message does change the order, so it travels there.
       op = op ?? { id }
       if (added.length) op.add = added
       if (updated.length) op.update = updated
       if (removed.length) op.del = removed
-      const kept = prev.m.filter((mid) => currentSet.has(mid))
-      const fresh = next.m.filter((mid) => !oldSet.has(mid))
-      if ([...kept, ...fresh].join('\n') !== next.m.join('\n')) op.order = next.m
+      if (added.length || removed.length) {
+        op.order = next.m
+        op.meta = op.meta ?? chatMeta(raw)
+      }
       touched = true
     }
     if (op) ops.push(op)
@@ -274,7 +283,10 @@ export function applySyncDelta(local: SyncData, delta: SyncDelta): SyncData {
       const byId = new Map<string, Obj>()
       for (const project of projects) if (isObj(project) && typeof project.id === 'string') byId.set(project.id, project)
       for (const project of nextProjects) if (isObj(project) && typeof project.id === 'string') byId.set(project.id, project)
-      merged.projects = [...byId.values()]
+      // Projects travel without their extracted file text; keep this device's
+      // copy for files that still exist after the rename/update.
+      const restored = keepLocalProjectFileText(projects, { projects: [...byId.values()] })
+      merged.projects = restored.projects
       merged.folders = merged.projects
     } else if (!('projects' in settings) && !('folders' in settings)) {
       // A one-key delta should not add empty arrays that were never part of
@@ -453,6 +465,13 @@ export function applyDeltaToBaseline(base: SyncBaseline, delta: SyncDelta): Sync
   for (const id of delta.selectedRevision?.del ?? []) delete out.selected[id]
 
   return out
+}
+
+/** The settings-only part of a delta: everything except chat operations. Used
+ *  to keep the encrypted settings log separate from per-message rows. */
+export function settingsOnlyDelta(delta: SyncDelta): SyncDelta | null {
+  const { chats: _chats, ...rest } = delta
+  return rest.settings || rest.workspaces || rest.selectedRevision ? rest : null
 }
 
 /** Number of messages (or whole chats) a delta touches, for tests and for a

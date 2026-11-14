@@ -161,6 +161,23 @@ test('adopting the other device keeps endpoint keys and MCP headers too', () => 
   assert.equal(out.settings.mcps[0].headers, 'Bearer x')
 })
 
+test('adopting the other device keeps share tokens that only exist here', () => {
+  const local = empty({ settings: { shares: [{ id: 's1', chatId: 'c1', token: 'owner-secret' }] } })
+  const remote = empty({ settings: { shares: [{ id: 's1', chatId: 'c1', token: '' }] } })
+  const out = mergeSyncData(local, remote, 'remote')
+  assert.equal(out.settings.shares[0].token, 'owner-secret')
+})
+
+test('adopting a remote project keeps extracted file text only this device has', () => {
+  const local = empty({ settings: { projects: [{ id: 'p1', name: 'App', context: [{ id: 'f1', path: 'a.ts', text: 'const a = 1' }] }] } })
+  const remote = empty({ settings: { projects: [{ id: 'p1', name: 'App renamed', context: [{ id: 'f1', path: 'a.ts', tokens: 12 }, { id: 'f2', path: 'b.ts' }] }] } })
+  const out = mergeSyncData(local, remote, 'remote')
+  assert.equal(out.settings.projects[0].name, 'App renamed')
+  // File text never travels (shapeSyncData strips it); the local copy stays.
+  assert.equal(out.settings.projects[0].context[0].text, 'const a = 1')
+  assert.equal(out.settings.projects[0].context[1].text, undefined)
+})
+
 test('a new chat stays open when a remote snapshot arrives', () => {
   const local = empty({ chats: [chat('a', 100), chat('b', 200)], settings: { chat: '' } })
   const remote = empty({ chats: [chat('b', 200)], settings: { chat: 'b' } })

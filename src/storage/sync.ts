@@ -5,7 +5,7 @@
  * is the only thing the user ever copies.
  * Payloads are versioned ({ v, storeVersion }) for backwards compatibility. */
 
-import { decryptBackup, encryptBackup } from './backupCrypto'
+import { decryptSecret, encryptSecret } from './backupCrypto'
 
 export const SYNC_TOKEN_PREFIX = 'byok1'
 export const SYNC_EXPORT_VERSION = 4
@@ -102,7 +102,7 @@ export async function encryptSyncPayload(payload: SyncPayload, token: string): P
   if (bytes > SYNC_PLAINTEXT_MAX_BYTES) {
     throw Error(`This sync data is too large to encrypt (${(bytes / 1e6).toFixed(1)} MB; the limit is about 5.7 MB). Trim chats, or export a file backup instead.`)
   }
-  return { encrypted: await encryptBackup(json, token) }
+  return { encrypted: await encryptSecret(json, token, 'payload') }
 }
 
 /* Deltas use the same token-derived envelope as the full snapshot, one
@@ -114,12 +114,12 @@ export async function encryptSyncDelta(delta: unknown, token: string): Promise<S
   if (bytes > SYNC_PLAINTEXT_MAX_BYTES) {
     throw Error(`This sync change is too large to encrypt (${(bytes / 1e6).toFixed(1)} MB; the limit is about 5.7 MB). Split the workspace into smaller files, or export a file backup instead.`)
   }
-  return { encrypted: await encryptBackup(json, token) }
+  return { encrypted: await encryptSecret(json, token, 'delta') }
 }
 
 export async function decryptSyncDelta(body: unknown, token: string): Promise<unknown> {
   if (body && typeof body === 'object' && typeof (body as SyncEnvelope).encrypted === 'string') {
-    return JSON.parse(await decryptBackup((body as SyncEnvelope).encrypted, token)) as unknown
+    return JSON.parse(await decryptSecret((body as SyncEnvelope).encrypted, token, 'delta')) as unknown
   }
   if (body && typeof body === 'object') return body
   throw Error('That sync delta is not usable.')
@@ -127,9 +127,24 @@ export async function decryptSyncDelta(body: unknown, token: string): Promise<un
 
 export async function decryptSyncPayload(body: unknown, token: string): Promise<SyncPayload> {
   if (body && typeof body === 'object' && typeof (body as SyncEnvelope).encrypted === 'string') {
-    return JSON.parse(await decryptBackup((body as SyncEnvelope).encrypted, token)) as SyncPayload
+    return JSON.parse(await decryptSecret((body as SyncEnvelope).encrypted, token, 'payload')) as SyncPayload
   }
   // Legacy plaintext payload from a device running an older build.
   if (body && typeof body === 'object') return body as SyncPayload
   throw Error('That sync slot does not contain a usable payload.')
+}
+
+/** Seal one chat message (or chat metadata) for the per-message store. The
+ *  server sees only this envelope, so per-message rows keep the same
+ *  end-to-end guarantee as the settings snapshot. */
+export async function encryptChatPart(value: unknown, token: string, purpose: 'message' | 'chat'): Promise<SyncEnvelope> {
+  return { encrypted: await encryptSecret(JSON.stringify(value ?? null), token, purpose) }
+}
+
+export async function decryptChatPart(body: unknown, token: string, purpose: 'message' | 'chat'): Promise<unknown> {
+  if (body && typeof body === 'object' && typeof (body as SyncEnvelope).encrypted === 'string') {
+    return JSON.parse(await decryptSecret((body as SyncEnvelope).encrypted, token, purpose)) as unknown
+  }
+  if (body && typeof body === 'object') return body
+  return null
 }

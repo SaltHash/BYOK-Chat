@@ -5,6 +5,7 @@ import { syncStatus } from '../storage/syncClient'
 import type { SyncData, SyncMergeMode } from '../storage/syncMerge'
 import {
   getSyncToken, setSyncToken, getAutoSync, setAutoSync, getLastSync,
+  getSyncChats, setSyncChats, getSyncKeys, setSyncKeys,
   fetchRemote, pushNow, pullAndMerge, linkAndMerge, startSyncRuntime,
 } from '../storage/syncRuntime'
 import { Btn, Checkbox, Input, Modal } from './ui'
@@ -20,6 +21,8 @@ export function SyncBox() {
   const [shared, setShared] = useState(true)
   const [copied, setCopied] = useState(false)
   const [busy, setBusy] = useState(false)
+  const [chats, setChats] = useState(getSyncChats())
+  const [keys, setKeys] = useState(getSyncKeys())
   // A pasted token whose remote data is fetched and awaiting a merge choice.
   const [linked, setLinked] = useState<{ token: string; data: SyncData; updatedAt: number; seq: number } | null>(null)
   useEffect(() => { void syncStatus().then((s) => { setBackend(s.configured ? 'Neon' : s.backend); setShared(s.shared !== false) }).catch(() => { setBackend('unreachable'); setShared(false) }) }, [])
@@ -86,6 +89,17 @@ export function SyncBox() {
       .catch((e) => setStatus(`Pull failed: ${(e as Error).message}`)).finally(() => setBusy(false))
   }
 
+  /* Both options change what the slot is allowed to hold, so the choice is
+   * written first and then a full push rewrites the slot under the new rules
+   * (turning chats off also deletes the stored conversations). */
+  const applyStorage = (nextChats: boolean, nextKeys: boolean, message: string) => {
+    setChats(nextChats); setKeys(nextKeys)
+    setBusy(true); setStatus(message)
+    void pushNow(token).then((r) => setStatus(`${message} Synced at ${new Date(r.updatedAt).toLocaleTimeString()}.`))
+      .catch((e) => setStatus(`${message} The push failed: ${(e as Error).message}`))
+      .finally(() => setBusy(false))
+  }
+
   return (
     <div className="divide-y divide-bor">
       <div className="flex min-h-11 flex-wrap items-center gap-3 py-3">
@@ -116,6 +130,30 @@ export function SyncBox() {
             )}
             <Btn v="soft" icon={Unlink} disabled={busy} onClick={() => { setToken(''); setSyncToken(''); setAuto(false); setStatus('Unlinked on this device. The server slot is kept.') }}>Unlink</Btn>
             <Checkbox checked={auto} disabled={busy} set={(v) => { setAuto(v); startSyncRuntime() }} label="Automatic sync" className="text-mu" />
+          </div>
+          <div className="space-y-2 rounded-lg bg-surf p-3">
+            <div className="text-xs font-medium text-mu">What this slot stores</div>
+            <Checkbox
+              checked={chats}
+              disabled={busy}
+              set={(v) => { setSyncChats(v); applyStorage(v, keys, v ? 'Chat storage is on.' : 'Chat storage is off.') }}
+              label="Store chats on the server"
+            />
+            <p className="pl-6 text-xs text-mu">
+              Off by default. When off, only settings are stored. When on, each message is stored as its own
+              encrypted entry, without uploaded files, tool arguments or tool results, so a device downloads only the
+              messages it does not already have.
+            </p>
+            <Checkbox
+              checked={keys}
+              disabled={busy}
+              set={(v) => { setSyncKeys(v); applyStorage(chats, v, v ? 'API key storage is on.' : 'API key storage is off.') }}
+              label="Store API keys in the slot"
+            />
+            <p className="pl-6 text-xs text-mu">
+              Off by default. Endpoint keys, search-provider keys and MCP headers stay on this device unless this is on.
+              Everything in the slot is encrypted with this sync token.
+            </p>
           </div>
         </div>
       )}

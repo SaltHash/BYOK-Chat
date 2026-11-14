@@ -1,6 +1,7 @@
 import type { PersistStorage, StateStorage, StorageValue } from 'zustand/middleware'
 import { extractCitedIds } from './citations'
 import { attachFlushOnHide, createCoalescedPersistStorage, type CoalescedPersistStorage } from './storage/coalesce'
+import { leanChat } from './storage/lean'
 
 export const QUOTA_FLAG = 'byok.v1:quota-full'
 
@@ -160,11 +161,13 @@ export const storageUsage = async (): Promise<{ localBytes: number; quota?: numb
 }
 
 /* ---- persisted-copy shaping ----
- * The persisted copy drops attachment bytes (they are restored from durable
- * blob storage on boot) and empty assistant placeholders. The mapping depends
- * only on the chat object, and immutable updates replace only the chat that
- * changed, so a per-chat WeakMap keeps this O(changed chat) per store write
- * instead of O(entire history). */
+ * The persisted copy keeps everything a reader sees and drops the payloads:
+ * attachment bytes (restored from durable blob storage on boot), system
+ * prompts, raw request bodies, tool arguments and results, retry alternatives
+ * and research evidence. It also drops empty assistant placeholders. The
+ * mapping depends only on the chat object, and immutable updates replace only
+ * the chat that changed, so a per-chat WeakMap keeps this O(changed chat) per
+ * store write instead of O(entire history). */
 
 type PersistMsg = {
   r?: string
@@ -175,14 +178,25 @@ type PersistMsg = {
 }
 type PersistChat = { msgs: PersistMsg[] }
 
-export const pruneChatForPersist = <C extends PersistChat>(chat: C): C => ({
-  ...chat,
-  msgs: chat.msgs
-    .filter((m) => !(m.r === 'assistant' && !m.t && !m.err && !m.research))
-    .map((m) => (m.att?.length
-      ? { ...m, att: m.att.map(({ name, kind, size, mime, source, pages, chars, truncated, modelName }) => ({ name, kind, size, ...(mime ? { mime } : {}), ...(source ? { source } : {}), ...(pages ? { pages } : {}), ...(chars ? { chars } : {}), ...(truncated ? { truncated: true } : {}), ...(modelName ? { modelName } : {}) })) }
-      : m)),
-}) as C
+/** Shape options for the persisted copy. Tool payloads are the largest thing
+ *  a message carries and are almost never re-read; the call rows (tool name,
+ *  failure, duration) are kept so the process panel still reads correctly. */
+const PERSIST_LEAN = {
+  toolResultChars: 0,
+  toolArgChars: 0,
+  reasoningChars: 4000,
+  researchChars: 1200,
+  toolTextChars: 2000,
+  alternatives: false,
+} as const
+
+export const pruneChatForPersist = <C extends PersistChat>(chat: C): C => {
+  const shaped = leanChat(chat, PERSIST_LEAN) as C
+  return {
+    ...shaped,
+    msgs: shaped.msgs.filter((m) => !(m.r === 'assistant' && !m.t && !m.err && !m.research)),
+  } as C
+}
 
 /** Build the chat mapper used by `partialize`. One instance per store. */
 export const createPersistMapper = () => {

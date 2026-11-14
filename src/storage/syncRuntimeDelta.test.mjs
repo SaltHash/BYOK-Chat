@@ -3,8 +3,9 @@ import assert from 'node:assert/strict'
 import { handleSyncPush, handleSyncPull, parseToken } from '../../server/sync.mjs'
 import { memStore } from '../../server/syncStore.mjs'
 import { encryptSyncDelta } from './sync.ts'
+import { encryptChatPush } from './chatSync.ts'
 import { normSearch, searchKeyOf, useS } from '../store.ts'
-import { getSyncToken, pullAndMerge, pushNow, resetSyncBaseline, setSyncToken } from './syncRuntime.ts'
+import { getSyncToken, pullAndMerge, pushNow, resetSyncBaseline, setSyncChats, setSyncToken } from './syncRuntime.ts'
 
 /* Drive the real runtime against the real sync handlers with fetch routed to
  * an in-memory backend. This covers the wiring the pure delta tests cannot:
@@ -57,6 +58,7 @@ test('the first push is complete and follow-up pushes are small deltas', async (
   const previousToken = getSyncToken()
   try {
     setSyncToken(TOKEN_A)
+    setSyncChats(true)
     resetSyncBaseline()
     const messages = bigHistory()
     useS.setState({
@@ -79,17 +81,21 @@ test('the first push is complete and follow-up pushes are small deltas', async (
     assert.equal(second.seq, 2)
 
     const row = await backend.get(id)
-    assert.equal(row.deltas.length, 1)
-    const fullBytes = JSON.stringify(seeded.payload).length
-    const deltaBytes = JSON.stringify(row.deltas[0].delta).length
-    assert.ok(deltaBytes < fullBytes / 5, `delta ${deltaBytes} bytes should be far below the ${fullBytes}-byte snapshot`)
+    // The new message is one row; the settings log stays empty.
+    assert.equal(row.deltas.length, 0)
+    const changed = [...row.messages.values()].filter((m) => m.seq === 2)
+    assert.deepEqual(changed.map((m) => m.id), ['new'])
+    const fullBytes = JSON.stringify([...row.messages.values()]).length
+    const deltaBytes = JSON.stringify(changed).length
+    assert.ok(deltaBytes < fullBytes / 5, `one message ${deltaBytes} bytes should be far below the ${fullBytes}-byte history`)
 
     // The same state produces no request-sized work once it is settled.
     const settled = await pushNow(TOKEN_A)
     assert.equal(settled.backend, 'up-to-date')
-    assert.equal((await backend.get(id)).deltas.length, 1)
+    assert.equal([...row.messages.values()].length, next.length)
   } finally {
     restore()
+    setSyncChats(false)
     setSyncToken(previousToken)
     resetSyncBaseline()
   }
@@ -101,6 +107,7 @@ test('a pull asks only for changes after the local sequence and applies them', a
   const previousToken = getSyncToken()
   try {
     setSyncToken(TOKEN_B)
+    setSyncChats(true)
     resetSyncBaseline()
     useS.setState({
       chats: [{ id: 'c1', title: 'Chat', msgs: [{ id: 'm1', r: 'user', t: 'hello', at: 1 }] }],
@@ -135,6 +142,7 @@ test('a pull asks only for changes after the local sequence and applies them', a
     assert.equal(settled.backend, 'up-to-date')
   } finally {
     restore()
+    setSyncChats(false)
     setSyncToken(previousToken)
     resetSyncBaseline()
   }
@@ -146,6 +154,7 @@ test('a pulled change leaves the open chat and the search credentials alone', as
   const previousToken = getSyncToken()
   try {
     setSyncToken(TOKEN_E)
+    setSyncChats(false)
     resetSyncBaseline()
     useS.setState({
       chats: [
@@ -188,6 +197,7 @@ test('a stale write is rejected, the missing change is pulled, and the write ret
   const previousToken = getSyncToken()
   try {
     setSyncToken(TOKEN_C)
+    setSyncChats(true)
     resetSyncBaseline()
     useS.setState({
       chats: [{ id: 'c1', title: 'Chat', msgs: [{ id: 'm1', r: 'user', t: 'hello', at: 1 }] }],
@@ -207,12 +217,12 @@ test('a stale write is rejected, the missing change is pulled, and the write ret
         const body = JSON.parse(String(init.body ?? '{}'))
         if (body.baseSeq === 1) {
           injected = true
-          const remote = { v: 1, at: Date.now(), chats: { ops: [{ id: 'c1', add: [{ id: 'remote', r: 'user', t: 'remote edit', at: 3 }] }] } }
+          const remote = { ops: [{ id: 'c1', order: ['m1', 'remote'], add: [{ id: 'remote', r: 'user', t: 'remote edit', at: 3 }] }] }
           await handleSyncPush(
             request('https://app.test/api/sync/push', {
               method: 'POST',
               headers: { 'content-type': 'application/json' },
-              body: JSON.stringify({ token: TOKEN_C, delta: await encryptSyncDelta(remote, TOKEN_C), baseSeq: 1 }),
+              body: JSON.stringify({ token: TOKEN_C, chats: await encryptChatPush(remote, TOKEN_C), baseSeq: 1, chatStore: true, at: 3 }),
             }),
             backend,
           )
@@ -228,9 +238,13 @@ test('a stale write is rejected, the missing change is pulled, and the write ret
     assert.equal(ids.length, 3)
     assert.equal(new Set(ids).size, 3)
     assert.ok(ids.includes('remote') && ids.includes('local'))
-    assert.equal((await backend.get(parseToken(TOKEN_C).id)).deltas.length, 2)
+    const stored = await backend.get(parseToken(TOKEN_C).id)
+    // Every message is its own row, and the local edit is the newest one.
+    assert.equal([...stored.messages.values()].filter((m) => !m.deleted).length, 3)
+    assert.ok([...stored.messages.values()].some((m) => m.id === 'local' && m.seq === 3))
   } finally {
     restore()
+    setSyncChats(false)
     setSyncToken(previousToken)
     resetSyncBaseline()
   }
@@ -242,6 +256,7 @@ test('a slot cleared by a server restart is re-seeded instead of failing forever
   const previousToken = getSyncToken()
   try {
     setSyncToken(TOKEN_D)
+    setSyncChats(true)
     resetSyncBaseline()
     useS.setState({
       chats: [{ id: 'c1', title: 'Chat', msgs: [{ id: 'm1', r: 'user', t: 'hello', at: 1 }] }],
@@ -259,6 +274,7 @@ test('a slot cleared by a server restart is re-seeded instead of failing forever
     assert.deepEqual(row.deltas, [])
   } finally {
     restore()
+    setSyncChats(false)
     setSyncToken(previousToken)
     resetSyncBaseline()
   }

@@ -76,5 +76,6 @@ Desktop.ini
 !.yarn/releases
 !.yarn/versions
 
-# Local agent storage
+# Local agent info and storage
 agents_storage/screenshots/
+AUDIT_SYSTEM_PROMPT.md

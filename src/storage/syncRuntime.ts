@@ -1,7 +1,7 @@
 /* Automatic device-sync runtime.
  *
- * One place owns the token/auto bookkeeping and the push/pull orchestration so
- * the settings UI stays thin:
+ * One place owns the token/option bookkeeping and the push/pull orchestration
+ * so the settings UI stays thin:
  *   - on boot and whenever the tab becomes visible, and on a slow interval, the
  *     newest remote changes are pulled and smart-merged into local state;
  *   - local changes (chats, workspaces or settings) are debounced and pushed,
@@ -9,26 +9,32 @@
  *   - manual push/pull in the settings UI call the same helpers.
  * All work is best-effort: a failed sync must never break the app.
  *
- * Reads and writes are incremental. A push sends only the entities and
- * messages that changed since the last synced sequence, and a pull asks the
- * server for changes after that sequence. Only a first link (or a reset after
- * the server compacted its log) transfers the complete snapshot, which is why
- * a newly linked device still receives every part of the save. */
+ * Two data classes travel separately, both incrementally:
+ *
+ *   settings  one encrypted snapshot plus one encrypted delta per change;
+ *   chats     only when the user opts in: one encrypted row per chat and one
+ *             encrypted row per message, pulled by sequence so a device never
+ *             re-downloads a message it already has.
+ *
+ * Chats are NOT stored on the server by default. Neither are API keys. Both
+ * are explicit opt-ins in Settings → Data → Device sync. Turning the chat store
+ * off pushes a settings-only snapshot, which also deletes every stored chat
+ * row from the slot.
+ */
 
 import { buildSyncPayload, checkSyncCompat, decryptSyncDelta, decryptSyncPayload, encryptSyncDelta, encryptSyncPayload, parseSyncToken, type SyncPayload } from './sync'
+import { chatChangesToDelta, encryptChatPush, encryptChatPushChunks, type SyncChatPush } from './chatSync'
 import { mergeSyncData, type SyncData } from './syncMerge'
-import { applyDeltaToBaseline, applySyncDelta, baselineFromData, baselineMatches, computeSyncDelta, emptyBaseline, type SyncBaseline, type SyncDelta } from './syncDelta'
+import { applyDeltaToBaseline, applySyncDelta, baselineFromData, baselineMatches, computeSyncDelta, emptyBaseline, settingsOnlyDelta, type SyncBaseline, type SyncDelta } from './syncDelta'
 import { detectChatConflicts, recordSyncConflicts } from './syncConflicts'
-import { shapeSyncData } from './syncShaping'
-import { syncPull, syncPush } from './syncClient'
+import { shapeSyncData, type SyncShapeOptions } from './syncShaping'
+import { syncPull, syncPush, type SyncPullResult } from './syncClient'
 import { durableGetSyncBase, durablePutSyncBase } from './durable'
+import { clearSyncKeyCache } from './backupCrypto'
 import { useS } from '../store'
 import { STORE_VERSION } from '../persistence'
 
-/* Device sync is on. It was switched off while every push uploaded the whole
- * store; with incremental deltas the loops move only what changed, so the
- * Settings section and the background runtime are enabled again. Set this to
- * false to hide the UI and stop every timer. */
+/* Device sync is on. Set this to false to hide the UI and stop every timer. */
 export const DEVICE_SYNC_ENABLED = true
 
 /* Device-local link state, deliberately outside the synced store: the token is
@@ -37,6 +43,10 @@ export const DEVICE_SYNC_ENABLED = true
 const TOKEN_KEY = 'byok.sync.token'
 const AUTO_KEY = 'byok.sync.auto'
 const LAST_KEY = 'byok.sync.last'
+/** Opt-in: store conversations in the sync slot. Off by default. */
+const CHATS_KEY = 'byok.sync.chats'
+/** Opt-in: include endpoint/search/MCP credentials. Off by default. */
+const KEYS_KEY = 'byok.sync.keys'
 
 /** How often an open, idle tab checks the sync slot. */
 export const SYNC_PULL_INTERVAL_MS = 5 * 60_000
@@ -61,11 +71,61 @@ export const SYNC_PUSH_RETRY_MS = 30_000
 export const SYNC_LIVE_ONLY = ['busy', 'busyChats', 'doneChats', 'queued', 'draft', 'drafts', 'notice', 'flashMsg', 'researchPanel', 'chat', 'newChatPending', 'activeProject', 'usage', 'usageTitles', 'runJournal']
 
 export const getSyncToken = (): string => { try { return localStorage.getItem(TOKEN_KEY) ?? '' } catch { return '' } }
-export const setSyncToken = (t: string): void => { try { t ? localStorage.setItem(TOKEN_KEY, t) : localStorage.removeItem(TOKEN_KEY) } catch { /* blocked storage */ } }
+export const setSyncToken = (t: string): void => {
+  try { t ? localStorage.setItem(TOKEN_KEY, t) : localStorage.removeItem(TOKEN_KEY) } catch { /* blocked storage */ }
+  // A different token means a different key: never reuse a derived key (or a
+  // baseline) from the previous slot.
+  clearSyncKeyCache()
+}
 export const getAutoSync = (): boolean => { try { return localStorage.getItem(AUTO_KEY) === '1' } catch { return false } }
 export const setAutoSync = (on: boolean): void => { try { localStorage.setItem(AUTO_KEY, on ? '1' : '0') } catch { /* blocked storage */ } }
 export const getLastSync = (): number => { try { return Number(localStorage.getItem(LAST_KEY) ?? 0) || 0 } catch { return 0 } }
 const setLastSync = (t: number): void => { try { localStorage.setItem(LAST_KEY, String(t)) } catch { /* blocked storage */ } }
+
+/* The two storage options are read on every push, so keep the last value in
+ * memory as well. Storage being blocked (private mode, a test host without a
+ * DOM) must not silently flip an opt-in off after the user enabled it. */
+/** Set when an option that changes what the snapshot may contain was toggled:
+ *  the next push must rewrite the snapshot, not send a delta, or the old
+ *  snapshot (with keys or chats) would stay in the slot forever. */
+let forceFullPush = false
+
+const optionCache = new Map<string, boolean>()
+const readFlag = (key: string): boolean => {
+  const cached = optionCache.get(key)
+  if (cached !== undefined) return cached
+  try { return localStorage.getItem(key) === '1' } catch { return false }
+}
+const writeFlag = (key: string, on: boolean): void => {
+  optionCache.set(key, on)
+  try { localStorage.setItem(key, on ? '1' : '0') } catch { /* blocked storage */ }
+}
+
+/** Whether conversations are stored in the slot. Off unless opted in. */
+export const getSyncChats = (): boolean => readFlag(CHATS_KEY)
+/** Whether credentials are stored in the slot. Off unless opted in. */
+export const getSyncKeys = (): boolean => readFlag(KEYS_KEY)
+
+/** Change what the slot holds. Resets the delta baseline and drops the derived
+ *  key so the next push rewrites the slot from scratch under the new policy. */
+export function setSyncChats(on: boolean): void {
+  writeFlag(CHATS_KEY, on)
+  // The slot's shape changes completely: rewrite the snapshot and the rows
+  // instead of sending a delta shaped under the old policy. The baseline is
+  // kept so the rewrite can also emit tombstones for chats being removed.
+  forceFullPush = true
+}
+
+export function setSyncKeys(on: boolean): void {
+  writeFlag(KEYS_KEY, on)
+  // The stored snapshot may hold credentials from before the toggle; only a
+  // full rewrite replaces it.
+  forceFullPush = true
+}
+
+export function getSyncShapeOptions(): SyncShapeOptions {
+  return { chats: getSyncChats(), includeKeys: getSyncKeys() }
+}
 
 /** Whether background automatic push/pull should run. Manual sync works with
  *  or without this, so it only gates the timers. */
@@ -179,8 +239,14 @@ const decryptDelta = async (raw: unknown, token: string): Promise<SyncDelta> => 
   return value as SyncDelta
 }
 
+/** Decode the per-message rows of a pull into the same delta shape the merge
+ *  engine already understands. */
+async function rowsDeltaOf(r: SyncPullResult, token: string): Promise<SyncDelta | null> {
+  return chatChangesToDelta(r.chats, r.messages, token)
+}
+
 /** Fetch and decrypt the remote slot without touching local state. Used by the
- *  linking flow: a new device receives the complete snapshot plus any deltas
+ *  linking flow: a new device receives the complete save plus any deltas
  *  layered on it, then chooses how to combine it with this device. */
 export async function fetchRemote(token = getSyncToken()): Promise<{ data: SyncData; updatedAt: number; backend: string; seq: number }> {
   if (!token) throw Error('No sync token on this device.')
@@ -190,6 +256,8 @@ export async function fetchRemote(token = getSyncToken()): Promise<{ data: SyncD
   assertCompatible(payload, r.exportVersion, r.storeVersion)
   let data = toSyncData(payload)
   for (const raw of r.deltas ?? []) data = applySyncDelta(data, await decryptDelta(raw, token))
+  const rows = await rowsDeltaOf(r, token)
+  if (rows) data = applySyncDelta(data, rows)
   return { data, updatedAt: r.updatedAt, backend: r.backend, seq: Number(r.seq) || 0 }
 }
 
@@ -207,6 +275,7 @@ export async function pullAndMerge(token = getSyncToken()): Promise<{ data: Sync
   }
   let data: SyncData
   let nextBase: SyncBaseline
+  const rows = await rowsDeltaOf(r, token)
 
   if (r.payload) {
     // First pull, or the server compacted past our sequence. Rebuild the
@@ -216,6 +285,7 @@ export async function pullAndMerge(token = getSyncToken()): Promise<{ data: Sync
     assertCompatible(payload, r.exportVersion, r.storeVersion)
     let remote = toSyncData(payload)
     for (const raw of r.deltas ?? []) remote = applySyncDelta(remote, await decryptDelta(raw, token))
+    if (rows) remote = applySyncDelta(remote, rows)
     const local = readLocalData()
     recordSyncConflicts(detectChatConflicts(local.chats, remote.chats))
     data = mergeSyncData(local, remote, 'merge')
@@ -229,6 +299,10 @@ export async function pullAndMerge(token = getSyncToken()): Promise<{ data: Sync
     for (const delta of deltas) {
       current = applySyncDelta(current, delta)
       next = applyDeltaToBaseline(next, delta)
+    }
+    if (rows) {
+      current = applySyncDelta(current, rows)
+      next = applyDeltaToBaseline(next, rows)
     }
     data = current
     nextBase = { ...next, seq }
@@ -247,11 +321,46 @@ const isMissingSlot = (error: unknown): boolean => {
 const isConflict = (error: unknown): boolean =>
   (error as { status?: number }).status === 409 || (error as { code?: string }).code === 'sync_conflict'
 
+/** Chat rows for a full push. A first push sends everything; a compacting
+ *  push diffs against the current baseline so a chat deleted locally while the
+ *  log was full still produces its tombstone. Large saves are split into
+ *  requests the transport can carry. */
+async function fullChatPushes(data: SyncData, token: string): Promise<SyncChatPush[]> {
+  if (!getSyncChats()) return []
+  const base = await loadBaseline(token)
+  const from = base.seq > 0 ? base : emptyBaseline(tokenIdFor(token), 0)
+  const all = computeSyncDelta(from, data)
+  return encryptChatPushChunks(all?.chats, token)
+}
+
+/** Send the remaining chat chunks after the request that seeded the slot. */
+async function pushChatChunks(token: string, chunks: SyncChatPush[], fromSeq: number): Promise<number> {
+  let seq = fromSeq
+  for (const chunk of chunks) {
+    const r = await syncPush(token, { chats: chunk, baseSeq: seq, storeVersion: STORE_VERSION, exportVersion: 4, chatStore: true, at: Date.now() })
+    seq = Number(r.seq) || 0
+  }
+  return seq
+}
+
 async function pushFull(token: string, baseSeq: number): Promise<{ updatedAt: number; backend: string; seq: number }> {
-  const data = shapeSyncData(readLocalData())
-  const payload = buildSyncPayload({ storeVersion: STORE_VERSION, settings: data.settings, chats: data.chats, workspaces: data.workspaces, selectedRevision: data.selectedRevision })
-  const r = await syncPush(token, { payload: await encryptSyncPayload(payload, token), baseSeq, storeVersion: payload.storeVersion, exportVersion: payload.v })
-  const seq = Number(r.seq) || 0
+  const data = shapeSyncData(readLocalData(), getSyncShapeOptions())
+  // Conversations never ride the snapshot: with the chat store on they travel
+  // as one row per message, and with it off they do not travel at all.
+  const payload = buildSyncPayload({ storeVersion: STORE_VERSION, settings: data.settings, chats: [], workspaces: data.workspaces, selectedRevision: data.selectedRevision })
+  const [firstChunk, ...restChunks] = await fullChatPushes(data, token)
+  const r = await syncPush(token, {
+    payload: await encryptSyncPayload(payload, token),
+    baseSeq,
+    storeVersion: payload.storeVersion,
+    exportVersion: payload.v,
+    // Always explicit: `false` tells the server to erase any conversations it
+    // stored before the option was turned off.
+    chatStore: getSyncChats(),
+    ...(firstChunk ? { chats: firstChunk } : {}),
+    at: Date.now(),
+  })
+  const seq = await pushChatChunks(token, restChunks, Number(r.seq) || 0)
   setBaseline(baselineFromData(data, tokenIdFor(token), seq))
   setLastSync(r.updatedAt)
   return { updatedAt: r.updatedAt, backend: r.backend, seq }
@@ -284,6 +393,13 @@ export async function pushNow(token = getSyncToken()): Promise<{ updatedAt: numb
   try { await pullAndMerge(token) } catch (error) { pullError = error }
   let base = await loadBaseline(token)
 
+  // A storage option changed: the stored snapshot itself must be replaced, not
+  // patched, or the previous credentials/chats would remain in the slot.
+  if (forceFullPush) {
+    forceFullPush = false
+    return pushFullWithRetry(token, base.seq)
+  }
+
   // A first push, or the slot disappeared (server restart, expiry). Re-seed
   // with a complete snapshot; if the slot actually exists, the server's 409
   // sends us through pull-and-merge before retrying, so nothing is overwritten.
@@ -293,15 +409,25 @@ export async function pushNow(token = getSyncToken()): Promise<{ updatedAt: numb
   }
 
   for (let attempt = 0; attempt < 3; attempt++) {
-    const data = shapeSyncData(readLocalData())
+    const data = shapeSyncData(readLocalData(), getSyncShapeOptions())
     const delta = computeSyncDelta(base, data)
     if (!delta) return { updatedAt: getLastSync(), backend: 'up-to-date', seq: base.seq }
+    const settingsDelta = settingsOnlyDelta(delta)
+    const chatStore = getSyncChats()
+    const chats = chatStore
+      ? await encryptChatPush(delta.chats, token)
+      // With the store off, chat deletions only exist to clear an older slot:
+      // the flag tells the server to erase its rows, so no rows need to travel.
+      : (delta.chats?.del?.length ? { del: delta.chats.del } : undefined)
     try {
       const r = await syncPush(token, {
-        delta: await encryptSyncDelta(delta, token),
+        ...(settingsDelta ? { delta: await encryptSyncDelta(settingsDelta, token) } : {}),
+        ...(chats ? { chats } : {}),
         baseSeq: base.seq,
         storeVersion: STORE_VERSION,
         exportVersion: 4,
+        chatStore,
+        at: delta.at,
       })
       const seq = Number(r.seq) || 0
       setBaseline(baselineFromData(data, tokenIdFor(token), seq))
@@ -333,6 +459,10 @@ export async function linkAndMerge(token: string, mode: 'merge' | 'remote' | 'lo
   const local = readLocalData()
   if (mode === 'merge') recordSyncConflicts(detectChatConflicts(local.chats, remote.chats))
   const data = mergeSyncData(local, remote, mode)
+  // Chats are not stored unless the user opted in, so a remote snapshot from
+  // this slot cannot legitimately be empty of conversations while meaning
+  // "delete them here". Keep this device's chats when the store is off.
+  if (!getSyncChats() && mode === 'remote') data.chats = local.chats
   applySyncData(data)
   // "Use the other device" is exactly what the slot already holds: adopting it
   // needs no upload at all. The baseline is the remote state, so any local-only
@@ -342,10 +472,19 @@ export async function linkAndMerge(token: string, mode: 'merge' | 'remote' | 'lo
     setLastSync(Date.now())
     return { updatedAt: Date.now(), backend: 'remote', seq: remoteSeq }
   }
-  const shaped = shapeSyncData(data)
-  const payload = buildSyncPayload({ storeVersion: STORE_VERSION, settings: shaped.settings, chats: shaped.chats, workspaces: shaped.workspaces, selectedRevision: shaped.selectedRevision })
-  const r = await syncPush(token, { payload: await encryptSyncPayload(payload, token), baseSeq: remoteSeq, storeVersion: payload.storeVersion, exportVersion: payload.v })
-  const seq = Number(r.seq) || 0
+  const shaped = shapeSyncData(data, getSyncShapeOptions())
+  const payload = buildSyncPayload({ storeVersion: STORE_VERSION, settings: shaped.settings, chats: [], workspaces: shaped.workspaces, selectedRevision: shaped.selectedRevision })
+  const [firstChunk, ...restChunks] = await fullChatPushes(shaped, token)
+  const r = await syncPush(token, {
+    payload: await encryptSyncPayload(payload, token),
+    baseSeq: remoteSeq,
+    storeVersion: payload.storeVersion,
+    exportVersion: payload.v,
+    chatStore: getSyncChats(),
+    ...(firstChunk ? { chats: firstChunk } : {}),
+    at: Date.now(),
+  })
+  const seq = await pushChatChunks(token, restChunks, Number(r.seq) || 0)
   setBaseline(baselineFromData(shaped, tokenIdFor(token), seq))
   setLastSync(r.updatedAt)
   return { updatedAt: r.updatedAt, backend: r.backend, seq }

@@ -1,154 +1,110 @@
 /* What actually travels to the remote sync slot.
  *
  * Local storage keeps the full conversation; a sync payload keeps the
- * user-facing story: message text, the final answer, research reports and
- * narration, reasoning summaries, the search evidence behind citations,
- * projects, settings and workspaces. Uploaded file bytes, system prompts, raw
- * request/response bodies, full tool arguments and other tool output stay
- * local. Caps keep snapshots small enough to stay cheap in Neon and limit what
- * a remote copy can reveal.
+ * user-facing story and nothing else:
  *
- * Shapes are plain data, so the module is pure and unit-testable.
+ *   - message text, bylines, model labels, token counts and timings;
+ *   - tool-call indicators (which tool ran, whether it failed, how long it
+ *     took) without their arguments or results;
+ *   - research narration, the plan and the final report, without the evidence
+ *     transcripts behind them;
+ *   - project names and file names, without the extracted file text;
+ *   - settings, without credentials unless the user explicitly opted in.
+ *
+ * Uploaded file bytes, workspace file bodies, system prompts, raw
+ * request/response bodies, retry alternatives and older workspace revisions
+ * stay local. Shapes are plain data, so the module is pure and unit-testable.
  */
 
-import { compactSearchEvidence } from '../persistence'
-import { extractCitedIds } from '../citations'
+import { leanChat, leanMessage, leanProject } from './lean'
 import type { SyncData } from './syncMerge'
 
 type Obj = Record<string, unknown>
 
 const obj = (v: unknown): Obj => (v && typeof v === 'object' && !Array.isArray(v) ? v as Obj : {})
 const arr = (v: unknown): unknown[] => (Array.isArray(v) ? v : [])
-const clip = (v: unknown, n: number): unknown => (typeof v === 'string' && v.length > n ? `${v.slice(0, n)}…` : v)
+const clip = (v: string, n: number): string => (v.length > n ? `${v.slice(0, n)}…` : v)
 
-const shapeAttachment = (a: unknown): unknown => {
-  const x = obj(a)
-  const { data, text, ...rest } = x
-  return rest
-}
+/** Caps for the one large user-facing artifact that still travels: the latest
+ *  workspace revision. A single file larger than this is a generated binary or
+ *  a data dump; storing it on every workspace edit is not worth the transfer,
+ *  so it is truncated with an explicit marker rather than silently dropped. */
+export const WORKSPACE_FILE_MAX_CHARS = 24_000
+export const WORKSPACE_TOTAL_MAX_CHARS = 400_000
 
-const shapeCall = (c: unknown, cited: Set<string>): unknown => {
-  const x = obj(c)
-  const { result, arguments: args, ...rest } = x
-  // A short argument string keeps the process log readable ("search: cats");
-  // the full tool input stays local.
-  const out: Obj = { ...rest, ...(typeof args === 'string' && args.length <= 500 ? { arguments: args } : {}) }
-  // The evidence behind a citation is user-facing: without it a synced copy
-  // renders the report with no sources panel and dead [S<n>] links. Keep
-  // search evidence (cited blocks first) and read pages, capped.
-  if (typeof result === 'string' && result) {
-    if (x.name === 'search') out.result = compactSearchEvidence(result, cited, 12000)
-    else if (x.name === 'fetch_page') out.result = clip(result, 12000)
-  }
-  return out
-}
-
-const shapeMsg = (m: unknown): unknown => {
-  const x = obj(m)
-  const { full, sys, log, historyTokens, explicitTokens, ...rest } = x
-  const out: Obj = { ...rest }
-  // The model's reasoning summary is shown in the thinking panel, so it is
-  // part of the saved conversation; the raw request bodies and process logs
-  // stay local. Cap it so a long trace cannot bloat a snapshot.
-  if (typeof x.reasoning === 'string' && x.reasoning) out.reasoning = clip(x.reasoning, 8000)
-  if (Array.isArray(x.att)) out.att = x.att.map(shapeAttachment)
-  if (Array.isArray(x.toolRounds)) {
-    const cited = new Set(extractCitedIds(`${String(x.toolFinal ?? '')}\n${String(x.t ?? '')}`))
-    out.toolRounds = x.toolRounds.map((round) => {
-      const r = obj(round)
-      return { ...r, text: clip(r.text, 4000), calls: arr(r.calls).map((call) => shapeCall(call, cited)) }
-    })
-  }
-  // Paths that branch off this message travel the same way the visible
-  // transcript does: text and evidence in, raw request bodies out. Nested
-  // forks are shaped recursively, so a deep tree cannot smuggle a payload.
-  if (x.fork && typeof x.fork === 'object') {
-    const f = obj(x.fork)
-    out.fork = { ai: typeof f.ai === 'number' ? f.ai : 0, paths: arr(f.paths).map((p) => arr(p).map(shapeMsg)) }
-  }
-  if (Array.isArray(x.alts)) out.alts = x.alts.map((alt) => {
-    const a = obj(alt)
-    const { att, toolRounds, log, full: f, sys: s, reasoning: rs, ...keep } = a
-    return keep
-  })
-  if (x.research && typeof x.research === 'object') {
-    const rs = obj(x.research)
-    out.research = {
-      ...rs,
-      ...(typeof rs.note === 'string' ? { note: rs.note.slice(0, 4000) } : {}),
-      ...(typeof rs.reasoning === 'string' ? { reasoning: rs.reasoning.slice(0, 8000) } : {}),
-      ...(typeof rs.steer === 'string' ? { steer: rs.steer.slice(0, 800) } : {}),
-      // Delegated agents and their reports are user-facing (the run card and
-      // report panel show them), so they travel, capped like other narration.
-      ...(Array.isArray(rs.agents) ? {
-        agents: (rs.agents as Obj[]).slice(-24).map((a) => ({
-          ...a,
-          brief: clip(a.brief, 1200),
-          answer: clip(a.answer, 4000),
-          error: clip(a.error, 600),
-          sources: Array.isArray(a.sources) ? a.sources.slice(0, 40) : a.sources,
-          followUps: Array.isArray(a.followUps)
-            ? (a.followUps as Obj[]).slice(-3).map((f) => ({ ...obj(f), q: clip(f.q, 600), a: clip(f.a, 3000) }))
-            : a.followUps,
-          followUpErrors: Array.isArray(a.followUpErrors)
-            ? (a.followUpErrors as unknown[]).slice(-4).map((e) => clip(e, 600))
-            : a.followUpErrors,
-        })),
-      } : {}),
-      steps: arr(rs.steps).map((step) => {
-        const st = obj(step)
-        return { ...st, ...(typeof st.lead === 'string' ? { lead: st.lead.slice(0, 2000) } : {}) }
-      }),
-    }
-  }
-  return out
+const SYNC_MESSAGE_OPTIONS = {
+  toolResultChars: 0,
+  toolArgChars: 0,
+  reasoningChars: 2000,
+  researchChars: 1200,
+  toolTextChars: 2000,
+  alternatives: false,
 }
 
 export function shapeChatForSync(c: unknown): unknown {
-  const x = obj(c)
-  const { fork, ...rest } = x
-  return {
-    ...rest,
-    msgs: arr(x.msgs).map(shapeMsg),
-    ...(fork && typeof fork === 'object'
-      ? { fork: { ai: typeof obj(fork).ai === 'number' ? obj(fork).ai : 0, paths: arr(obj(fork).paths).map((p) => arr(p).map(shapeMsg)) } }
-      : {}),
-  }
+  return leanChat(c, SYNC_MESSAGE_OPTIONS)
 }
 
-/** Workspaces are generated project files, so they are user-facing. Only the
- *  latest revision is synced (older history stays local), but its file bodies
- *  are sent whole: silently clipping a workspace file makes a synced copy look
- *  complete while it will not build. If the full payload exceeds the transport
- *  limit the push fails loudly instead of storing a damaged file. */
+/** Workspaces are generated project files, so they are user-facing and only
+ *  exist when chats are stored. Only the latest revision is synced (older
+ *  history stays local) and its bodies are capped; a capped file says so. */
 export function shapeWorkspacesForSync(value: unknown): Obj {
   const out: Obj = {}
+  let budget = WORKSPACE_TOTAL_MAX_CHARS
   for (const [id, ws] of Object.entries(obj(value))) {
     const w = obj(ws)
     const revisions = arr(w.revisions)
     const latest = revisions.length ? revisions[revisions.length - 1] : undefined
-    out[id] = latest ? { ...w, revisions: [{ ...obj(latest), files: arr(obj(latest).files) }] } : { ...w, revisions: [] }
+    if (!latest || !obj(latest).files) { out[id] = { ...w, revisions: [] }; continue }
+    const rev = obj(latest)
+    const files = arr(rev.files).map((file) => {
+      const f = obj(file)
+      if (typeof f.content !== 'string') return f
+      const room = Math.max(0, Math.min(WORKSPACE_FILE_MAX_CHARS, budget))
+      budget -= Math.min(f.content.length, room)
+      if (f.content.length <= room) return f
+      return { ...f, content: clip(f.content, room), truncated: true }
+    })
+    out[id] = { ...w, revisions: [{ ...rev, files }] }
   }
   return out
 }
 
-/** Strip credentials from settings that can carry them even though the export
- *  path already omits keys; this is defence in depth for sync. */
-function shapeSettings(settings: Obj): Obj {
+/** Strip credentials from settings unless the user opted into syncing them.
+ *  Endpoint keys, every search-provider key, the reader key and MCP headers
+ *  are all covered; a provider added later cannot leak by being missed. */
+function shapeSettings(settings: Obj, includeKeys: boolean): Obj {
   const out: Obj = { ...settings }
+  // Project context files are extracted file text (see leanProject).
+  if (Array.isArray(out.projects)) out.projects = out.projects.map(leanProject)
+  if (Array.isArray(out.folders)) out.folders = out.folders.map(leanProject)
+  if (includeKeys) return out
   if (Array.isArray(out.eps)) out.eps = out.eps.map((e) => ({ ...obj(e), key: '' }))
-  if (out.search && typeof out.search === 'object') {
-    out.search = { ...obj(out.search), keys: {}, readerKey: '' }
-  }
+  if (out.search && typeof out.search === 'object') out.search = { ...obj(out.search), keys: {}, readerKey: '' }
   if (Array.isArray(out.mcps)) out.mcps = out.mcps.map((m) => ({ ...obj(m), headers: '' }))
+  // A share record's token is the owner credential for editing or revoking a
+  // public link; it is minted server-side and stays on the device that made it.
+  if (Array.isArray(out.shares)) out.shares = out.shares.map((s) => ({ ...obj(s), token: '' }))
   return out
 }
 
-export function shapeSyncData(data: SyncData): SyncData {
+export type SyncShapeOptions = {
+  /** Include conversations. Off by default: the server stores settings only. */
+  chats?: boolean
+  /** Include endpoint/search/MCP credentials. Off by default. */
+  includeKeys?: boolean
+}
+
+export function shapeSyncData(data: SyncData, options: SyncShapeOptions = {}): SyncData {
+  const chats = options.chats === true
   return {
-    settings: shapeSettings(data.settings),
-    chats: data.chats.map(shapeChatForSync),
-    workspaces: shapeWorkspacesForSync(data.workspaces),
-    selectedRevision: data.selectedRevision,
+    settings: shapeSettings(data.settings, options.includeKeys === true),
+    chats: chats ? data.chats.map(shapeChatForSync) : [],
+    workspaces: chats ? shapeWorkspacesForSync(data.workspaces) : {},
+    selectedRevision: chats ? data.selectedRevision : {},
   }
 }
+
+/** One message, exactly as uploaded. Exposed for tests and for the server-side
+ *  equivalent in server/sync.mjs. */
+export const shapeMessageForSync = (m: unknown): unknown => leanMessage(m, SYNC_MESSAGE_OPTIONS)

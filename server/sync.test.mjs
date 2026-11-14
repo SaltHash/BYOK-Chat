@@ -198,6 +198,126 @@ test('simultaneous delta pushes are serialized so one cannot overwrite the other
   assert.equal(pulled.deltas.length, 1, 'the log must hold one change per sequence')
 })
 
+/* ---- opt-in per-message chat storage ---- */
+
+const chatPush = (token, chats, extra = {}) => req({ token, baseSeq: 1, chatStore: true, at: 100, chats, ...extra })
+
+async function seedWithChatStore(backend, token) {
+  // One full push seeds the settings snapshot and the message rows together.
+  return handleSyncPush(req({
+    token,
+    payload: { v: 4, storeVersion: 18, settings: {}, chats: [], workspaces: {}, selectedRevision: {} },
+    chatStore: true,
+    at: 100,
+    chats: {
+      ops: [{
+        id: 'c1', meta: { id: 'c1', title: 'Chat' }, order: ['m1', 'm2'],
+        add: [{ id: 'm1', r: 'user', t: 'one' }, { id: 'm2', r: 'user', t: 'two' }],
+      }],
+    },
+  }), backend)
+}
+
+test('chats are refused and cleared unless the client opts in', async () => {
+  const backend = memStore()
+  const token = tokenFor('k'.repeat(16))
+  const id = parseToken(token).id
+  // A legacy-shaped plaintext snapshot that still carries conversations.
+  await handleSyncPush(req({
+    token,
+    payload: { v: 4, storeVersion: 18, settings: { themeMode: 'dark' }, chats: [{ id: 'c1', title: 'Secret', msgs: [{ id: 'm1', r: 'user', t: 'private' }] }], workspaces: {}, selectedRevision: {} },
+  }), backend)
+  const stored = await backend.get(id)
+  assert.deepEqual(stored.payload.chats, [], 'conversations are not stored by default')
+  assert.equal([...stored.messages.values()].length, 0)
+
+  // Turning the opt-in on and then off again removes the stored messages.
+  const seeded = await seedWithChatStore(backend, token)
+  assert.ok((await backend.get(id)).messages.size >= 2)
+  await handleSyncPush(req({ token, delta: { v: 1, at: 200 }, baseSeq: seeded.seq, chatStore: false }), backend)
+  assert.equal((await backend.get(id)).messages.size, 0)
+  assert.equal((await backend.get(id)).chats.size, 0)
+})
+
+test('each message is its own row and a pull returns only rows after the sequence', async () => {
+  const backend = memStore()
+  const token = tokenFor('l'.repeat(16))
+  const id = parseToken(token).id
+  const seeded = await seedWithChatStore(backend, token)
+
+  const all = await handleSyncPull(pullReq(token, 0), backend)
+  assert.equal(all.chats.length, 1)
+  assert.deepEqual(all.messages.map((m) => m.id).sort(), ['m1', 'm2'])
+
+  // One edited message and one new message in the next push.
+  await handleSyncPush(chatPush(token, {
+    ops: [{ id: 'c1', order: ['m1', 'm2', 'm3'], update: [{ id: 'm2', r: 'user', t: 'two edited' }], add: [{ id: 'm3', r: 'user', t: 'three' }] }],
+  }, { baseSeq: seeded.seq }), backend)
+
+  const missed = await handleSyncPull(pullReq(token, seeded.seq), backend)
+  assert.equal(missed.payload, undefined, 'an incremental pull must not return the snapshot')
+  assert.deepEqual(missed.messages.map((m) => m.id).sort(), ['m2', 'm3'])
+  assert.ok(missed.messages.length < all.messages.length + 2)
+
+  // The idle poll after it is metadata only.
+  const idle = await handleSyncPull(pullReq(token, missed.seq), backend)
+  assert.equal(idle.upToDate, true)
+  assert.equal(idle.messages, undefined)
+})
+
+test('the stored message body is stripped of files, tool arguments and tool results', async () => {
+  const backend = memStore()
+  const token = tokenFor('m'.repeat(16))
+  const id = parseToken(token).id
+  const seeded = await seedWithChatStore(backend, token)
+  await handleSyncPush(chatPush(token, {
+    ops: [{
+      id: 'c1', order: ['x1'],
+      add: [{
+        id: 'x1', r: 'assistant', t: 'answer', full: 'PROMPT', sys: 'SYS', log: [{ n: 'm' }], fx: 'FILES', ctx: ['f'],
+        att: [{ name: 'a.png', kind: 'img', size: '4 KB', data: 'BASE64', text: 'TEXT' }],
+        toolRounds: [{ text: 'ran', calls: [{ id: 't', name: 'search', arguments: '{"q":"x"}', result: 'RESULTS', error: false, ms: 5 }] }],
+      }],
+    }],
+  }, { baseSeq: seeded.seq }), backend)
+  const row = await backend.get(id)
+  const body = [...row.messages.values()].find((m) => m.id === 'x1').body
+  assert.deepEqual(body.att[0], { name: 'a.png', kind: 'img', size: '4 KB' })
+  assert.deepEqual(body.toolRounds[0].calls[0], { id: 't', name: 'search', error: false, ms: 5 })
+  for (const key of ['full', 'sys', 'log', 'fx', 'ctx']) assert.equal(key in body, false)
+})
+
+test('an idle poll reads the metadata row only, never the stored save', async () => {
+  const backend = memStore()
+  const token = tokenFor('o'.repeat(16))
+  const seeded = await seedWithChatStore(backend, token)
+  const calls = []
+  const spy = {
+    kind: backend.kind,
+    async meta(id) { calls.push('meta'); return backend.meta(id) },
+    async snapshot(id) { calls.push('snapshot'); return backend.snapshot(id) },
+    async changes(id, since, entitySince) { calls.push('changes'); return backend.changes(id, since, entitySince) },
+    async touch() {},
+    async del(id) { calls.push('del'); return backend.del(id) },
+  }
+  const idle = await handleSyncPull(pullReq(token, seeded.seq), spy)
+  assert.equal(idle.upToDate, true)
+  // This is the egress fix: a poll that has nothing to collect must not read
+  // the snapshot, the delta log or a single message row.
+  assert.deepEqual(calls, ['meta'])
+})
+
+test('a chat delete becomes a tombstone and its message rows are reclaimed', async () => {
+  const backend = memStore()
+  const token = tokenFor('n'.repeat(16))
+  const id = parseToken(token).id
+  const seeded = await seedWithChatStore(backend, token)
+  await handleSyncPush(req({ token, baseSeq: seeded.seq, chatStore: true, at: 300, chats: { del: ['c1'] } }), backend)
+  assert.equal((await backend.get(id)).messages.size, 0)
+  const pulled = await handleSyncPull(pullReq(token, seeded.seq), backend)
+  assert.deepEqual(pulled.chats.map((c) => [c.chatId, c.deleted]), [['c1', true]])
+})
+
 test('a full push compacts the log and resets the base sequence', async () => {
   const backend = memStore()
   const token = tokenFor('e'.repeat(16))
@@ -214,7 +334,7 @@ test('a full push compacts the log and resets the base sequence', async () => {
   const pulled = await handleSyncPull(pullReq(token), backend)
   assert.equal(pulled.full, true)
   assert.equal(pulled.baseSeq, 3)
-  assert.deepEqual(pulled.deltas, [])
+  assert.deepEqual(pulled.deltas ?? [], [])
   assert.deepEqual(pulled.payload.settings, { themeMode: 'light' })
 
   // The old sequence is behind the new base: a full snapshot is required.

@@ -297,7 +297,7 @@ export function mergeSearch(local: unknown, remote: unknown): Obj {
 /** Id-keyed collections whose entries carry a credential. Sync blanks these
  *  fields, so a copy that arrives without one means "not sent", never
  *  "cleared". */
-const CRED_FIELDS: Record<string, string> = { eps: 'key', mcps: 'headers' }
+const CRED_FIELDS: Record<string, string> = { eps: 'key', mcps: 'headers', shares: 'token' }
 
 const modelsAtOf = (endpoint: Obj): number => {
   const at = Number(endpoint.modelsAt)
@@ -399,6 +399,40 @@ export function keepLocalCredentials(local: Obj, incoming: Obj): Obj {
       return typeof x[field] === 'string' && !x[field] && kept ? { ...x, [field]: kept } : item
     })
   }
+  return out
+}
+
+/** Project context files carry extracted file text that never travels (see
+ *  shapeSyncData). When a remote copy replaces the project list, keep the text
+ *  for files whose ids still exist locally, so adopting a rename or a merge
+ *  does not silently drop this device's project material. */
+export function keepLocalProjectFileText(localProjects: unknown, incoming: Obj): Obj {
+  const out: Obj = { ...incoming }
+  const texts = new Map<string, Map<string, string>>()
+  for (const project of asArr(localProjects)) {
+    if (!isObj(project) || typeof project.id !== 'string') continue
+    const files = new Map<string, string>()
+    for (const file of asArr(project.context)) {
+      if (isObj(file) && typeof file.id === 'string' && typeof file.text === 'string' && file.text) files.set(file.id, file.text)
+    }
+    if (files.size) texts.set(project.id, files)
+  }
+  if (!texts.size) return out
+  const restore = (projects: unknown[]): unknown[] => projects.map((project) => {
+    if (!isObj(project) || typeof project.id !== 'string' || !Array.isArray(project.context)) return project
+    const byId = texts.get(project.id)
+    if (!byId) return project
+    return {
+      ...project,
+      context: project.context.map((file) => {
+        if (!isObj(file) || typeof file.id !== 'string') return file
+        const text = byId.get(file.id)
+        return text && !file.text ? { ...file, text } : file
+      }),
+    }
+  })
+  if (Array.isArray(out.projects)) out.projects = restore(out.projects)
+  if (Array.isArray(out.folders)) out.folders = restore(out.folders)
   return out
 }
 
@@ -506,7 +540,7 @@ export function mergeSyncData(local: SyncData, remote: SyncData, mode: SyncMerge
     // A model row removed here is absent from the adopted list too, which is
     // indistinguishable from an old cloud copy that still has it. Keep the
     // newer model-list edit on shared endpoints.
-    const settings = keepLocalModelEdits(local.settings.eps, adopted)
+    const settings = keepLocalModelEdits(local.settings.eps, keepLocalProjectFileText(local.settings.projects ?? local.settings.folders, adopted))
     return { settings: resolveChatPointer(local.settings.chat, settings, remote.chats), chats: keepLocalChatsLogs(local.chats, remote.chats), workspaces: { ...asObj(remote.workspaces) }, selectedRevision: { ...asObj(remote.selectedRevision) } }
   }
   if (mode === 'local') {

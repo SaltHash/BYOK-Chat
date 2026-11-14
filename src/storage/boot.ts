@@ -10,7 +10,7 @@
  *   validated independently and the index is rebuilt when it is damaged, so a
  *   bad record or interrupted write cannot block the whole app. */
 import { durableGetChats, durableGetWorkspaces, durablePutChats, durablePutWorkspaces, durableSetMeta, durableGetMeta, blobDel, blobPut, blobGet, splitPersistedForDurable, compactChatsForDurable } from './durable'
-import { CHAT_SHARD_PREFIX, QUOTA_FLAG, reportStorageFailure, reportStorageRecovery, STORE_VERSION, withoutExpiredTemps } from '../persistence'
+import { CHAT_SHARD_PREFIX, pruneChatForPersist, QUOTA_FLAG, reportStorageFailure, reportStorageRecovery, STORE_VERSION, withoutExpiredTemps } from '../persistence'
 
 const CHATS_DEBOUNCE_MS = 1200
 let timer: ReturnType<typeof setTimeout> | null = null
@@ -279,7 +279,12 @@ export async function hydrateDurable(patch: (p: Record<string, unknown>) => void
  * second — into a single write per window, using the newest arguments. */
 export function mirrorToDurable(chats: unknown, workspaces: unknown): void {
   if (eraseInProgress) return
-  pendingMirror = { chats, workspaces }
+  // The durable mirror is the recovery copy for the same visible conversation,
+  // not a second copy of every tool payload: attachment bytes already live in
+  // the blob store, and tool results/arguments are the bulk of a long chat.
+  // Shaping here roughly halves IndexedDB usage and leaves restore unchanged.
+  const lean = Array.isArray(chats) ? (chats as Parameters<typeof pruneChatForPersist>[0][]).map((chat) => pruneChatForPersist(chat)) : chats
+  pendingMirror = { chats: lean, workspaces }
   if (timer) clearTimeout(timer)
   timer = setTimeout(() => { timer = null; flushDurableMirror() }, CHATS_DEBOUNCE_MS)
 }

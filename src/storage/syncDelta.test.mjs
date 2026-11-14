@@ -79,7 +79,10 @@ test('a new message sends one message rather than the whole chat', () => {
   }
   const delta = computeSyncDelta(baselineFromData(before, token, 1), after)
   const op = delta.chats.ops[0]
-  assert.equal(op.meta, undefined)
+  // Every chat operation is self-describing: metadata and the full order ride
+  // along so the per-message store can write one row per message.
+  assert.equal(op.meta.title, 'A')
+  assert.deepEqual(op.order, [...before.chats[0].msgs.map((m) => m.id), 'new'])
   assert.equal(op.update, undefined)
   assert.deepEqual(op.add.map((m) => m.id), ['new'])
   assert.ok(JSON.stringify(delta).length < 600, `delta should be tiny, was ${JSON.stringify(delta).length} bytes`)
