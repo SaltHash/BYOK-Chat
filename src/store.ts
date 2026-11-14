@@ -1733,9 +1733,14 @@ export const useS = create<S>()(
             r.ctl = new AbortController()
             let researchEffort = get().effort[e.model] ?? ''
             if (researchEffort === 'auto') {
-              const picked = await classifyEffort(query, e.modelEfforts?.[e.model] ?? [])
-              if (picked.level) { researchEffort = picked.level; bump(picked.tin, picked.tout); const ce = effortClassifierOf(get()); if (ce) addCost(ce, ce.model, picked.tin, picked.tout, (picked as any).cost ?? 0, picked); log.push({ n: `${picked.by} (effort)`, m: picked.level, detail: `Auto effort for ${e.model}: chose ${picked.level}.`, ms: 0, tin: picked.tin, tout: picked.tout, cacheRead: (picked as any).cacheRead ?? 0, cacheWrite: (picked as any).cacheWrite ?? 0, cost: (picked as any).cost ?? 0, at: Date.now() }) }
-              else researchEffort = ''
+              const levels = e.modelEfforts?.[e.model] ?? []
+              // No reported levels means no effort to classify or send.
+              if (!levels.length) researchEffort = ''
+              else {
+                const picked = await classifyEffort(query, levels)
+                if (picked.level) { researchEffort = picked.level; bump(picked.tin, picked.tout); const ce = effortClassifierOf(get()); if (ce) addCost(ce, ce.model, picked.tin, picked.tout, (picked as any).cost ?? 0, picked); log.push({ n: `${picked.by} (effort)`, m: picked.level, detail: `Auto effort for ${e.model}: chose ${picked.level}.`, ms: 0, tin: picked.tin, tout: picked.tout, cacheRead: (picked as any).cacheRead ?? 0, cacheWrite: (picked as any).cacheWrite ?? 0, cost: (picked as any).cost ?? 0, at: Date.now() }) }
+                else researchEffort = ''
+              }
             }
             const o = { ...(get().params.def ? {} : { max: get().params.max, temp: get().params.temp, topp: get().params.topp }), effort: researchEffort }
             // The round's narration streams above the searches it is about to
@@ -2458,16 +2463,21 @@ export const useS = create<S>()(
             if (p.effects.effort) effort = p.effects.effort === 'lowest' ? lowestEffortOf(e) : highestEffortOf(e)
             else if (effort === 'auto') {
               const levels = e.modelEfforts?.[e.model] ?? []
-              const picked = await classifyEffort(um.full ?? um.t, levels)
-              if (picked.level) {
-                effort = picked.level
-                bump(picked.tin, picked.tout)
-                const ce = effortClassifierOf(get())
-                if (ce) addCost(ce, ce.model, picked.tin, picked.tout, (picked as any).cost ?? 0, picked)
-                log.push({ n: `${picked.by} (effort)`, m: picked.level, detail: `Auto effort for ${e.model}: chose ${picked.level} from ${levels.length} available levels (${levels.join(', ')}).`, ms: 0, tin: picked.tin, tout: picked.tout, cacheRead: (picked as any).cacheRead ?? 0, cacheWrite: (picked as any).cacheWrite ?? 0, cost: (picked as any).cost ?? 0, at: Date.now() })
-              } else {
-                effort = ''
-                log.push({ n: 'Effort (auto)', m: '', err: `Auto effort failed validation or no helper model is usable for ${e.model}; using the default level.`, at: Date.now() })
+              // A model that reports no levels has nothing to classify, and the
+              // provider would ignore an effort for it anyway.
+              if (!levels.length) effort = ''
+              else {
+                const picked = await classifyEffort(um.full ?? um.t, levels)
+                if (picked.level) {
+                  effort = picked.level
+                  bump(picked.tin, picked.tout)
+                  const ce = effortClassifierOf(get())
+                  if (ce) addCost(ce, ce.model, picked.tin, picked.tout, (picked as any).cost ?? 0, picked)
+                  log.push({ n: `${picked.by} (effort)`, m: picked.level, detail: `Auto effort for ${e.model}: chose ${picked.level} from ${levels.length} available levels (${levels.join(', ')}).`, ms: 0, tin: picked.tin, tout: picked.tout, cacheRead: (picked as any).cacheRead ?? 0, cacheWrite: (picked as any).cacheWrite ?? 0, cost: (picked as any).cost ?? 0, at: Date.now() })
+                } else {
+                  effort = ''
+                  log.push({ n: 'Effort (auto)', m: '', err: `Auto effort failed validation or no helper model is usable for ${e.model}; using the default level.`, at: Date.now() })
+                }
               }
             }
             effortCache.set(e.model, effort)

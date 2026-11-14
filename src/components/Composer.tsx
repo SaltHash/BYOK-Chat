@@ -215,7 +215,9 @@ function ModelMenu({ close, cfg }: { close: () => void; cfg: (t: string) => void
   // must not produce a second, synthetic one.
   const effortLevels = [...new Map(efforts.filter(Boolean).map((x) => [x.toLowerCase(), x])).values()]
     .sort((a, b) => (effortRank[a.toLowerCase()] ?? 50) - (effortRank[b.toLowerCase()] ?? 50))
-  const autoOn = !!effortClassifierOf(s)
+  // Auto is only a choice when the model actually reports levels: a slider
+  // whose ends are both "Auto" is not a control.
+  const autoOn = effortLevels.length > 0 && !!effortClassifierOf(s)
   const effortChoices = [...(autoOn ? ['auto'] : []), ...effortLevels]
   const storedEffort = activeModel ? s.effort[activeModel] : undefined
   const effortValue = storedEffort && effortChoices.includes(storedEffort) ? storedEffort : (effortLevels[0] ?? (autoOn ? 'auto' : ''))
@@ -874,10 +876,11 @@ export function Composer({ cfg, quote, onClearQuote }: { cfg: (t: string) => voi
             const activeEp = s.sel?.k === 'ep' && s.sel?.id ? s.eps.find((e) => e.id === s.sel!.id) : undefined
             const activeModel = s.sel?.k === 'ep' && s.sel.model ? s.sel.model : undefined
             const effortsArr = activeModel ? activeEp?.modelEfforts?.[activeModel] ?? [] : []
-            const autoOn = !!effortClassifierOf(s)
             const effortRank: Record<string, number> = { none: 0, minimal: 1, low: 2, medium: 3, high: 4, xhigh: 5, max: 6, auto: -1 }
             const effortLevels = [...new Map(effortsArr.filter(Boolean).map((x) => [x.toLowerCase(), x])).values()]
               .sort((a, b) => (effortRank[a.toLowerCase()] ?? 50) - (effortRank[b.toLowerCase()] ?? 50))
+            // Without reported levels there is no effort to label or route.
+            const autoOn = effortLevels.length > 0 && !!effortClassifierOf(s)
             const allChoices = [...(autoOn ? ['auto'] : []), ...effortLevels]
             const stored = activeModel ? s.effort[activeModel] : undefined
             const currentEffort = stored && allChoices.includes(stored) ? stored : (effortLevels[0] ?? (autoOn ? 'auto' : ''))
