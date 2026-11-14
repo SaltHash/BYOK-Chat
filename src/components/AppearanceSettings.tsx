@@ -267,6 +267,13 @@ export function AppearanceSettings() {
         {row('message-times', 'Message times', <Toggle on={!!s.prefs.showTimestamps} set={(showTimestamps) => s.patch({ prefs: { ...s.prefs, showTimestamps } })} label="Message times" />)}
         {row('message-actions', 'Always show message actions', <Toggle on={!!s.prefs.alwaysShowActions} set={(alwaysShowActions) => s.patch({ prefs: { ...s.prefs, alwaysShowActions } })} label="Always show message actions" />)}
         {row('revert-send', 'Revert send button', <Toggle on={s.prefs.revertSend === true} set={(revertSend) => s.patch({ prefs: { ...s.prefs, revertSend } })} label="Revert send button" />)}
+        {row('reply-picker', 'Response picker', <Toggle on={s.prefs.showReplyPicker !== false} set={(showReplyPicker) => s.patch({ prefs: { ...s.prefs, showReplyPicker } })} label="Response picker" />)}
+        {row('reply-copy', 'Copy button', <Toggle on={s.prefs.showCopyAction !== false} set={(showCopyAction) => s.patch({ prefs: { ...s.prefs, showCopyAction } })} label="Copy button" />)}
+        {row('reply-pin', 'Pin button', <Toggle on={s.prefs.showPinAction === true} set={(showPinAction) => s.patch({ prefs: { ...s.prefs, showPinAction } })} label="Pin button" />)}
+        {row('reply-bookmark', 'Bookmark button', <Toggle on={s.prefs.showBookmarkAction === true} set={(showBookmarkAction) => s.patch({ prefs: { ...s.prefs, showBookmarkAction } })} label="Bookmark button" />)}
+        {row('reply-retry', 'Retry button', <Toggle on={s.prefs.showRetryAction !== false} set={(showRetryAction) => s.patch({ prefs: { ...s.prefs, showRetryAction } })} label="Retry button" />)}
+        {row('reply-branch', 'New path button', <Toggle on={s.prefs.showBranchAction === true} set={(showBranchAction) => s.patch({ prefs: { ...s.prefs, showBranchAction } })} label="New path button" />)}
+        {row('reply-delete', 'Delete button', <Toggle on={s.prefs.showDeleteAction !== false} set={(showDeleteAction) => s.patch({ prefs: { ...s.prefs, showDeleteAction } })} label="Delete button" />)}
       </Section>
 
       <Section title="Model picker">

@@ -1105,18 +1105,18 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
         </div>
       )}
       <div className={cx('flex flex-wrap items-center gap-0.5 transition-opacity', prefs.alwaysShowActions || (m.alts && m.alts.length > 1) || (m.fork && m.fork.paths.length > 0) ? '' : 'opacity-100 md:opacity-0 md:group-hover:opacity-100 md:focus-within:opacity-100')}>
-        {m.alts && m.alts.length > 1 && !busy && (
+        {prefs.showReplyPicker !== false && m.alts && m.alts.length > 1 && !busy && (
           <>
             <Btn sm icon={ChevronLeft} title="Previous reply" disabled={(m.ai ?? 0) < 1} onClick={() => useS.getState().variant(m.id, (m.ai ?? 0) - 1)} />
             <span className="px-1 text-xs text-mu">{(m.ai ?? 0) + 1}/{m.alts.length}</span>
             <Btn sm icon={ChevronRight} title="Next reply" disabled={(m.ai ?? 0) >= m.alts.length - 1} onClick={() => useS.getState().variant(m.id, (m.ai ?? 0) + 1)} />
           </>
         )}
-        <Btn icon={ok ? Check : Copy} title="Copy with formatting — Shift-click for Markdown, Ctrl/Cmd-click for plain text" onClick={(e) => copyReply(e.shiftKey ? 'markdown' : e.ctrlKey || e.metaKey ? 'plain' : 'rich')} />
-        {!m.err && !hideBody && (
+        {prefs.showCopyAction !== false && <Btn icon={ok ? Check : Copy} title="Copy with formatting — Shift-click for Markdown, Ctrl/Cmd-click for plain text" onClick={(e) => copyReply(e.shiftKey ? 'markdown' : e.ctrlKey || e.metaKey ? 'plain' : 'rich')} />}
+        {prefs.showPinAction === true && !m.err && !hideBody && (
           <Btn icon={m.pin ? PinOff : Pin} title={m.pin ? 'Unpin this reply (it stays in the model context until unpinned)' : 'Pin this reply (shown under the header and kept in the model context)'} className={m.pin ? 'text-ac' : undefined} onClick={() => useS.getState().pinMsg(m.id)} />
         )}
-        {!hideBody && !m.err && (
+        {prefs.showBookmarkAction === true && !hideBody && !m.err && (
           <Btn
             icon={Bookmark}
             title={bookmarked ? 'Remove this reply from bookmarks' : 'Bookmark this reply (listed in the sidebar)'}
@@ -1129,11 +1129,11 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
           <Btn icon={Volume2} title="Read aloud" onClick={() => speak(displayText, normVoice(useS.getState().voicePrefs))} />
         )}
         <PathSwitch anchor={m.id} />
-        {!m.err && (last
+        {prefs.showRetryAction !== false && !m.err && (last
           ? <Btn icon={RefreshCw} title="Regenerate" onClick={() => useS.getState().regen()} />
           : <Btn icon={RefreshCw} title="Regenerate this reply — the current one stays reachable from the path arrows" onClick={() => useS.getState().regenAt(m.id)} />)}
-        <Btn icon={GitBranch} title="Start a new path from here — this thread stays reachable from the path arrows" onClick={() => useS.getState().branch(m.id)} />
-        {confirmDel ? (
+        {prefs.showBranchAction === true && <Btn icon={GitBranch} title="Start a new path from here — this thread stays reachable from the path arrows" onClick={() => useS.getState().branch(m.id)} />}
+        {prefs.showDeleteAction !== false && (confirmDel ? (
           <>
             <span className="px-1 text-xs text-er">Delete?</span>
             <Btn sm icon={Check} title="Confirm delete message" className="text-er" onClick={() => { useS.getState().delMsg(m.id); setConfirmDel(false) }} />
@@ -1141,7 +1141,7 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
           </>
         ) : (
           <Btn icon={Trash2} title="Delete" onClick={() => setConfirmDel(true)} />
-        )}
+        ))}
       </div>
     </div>
   )
