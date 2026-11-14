@@ -38,6 +38,18 @@ function reloadForFreshShell(): boolean {
   return true
 }
 
+/** Like `loadChunk`, but a chunk that still cannot be loaded resolves to
+ *  `fallback` instead of rejecting. Use it where a missing chunk should
+ *  degrade one panel (e.g. plain-text markdown) rather than reach an error
+ *  boundary and replace the whole screen. */
+export async function loadChunkOr<T>(load: () => Promise<T>, fallback: T): Promise<T> {
+  try {
+    return await loadChunk(load)
+  } catch {
+    return fallback
+  }
+}
+
 export async function loadChunk<T>(load: () => Promise<T>): Promise<T> {
   try {
     return await load()

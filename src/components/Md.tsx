@@ -1,4 +1,4 @@
-import { lazy, Suspense, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { lazy, memo, Suspense, useLayoutEffect, useMemo, useRef, useState, type ComponentType } from 'react'
 import { Check, Copy, GitBranch, Pencil, Trash2, Undo2 } from 'lucide-react'
 import { useS, featOn, type Msg } from '../store'
 import { tokenizeMentions, bannerOf, sentBodyText, isPill } from '../mentions'
@@ -6,13 +6,22 @@ import { MentionChip, SentMentionBanner, SentQuoteBanner } from './Mention'
 import { splitQuotedReply } from '../quote'
 import { Btn, cx } from './ui'
 import { PathSwitch } from './PathSwitch'
-import { loadChunk } from '../chunkLoad'
+import { loadChunkOr } from '../chunkLoad'
 import type { CiteMap } from './Rich'
+
+type RichProps = { t: string; bare?: boolean; cites?: CiteMap; blocks?: boolean; fadeFrom?: number }
+
+/** If the renderer's chunk cannot be fetched (a deploy replaced the old
+ *  hashed file while this tab stayed open, or the connection dropped twice),
+ *  the reply still has to be readable. Degrading to plain text keeps the chat
+ *  on screen; letting the rejected import escape would hit the nearest error
+ *  boundary and replace the whole conversation with an error page. */
+const PlainRich = memo(({ t }: RichProps) => <p className="whitespace-pre-wrap">{t}</p>)
 
 // The full renderer (tables, math, highlighting) loads on first use to keep the
 // first paint light. A tab left open across a deploy holds an older shell whose
 // chunk names no longer exist, so the load recovers instead of 404ing.
-const Rich = lazy(() => loadChunk(() => import('./Rich')))
+const Rich = lazy(() => loadChunkOr<{ default: ComponentType<RichProps> }>(() => import('./Rich'), { default: PlainRich }))
 
 export function Md({ t, bare = false, cites, blocks = false, fadeFrom }: { t: string; bare?: boolean; cites?: CiteMap; blocks?: boolean; fadeFrom?: number }) {
   return (

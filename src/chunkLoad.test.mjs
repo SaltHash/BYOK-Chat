@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { loadChunk } from './chunkLoad'
+import { loadChunk, loadChunkOr } from './chunkLoad'
 
 // The helper reads these two globals at call time, so plain stand-ins are enough.
 const cache = new Map()
@@ -21,6 +21,16 @@ test('a chunk that loads first time is returned without touching the shell', asy
   cache.clear()
   globalThis.location.reloads = 0
   assert.equal(await loadChunk(() => Promise.resolve('rich')), 'rich')
+  assert.equal(globalThis.location.reloads, 0)
+})
+
+test('a chunk that cannot be loaded falls back instead of throwing', async () => {
+  // A recent reload means no second one is attempted: this is the worst case,
+  // where the old chunk is really gone and the panel has to degrade.
+  cache.set('byok:chunk-reload', String(Date.now()))
+  globalThis.location.reloads = 0
+  const fallback = { default: 'plain text' }
+  assert.deepEqual(await loadChunkOr(() => Promise.reject(Error('offline')), fallback), fallback)
   assert.equal(globalThis.location.reloads, 0)
 })
 

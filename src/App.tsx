@@ -15,12 +15,13 @@ import { Notice } from './components/Toast'
 /* Settings, the command palette, the widget rail and the share view are all
  * opened on demand. Loading them lazily keeps their editors, charts and share
  * reader off the first-paint path; the chat shell and composer stay eager. */
-const Settings = lazy(() => import('./components/Settings').then((m) => ({ default: m.Settings })))
-const Palette = lazy(() => import('./components/Palette').then((m) => ({ default: m.Palette })))
-const Widgets = lazy(() => import('./components/Widgets').then((m) => ({ default: m.Widgets })))
-const ShareView = lazy(() => import('./components/ShareView').then((m) => ({ default: m.ShareView })))
+const Settings = lazy(() => loadChunk(() => import('./components/Settings')).then((m) => ({ default: m.Settings })))
+const Palette = lazy(() => loadChunk(() => import('./components/Palette')).then((m) => ({ default: m.Palette })))
+const Widgets = lazy(() => loadChunk(() => import('./components/Widgets')).then((m) => ({ default: m.Widgets })))
+const ShareView = lazy(() => loadChunk(() => import('./components/ShareView')).then((m) => ({ default: m.ShareView })))
 import { shareIdFromHash, shareHash, updateShare } from './share'
 import { chatHash, chatIdFromHash, historyAction } from './chatRoute'
+import { loadChunk } from './chunkLoad'
 import { getStorageWarning, subscribeStorageWarning } from './persistence'
 import { Btn } from './components/ui'
 import { ErrorBoundary } from './components/ErrorBoundary'
@@ -254,7 +255,11 @@ export default function App() {
       {side && <div className="fixed inset-0 z-10 bg-black/50 md:hidden" onClick={() => setSide(false)} />}
       <Sidebar open={side} toggle={() => setSide((v) => !v)} cfg={setCfg} width={clampSidebarWidth(prefs.sidebarWidth)} />
       {side && <div role="separator" aria-orientation="vertical" aria-label="Resize sidebar" onPointerDown={resize('sidebarWidth')} className="shell-resizer hidden w-1 shrink-0 cursor-col-resize md:block" />}
-      <Chat side={side} toggle={() => setSide(true)} cfg={setCfg} pal={() => setPal(true)} />
+      {/* A render failure inside the conversation stays in the conversation:
+       *  the sidebar keeps working, and opening another chat resets it. */}
+      <ErrorBoundary compact fill resetKey={currentChat} title="This chat could not be shown">
+        <Chat side={side} toggle={() => setSide(true)} cfg={setCfg} pal={() => setPal(true)} />
+      </ErrorBoundary>
       {rail && featOn({ features }, 'widgets') && Object.values(widgets).some(Boolean) && (
         <>
           <div className="fixed inset-0 z-10 bg-black/50 lg:hidden" onClick={() => useS.getState().patch({ rail: false })} />
@@ -264,11 +269,17 @@ export default function App() {
           </Suspense>
         </>
       )}
-      {pal && <Suspense fallback={null}><Palette close={() => setPal(false)} cfg={setCfg} toggleSide={() => setSide((v) => !v)} /></Suspense>}
+      {pal && (
+        <ErrorBoundary compact fill title="The command palette could not load">
+          <Suspense fallback={null}><Palette close={() => setPal(false)} cfg={setCfg} toggleSide={() => setSide((v) => !v)} /></Suspense>
+        </ErrorBoundary>
+      )}
       {cfg && (
-        <Suspense fallback={<div role="status" className="fixed inset-0 z-40 grid place-items-center bg-bg/70 text-sm text-mu backdrop-blur-sm">Loading settings…</div>}>
-          <Settings tab={cfg} setTab={setCfg} />
-        </Suspense>
+        <ErrorBoundary compact fill title="Settings could not load">
+          <Suspense fallback={<div role="status" className="fixed inset-0 z-40 grid place-items-center bg-bg/70 text-sm text-mu backdrop-blur-sm">Loading settings…</div>}>
+            <Settings tab={cfg} setTab={setCfg} />
+          </Suspense>
+        </ErrorBoundary>
       )}
       {!setupDone && <Welcome addEndpoint={() => { const s = useS.getState(); if (!s.eps.length) s.add('eps'); setCfg('eps') }} close={() => {}} />}
       </div>

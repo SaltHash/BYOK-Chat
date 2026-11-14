@@ -3,10 +3,16 @@ import { Component, type ErrorInfo, type ReactNode } from 'react'
 /* A render error in one panel must not leave a blank page with no way back.
  * The boundary is deliberately dependency-free (native buttons, no store or
  * UI imports): the component that failed may be the store shell itself. Saved
- * data is untouched, so the recovery path is reload first, backup second. */
+ * data is untouched, so the recovery path is reload first, backup second.
+ *
+ * `resetKey` makes a boundary scoped to one view recoverable: switching chats
+ * (or settings tabs) clears the failure, so one unrenderable item cannot trap
+ * every later one. `fill` lets the compact card take the place of the panel it
+ * replaced instead of collapsing to the width of its text. */
+type Props = { children: ReactNode; compact?: boolean; fill?: boolean; title?: string; resetKey?: unknown }
 type State = { error: Error | null }
 
-export class ErrorBoundary extends Component<{ children: ReactNode; compact?: boolean; title?: string }, State> {
+export class ErrorBoundary extends Component<Props, State> {
   state: State = { error: null }
 
   static getDerivedStateFromError(error: Error): State {
@@ -18,10 +24,19 @@ export class ErrorBoundary extends Component<{ children: ReactNode; compact?: bo
     console.error('[byok] render failed', error, info.componentStack)
   }
 
+  componentDidUpdate(prev: Props): void {
+    if (this.state.error && prev.resetKey !== this.props.resetKey) this.setState({ error: null })
+  }
+
   render(): ReactNode {
     const error = this.state.error
     if (!error) return this.props.children
     const details = `${error.name}: ${error.message}\n${error.stack ?? ''}`
+    const reload = (
+      <button type="button" onClick={() => window.location.reload()} className="inline-flex h-9 items-center rounded-lg bg-ac px-3 text-sm font-medium text-acx hover:opacity-90">
+        Reload
+      </button>
+    )
     const copy = (
       <button
         type="button"
@@ -33,10 +48,10 @@ export class ErrorBoundary extends Component<{ children: ReactNode; compact?: bo
     )
     if (this.props.compact) {
       return (
-        <div role="alert" className="space-y-3 rounded-xl border border-er/40 bg-surf p-4 text-tx">
+        <div role="alert" className={`space-y-3 rounded-xl border border-er/40 bg-surf p-4 text-tx${this.props.fill ? ' m-3 min-w-0 flex-1 self-stretch overflow-auto' : ''}`}>
           <h2 className="text-sm font-semibold">{this.props.title ?? 'This panel could not render'}</h2>
-          <p className="text-xs leading-5 text-mu">Your saved data is safe. Close and reopen this panel, or reload the page.</p>
-          <div className="flex flex-wrap gap-2">{copy}</div>
+          <p className="text-xs leading-5 text-mu">Your saved data is safe. Reload to try again, or copy the details for a bug report.</p>
+          <div className="flex flex-wrap gap-2">{reload}{copy}</div>
         </div>
       )
     }
@@ -49,12 +64,7 @@ export class ErrorBoundary extends Component<{ children: ReactNode; compact?: bo
             export a backup from Settings → Data controls before clearing browser storage.
           </p>
           <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-bg p-3 font-mono text-xs text-er">{details}</pre>
-          <div className="flex flex-wrap gap-2">
-            <button type="button" onClick={() => window.location.reload()} className="inline-flex h-9 items-center rounded-lg bg-ac px-3 text-sm font-medium text-acx hover:opacity-90">
-              Reload
-            </button>
-            {copy}
-          </div>
+          <div className="flex flex-wrap gap-2">{reload}{copy}</div>
         </div>
       </div>
     )
