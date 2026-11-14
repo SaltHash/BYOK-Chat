@@ -71,7 +71,7 @@ export function Palette({ close, cfg, toggleSide }: { close: () => void; cfg: (t
     // Every feature toggle.
     ...FEATURES.map(([id, label, desc]) => action(FEATURE_ICON[id] ?? SlidersHorizontal, `Feature: ${label}`, 'Setting', `feature ${label} ${desc} toggle enable disable`, () => cfg(`features#feature-${id}`))),
     // Every library entry.
-    ...LIBRARY_ITEMS.map(([k, l]: [string, string]) => action(Library, `Library: ${l}`, 'Setting', `library sidebar ${l} show entries`, () => cfg('features#library-entries'))),
+    ...LIBRARY_ITEMS.map(([k, l]: [string, string]) => action(Library, `Library: ${l}`, 'Setting', `library sidebar ${l} show entries`, () => cfg('library#library-entries'))),
     // Every skill (built-in + custom).
     ...(featOn(s, 'skills') ? skills.map((st) => {
       const def = resolveSkill(st)

@@ -1,7 +1,7 @@
 import {
   SlidersHorizontal, Server, ScrollText, Sparkles, ListMusic, Terminal,
   FolderOpen, Wrench, Brain, PanelRight, Palette as PaletteIcon, Keyboard,
-  TrendingUp, Database, FlaskConical, MessagesSquare, Plug, Volume2,
+  TrendingUp, Database, FlaskConical, MessagesSquare, Plug, Volume2, Library,
 } from 'lucide-react'
 import type { Ic } from './components/ui'
 import { FEATURE_TABS, featOn, type FeatureId } from './store'
@@ -14,7 +14,7 @@ import { FEATURE_TABS, featOn, type FeatureId } from './store'
  */
 export type SettingsTabId =
   | 'features' | 'eps' | 'prompts' | 'skills' | 'pls' | 'cmds'
-  | 'workspace' | 'tools' | 'mcp' | 'memory' | 'widgets' | 'look' | 'chats'
+  | 'workspace' | 'tools' | 'mcp' | 'memory' | 'widgets' | 'library' | 'look' | 'chats'
   | 'voice' | 'keys' | 'stats' | 'data' | 'adv'
 
 /** Tabs hidden while their owning feature is disabled. Lives here (not in
@@ -40,6 +40,7 @@ export const SETTINGS_TABS: [SettingsTabId, string, Ic][] = [
   ['mcp', 'MCP servers', Plug],
   ['memory', 'Memory', Brain],
   ['widgets', 'Widgets', PanelRight],
+  ['library', 'Library', Library],
   ['look', 'Appearance', PaletteIcon],
   ['chats', 'Chats', MessagesSquare],
   ['voice', 'Voice', Volume2],
@@ -61,6 +62,7 @@ export const TAB_KEYWORDS: Record<SettingsTabId, string> = {
   mcp: 'mcp model context protocol servers tools external remote connect url headers bearer token',
   memory: 'memory tool mode recall method classifier add stored duplicates categories temporary temp chats recall save',
   widgets: 'widgets panels context meter endpoint status usage scratchpad snippets cost last reply prompts shortcuts draft counter checklist',
+  library: 'library sidebar shortcut list entries endpoints playlists qualities commands tools memory widgets show hide',
   look: 'appearance fonts theme dark light hue saturation brightness sliders display layout max height width message settings model picker palette blur opacity style preset radius rounded sharp bubbly floating density compact comfortable spacious spacing header padding margins gap overrides sidebar composer panel code blocks timestamps actions hover text size scale zoom wrap code lines transparency flat contrast',
   chats: 'chats conversation replies temporary retention hours immediate expires enter send title auto streaming markdown fade speed model answered log startup open load shown sidebar attachments documents pdf office archives ocr image transcription',
   voice: 'voice dictation microphone speech recognition read aloud speech synthesis language rate auto read',
@@ -79,7 +81,7 @@ export const SETTINGS_GROUPS: { label: string; tabs: SettingsTabId[] }[] = [
   // switchboard that gates the rest, so it sits on its own above the groups.
   { label: '', tabs: ['features'] },
   { label: 'Essentials', tabs: ['look', 'chats', 'prompts', 'eps', 'tools'] },
-  { label: 'More', tabs: ['pls', 'skills', 'cmds', 'voice', 'mcp', 'memory', 'workspace', 'widgets'] },
+  { label: 'More', tabs: ['pls', 'skills', 'cmds', 'voice', 'mcp', 'memory', 'workspace', 'widgets', 'library'] },
   { label: 'System', tabs: ['keys', 'stats', 'data', 'adv'] },
 ]
 
@@ -105,7 +107,7 @@ export const SETTING_LINKS: SettingLink[] = [
   { tab: 'features', anchor: 'feature-widgets', title: 'Feature: Widgets', keywords: 'feature widgets toggle panel' },
   { tab: 'features', anchor: 'feature-shortcuts', title: 'Feature: Shortcuts', keywords: 'feature shortcuts toggle keyboard' },
   { tab: 'features', anchor: 'feature-library', title: 'Feature: Library', keywords: 'feature library toggle sidebar' },
-  { tab: 'features', anchor: 'library-entries', title: 'Library entries', keywords: 'library sidebar shortcuts entries show' },
+  { tab: 'library', anchor: 'library-entries', title: 'Library entries', keywords: 'library sidebar shortcuts entries show' },
   { tab: 'features', anchor: 'show-disabled-features', title: 'Show disabled features', keywords: 'disabled features off hidden settings tabs signpost show hide' },
   { tab: 'features', anchor: 'feature-workspace', title: 'Feature: Workspace', keywords: 'feature workspace toggle files' },
   { tab: 'features', anchor: 'feature-advanced', title: 'Feature: Advanced', keywords: 'feature advanced toggle debugging' },

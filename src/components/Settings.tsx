@@ -423,7 +423,6 @@ function FeaturesTab() {
     if (id === 'library') return Library
     return TABS.find(([k]) => (FEATURE_TABS[id] ?? []).includes(k))?.[2] ?? SlidersHorizontal
   }
-  const show = s.libraryShow ?? DEFAULT_LIBRARY_SHOW
   const order = (s.featureOrder ?? []).filter((id) => FEATURES.some(([f]) => f === id))
   for (const [id] of FEATURES) if (!order.includes(id)) order.push(id)
   const move = (id: FeatureId, d: number) => {
@@ -448,17 +447,7 @@ function FeaturesTab() {
         const [, label, desc] = byId(id)
         return (
         <Anchor key={id} id={`feature-${id}`}>
-        <Card icon={iconFor(id)} title={label} muted={!F[id]} right={<span className="flex items-center gap-1"><Btn sm icon={ArrowUp} title={`Move ${label} up`} disabled={order.indexOf(id) === 0} onClick={() => move(id, -1)} /><Btn sm icon={ArrowDown} title={`Move ${label} down`} disabled={order.indexOf(id) === order.length - 1} onClick={() => move(id, 1)} /><Toggle on={!!F[id]} set={(on) => toggle(id, on)} label={`Enable ${label}`} /></span>}>
-          {id === 'library' && !!F[id] && (
-            <Anchor id="library-entries">
-            <Field label="Library entries">
-              <div className="grid grid-cols-2 gap-2">
-                {LIBRARY_ITEMS.map(([k, l]) => <Checkbox key={k} checked={show[k] ?? true} set={(v) => s.patch({ libraryShow: { ...show, [k]: v } })} label={l} />)}
-              </div>
-            </Field>
-            </Anchor>
-          )}
-        </Card>
+        <Card icon={iconFor(id)} title={label} muted={!F[id]} right={<span className="flex items-center gap-1"><Btn sm icon={ArrowUp} title={`Move ${label} up`} disabled={order.indexOf(id) === 0} onClick={() => move(id, -1)} /><Btn sm icon={ArrowDown} title={`Move ${label} down`} disabled={order.indexOf(id) === order.length - 1} onClick={() => move(id, 1)} /><Toggle on={!!F[id]} set={(on) => toggle(id, on)} label={`Enable ${label}`} /></span>} />
         </Anchor>
         )
       })}
@@ -2163,7 +2152,28 @@ function Chats() {
   )
 }
 
-const VIEWS: Record<string, () => ReactNode> = { features: FeaturesTab, eps: Eps, prompts: QualitiesTab, skills: SkillsTab, pls: Pls, cmds: Cmds, workspace: WorkspaceTab, tools: Tools, mcp: McpTab, memory: MemoryTab, widgets: WidgetsTab, look: AppearanceSettings, chats: Chats, voice: VoiceTab, keys: KeysTab, data: DataTab, adv: AdvancedTab }
+/** Library choices have their own tab: the Features switch only turns the
+ *  sidebar list on or off, with nothing to expand underneath it. */
+function LibraryTab() {
+  const s = useSConfig()
+  const show = s.libraryShow ?? DEFAULT_LIBRARY_SHOW
+  return (
+    <Panel id="library">
+      <Section title="Library">
+        <p className="text-sm text-mu">Shortcut entries listed under your chats in the sidebar.</p>
+        <Anchor id="library-entries">
+          <Field label="Library entries">
+            <div className="grid grid-cols-2 gap-2">
+              {LIBRARY_ITEMS.map(([k, l]) => <Checkbox key={k} checked={show[k] ?? true} set={(v) => s.patch({ libraryShow: { ...show, [k]: v } })} label={l} />)}
+            </div>
+          </Field>
+        </Anchor>
+      </Section>
+    </Panel>
+  )
+}
+
+const VIEWS: Record<string, () => ReactNode> = { features: FeaturesTab, eps: Eps, prompts: QualitiesTab, skills: SkillsTab, pls: Pls, cmds: Cmds, workspace: WorkspaceTab, tools: Tools, mcp: McpTab, memory: MemoryTab, widgets: WidgetsTab, library: LibraryTab, look: AppearanceSettings, chats: Chats, voice: VoiceTab, keys: KeysTab, data: DataTab, adv: AdvancedTab }
 
 export function Settings({ tab, setTab }: { tab: string; setTab: (t: string) => void }) {
   const features = useS((s) => s.features)
