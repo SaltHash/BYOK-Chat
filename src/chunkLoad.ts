@@ -18,6 +18,9 @@ const RETRY_MS = 250
 /* Longer than the reload takes to unload and boot the new shell, short enough
  * that a later deployment in the same tab can still recover on its own. */
 const RELOAD_WINDOW_MS = 10_000
+/* How long a triggered reload is given to unload the document before the
+ * caller is handed the original import failure instead. */
+const RELOAD_SETTLE_MS = 1500
 
 /* Session storage is the only place the reload can be remembered across the
  * document that triggers it. When it is unavailable (some privacy modes) the
@@ -46,7 +49,16 @@ export async function loadChunk<T>(load: () => Promise<T>): Promise<T> {
       setTimeout(() => { load().then(resolve, reject) }, RETRY_MS)
     })
   } catch (error) {
-    if (reloadForFreshShell()) return new Promise<T>(() => {}) // the page is unloading
+    if (reloadForFreshShell()) {
+      // Normally the document unloads here. It may not: the app asks before
+      // closing while a research run is in flight, and if the user stays the
+      // page survives. Settle either way, so whatever was Suspense-waiting
+      // (Settings, the palette, the share view) gets an error instead of
+      // waiting forever.
+      return await new Promise<T>((_, reject) => {
+        setTimeout(() => reject(error), RELOAD_SETTLE_MS)
+      })
+    }
     throw error
   }
 }

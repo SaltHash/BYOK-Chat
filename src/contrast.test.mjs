@@ -20,14 +20,22 @@ const ratio = (a, b) => {
   return (x + 0.05) / (y + 0.05)
 }
 
-const themes = () => {
+/** Raw CSS text of every shipped palette block. `neutral` is the pre-paint
+ *  fallback and `custom` is user-defined; only the eight built-in palettes
+ *  have values this app guarantees. */
+const paletteBlocks = () => {
   const found = new Map()
   for (const match of css.matchAll(/\[data-t=([a-z]+)\]\s*\{\s*color-scheme:[^}]*\}/g)) {
-    const name = match[1]
-    // `neutral` is the pre-paint fallback and `custom` is user-defined; only
-    // the eight shipped palettes have values guaranteed by this app.
-    if (name === 'neutral' || name === 'custom') continue
-    const value = (key) => match[0].match(new RegExp(`--${key}:\\s*(#[0-9a-f]{6})`, 'i'))?.[1]
+    if (match[1] === 'neutral' || match[1] === 'custom') continue
+    found.set(match[1], match[0])
+  }
+  return found
+}
+
+const themes = () => {
+  const found = new Map()
+  for (const [name, block] of paletteBlocks()) {
+    const value = (key) => block.match(new RegExp(`--${key}:\\s*(#[0-9a-f]{6})`, 'i'))?.[1]
     found.set(name, { bg: value('bg'), side: value('side'), surf: value('surf'), hov: value('hov'), mu: value('mu') })
   }
   return found
@@ -71,11 +79,22 @@ test('sidebar, surface and hover steps stay perceptible on every built-in theme'
   }
 })
 
-test('theme muted colours stay in sync with the runtime palette export', () => {
+/* Every token, not just the muted text: the store table seeds the custom-theme
+ * editor and the pickers, the stylesheet paints the built-in palettes, and a
+ * token that differs between them makes "start from <theme>" produce a palette
+ * that does not match the theme it was copied from. It did (error reds), so the
+ * assertion now covers all fifteen keys. */
+const TOKENS = ['bg', 'side', 'surf', 'hov', 'tx', 'mu', 'ac', 'acx', 'er', 'code', 'codeh', 'c2', 'c3', 'c4', 'c5']
+
+test('every theme token stays in sync with the runtime palette export', () => {
   const source = readFileSync(new URL('./store.ts', import.meta.url), 'utf8')
-  for (const [name, value] of themes()) {
+  for (const [name, block] of paletteBlocks()) {
     const row = source.match(new RegExp(`\\b${name}: \\{[^}]*\\}`))?.[0]
     assert.ok(row, `${name} is missing from THEME_COLORS`)
-    assert.match(row, new RegExp(`mu: '${value.mu}'`, 'i'), `${name} muted colour differs between CSS and store`)
+    for (const key of TOKENS) {
+      const cssValue = block.match(new RegExp(`--${key}:\\s*(#[0-9a-f]{6})`, 'i'))?.[1]
+      assert.ok(cssValue, `${name} is missing --${key} in index.css`)
+      assert.match(row, new RegExp(`\\b${key}: '${cssValue}'`, 'i'), `${name}: ${key} is ${cssValue} in CSS but differs in THEME_COLORS`)
+    }
   }
 })

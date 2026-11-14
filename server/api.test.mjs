@@ -92,6 +92,22 @@ test('the reader route reads a page through the selected reader API', async () =
   assert.ok(!Number.isNaN(Date.parse(result.body.fetchedAt)))
 })
 
+test('a reader that echoes the key cannot leak it into the response body', async () => {
+  const apiKey = 'reader_live_1234567890abcdefghijklmnop'
+  const fetchFn = async () => new Response(JSON.stringify({ error: `invalid key ${apiKey}` }), {
+    status: 401,
+    headers: { 'content-type': 'application/json' },
+  })
+  const req = { method: 'POST', url: '/api/reader', headers: {}, text: async () => JSON.stringify({ url: 'https://example.com/a', provider: 'exa', apiKey, fallback: false }) }
+  const result = await apiRoute(req, {}, { fetchFn })
+  // Same mapping as /api/search and /api/extract: the caller's request was
+  // fine, the upstream rejected the credential, so it is a bad gateway.
+  assert.equal(result.status, 502)
+  assert.equal(result.body.code, 'upstream_auth')
+  assert.ok(!String(result.body.error).includes(apiKey), `the reader key leaked into: ${result.body.error}`)
+  assert.match(String(result.body.error), /rejected the key/)
+})
+
 test('the reader route rejects the wrong method and a missing url', async () => {
   const wrong = await apiRoute({ method: 'GET', url: '/api/reader', headers: {} }, {})
   assert.equal(wrong.status, 405)

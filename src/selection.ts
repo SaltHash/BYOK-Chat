@@ -23,7 +23,12 @@ export function allOrderedModels(eps: EpLike[]): ModelSel[] {
   return eps.flatMap((ep) => modelsOf(ep as Parameters<typeof modelsOf>[0]).map((model) => ({ k: 'ep' as const, id: ep.id, model })))
 }
 
-/** Step model selection by delta (+1 next, -1 prev), wrapping around. */
+/** Step model selection by delta (+1 next, -1 prev), wrapping around.
+ *
+ * With no usable selection (nothing chosen yet, or the selected endpoint or
+ * model was deleted) the step starts from the edge opposite the direction:
+ * next lands on the first model, previous on the last. Treating -1 as the
+ * index made "previous" land one short of the end. */
 export function stepModelSelection(
   eps: EpLike[],
   sel: { id?: string; model?: string } | null | undefined,
@@ -31,8 +36,9 @@ export function stepModelSelection(
 ): ModelSel | null {
   const list = allOrderedModels(eps)
   if (!list.length) return null
-  const at = list.findIndex((m) => m.id === sel?.id && m.model === sel?.model)
-  return list[(at + delta + list.length) % list.length]
+  const found = list.findIndex((m) => m.id === sel?.id && m.model === sel?.model)
+  const from = found >= 0 ? found : delta > 0 ? -1 : 0
+  return list[(from + delta + list.length) % list.length]
 }
 
 type PromptLike = { id: string }

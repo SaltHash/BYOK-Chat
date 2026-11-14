@@ -155,8 +155,9 @@ const server = createServer(async (req, res) => {
     // Missing static files (for example a hashed chunk from a previous build)
     // must 404 instead of answering with the HTML shell — a 200 text/html
     // response for a .js request breaks dynamic imports and confuses caches.
-    // Extension-less paths keep the SPA fallback, matching the Worker's
-    // `not_found_handling: single-page-application` asset routing.
+    // Extension-less paths keep the SPA fallback, matching the Worker entry's
+    // own fallback. (The asset layer itself uses `not_found_handling: "none"`,
+    // so the shell is served only for paths without an extension.)
     if (path !== '/index.html' && extname(path)) return sendResult(res, jsonResult(404, { error: 'Not found' }))
     try {
       return await sendIndexFallback(req, res)

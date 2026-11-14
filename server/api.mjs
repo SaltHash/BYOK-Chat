@@ -3,7 +3,7 @@
  * { status, headers, body } descriptors; each host adapts them to its
  * response type. Secrets are read from the `env` argument only (process.env
  * for the Node server, Worker bindings for Cloudflare) and never logged. */
-import { boundedInt, normalizeProvider, providerLabel, providerNeedsKey, apiKeyFor, resolveApiKey, resolveZone, apiBaseUrlFor, runApiSearch, SEARCH_API_PROVIDERS } from './search.mjs'
+import { boundedInt, normalizeProvider, providerLabel, providerNeedsKey, apiKeyFor, resolveApiKey, resolveZone, apiBaseUrlFor, runApiSearch, redactSecrets, SEARCH_API_PROVIDERS } from './search.mjs'
 import { fetchPageText, fetchPageViaProvider, normalizeReaderProvider, READER_PROVIDERS } from './extract.mjs'
 import { handleSyncPush, handleSyncPull } from './sync.mjs'
 import { syncBackend, redact, neonSyncEnabled } from './syncStore.mjs'
@@ -222,7 +222,10 @@ export async function apiReader(req, env = process.env, opts = {}) {
       : code === 'rate_limited' ? 429
       : e.status === 404 ? 404 : 502
     console.error(`[reader] provider=${provider} code=${code} upstream=${e.status ?? 0} urlChars=${target.length}`)
-    return jsonResult(status, { error: e.message || 'Could not read the page.', code, retryable: e.retryable === true })
+    // The reader key is in scope here and a hosted reader may echo it back in
+    // its error body; that text is shown to the user and can be persisted in
+    // a reply (and therefore synced or shared), so scrub it first.
+    return jsonResult(status, { error: redactSecrets(e.message || 'Could not read the page.', [apiKey]), code, retryable: e.retryable === true })
   }
 }
 

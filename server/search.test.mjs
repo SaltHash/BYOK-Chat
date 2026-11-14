@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { boundedInt, selectResults, normalizeProvider, providerNeedsKey, classifyUpstream, buildApiRequest, parseApiResponse, runApiSearch, apiKeyFor, resolveApiKey, resolveZone } from './search.mjs'
+import { boundedInt, selectResults, normalizeProvider, providerNeedsKey, classifyUpstream, buildApiRequest, parseApiResponse, runApiSearch, apiKeyFor, resolveApiKey, resolveZone, redactSecrets } from './search.mjs'
 
 test('normalizes, deduplicates and favors distinct high-scoring sources', () => {
   const results = selectResults([
@@ -120,6 +120,28 @@ test('classifies upstream failures instead of masking them as generic errors', (
   assert.match(down.message, /temporarily unavailable/)
   assert.equal(classifyUpstream('you', 400, '').code, 'bad_request')
   assert.equal(classifyUpstream('you', 400, '').retryable, false)
+})
+
+test('a provider that echoes the rejected key never leaks it into the error', async () => {
+  const limits = { maxResults: 8, maxSnippetChars: 100 }
+  // SerpAPI authenticates with a query parameter, so the key is in the URL too.
+  const key = 'pf_live_1234567890abcdefghijklmnop'
+  const echo = async () => new Response(`{"error":"invalid api key ${key} for this request"}`, {
+    status: 401,
+    headers: { 'content-type': 'application/json' },
+  })
+  await assert.rejects(
+    () => runApiSearch('serper', 'q', { apiKey: key, timeoutMs: 5000, limits, retry: { maxRetries: 0, baseMs: 1 }, fetchFn: echo }),
+    (error) => {
+      assert.match(error.message, /rejected the API key/)
+      assert.ok(!error.message.includes(key), `the rejected key leaked into: ${error.message}`)
+      assert.equal(error.code, 'upstream_auth')
+      return true
+    },
+  )
+  // Key-shaped tokens are scrubbed even when this request never sent them.
+  assert.ok(!redactSecrets('bad sk-live-abcdefghijklmnop').includes('sk-live'))
+  assert.equal(redactSecrets('nothing to hide'), 'nothing to hide')
 })
 
 test('retries transient failures with backoff but never permanent errors', async () => {

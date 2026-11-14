@@ -393,7 +393,7 @@ function ModelsEditor({ e, update }: { e: any; update: (p: object) => void }) {
       }}
     />
     <button onClick={() => { setPicker(true); setSelectedModels([]); void loadCatalog() }} className="flex w-full items-center justify-center gap-2 rounded-lg border border-dashed border-bor py-2 text-sm text-mu hover:text-tx"><Plus size={14} />Add model</button>
-    {picker && <Modal close={() => setPicker(false)} keyboard={false}><div className="modal-panel flex max-h-[80dvh] w-full max-w-xl flex-col gap-3 rounded-2xl bg-bg p-5 shadow-2xl">
+    {picker && <Modal close={() => setPicker(false)} keyboard={false} label="Choose a model"><div className="modal-panel flex max-h-[80dvh] w-full max-w-xl flex-col gap-3 rounded-2xl bg-bg p-5 shadow-2xl">
       <div className="flex items-center justify-between"><div><h3 className="flex items-center gap-1.5 font-semibold">Choose a model</h3><p className="mt-0.5 text-xs text-mu">{e.name}{endpointId ? ` · ${endpointId}` : ''}</p></div><button onClick={() => setPicker(false)} className="grid size-8 place-items-center rounded-lg text-mu hover:bg-hov hover:text-tx" aria-label="Close model picker"><X size={16}/></button></div>
       <div className="flex flex-wrap gap-2"><button onClick={loadCatalog} className="rounded-lg bg-hov px-3 py-2 text-xs text-tx">{catalog.length ? 'Refresh model catalog' : 'Load available models'}</button>
       <button onClick={() => { clearModelDiscoveryCache(e.url); clearCatalogCache(e.id); void loadCatalog() }} title="Clear cached working and failed model-list URLs for this endpoint, then probe them again." className="rounded-lg px-3 py-2 text-xs text-mu hover:bg-hov hover:text-tx">Retry model-list checks</button></div>
@@ -453,7 +453,7 @@ function FeaturesTab() {
       })}
       </Section>
       {confirm === 'stats' && (
-        <Modal close={() => setConfirm(null)}>
+        <Modal close={() => setConfirm(null)} label="Turn off stats?">
           <div className="modal-panel w-full max-w-sm space-y-4 rounded-2xl bg-bg p-5">
             <div className="flex items-center gap-2 font-semibold"><TrendingUp size={18} className="text-ac" />Turn off stats?</div>
             <div className="flex flex-col gap-2">
@@ -465,7 +465,7 @@ function FeaturesTab() {
         </Modal>
       )}
       {confirm === 'memory' && (
-        <Modal close={() => setConfirm(null)}>
+        <Modal close={() => setConfirm(null)} label="Turn off memory?">
           <div className="modal-panel w-full max-w-sm space-y-4 rounded-2xl bg-bg p-5">
             <div className="flex items-center gap-2 font-semibold"><Brain size={18} className="text-ac" />Turn off memory?</div>
             <div className="flex flex-col gap-2">
@@ -1142,7 +1142,7 @@ function ToolLimitCard() {
         <Btn sm icon={unlocked ? LockOpen : Lock} title={unlocked ? 'Lock back to 32 rounds' : 'Unlock up to 64 rounds plus unlimited'} onClick={() => (unlocked ? relock() : setWarn(true))} />
       </div>
       {warn && (
-        <Modal close={() => setWarn(false)}>
+        <Modal close={() => setWarn(false)} label="Unlock higher tool limits?">
           <div className="modal-panel w-full max-w-sm space-y-4 rounded-2xl bg-bg p-5">
             <div className="flex items-center gap-2 font-semibold"><Lock size={18} className="text-ac" />Unlock higher tool limits?</div>
             <p className="text-sm text-mu">Above {TOOL_ROUNDS_BASE_MAX} rounds (up to {TOOL_ROUNDS_MAX}, plus unlimited) a looping model can run for a long time, burn through tokens, and grow the context until requests fail. Only raise this for long tool chains you trust. You can stop any reply with Stop.</p>
@@ -1593,7 +1593,7 @@ function Tools() {
         </Section>
       )}
       {asked && (
-        <Modal close={() => { setAsk(null); setAskAlways(false) }}>
+        <Modal close={() => { setAsk(null); setAskAlways(false) }} label={`Enable ${asked[1]}?`}>
           <div className="modal-panel w-full max-w-sm space-y-4 rounded-2xl bg-bg p-5">
             <div className="flex items-center gap-2 font-semibold"><ShieldCheck size={18} className="text-ac" />Enable {asked[1]}?</div>
             <p className="text-sm text-mu">{asked[5]}</p>

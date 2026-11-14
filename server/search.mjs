@@ -644,6 +644,56 @@ function isTransientStatus(status) {
   return status === 429 || status === 502 || status === 503 || status === 504
 }
 
+/* Credentials that belong to *this* request: header values (some carry a
+ * `Bearer ` prefix) plus the query parameters some providers authenticate
+ * with. SerpAPI, for example, takes `api_key=` in the URL.
+ * Only called on the failure path, so it stays off the hot path. */
+function requestSecrets(url, options) {
+  const out = []
+  const headers = options?.headers
+  if (headers && typeof headers.forEach === 'function') headers.forEach((value) => out.push(String(value ?? '')))
+  else if (headers && typeof headers === 'object') for (const value of Object.values(headers)) out.push(String(value ?? ''))
+  try {
+    const params = new URL(String(url)).searchParams
+    for (const name of ['api_key', 'apiKey', 'key', 'token', 'zone']) {
+      const value = params.get(name)
+      if (value) out.push(value)
+    }
+  } catch { /* not an absolute URL */ }
+  return out.map((value) => value.replace(/^Bearer\s+/i, '').trim()).filter((value) => value.length >= 8)
+}
+
+/** Remove this request's credential — and any key-shaped token — from text
+ *  that is about to be shown to the user. A provider that echoes the rejected
+ *  key in its error body would otherwise put it into the reply, which the app
+ *  persists, syncs and can publish as a share. */
+export function redactSecrets(text, secrets = []) {
+  let out = String(text ?? '')
+  for (const secret of secrets) if (secret) out = out.split(secret).join('•••')
+  return out.replace(/\b(sk|gsk|pk|xai|AIza|hf)[-_A-Za-z0-9]{12,}/g, '•••')
+}
+
+/* An error body is attacker-shaped: a provider (or something between us and
+ * it) can answer a 401 with an arbitrarily large body, and the message only
+ * ever uses a couple of hundred characters. Read through the stream and stop
+ * at the cap, cancelling the rest, so the server cannot be made to buffer
+ * megabytes to produce a short message. */
+async function readErrorDetail(response, cap = 200) {
+  const reader = response.body?.getReader?.()
+  if (!reader) return String(await response.text().catch(() => '') || '').slice(0, cap)
+  const decoder = new TextDecoder()
+  let out = ''
+  try {
+    while (out.length <= cap) {
+      const { done, value } = await reader.read()
+      if (done) break
+      out += decoder.decode(value, { stream: true })
+    }
+  } catch { /* keep what arrived before the failure */ }
+  try { await reader.cancel() } catch { /* already closed */ }
+  return out.slice(0, cap)
+}
+
 /* One attempt, including the body read when `read` is supplied. Failures are
  * thrown already classified (see `classifyUpstream`); retryable ones carry
  * `retryable`, and throttled responses may carry `retryAfterMs`. The caller's
@@ -659,9 +709,8 @@ async function attemptFetch(fetchFn, url, options, signal, { provider = '', base
       { status: 0, code: timedOut ? 'timeout' : 'network', retryable: true, provider })
   }
   if (!response.ok) {
-    // Drain the error body so connections are reused cleanly.
-    const detail = await response.text().catch(() => '').then((t) => String(t || '').slice(0, 200))
-    const failure = classifyUpstream(provider, response.status, detail)
+    const detail = await readErrorDetail(response)
+    const failure = classifyUpstream(provider, response.status, redactSecrets(detail, requestSecrets(url, options)))
     if (isTransientStatus(response.status)) failure.retryAfterMs = retryAfterMs(response, base, 0)
     throw failure
   }
