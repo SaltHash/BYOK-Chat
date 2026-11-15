@@ -306,8 +306,10 @@ const PRESET_PRE: Record<string, ['openai' | 'anthropic', string, string, 'autho
 }
 
 /* Presets are ordered by how commonly they are used, so the Settings picker
- * opens on the most likely choices. Providers missing from this list (for
- * example a future registry entry) are appended rather than dropped. */
+ * opens on the most likely choices. The catch-all "Other … compatible" rows
+ * stay last: they are the fallback for a provider that has no preset, not a
+ * peer of the named ones. Providers missing from this list (for example a
+ * future registry entry) are appended rather than dropped. */
 export const PRESET_ORDER = [
   'OpenRouter',
   'AIHubMix',
@@ -325,8 +327,6 @@ export const PRESET_ORDER = [
   'Vercel AI Gateway',
   'Cloudflare Workers AI',
   'Ollama (local)',
-  'Other OpenAI-compatible',
-  'Other Anthropic-compatible',
   'Requesty',
   'Portkey',
   'LiteLLM (self-hosted)',
@@ -336,6 +336,8 @@ export const PRESET_ORDER = [
   'Inworld',
   'CompactifAI',
   'The Grid',
+  'Other OpenAI-compatible',
+  'Other Anthropic-compatible',
 ]
 const presetRank = (name: string) => {
   const i = PRESET_ORDER.indexOf(name)

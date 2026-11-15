@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { X, Plus, Trash2, ArrowUp, ArrowDown, CornerDownRight, ChevronDown, ChevronRight, Eye, EyeOff, Play, ShieldCheck, Shield, Download, Check, CircleCheck, CircleX, Cpu, Route, GripVertical, Server, ListMusic, ScrollText, Terminal, Wrench, Palette, FolderOpen, PanelRight, TrendingUp, Keyboard, Search, Brain, Pencil, Sparkles, RotateCcw, SlidersHorizontal, FlaskConical, Library, Database, Lock, LockOpen, LayoutTemplate, Share2, Plug, Image as ImageIcon, Volume2, AudioLines, Code2, Star, TriangleAlert } from 'lucide-react'
+import { X, Plus, Trash2, ArrowUp, ArrowDown, CornerDownRight, ChevronDown, ChevronLeft, ChevronRight, Eye, EyeOff, Play, ShieldCheck, Shield, Download, Check, CircleCheck, CircleX, Cpu, Route, GripVertical, Server, ListMusic, ScrollText, Terminal, Wrench, Palette, FolderOpen, PanelRight, TrendingUp, Keyboard, Search, Brain, Pencil, Sparkles, RotateCcw, SlidersHorizontal, FlaskConical, Library, Database, Lock, LockOpen, LayoutTemplate, Share2, Plug, Image as ImageIcon, Volume2, AudioLines, Code2, Star, TriangleAlert } from 'lucide-react'
 import { modelListEdit } from '../models'
 import { useS, useSConfig, PRE, BLANK, THEMES, DARK_THEMES, LIGHT_THEMES, THEME_COLOR_KEYS, THEME_COLOR_LABELS, THEME_COLORS, defaultCustomTheme, customThemeColors, normCustomTheme, SEARCH_PROVIDERS, READER_PROVIDERS, FEATURES, LIBRARY_ITEMS, FEATURE_TABS, FEATURE_WIDGETS, DEFAULT_LIBRARY_SHOW, DEFAULT_ADVANCED, featOn, normSearch, normAdvanced, normLogDetail, normDocs, usable, modelsOf, modelNameOf, helperRef, splitHelperRef, favRef, toggleFavRef, effortClassifierOf, TOOL_ROUNDS_DEFAULT, TOOL_ROUNDS_MIN, TOOL_ROUNDS_BASE_MAX, TOOL_ROUNDS_MAX, toolRoundLimitOf, isToolRoundsUnlimited, GENERAL_PROMPT_TEXT, STARTUP_MODES, normStartup, PROMPT_RECALL_MODES, normPromptRecall, uid, REPLY_METRICS, DEFAULT_REPLY_STATS, HELPER_TASKS, helperAutoEffort, type HelperTask, type PromptRecallMode, type ReplyMetric, type ReplyModelLabel, type Kind, type FeatureId, type DocPrefs, type ModelPrice } from '../store'
 import { normSkills, resolveSkill, validateCustomSkill, enabledSkills, BUILTIN_SKILLS, SKILL_TOOL_NAME, type SkillState } from '../skills'
@@ -15,6 +15,7 @@ import { Anchor, Panel, Section, SettingRow } from './settingsPrimitives'
 import { SortableList, useFlipAnimate, type SortHandleProps, type SortItemApi } from './dnd'
 import { fetchModelCatalogCached, clearCatalogCache, prefetchModelCatalog, fetchModelProviders, filterCatalogByEndpoint, prioritizeProviderRows, discoverEndpointModels, clearModelDiscoveryCache, type CatalogEntry, type CatalogProvider, type CatalogSource } from '../catalog'
 import { resolveProvider } from '../providerRegistry'
+import { apiCompanyOf, apiUrlFor } from '../endpointUrl'
 import { parseCurlCommand, type CurlProvider } from '../curlImport'
 import { ENDPOINT_AUTH_OPTIONS, endpointAuthOf, headerBlockOf, type EndpointAuth } from '../endpointAuth'
 import { providerFetch } from '../net'
@@ -67,45 +68,235 @@ function HelperPointer({ anchor, title, current }: { anchor: string; title: stri
     </Anchor>
   )
 }
-/** The single quick-add control on the Endpoints tab. The main half creates
- *  an OpenAI-compatible endpoint right away; the arrow half opens a menu that
- *  can also create an Anthropic-compatible one. cURL import stays a separate
- *  button beside it. */
-function AddEndpointSplit({ onAdd }: { onAdd: (type: 'openai' | 'anthropic') => void }) {
-  const [open, setOpen] = useState(false)
-  const ref = useRef<HTMLDivElement>(null)
-  const trigger = useRef<HTMLButtonElement>(null)
-  const menu = useRef<HTMLDivElement>(null)
-  const menuKeys = useMenuNav(open, menu, () => setOpen(false), () => trigger.current?.focus())
-  useEffect(() => {
-    if (!open) return
-    const f = (e: MouseEvent) => { if (!ref.current?.contains(e.target as Node)) setOpen(false) }
-    addEventListener('mousedown', f)
-    return () => removeEventListener('mousedown', f)
-  }, [open])
-  const pick = (t: 'openai' | 'anthropic') => { setOpen(false); onAdd(t); trigger.current?.focus() }
+/** The base URL a custom endpoint needs. An OpenAI-compatible server is almost
+ *  always at https://api.<company>.com/v1, so the company is asked for in
+ *  place, with the rest of the URL as text around it; a server that does not
+ *  fit that shape (localhost with a port, a gateway path) switches to a full
+ *  URL. */
+function BaseUrlField({ url, set, type }: { url: string; set: (v: string) => void; type: 'openai' | 'anthropic' }) {
+  const company = apiCompanyOf(url)
+  const [full, setFull] = useState(() => !!url.trim() && company === null)
+  if (type !== 'openai') return <Input value={url} set={set} placeholder="https://api.company.com/v1" aria-label="Base URL" />
+  if (full)
+    return (
+      <div className="space-y-1.5">
+        <Input value={url} set={set} placeholder="https://api.company.com/v1" aria-label="Base URL" />
+        <button type="button" onClick={() => setFull(false)} className="text-xs text-mu underline decoration-mu/40 underline-offset-2 hover:text-tx">
+          {'Use the https://api.<company>.com/v1 shape'}
+        </button>
+      </div>
+    )
   return (
-    <div ref={ref} className="relative inline-flex">
-      <Btn v="solid" icon={Plus} className="!rounded-r-none" onClick={() => pick('openai')}>Add endpoint</Btn>
-      <button
-        ref={trigger}
-        type="button"
-        aria-haspopup="menu"
-        aria-expanded={open}
-        aria-label="Choose the API format"
-        title="Choose the API format"
-        onClick={() => setOpen((v) => !v)}
-        className="inline-flex w-7 items-center justify-center rounded-lg rounded-l-none border-l border-black/15 bg-ac text-acx transition-opacity hover:opacity-90"
-      >
-        <ChevronDown size={14} className={cx('transition-transform', open && 'rotate-180')} />
-      </button>
-      {open && (
-        <div ref={menu} role="menu" aria-label="Endpoint type" onKeyDown={menuKeys} className="menu-surface absolute left-0 top-full z-20 mt-1.5 w-64 rounded-xl bg-surf p-1.5">
-          <Item role="menuitem" icon={Cpu} onClick={() => pick('openai')} sub="Most providers, local servers, OpenRouter">OpenAI-compatible</Item>
-          <Item role="menuitem" icon={ScrollText} onClick={() => pick('anthropic')} sub="Anthropic Messages API shape">Anthropic-compatible</Item>
-        </div>
-      )}
+    <div className="space-y-1.5">
+      <div className="flex flex-wrap items-center gap-1 rounded-lg bg-surf px-2.5 py-2 font-mono text-sm">
+        <span className="shrink-0 select-none text-mu">https://api.</span>
+        <input
+          value={company ?? ''}
+          onChange={(ev) => set(apiUrlFor(ev.target.value))}
+          placeholder="company"
+          aria-label="Company domain"
+          autoCapitalize="none"
+          autoCorrect="off"
+          spellCheck={false}
+          className="min-w-24 flex-1 rounded-md bg-bg px-2 py-1 text-tx outline-none placeholder:text-mu/60 focus:ring-2 focus:ring-ac/40"
+        />
+        <span className="shrink-0 select-none text-mu">.com/v1</span>
+      </div>
+      <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1 text-xs text-mu">
+        <span className="min-w-0">
+          {company ? <span className="font-mono">{url}</span> : 'The company part of the API host, e.g. “acme” for api.acme.com.'}
+        </span>
+        <button type="button" onClick={() => setFull(true)} className="shrink-0 underline decoration-mu/40 underline-offset-2 hover:text-tx">Use another URL</button>
+      </div>
     </div>
+  )
+}
+
+type EpStep = 'provider' | 'connection' | 'key' | 'model'
+
+const WIZARD_STEP_LABEL: Record<EpStep, string> = {
+  provider: 'Choose a provider',
+  connection: 'Connect the endpoint',
+  key: 'Add your API key',
+  model: 'Pick a model',
+}
+
+/** Add-endpoint wizard: provider → connection → key → model. The connection
+ *  step only exists for a preset that has no URL of its own, so a named
+ *  provider is two screens and a custom server is three. A provider that is not
+ *  in the list is routed to the OpenAI-compatible preset, which nearly every
+ *  API speaks; everything chosen here stays editable on the endpoint's card. */
+function EndpointWizard({ close }: { close: () => void }) {
+  const [preset, setPreset] = useState('')
+  const [type, setType] = useState<'openai' | 'anthropic'>('openai')
+  const [url, setUrl] = useState('')
+  const [name, setName] = useState('')
+  const [key, setKey] = useState('')
+  const [model, setModel] = useState('')
+  const [step, setStep] = useState(0)
+  const [query, setQuery] = useState('')
+  const [found, setFound] = useState<CatalogEntry[]>([])
+  const [status, setStatus] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  // A preset that carries its own URL needs no connection step at all.
+  const custom = !PRE[preset]?.[1]
+  const steps: EpStep[] = custom ? ['provider', 'connection', 'key', 'model'] : ['provider', 'key', 'model']
+  const at = steps[Math.min(step, steps.length - 1)]
+  const company = apiCompanyOf(url)
+  const derivedName = name.trim() || company || (/^Other /i.test(preset) ? '' : preset) || 'New endpoint'
+  let host = ''
+  try { host = new URL(url).host } catch { /* the URL is still being typed */ }
+
+  const findModels = async () => {
+    setBusy(true)
+    setStatus('Looking for a model list…')
+    try {
+      const out = await discoverEndpointModels({ ...BLANK.eps(), name: derivedName, type, url: url.trim(), key: key.trim(), preset }, providerFetch)
+      setFound(out.entries)
+      const n = out.entries.length
+      setStatus(n
+        ? `${n} model${n === 1 ? '' : 's'} found${out.workingUrl ? ` · ${out.workingUrl}` : ''}.`
+        : `${out.error || 'No model list was returned.'} Enter the model ID below.`)
+    } catch (err: any) {
+      setStatus(`${err?.message || 'The model list could not be loaded.'} Enter the model ID below.`)
+    } finally { setBusy(false) }
+  }
+  // The model step is the one place where waiting is worse than fetching: the
+  // endpoint usually answers with its own list, and a typed id is the fallback.
+  useEffect(() => {
+    if (at !== 'model' || !/^https?:\/\//i.test(url.trim()) || found.length || status || busy) return
+    void findModels()
+  }, [at])
+
+  const choose = (k: string) => {
+    const info = PRE[k]
+    if (!info) return
+    const [t, u] = info
+    setPreset(k); setType(t); setUrl(u); setName(u ? k : '')
+    setFound([]); setStatus(''); setModel('')
+    setStep(1)
+  }
+  const next = () => setStep((n) => Math.min(n + 1, steps.length - 1))
+  const back = () => setStep((n) => Math.max(n - 1, 0))
+  const canNext = at === 'provider' ? !!preset : at === 'connection' ? /^https?:\/\/\S+$/i.test(url.trim()) : true
+  /* Enter takes the same step the Continue button would, so a keyboard user
+     never has to leave the field they are typing in. */
+  const enter = (ev: { key: string; preventDefault: () => void }) => {
+    if (ev.key !== 'Enter') return
+    ev.preventDefault()
+    if (!canNext) return
+    if (at === 'model') finish()
+    else next()
+  }
+  const finish = () => {
+    const base = { ...BLANK.eps(), name: derivedName, type, url: url.trim(), key: key.trim(), preset }
+    const hit = found.find((f) => f.id === model)
+    const endpoint = {
+      ...base,
+      ...modelListEdit(base, model ? [model] : [''], Date.now(), model),
+      ...(hit?.name ? { modelNames: { [model]: hit.name } } : {}),
+      ...(hit?.context && hit.context > 0 ? { modelContext: { [model]: hit.context } } : {}),
+    }
+    // New endpoints land at the top of the list, where the card is in view.
+    const state = useS.getState()
+    state.patch({ eps: [endpoint, ...state.eps] })
+    close()
+  }
+
+  const known = Object.keys(PRE).filter((k) => !/^Other .+-compatible$/i.test(k))
+  const matches = known.filter((k) => k.toLowerCase().includes(query.trim().toLowerCase()))
+  const providerStep = (
+    <div className="space-y-3">
+      <input
+        autoFocus
+        value={query}
+        onChange={(ev) => setQuery(ev.target.value)}
+        placeholder="Search providers"
+        aria-label="Search providers"
+        className="w-full rounded-lg bg-surf px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ac/40"
+      />
+      <div className="dd-list max-h-56 space-y-0.5 overflow-y-auto overscroll-contain pr-1">
+        {matches.map((k) => {
+          const [t, u] = PRE[k]
+          let h = ''
+          try { h = new URL(u).host } catch { /* a preset without a URL */ }
+          return (
+            <button key={k} type="button" onClick={() => choose(k)} className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left hover:bg-hov focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ac/40">
+              <span className="min-w-0 flex-1 truncate text-sm">{k}</span>
+              <span className="shrink-0 text-xs text-mu">{h || (t === 'anthropic' ? 'Anthropic Messages' : '')}</span>
+              <ChevronRight size={14} className="shrink-0 text-mu" aria-hidden="true" />
+            </button>
+          )
+        })}
+        {!matches.length && <p className="px-2 py-6 text-center text-sm text-mu">No provider matches “{query}”.</p>}
+      </div>
+      <div className="rounded-xl bg-surf p-3">
+        <p className="text-sm font-medium">Can’t find your provider?</p>
+        <p className="mt-1 text-xs text-mu">Most APIs work through the OpenAI-compatible preset — you only need the company part of its base URL.</p>
+        <div className="mt-2.5 flex flex-wrap gap-2">
+          <Btn v="solid" icon={Cpu} onClick={() => choose('Other OpenAI-compatible')}>Use OpenAI-compatible</Btn>
+          <Btn v="soft" icon={ScrollText} onClick={() => choose('Other Anthropic-compatible')}>Anthropic Messages</Btn>
+        </div>
+      </div>
+    </div>
+  )
+  const connectionStep = (
+    <div className="space-y-4">
+      <p className="text-sm text-mu">{preset === 'Other Anthropic-compatible' ? 'Enter the base URL of an endpoint that speaks the Anthropic Messages API.' : 'Enter the base URL of your OpenAI-compatible endpoint.'}</p>
+      <Field label="Base URL"><BaseUrlField url={url} set={setUrl} type={type} /></Field>
+      <Field label="Endpoint name"><Input value={name} set={setName} placeholder={derivedName} aria-label="Endpoint name" onKeyDown={enter} /></Field>
+      <p className="text-xs text-mu">This is the part of the URL before <span className="font-mono">/chat/completions</span>; your provider’s docs list it.</p>
+    </div>
+  )
+  const keyStep = (
+    <div className="space-y-4">
+      <div className="rounded-xl bg-surf px-3 py-2 text-xs text-mu">
+        <span className="text-tx">{derivedName}</span>
+        {host ? <span className="font-mono"> · {host}</span> : null}
+        {preset ? <span> · {preset}</span> : null}
+        {model ? <span className="font-mono"> · {model}</span> : null}
+      </div>
+      <Field label="API key"><Input autoFocus type="password" value={key} set={setKey} placeholder="sk-…" aria-label="API key" onKeyDown={enter} /></Field>
+      <p className="text-xs text-mu">The key stays in this browser and is only sent to this provider. Leave it empty for a local server.</p>
+    </div>
+  )
+  const modelStep = (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="min-w-0 flex-1 text-xs text-mu">{status || 'Looking for a model list…'}</p>
+        <Btn sm icon={Search} disabled={busy} onClick={() => void findModels()}>{busy ? 'Looking…' : 'Refresh list'}</Btn>
+      </div>
+      {found.length > 0 && <Field label="Model"><SearchSelect ariaLabel="Model" value={model} set={setModel} opts={[['', 'Choose a model'], ...found.map((f) => [f.id, f.id] as [string, string])]} placeholder="Search models" /></Field>}
+      <Field label="Model ID"><Input autoFocus={!found.length} value={model} set={setModel} placeholder="e.g. gpt-5.5-mini" aria-label="Model ID" onKeyDown={enter} /></Field>
+      <p className="text-xs text-mu">More models, prices and routing can be set later from this endpoint’s card in Settings → Endpoints.</p>
+    </div>
+  )
+  return (
+    <Modal close={close} label="Add endpoint">
+      <div className="modal-panel flex max-h-[88dvh] w-full max-w-xl flex-col gap-4 overflow-hidden rounded-2xl bg-bg p-5 shadow-2xl">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h3 className="flex items-center gap-2 font-semibold"><Server size={18} className="text-ac" />Add endpoint</h3>
+            <p className="mt-0.5 text-xs text-mu">Step {step + 1} of {steps.length} · {WIZARD_STEP_LABEL[at]}</p>
+          </div>
+          <button onClick={close} aria-label="Close add endpoint" className="grid size-8 shrink-0 place-items-center rounded-lg text-mu hover:bg-hov hover:text-tx"><X size={16} /></button>
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain pr-1">
+          {at === 'provider' ? providerStep : at === 'connection' ? connectionStep : at === 'key' ? keyStep : modelStep}
+        </div>
+        <div className="flex items-center justify-between gap-2 pt-1">
+          {step > 0 ? <Btn v="soft" icon={ChevronLeft} onClick={back}>Back</Btn> : <span />}
+          {/* Picking a provider advances on its own, so that step gets a hint
+              instead of a button that could never be enabled. */}
+          {at === 'provider'
+            ? <span className="text-xs text-mu">Choose a provider to continue</span>
+            : at === 'model'
+              ? <Btn v="solid" icon={Check} onClick={finish}>Add endpoint</Btn>
+              : <Btn v="solid" icon={ChevronRight} disabled={!canNext} onClick={next}>Continue</Btn>}
+        </div>
+      </div>
+    </Modal>
   )
 }
 
@@ -724,21 +915,11 @@ function Eps() {
   const [editingName, setEditingName] = useState('')
   const [advanced, setAdvanced] = useState<string[]>([])
   const [curlOpen, setCurlOpen] = useState(false)
+  const [wizard, setWizard] = useState(false)
   const catalogPrefs = (endpointId: string) => Object.values(PRE).find((x) => x[2] && x[2] === endpointId)?.[3] ?? 'author'
   const selectPreset = (id: string, name: string) => {
     const [type, url, endpointId, endpointFilter] = PRE[name]
     upd('eps', id, { preset: name, type, url, name, endpointId, endpointFilter })
-  }
-  const addCompatible = (type: 'openai' | 'anthropic') => {
-    const endpoint = {
-      ...BLANK.eps(),
-      name: type === 'anthropic' ? 'Anthropic-compatible' : 'OpenAI-compatible',
-      type,
-      preset: type === 'anthropic' ? 'Other Anthropic-compatible' : 'Other OpenAI-compatible',
-    }
-    // New quick-adds land at the top so the new card is visible immediately.
-    const state = useS.getState()
-    state.patch({ eps: [endpoint, ...state.eps] })
   }
   const importCurl = async (provider: CurlProvider): Promise<string> => {
     const endpoint = {
@@ -771,9 +952,12 @@ function Eps() {
     if (found.entries.length) return `Added ${provider.name}. Found ${found.entries.length} model${found.entries.length === 1 ? '' : 's'} at ${found.workingUrl}.`
     return `Added ${provider.name}. ${found.error || 'No model list was found.'} The model from the cURL command is still ready to use, and failed model-list URLs are cached so they are not retried.`
   }
-  const quickActions = <div className="flex flex-wrap gap-2">
-    <AddEndpointSplit onAdd={addCompatible} />
-    <Btn v="soft" icon={Terminal} onClick={() => setCurlOpen(true)}>Add provider from cURL</Btn>
+  const quickActions = <div className="space-y-2">
+    <div className="flex flex-wrap gap-2">
+      <Btn v="solid" icon={Plus} onClick={() => setWizard(true)}>Add endpoint</Btn>
+      <Btn v="soft" icon={Terminal} onClick={() => setCurlOpen(true)}>Add provider from cURL</Btn>
+    </div>
+    <p className="text-xs text-mu">Most providers are listed. If yours is not, choose OpenAI-compatible — nearly every API speaks it.</p>
   </div>
   return (
     <Panel id="eps" n={eps.length}>
@@ -784,6 +968,9 @@ function Eps() {
         if (!e) return null
         const u = (p: object) => upd('eps', e.id, p)
         const provider = resolveProvider({ preset: e.preset, url: e.url })
+        // A preset with its own URL never needs the field; a custom server
+        // cannot work without one, so it is asked for in the card body.
+        const needsUrl = !PRE[e.preset ?? '']?.[1]
         return (
           <Anchor key={eid} id={`ep-${e.id}`}>
           <Card handle={handle} icon={Server} title={editingName === e.id
@@ -792,6 +979,7 @@ function Eps() {
             <div className="space-y-3">
               <Anchor id="models"><section className="space-y-3 rounded-xl bg-bg p-3">
               <Field label="Preset"><SearchSelect ariaLabel="Endpoint preset" value={e.preset ?? presetForUrl(e.url)?.[0] ?? ''} set={(v) => v ? selectPreset(e.id, v) : u({ preset: '', endpointId: '', endpointFilter: 'author' })} opts={[[ '', 'Choose a preset'], ...Object.keys(PRE).map((k) => [k, k] as [string, string])]} placeholder="Search endpoints" /></Field>
+              {needsUrl && <Field label="Base URL"><BaseUrlField url={e.url} set={(v: string) => u({ url: v })} type={e.type} /></Field>}
               <Field label="Models">
                 <ModelsEditor e={e} update={u} />
               </Field>
@@ -814,7 +1002,7 @@ function Eps() {
               </Field>
               </section></Anchor>
               <Anchor id="advanced-connection"><details open={advanced.includes(e.id)} onToggle={(ev) => { const isOpen = ev.currentTarget.open; setAdvanced(current => isOpen ? [...new Set([...current, e.id])] : current.filter(id => id !== e.id)) }} className="rounded-xl bg-bg px-3"><summary className="flex cursor-pointer list-none items-center gap-2 py-3 text-sm font-medium text-mu"><span>Advanced connection settings</span><ChevronRight size={16} aria-hidden="true" className={cx('transition-transform', advanced.includes(e.id) && 'rotate-90')} /></summary><div className="space-y-3 pb-3">
-                <Field label="Base URL"><Input value={e.url} set={(v) => { const match = presetForUrl(v); u({ url: v, ...(match ? { preset: match[0], endpointId: match[1][2], endpointFilter: match[1][3] } : { preset: '', endpointId: '', endpointFilter: 'author' }) }) }} placeholder="https://…/v1" /></Field>
+                {!needsUrl && <Field label="Base URL"><Input value={e.url} set={(v) => { const match = presetForUrl(v); u({ url: v, ...(match ? { preset: match[0], endpointId: match[1][2], endpointFilter: match[1][3] } : { preset: '', endpointId: '', endpointFilter: 'author' }) }) }} placeholder="https://…/v1" /></Field>}
                 <Field label="API format" row><Seg label="API format" v={e.type} set={(v) => u({ type: v })} opts={[[ 'openai', 'OpenAI-compatible'], ['anthropic', 'Anthropic Messages']]} /></Field>
                 <Field label="Endpoint ID"><Input value={e.endpointId ?? presetForUrl(e.url)?.[1][2] ?? ''} set={(endpointId) => u({ endpointId, endpointFilter: catalogPrefs(endpointId) })} placeholder="e.g. anthropic" /></Field>
                 {provider?.accountScoped && <Field label="Account ID"><Input value={e.accountId ?? ''} set={(accountId) => u({ accountId })} placeholder="Cloudflare account ID" /></Field>}
@@ -883,6 +1071,7 @@ function Eps() {
           <SettingRow label="Show model pricing controls"><Toggle on={s.prefs.showModelPricing} set={(showModelPricing) => s.patch({ prefs: { ...s.prefs, showModelPricing } })} label="Show model pricing controls" /></SettingRow>
         </Anchor>
       </Section>
+      {wizard && <EndpointWizard close={() => setWizard(false)} />}
       {curlOpen && <CurlImportModal close={() => setCurlOpen(false)} importProvider={importCurl} />}
     </Panel>
   )
