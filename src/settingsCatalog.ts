@@ -217,6 +217,7 @@ export const SETTING_LINKS: SettingLink[] = [
   { tab: 'look', anchor: 'high-contrast', title: 'High contrast', keywords: 'high contrast muted text borders readable accessibility theme' },
   { tab: 'look', anchor: 'message-times', title: 'Message times', keywords: 'message times timestamps clock sent at' },
   { tab: 'look', anchor: 'message-actions', title: 'Always show message actions', keywords: 'message actions hover always show copy regenerate delete' },
+  { tab: 'chats', anchor: 'revert-send', title: 'Revert send button', keywords: 'revert send revert message edit message edit prompt resend replace prompt delete later messages undo send undo' },
   { tab: 'widgets', anchor: 'context-meter', title: 'Context meter', keywords: 'context meter tokens circle header appearance' },
   { tab: 'widgets', anchor: 'context-compact', title: 'Auto-compact context', keywords: 'context compaction compact summarize handoff threshold percent auto' },
   { tab: 'look', anchor: 'context-limit', title: 'Context meter limit', keywords: 'context limit estimated meter tokens' },

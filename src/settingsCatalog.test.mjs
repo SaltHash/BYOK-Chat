@@ -26,3 +26,9 @@ test('settings search finds sections and individual deep links using keywords', 
   assert.ok(searchSettings('dark theme').some(result => result.target === 'look'))
   assert.deepEqual(splitSettingTarget('eps#credentials'), { tab: 'eps', anchor: 'credentials' })
 })
+
+test('settings search finds the revert send button by what it does', () => {
+  for (const q of ['revert', 'edit message', 'revert message']) {
+    assert.ok(searchSettings(q).some(result => result.target === 'chats#revert-send'), q)
+  }
+})

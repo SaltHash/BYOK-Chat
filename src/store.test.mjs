@@ -136,7 +136,7 @@ test('revert send arms the composer and cancel restores the thread', async () =>
   const s = () => useS.getState()
   useS.setState({
     chats: [{ id: 'a', title: 'A', msgs: [
-      { id: 'u1', r: 'user', t: 'first' },
+      { id: 'u1', r: 'user', t: 'first', att: [{ name: 'notes.txt', kind: 'txt', size: '1 KB', text: 'hello' }] },
       { id: 'a1', r: 'assistant', t: 'reply' },
       { id: 'u2', r: 'user', t: 'second' },
     ] }],
@@ -146,6 +146,7 @@ test('revert send arms the composer and cancel restores the thread', async () =>
   assert.equal(s().armRevert('u1'), true)
   assert.equal(s().draft, 'first')
   assert.equal(s().revert?.mid, 'u1')
+  assert.deepEqual(s().revert?.att.map((a) => a.name), ['notes.txt'], 'the message attachments ride along for the composer')
   assert.equal(s().chats[0].msgs.length, 3, 'arming does not delete anything')
   // A refused send must not drop the messages either.
   assert.equal(await s().send('first', []), false)

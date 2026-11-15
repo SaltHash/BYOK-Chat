@@ -295,6 +295,25 @@ export function Composer({ cfg, quote, onClearQuote }: { cfg: (t: string) => voi
     const at = chat ? chat.msgs.findIndex((m) => m.id === st.revert!.mid) : -1
     return at < 0 ? 0 : chat!.msgs.length - at
   })
+  // A revert brings the message's attachments back with its text. What was in
+  // the box before it was armed comes back when the revert is cancelled, and
+  // stays gone once the reverted prompt is actually sent.
+  const preRevert = useRef<Att[] | null>(null)
+  const revertHere = !!revert && revert.chat === s.chat
+  useEffect(() => {
+    if (revertHere) {
+      if (preRevert.current === null) preRevert.current = att
+      setAtt(revert?.att ?? [])
+      return
+    }
+    if (preRevert.current !== null) {
+      setAtt(preRevert.current)
+      preRevert.current = null
+    }
+    // `att` is only read at the moment a revert is armed; watching it would
+    // restore the stash on every attachment change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [revertHere, revert?.mid])
   // Streaming is per chat: a reply running in another chat leaves this
   // composer free to send, and Stop here cancels only this chat's reply.
   const streaming = !!s.busyChats?.[s.chat]
@@ -504,6 +523,9 @@ export function Composer({ cfg, quote, onClearQuote }: { cfg: (t: string) => voi
       histIdx.current = null
       if (useS.getState().draft === v) { pending.current = 'end'; s.patch({ draft: '' }) }
       setArmed(null)
+      // The reverted prompt (and its files) replaced what was in the box, so
+      // there is nothing pre-revert left to restore.
+      preRevert.current = null
       setAtt([])
       setActive(null)
       onClearQuote?.()
@@ -864,6 +886,16 @@ export function Composer({ cfg, quote, onClearQuote }: { cfg: (t: string) => voi
               )
             }}
           </Pop>
+          <button
+            type="button"
+            aria-pressed={armed === 'research'}
+            title={armed === 'research' ? 'Deep research is on for this message — click to turn it off' : 'Deep research: pick a depth, review a plan, then run it'}
+            onClick={() => { setArmed(armed === 'research' ? null : 'research'); ta.current?.focus() }}
+            className={cx(chip, armed === 'research' && 'bg-ac/15 text-tx')}
+          >
+            <BookOpen size={16} />
+            <span className="max-w-20 truncate sm:max-w-32">Deep research</span>
+          </button>
           <Pop up w="w-[26rem]" scroll={false} onOpenChange={setMenusOpen} trigger={(o) => {
             const activeEp = s.sel?.k === 'ep' && s.sel?.id ? s.eps.find((e) => e.id === s.sel!.id) : undefined
             const activeModel = s.sel?.k === 'ep' && s.sel.model ? s.sel.model : undefined

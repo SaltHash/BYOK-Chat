@@ -2188,6 +2188,11 @@ function Chats() {
             <Seg v={(prefs.sendWhileBusy ?? 'queue') as 'queue' | 'stop'} set={(sendWhileBusy) => patch({ sendWhileBusy })} opts={[['queue', 'Queue'], ['stop', 'Stop first']]} />
           </SettingRow>
         </Anchor>
+        <Anchor id="revert-send">
+          <SettingRow label="Revert send button">
+            <Toggle on={prefs.revertSend === true} set={(revertSend) => patch({ revertSend })} label="Revert send button" />
+          </SettingRow>
+        </Anchor>
         <Anchor id="prompt-recall">
           <SettingRow label="Prompt recall (↑ / ↓)">
             <div className="w-52 max-w-full"><Sel value={normPromptRecall(prefs.promptRecall)} set={(promptRecall) => patch({ promptRecall: normPromptRecall(promptRecall) })} opts={PROMPT_RECALL_MODES as unknown as [string, string][]} inline /></div>

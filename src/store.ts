@@ -755,9 +755,10 @@ type S = {
    *  Session-scoped: it is never persisted and expires with its timer. */
   undo: { chat: Chat; index: number; wasOpen: boolean; draft?: string } | null
   /** Armed revert-send: which chat and message the composer text came from,
-   *  and the draft to restore on cancel. Session-scoped; sending drops every
-   *  message after `mid`. */
-  revert: { chat: string; mid: string; text: string; draft: string } | null
+   *  the attachments that ride back into the box with it, and the draft to
+   *  restore on cancel. Session-scoped; sending drops every message after
+   *  `mid`. */
+  revert: { chat: string; mid: string; text: string; att: Att[]; draft: string } | null
   /** Chat ids streaming a reply right now. `busy` is true while any of them
    *  runs, so per-chat controls read this map instead of the global flag. */
   busyChats: Record<string, true>
@@ -3500,9 +3501,9 @@ export const useS = create<S>()(
           const i = c ? c.msgs.findIndex((m) => m.id === mid) : -1
           if (!c || i < 0 || c.msgs[i].r !== 'user') return false
           if (chatBusy(s, c.id)) { set({ notice: { t: 'A reply is still in progress in this chat. Stop it first, then revert.' } }); return false }
-          // The old draft comes back on cancel; the message text replaces it in
-          // the composer while the revert is armed.
-          set({ revert: { chat: c.id, mid, text: c.msgs[i].t, draft: s.draft }, draft: c.msgs[i].t })
+          // The old draft comes back on cancel; the message text and its
+          // attachments replace the box while the revert is armed.
+          set({ revert: { chat: c.id, mid, text: c.msgs[i].t, att: c.msgs[i].att ?? [], draft: s.draft }, draft: c.msgs[i].t })
           return true
         },
         cancelRevert: () => {
