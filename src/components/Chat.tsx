@@ -11,7 +11,7 @@ import { toolLabel } from '../toolLabels'
 import { summarizeToolCalls, splitToolTrail, type ToolKind, type TrailCall } from '../toolSummary'
 import { formatMsgDateTime, formatMsgTime } from '../time'
 import { exactCost, formatCost, messageCostOf, outputTokensOf } from '../replyMetrics'
-import { Btn, Chip, cx, TextLightbox, ZoomableImage, type Ic } from './ui'
+import { Btn, Chip, cx, ImageLightbox, TextLightbox, ZoomableImage, type Ic } from './ui'
 import { Composer } from './Composer'
 import { ProjectOverview } from './ProjectOverview'
 import { Header } from './Header'
@@ -612,19 +612,23 @@ function replyDuration(m: Msg) {
   return (m.toolRounds ?? []).reduce((ms, round) => ms + round.calls.reduce((inner, call) => inner + Math.max(0, call.ms ?? 0), 0), 0)
 }
 
-/** A pasted-text attachment in a sent message: a short inline preview that
- *  opens the same full-screen viewer used by pasted-text cards in the composer. */
-function PastedChip({ a }: { a: { name: string; text?: string } }) {
+/** A file in a sent message. Every kind previews through the same full-screen
+ *  viewers the composer uses: text-bearing files (pastes, PDFs, documents) open
+ *  their extracted text, images open enlarged, and a file with nothing readable
+ *  stays a plain chip that says so instead of looking clickable. */
+function SentAtt({ a }: { a: NonNullable<Msg['att']>[number] }) {
   const [open, setOpen] = useState(false)
-  if (!a.text) return <Chip icon={Paperclip}>{a.name}</Chip>
-  return (
+  const [zoom, setZoom] = useState(false)
+  const src = a.kind === 'img' && a.data ? `data:${a.mime || 'image/*'};base64,${a.data}` : ''
+  const focus = 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ac/40'
+  if (a.text) return (
     <>
       <button
         type="button"
         onClick={() => setOpen(true)}
         aria-label={`Preview ${a.name} full screen`}
-        title={`Open ${a.name} full screen`}
-        className="flex max-w-[min(100%,22rem)] items-center gap-2 rounded-lg bg-surf px-2.5 py-1.5 text-left text-xs text-mu transition-colors hover:bg-hov hover:text-tx"
+        title={`Open ${a.name} full screen${a.pages ? ` · ${a.pages} pages` : ''}`}
+        className={cx('flex max-w-[min(100%,22rem)] items-center gap-2 rounded-lg bg-surf px-2.5 py-1.5 text-left text-xs text-mu transition-colors hover:bg-hov hover:text-tx', focus)}
       >
         <FileText size={13} className="shrink-0" aria-hidden="true" />
         <span className="min-w-0">
@@ -635,6 +639,22 @@ function PastedChip({ a }: { a: { name: string; text?: string } }) {
       {open && <TextLightbox text={a.text} title={a.name} close={() => setOpen(false)} />}
     </>
   )
+  if (src) return (
+    <>
+      <button
+        type="button"
+        onClick={() => setZoom(true)}
+        aria-label={`View ${a.name} full screen`}
+        title={`Open ${a.name} full screen`}
+        className={cx('flex max-w-[min(100%,18rem)] items-center gap-2 rounded-lg bg-surf py-1 pl-1 pr-2.5 text-xs text-tx transition-colors hover:bg-hov', focus)}
+      >
+        <img src={src} alt="" className="size-8 shrink-0 rounded object-cover" />
+        <span className="min-w-0 truncate font-medium">{a.name}</span>
+      </button>
+      {zoom && <ImageLightbox src={src} alt={a.name} close={() => setZoom(false)} />}
+    </>
+  )
+  return <span title={`${a.name} has no readable text to preview`}><Chip icon={Paperclip}>{a.name}</Chip></span>
 }
 
 const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWorkspaceId, cfg, searchQuery, searchOpen }: { m: Msg; last: boolean; onOpenWorkspace: (mid: string, workspaceId: string, filePath?: string) => void; onOpenResearch: (mid: string) => void; selectedWorkspaceId?: string | null; cfg: (t: string) => void; searchQuery?: string; searchOpen?: boolean }) {
@@ -781,11 +801,9 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
   if (m.r === 'user')
     return (
       <div id={`msg-${m.id}`} data-msg-role="user" className={cx('ml-auto max-w-[85%] space-y-2 rounded-xl p-1', flash && 'ring-2 ring-ac')}>
-        <div className="flex flex-wrap items-center justify-end gap-1.5">
+        <div className="flex flex-wrap items-center justify-end gap-1.5" role="group" aria-label="Attachments">
           {prefs.showTimestamps && m.at != null && <time dateTime={new Date(m.at).toISOString()} title={formatMsgDateTime(m.at)} className="text-xs text-mu">{formatMsgTime(m.at)}</time>}
-          {m.att?.map((a, i) => a.source === 'paste' && a.text
-            ? <PastedChip key={`${i}-${a.name}`} a={a} />
-            : <Chip key={`${i}-${a.name}`} icon={Paperclip}>{a.name}</Chip>)}
+          {m.att?.map((a, i) => <SentAtt key={`${i}-${a.name}`} a={a} />)}
         </div>
         {m.t && <UserText m={m} searchQuery={searchQuery} searchOpen={searchOpen} />}
       </div>

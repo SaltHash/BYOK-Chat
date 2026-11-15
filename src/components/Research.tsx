@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { BookOpen, Check, Copy, Download, FileText, Globe, ListFilter, ListOrdered, Pencil, Play, RotateCcw, Sparkles, Square, X } from 'lucide-react'
+import { BookOpen, Check, Copy, Download, FileText, Globe, Image as ImageIcon, ListFilter, ListOrdered, Pencil, Play, RotateCcw, Sparkles, Square, X } from 'lucide-react'
 import { useS, useLive, type Msg } from '../store'
 import { PLAN_INTRO, RESEARCH_TIERS, agentRoundsUsed, agentSources, countedSteps, dedupTrace, reasoningBlocks, researchProgress, tierOf, type ResearchAgent, type ResearchPlan, type ResearchPlanStep, type ResearchTierId } from '../research'
 import { claimForCitation, collectMessageSources, linkifyCitations, mergeSources, stripCitations } from '../citations'
@@ -14,9 +14,53 @@ const useMsgBusy = (mid: string) => useS((s) => {
   return !!c && s.busyChats?.[c.id] === true
 })
 import { SourcesPanel, scrollToSource } from './Sources'
-import { Btn, cx } from './ui'
+import { Btn, cx, ImageLightbox, TextLightbox } from './ui'
 
 const PLAN_ICONS = { search: Globe, analyze: ListFilter, report: FileText, other: Sparkles } as const
+
+/** The files the request came with, listed on the card so it is clear what the
+ *  run reads alongside the web. Each name previews the file through the same
+ *  viewer a sent message uses, so the card can be checked without scrolling
+ *  back to the request. */
+function ResearchFiles({ files, msg }: { files?: string[]; msg: Msg }) {
+  const [open, setOpen] = useState<{ title: string; text: string } | null>(null)
+  const [zoom, setZoom] = useState<{ src: string; alt: string } | null>(null)
+  if (!files?.length) return null
+  // Resolved on click from the request itself: the card only stores names, so
+  // the file bodies are never duplicated into the research state.
+  const find = (name: string) => {
+    const s = useS.getState()
+    const c = s.chats.find((x) => x.msgs.some((m) => m.id === msg.id))
+    const i = c ? c.msgs.findIndex((m) => m.id === msg.id) : -1
+    const um = c && i > 0 ? [...c.msgs.slice(0, i)].reverse().find((m) => m.r === 'user' && m.att?.some((a) => a.name === name)) : undefined
+    return um?.att?.find((a) => a.name === name)
+  }
+  const chip = 'inline-flex min-w-0 items-center gap-1 rounded-md bg-hov px-2 py-1 text-xs text-tx'
+  const button = cx(chip, 'transition-colors hover:bg-bor/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ac/40')
+  return (
+    <div className="flex flex-wrap items-center gap-1 text-xs text-mu">
+      <FileText size={12} aria-hidden />
+      <span>{files.length === 1 ? 'Using this file:' : `Using these ${files.length} files:`}</span>
+      {files.map((f) => {
+        const a = find(f)
+        const src = a?.kind === 'img' && a.data ? `data:${a.mime || 'image/*'};base64,${a.data}` : ''
+        if (a?.text) return (
+          <button key={f} type="button" onClick={() => setOpen({ title: f, text: a.text ?? '' })} title={`Preview ${f}`} aria-label={`Preview ${f} full screen`} className={button}>
+            {a.kind === 'img' && <ImageIcon size={11} aria-hidden />}{f}
+          </button>
+        )
+        if (src) return (
+          <button key={f} type="button" onClick={() => setZoom({ src, alt: f })} title={`Open ${f} full screen`} aria-label={`View ${f} full screen`} className={button}>
+            <ImageIcon size={11} aria-hidden />{f}
+          </button>
+        )
+        return <span key={f} className={chip} title="No readable text in this file">{f}</span>
+      })}
+      {open && <TextLightbox text={open.text} title={open.title} close={() => setOpen(null)} />}
+      {zoom && <ImageLightbox src={zoom.src} alt={zoom.alt} close={() => setZoom(null)} />}
+    </div>
+  )
+}
 const fmtEstimate = (n: number) => `≈$${n < 0.01 ? n.toFixed(3) : n.toFixed(2)}`
 const fmtTokens = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(n >= 100000 ? 0 : 1)}k` : String(n))
 
@@ -316,6 +360,7 @@ export function ResearchPlanCard({ msg }: { msg: Msg }) {
       <section aria-label="Research plan" aria-live="polite" className="space-y-4 rounded-2xl border border-bor bg-surf p-4">
         <h3 className="text-sm font-medium">{plan?.title || (planning ? liveDraft?.title : '') || rs.query.slice(0, 90)}</h3>
         {plan?.intro && <p className="text-xs leading-relaxed text-mu">{plan.intro}</p>}
+        <ResearchFiles files={rs.files} msg={msg} />
         {planning ? (
           <div className="space-y-2" aria-live="polite">
             <p role="status" aria-label="Generating research plan" className="flex items-center text-sm text-mu">
@@ -403,6 +448,7 @@ export function ResearchTierPicker({ msg }: { msg: Msg }) {
       <div>
         <h3 className="text-sm font-medium">Deep research on “{rs.query.slice(0, 120)}”</h3>
         <p className="mt-1 text-xs text-mu">Pick a depth. You&rsquo;ll review a plan before any searching starts.</p>
+        <div className="mt-2"><ResearchFiles files={rs.files} msg={msg} /></div>
       </div>
       <div className="grid gap-2 sm:grid-cols-3">
         {RESEARCH_TIERS.map((base) => tierOf(base.id)).map((t) => (

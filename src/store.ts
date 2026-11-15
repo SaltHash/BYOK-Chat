@@ -1441,7 +1441,8 @@ export const useS = create<S>()(
        * the (re)sent message asked for deep research. */
       function startResearchTierPick(chatId: string, msgs: Msg[], query: string) {
         const mid = uid()
-        const rq: ResearchState = { id: uid(), query, tier: null, status: 'tier-pick', steps: [], startedAt: Date.now() }
+        const files = [...msgs].reverse().find((m) => m.r === 'user')?.att?.map((a) => a.name)
+        const rq: ResearchState = { id: uid(), query, tier: null, status: 'tier-pick', steps: [], startedAt: Date.now(), ...(files?.length ? { files } : {}) }
         set({ chats: get().chats.map((x) => (x.id === chatId ? { ...x, msgs: [...msgs, { id: mid, r: 'assistant', t: '', at: Date.now(), by: '', log: [], research: rq }] } : x)) })
         // The tier picker is not a request, so this chat stops counting as
         // busy; any other chat that is streaming keeps streaming.
@@ -3100,7 +3101,7 @@ export const useS = create<S>()(
             um.historyTokens = 0
             um.explicitTokens = est(raw)
             const mid = uid()
-            const rq: ResearchState = { id: uid(), query: researchQuery, tier: null, status: 'tier-pick', steps: [], startedAt: Date.now() }
+            const rq: ResearchState = { id: uid(), query: researchQuery, tier: null, status: 'tier-pick', steps: [], startedAt: Date.now(), ...(namedAtt.length ? { files: namedAtt.map((a) => a.name) } : {}) }
             set((st) => {
               const old = st.chats.find((c) => c.id === st.chat)
               // Materializes the pending new chat (or falls back to a plain
@@ -3460,7 +3461,7 @@ export const useS = create<S>()(
           const nid = uid()
           const next: ResearchState = {
             id: uid(), query: rs.query, tier: rs.tier, status: 'plan', plan: rs.plan,
-            answers: rs.answers, steps: [], startedAt: Date.now(), estimate: rs.estimate,
+            answers: rs.answers, files: rs.files, steps: [], startedAt: Date.now(), estimate: rs.estimate,
           }
           set((st) => ({
             chats: st.chats.map((x) => (x.id === c.id ? { ...x, msgs: [...x.msgs.slice(0, i + 1), { id: nid, r: 'assistant' as const, t: '', at: Date.now(), by: '', log: [], research: next }, ...x.msgs.slice(i + 1)] } : x)),

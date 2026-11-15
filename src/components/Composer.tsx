@@ -724,10 +724,26 @@ export function Composer({ cfg, quote, onClearQuote }: { cfg: (t: string) => voi
                     </div>
                   )
                 }
+                // Files with extracted text open the same viewer as pasted
+                // text, so an uploaded PDF can be checked before it is sent.
+                const info = <>
+                  {bad(a) ? <TriangleAlert size={13} /> : <FileText size={13} />}
+                  {a.text && a.kind !== 'txt' && <Check size={12} className="shrink-0 text-ac" aria-hidden="true" />}
+                  <span className={a.text ? 'min-w-0 truncate' : undefined}>{a.name}</span>
+                  <span className="shrink-0 text-mu">{a.size}</span>
+                </>
                 return (
-                  <div onPointerDown={hp.onPointerDown} title={bad(a) ? 'The selected model cannot process this file' : `${a.name}${a.source ? ` · ${a.source}` : ''}${a.pages ? ` · ${a.pages} pages` : ''}${a.text ? ` · ${Math.round(a.text.length / 1024)} KB text` : ''}`} className={cx('inline-flex items-center gap-1.5 rounded-lg bg-hov py-1 pl-2 pr-1 text-xs', bad(a) && 'text-er')}>
+                  <div onPointerDown={hp.onPointerDown} title={bad(a) ? 'The selected model cannot process this file' : `${a.name}${a.source ? ` · ${a.source}` : ''}${a.pages ? ` · ${a.pages} pages` : ''}${a.text ? ` · ${Math.round(a.text.length / 1024)} KB text` : ''}`} className={cx('inline-flex min-w-0 items-center gap-1.5 rounded-lg bg-hov py-1 pl-2 pr-1 text-xs', bad(a) && 'text-er')}>
                     {handle('!bg-transparent !text-mu hover:!text-tx')}
-                    {bad(a) ? <TriangleAlert size={13} /> : <FileText size={13} />}{a.text && a.kind !== 'txt' && <Check size={12} className="shrink-0 text-ac" aria-hidden="true" />}{a.name}<span className="text-mu">{a.size}</span>
+                    {a.text ? (
+                      <button
+                        type="button"
+                        onClick={() => setTextPreview({ title: a.name, text: a.text ?? '' })}
+                        aria-label={`Preview ${a.name} full screen`}
+                        title={`${a.name} · click to preview`}
+                        className="inline-flex min-w-0 items-center gap-1.5 rounded-md py-0.5 pr-0.5 transition-colors hover:bg-bor/30 hover:text-tx focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ac/40"
+                      >{info}</button>
+                    ) : info}
                     {a.source === 'paste' && <Btn sm icon={Pencil} title="Edit pasted text in the composer" onClick={(e) => { e.stopPropagation(); editPasted(a) }} onPointerDown={(e) => e.stopPropagation()} />}
                     <Btn sm icon={X} title={`Remove ${a.name}`} onClick={remove} />
                   </div>
@@ -886,16 +902,6 @@ export function Composer({ cfg, quote, onClearQuote }: { cfg: (t: string) => voi
               )
             }}
           </Pop>
-          <button
-            type="button"
-            aria-pressed={armed === 'research'}
-            title={armed === 'research' ? 'Deep research is on for this message — click to turn it off' : 'Deep research: pick a depth, review a plan, then run it'}
-            onClick={() => { setArmed(armed === 'research' ? null : 'research'); ta.current?.focus() }}
-            className={cx(chip, armed === 'research' && 'bg-ac/15 text-tx')}
-          >
-            <BookOpen size={16} />
-            <span className="max-w-20 truncate sm:max-w-32">Deep research</span>
-          </button>
           <Pop up w="w-[26rem]" scroll={false} onOpenChange={setMenusOpen} trigger={(o) => {
             const activeEp = s.sel?.k === 'ep' && s.sel?.id ? s.eps.find((e) => e.id === s.sel!.id) : undefined
             const activeModel = s.sel?.k === 'ep' && s.sel.model ? s.sel.model : undefined

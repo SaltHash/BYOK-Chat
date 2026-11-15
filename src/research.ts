@@ -396,6 +396,9 @@ export type ResearchState = {
   /** Answers the user gave to the plan's clarifying questions, injected into
    * planning revisions and the research prompt so the run is tailored. */
   answers?: ResearchAnswer[]
+  /** Names of the files the request came with. The card lists them so it is
+   *  clear what the run will read alongside the web. */
+  files?: string[]
   /** Subagents delegated during a Thorough run. */
   agents?: ResearchAgent[]
   /** How many context searches the planning pass has run so far, shown while
