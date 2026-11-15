@@ -1463,7 +1463,7 @@ function Tools() {
       <Section title="Capabilities">
       <ImageGenCard />
       <Anchor id="deep-research">
-      <Card icon={Brain} title="Deep research" sub="@research(query)" />
+      <Card icon={Brain} title="Deep research" sub="Start it from the composer's + menu" />
       </Anchor>
       </Section>
       <Section title="Tools">

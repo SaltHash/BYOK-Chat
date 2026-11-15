@@ -10,15 +10,13 @@ test('mid-run steering becomes a user turn without restarting the run', () => {
   assert.doesNotMatch(note, /^\s/)
 })
 
-test('parses explicit @research forms and deep-research follow-ups', () => {
-  assert.deepEqual(r.parseResearchRequest('@research(climate adaptation)'), { query: 'climate adaptation', tier: null })
-  assert.deepEqual(r.parseResearchRequest('@research[quick](fusion progress)'), { query: 'fusion progress', tier: 'quick' })
-  assert.deepEqual(r.parseResearchRequest('@research thorough: battery recycling'), { query: 'battery recycling', tier: 'thorough' })
-  assert.deepEqual(r.parseResearchRequest('@research ocean currents'), { query: 'ocean currents', tier: null })
+test('reads the deep-research wording a follow-up chip sends', () => {
   assert.deepEqual(r.parseResearchRequest('Deep research on solar geoengineering'), { query: 'solar geoengineering', tier: null })
   assert.deepEqual(r.parseResearchRequest('Perform deep research on mRNA vaccines'), { query: 'mRNA vaccines', tier: null })
   assert.equal(r.parseResearchRequest('hello world'), null)
-  assert.equal(r.parseResearchRequest('@research()'), null)
+  // The typed @research(…) call is gone: research is stored on the message.
+  assert.equal(r.parseResearchRequest('@research(climate adaptation)'), null)
+  assert.equal(r.parseResearchRequest('@research[quick](fusion progress)'), null)
 })
 
 test('tiers resolve with a safe default and budgets', () => {

@@ -99,7 +99,7 @@ test('deep research drafts a plan, runs, and reports with verified citations', a
   globalThis.fetch = baseFetch
   searchN = 0
   resetStore()
-  const ok = await useS.getState().send('@research[quick](fusion power)', [])
+  const ok = await useS.getState().send('fusion power', [], 'research')
   assert.equal(ok, true)
   const pick = lastResearch()
   assert.equal(pick.research.status, 'tier-pick')
@@ -150,7 +150,7 @@ test('an invented citation is repaired and any leftover stripped', async () => {
   }
   searchN = 0
   resetStore()
-  await useS.getState().send('@research[quick](fusion citations)', [])
+  await useS.getState().send('fusion citations', [], 'research')
   const pick = lastResearch()
   useS.getState().chooseResearchTier(pick.id, 'quick')
   await wait(() => msgById(pick.id).research.status === 'plan')
@@ -169,7 +169,7 @@ test('stopping a run keeps its work and offers a resume', async () => {
   globalThis.fetch = slowFetch
   searchN = 0
   resetStore()
-  await useS.getState().send('@research[quick](fusion stop)', [])
+  await useS.getState().send('fusion stop', [], 'research')
   const pick = lastResearch()
   useS.getState().chooseResearchTier(pick.id, 'quick')
   await wait(() => msgById(pick.id).research.status === 'plan')
@@ -209,7 +209,7 @@ test('planning scopes the topic with a few context searches before the plan', as
   }
   searchN = 0
   resetStore()
-  await useS.getState().send('@research[quick](scoping test)', [])
+  await useS.getState().send('scoping test', [], 'research')
   const pick = lastResearch()
   useS.getState().chooseResearchTier(pick.id, 'quick')
   assert.equal(await wait(() => msgById(pick.id).research.status === 'plan'), true, 'plan should be ready')
@@ -247,7 +247,7 @@ test('a thorough run is a single researcher with a larger budget', async () => {
   }
   searchN = 0
   resetStore()
-  await useS.getState().send('@research[thorough](fusion team)', [])
+  await useS.getState().send('fusion team', [], 'research')
   const pick = lastResearch()
   useS.getState().chooseResearchTier(pick.id, 'thorough')
   assert.equal(await wait(() => msgById(pick.id).research.status === 'plan', 10000), true, 'plan should be ready')
@@ -292,7 +292,7 @@ test('a finished report can be re-run as a fresh card', async () => {
   globalThis.fetch = baseFetch
   searchN = 0
   resetStore()
-  await useS.getState().send('@research[quick](rerun test)', [])
+  await useS.getState().send('rerun test', [], 'research')
   const pick = lastResearch()
   useS.getState().chooseResearchTier(pick.id, 'quick')
   assert.equal(await wait(() => msgById(pick.id).research.status === 'plan'), true, 'plan should be ready')
@@ -325,7 +325,7 @@ test('a prose planning reply is repaired into a usable plan', async () => {
     throw new Error('unexpected fetch ' + u)
   }
   resetStore()
-  await useS.getState().send('@research[quick](repair test)', [])
+  await useS.getState().send('repair test', [], 'research')
   const pick = lastResearch()
   useS.getState().chooseResearchTier(pick.id, 'quick')
   assert.equal(await wait(() => msgById(pick.id).research.status === 'plan'), true, 'the plan is ready after repair')
@@ -375,7 +375,7 @@ test('evidence gathered before an endpoint failure survives the failover', async
     ],
     sel: null,
   })
-  await useS.getState().send('@research[quick](fusion failover)', [])
+  await useS.getState().send('fusion failover', [], 'research')
   const pick = lastResearch()
   useS.getState().chooseResearchTier(pick.id, 'quick')
   assert.equal(await wait(() => msgById(pick.id).research.status === 'plan'), true, 'plan should be ready')
@@ -416,7 +416,7 @@ test('a report that cites nothing is repaired with the run\u2019s sources', asyn
   }
   searchN = 0
   resetStore()
-  await useS.getState().send('@research[quick](uncited test)', [])
+  await useS.getState().send('uncited test', [], 'research')
   const pick = lastResearch()
   useS.getState().chooseResearchTier(pick.id, 'quick')
   await wait(() => msgById(pick.id).research.status === 'plan')
@@ -451,7 +451,7 @@ test('a run that closes after a single search is nudged to keep researching', as
   }
   searchN = 0
   resetStore()
-  await useS.getState().send('@research[quick](min search test)', [])
+  await useS.getState().send('min search test', [], 'research')
   const pick = lastResearch()
   useS.getState().chooseResearchTier(pick.id, 'quick')
   await wait(() => msgById(pick.id).research.status === 'plan')
@@ -473,7 +473,7 @@ test('the shown estimate blends candidate prices instead of assuming the pricies
     ],
     sel: null,
   })
-  await useS.getState().send('@research[quick](price ceiling)', [])
+  await useS.getState().send('price ceiling', [], 'research')
   const pick = lastResearch()
   useS.getState().chooseResearchTier(pick.id, 'quick')
   assert.equal(await wait(() => msgById(pick.id).research.status === 'plan'), true, 'plan should be ready')
@@ -523,7 +523,7 @@ test('failed searches and unreadable pages never spend the research budget', asy
   }
   searchN = 0
   resetStore()
-  await useS.getState().send('@research[quick](failed attempts)', [])
+  await useS.getState().send('failed attempts', [], 'research')
   const pick = lastResearch()
   useS.getState().chooseResearchTier(pick.id, 'quick')
   await wait(() => msgById(pick.id).research.status === 'plan')

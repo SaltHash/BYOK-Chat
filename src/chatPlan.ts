@@ -79,7 +79,12 @@ export function planRequest(s: PlanState, um: Msg, defaultFeatures: Record<Featu
   const enabledTools = F.tools && s.toolMode !== 'off' ? TOOLS.filter(([name]) => s.tools[name] === true).map(([name]) => name) : []
   const widgetTools = enabledTools.some((name) => name === 'prompt_chip' || name === 'inline_poll')
   const widgetSys = widgetTools ? 'Follow-up chips and choice cards are rendered by the interface after your reply. Never mention them in your prose, never say that you added follow-up options, and never tell the user to click or fill them.' : ''
-  const toolSys = enabledTools.length ? `${baseSys}${baseSys ? '\n\n' : ''}You may use the enabled tools when needed to answer the user. Call a tool for requests that need its actual result, then base your answer on the returned result.${widgetSys ? ` ${widgetSys}` : ''}` : baseSys
+  // A search request is stored on the message, so the prompt has to say what
+  // it asks for rather than relying on the reader's wording to imply it.
+  const searchSys = um.intent === 'search' && enabledTools.includes('search')
+    ? 'The reader explicitly asked for a web search with this message: call the web search tool before you answer, then base the reply on what it returns.'
+    : ''
+  const toolSys = enabledTools.length ? `${baseSys}${baseSys ? '\n\n' : ''}You may use the enabled tools when needed to answer the user. Call a tool for requests that need its actual result, then base your answer on the returned result.${widgetSys ? ` ${widgetSys}` : ''}${searchSys ? ` ${searchSys}` : ''}` : baseSys
   const skills = F.skills && !effects.skillsOff ? enabledSkills(normSkills(s.skills).skills) : []
   const sys = composeSystemPrompt(toolSys, skills)
   let err: Notice = null

@@ -719,7 +719,7 @@ export async function executeToolCalls(
 }
 export async function searchWeb(query: string, opts: { provider?: string; apiKey?: string; zone?: string; count?: number; timeoutMs?: number; maxSnippetChars?: number; maxRetries?: number; retryBaseMs?: number; cache?: boolean } = {}) {
   const q = query.trim().slice(0, 400)
-  if (!q) throw Error('Enter a search query, for example @search(latest climate report)')
+  if (!q) throw Error('Enter a search query, for example “latest climate report”.')
   const count = Number.isInteger(opts.count) ? Math.max(1, Math.min(10, opts.count as number)) : undefined
   const cacheKey = `s:${opts.provider ?? ''}:${opts.zone ?? ''}:${count ?? ''}:${opts.maxSnippetChars ?? ''}:${q.toLowerCase()}`
   if (opts.cache) {

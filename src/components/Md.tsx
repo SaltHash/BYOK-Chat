@@ -1,7 +1,7 @@
 import { lazy, memo, Suspense, useLayoutEffect, useMemo, useRef, useState, type ComponentType } from 'react'
 import { Check, Copy, GitBranch, Pencil, Trash2, Undo2 } from 'lucide-react'
 import { useS, featOn, type Msg } from '../store'
-import { tokenizeMentions, bannerOf, sentBodyText, isPill } from '../mentions'
+import { tokenizeMentions, isPill } from '../mentions'
 import { MentionChip, SentMentionBanner, SentQuoteBanner } from './Mention'
 import { splitQuotedReply } from '../quote'
 import { Btn, cx } from './ui'
@@ -38,16 +38,16 @@ export function UserText({ m, searchQuery, searchOpen }: { m: Msg; searchQuery?:
   const revertHere = useS((s) => s.revert?.mid === m.id)
   const branch = useS((s) => s.branch)
   const cmds = useS((s) => s.cmds)
-  const tools = useS((s) => s.tools)
   const features = useS((s) => s.features)
   const [ed, setEd] = useState(false)
   const [v, setV] = useState(m.t)
   const [copied, setCopied] = useState(false)
   const quoted = useMemo(() => splitQuotedReply(m.t), [m.t])
   const messageText = quoted?.body ?? m.t
-  const segs = useMemo(() => tokenizeMentions(messageText, { cmds, tools, commandsOn: featOn({ features }, 'commands'), toolsOn: featOn({ features }, 'tools') }), [messageText, cmds, tools, features])
-  const sentBanner = useMemo(() => bannerOf(messageText, segs), [messageText, segs])
-  const bodyText = useMemo(() => sentBodyText(messageText, sentBanner), [messageText, sentBanner])
+  const segs = useMemo(() => tokenizeMentions(messageText, { cmds, commandsOn: featOn({ features }, 'commands') }), [messageText, cmds, features])
+  // A search or deep-research turn is remembered on the message itself rather
+  // than being read back out of its wording.
+  const sentBanner = m.intent ?? null
   const cmdMsg = segs[0]?.kind === 'mention' && segs[0].m.kind === 'command'
   const hasMention = segs.some((s) => s.kind === 'mention')
   const contentRef = useRef<HTMLDivElement>(null)
@@ -92,7 +92,7 @@ export function UserText({ m, searchQuery, searchOpen }: { m: Msg; searchQuery?:
       }
     }
     walk(el)
-  }, [searchQuery, searchOpen, m.t, messageText, segs, bodyText, sentBanner])
+  }, [searchQuery, searchOpen, m.t, messageText, segs, sentBanner])
   if (ed)
     return (
       <div className="space-y-2">
@@ -108,11 +108,11 @@ export function UserText({ m, searchQuery, searchOpen }: { m: Msg; searchQuery?:
     <div className="group/u flex flex-col items-end gap-1">
       <div className={cx('max-w-full overflow-hidden rounded-2xl', cmdMsg ? 'min-w-40 border border-ac/40 bg-ac/5 shadow-sm' : 'bg-surf')}>
         {quoted && <SentQuoteBanner text={quoted.quote} />}
-        {sentBanner && <SentMentionBanner kind={sentBanner.kind} />}
+        {sentBanner && <SentMentionBanner kind={sentBanner} />}
         {(messageText || sentBanner) && (
           <div ref={contentRef} className={cx((!userMarkdown || (hasMention && !sentBanner)) && 'whitespace-pre-wrap')} style={{ padding: 'calc(var(--ui-composer-pad) - 2px) calc(var(--ui-composer-pad) + 4px)' }}>
             {sentBanner
-              ? userMarkdown ? <Md t={bodyText} /> : bodyText
+              ? userMarkdown ? <Md t={messageText} /> : messageText
               : hasMention
                 ? segs.map((sg, i) => sg.kind === 'text'
                   ? <span key={i}>{sg.text}</span>

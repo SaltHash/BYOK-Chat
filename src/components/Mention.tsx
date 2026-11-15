@@ -5,15 +5,12 @@ import type { Mention } from '../mentions'
 import type { Cmd } from '../store'
 import { cx } from './ui'
 
-/** Icon that stands for a mention: the command's own icon, the tool's icon,
- * or BookOpen / Search for the two banner mentions. */
+/** Icon that stands for a mention: the command's own icon, or the tool's. */
 export function mentionIcon(m: Mention, cmds: Cmd[]): LucideIcon {
   if (m.kind === 'command') {
     const c = cmds.find((x) => x.name === m.name)
     return (c && CI[c.in]) || CI.text
   }
-  if (m.kind === 'research') return BookOpen
-  if (m.kind === 'search') return Search
   return TOOLS.find(([id]) => id === m.name)?.[2] ?? Wrench
 }
 

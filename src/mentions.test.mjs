@@ -7,7 +7,7 @@ const cmds = [
   { id: 'c1', name: 'help', desc: 'Explains how the app works.', on: true },
   { id: 'c2', name: 'off', desc: '', on: false },
 ]
-const opts = { cmds, tools: { calc: true, date: true, search: false, fetch_page: true } }
+const opts = { cmds }
 
 test('tokenizes a leading slash command and keeps the rest as text', () => {
   const segs = m.tokenizeMentions('/help what is this', opts)
@@ -30,61 +30,17 @@ test('slash commands only count at the very start', () => {
   assert.ok(segs.every((s) => s.kind === 'text'))
 })
 
-test('search mentions are tokenized at word boundaries, with and without a call', () => {
-  const bare = m.tokenizeMentions('@search tomorrow', opts)
-  assert.equal(bare[0].kind, 'mention')
-  assert.equal(bare[0].m.label, '@search')
-  assert.equal(bare[0].m.end, 7)
-  assert.equal(bare[1].text, ' tomorrow')
-
-  const call = m.tokenizeMentions('add it @search(2*(3+4)) please', opts)
-  assert.equal(call[0].text, 'add it ')
-  assert.equal(call[1].kind, 'mention')
-  assert.equal(call[1].m.label, '@search')
-  assert.equal(call[2].text, '(2*(3+4)) please')
+test('feature switches suppress command pills', () => {
+  const off = { ...opts, commandsOn: false }
+  assert.ok(m.tokenizeMentions('/help now', off).every((s) => s.kind === 'text'))
 })
 
-/* Tools are the assistant's to choose; the composer no longer turns @tool
- * into a direct invocation. */
-test('other tool names stay ordinary text', () => {
-  for (const v of ['@date tomorrow', 'add it @calc(2*(3+4)) please', 'mail@date', '@nope hello']) {
+/* Search and deep research travel with the message as a request, so the @
+ * forms that used to open them are ordinary text again. */
+test('search, research and tool names stay ordinary text', () => {
+  for (const v of ['@search tomorrow', 'add it @search(2*(3+4)) please', '@research fusion progress', '@date tomorrow', '@nope hello']) {
     assert.ok(m.tokenizeMentions(v, opts).every((s) => s.kind === 'text'), v)
   }
-})
-
-test('search and research mentions are flagged for the banner', () => {
-  const search = m.mentionsOf(m.tokenizeMentions('@search(climate) now', opts))[0]
-  assert.equal(search.kind, 'search')
-  assert.equal(search.enabled, false)
-
-  const research = m.mentionsOf(m.tokenizeMentions('@research fusion progress', opts))[0]
-  assert.equal(research.kind, 'research')
-  assert.equal(research.enabled, true)
-})
-
-test('feature switches suppress pills and the banner', () => {
-  const off = { ...opts, commandsOn: false, toolsOn: false }
-  assert.ok(m.tokenizeMentions('/help @calc(1)', off).every((s) => s.kind === 'text'))
-  assert.equal(m.bannerOf('@search(x)', m.tokenizeMentions('@search(x)', off)), null)
-})
-
-test('bannerOf prefers deep research over an armed search', () => {
-  const segs = m.tokenizeMentions('@search(climate)', opts)
-  assert.equal(m.bannerOf('@search(climate)', segs)?.kind, 'search')
-  const research = m.tokenizeMentions('@research(climate)', opts)
-  assert.deepEqual(m.bannerOf('@research(climate)', research), { kind: 'research', query: 'climate' })
-  assert.equal(m.bannerOf('plain text', []), null)
-})
-
-test('stripMention removes a whole call or a single space', () => {
-  const [tok] = m.mentionsOf(m.tokenizeMentions('@search(climate) hello', opts))
-  assert.equal(m.stripMention('@search(climate) hello', tok), 'hello')
-  const [mid] = m.mentionsOf(m.tokenizeMentions('hi @search(climate) there', opts))
-  assert.equal(m.stripMention('hi @search(climate) there', mid), 'hi there')
-  const [bare] = m.mentionsOf(m.tokenizeMentions('@search tomorrow', opts))
-  assert.equal(m.stripMention('@search tomorrow', bare), 'tomorrow')
-  const [nested] = m.mentionsOf(m.tokenizeMentions('@search(2*(3+4))!', opts))
-  assert.equal(m.stripMention('@search(2*(3+4))!', nested), '!')
 })
 
 // '/help used @calc now' — a command pill and a tool pill from an older draft.
@@ -126,47 +82,4 @@ test('atomic rules ignore unrelated keys and plain text', () => {
   assert.equal(m.pillEdit(atomic, 'a', 13, 13), null)
   const plain = m.tokenizeMentions('nothing to see', opts)
   assert.equal(m.pillEdit(plain, 'Backspace', 8, 8), null)
-  // Banner mentions are not pills, so they delete one character at a time.
-  const search = m.tokenizeMentions('@search(climate)', opts)
-  assert.equal(m.pillEdit(search, 'Backspace', 7, 7), null)
-})
-
-test('armMention pulls an opened call out of the draft', () => {
-  assert.deepEqual(m.armMention('@search('), { kind: 'search', rest: '' })
-  assert.deepEqual(m.armMention('@research('), { kind: 'research', rest: '' })
-  assert.deepEqual(m.armMention('find the answer @search('), { kind: 'search', rest: 'find the answer' })
-  assert.deepEqual(m.armMention('hi  @research('), { kind: 'research', rest: 'hi' })
-  // Multi-line drafts keep everything before the call.
-  assert.deepEqual(m.armMention('first line\nsecond @search('), { kind: 'search', rest: 'first line\nsecond' })
-})
-
-test('armMention also takes a whole pasted call', () => {
-  assert.deepEqual(m.armMention('@search(climate adaptation)'), { kind: 'search', rest: 'climate adaptation' })
-  assert.deepEqual(m.armMention('  @research( fusion progress ) '), { kind: 'research', rest: 'fusion progress' })
-})
-
-test('armMention leaves ordinary writing alone', () => {
-
-  assert.equal(m.armMention(''), null)
-  assert.equal(m.armMention('@search'), null)
-  assert.equal(m.armMention('@search climate'), null)
-  assert.equal(m.armMention('see @search( now'), null)
-  assert.equal(m.armMention('mail@search('), null)
-  // Tier syntax is left for the research planner to read.
-  assert.equal(m.armMention('@research[quick](fusion)'), null)
-})
-
-test('sentBodyText drops the search/research wording the banner already shows', () => {
-  const opts2 = { cmds, tools: { search: true } }
-  // Search with a trailing query text.
-  let segs = m.tokenizeMentions('@search weather today', opts2)
-  let b = m.bannerOf('@search weather today', segs)
-  assert.equal(m.sentBodyText('@search weather today', b), 'weather today')
-  // Search with a complete (...) wrapper: only surrounding text remains.
-  segs = m.tokenizeMentions('quick @search(climate news) please', opts2)
-  b = m.bannerOf('quick @search(climate news) please', segs)
-  assert.equal(m.sentBodyText('quick @search(climate news) please', b), 'quick please')
-  // Research: banner carries the query, body shows nothing extra.
-  assert.equal(m.sentBodyText('@research(battery recycling)', m.bannerOf('@research(battery recycling)', [])), 'battery recycling')
-  assert.equal(m.sentBodyText('@research ocean currents', null), '@research ocean currents')
 })

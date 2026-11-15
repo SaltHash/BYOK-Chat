@@ -3,11 +3,11 @@ import { useShallow } from 'zustand/react/shallow'
 import { Plus, FileUp, FileText, ArrowUp, Square, CornerDownRight, ChevronRight, ListMusic, ListPlus, Cpu, ScrollText, Settings, Search, BookOpen, X, TriangleAlert, Wrench, Link as LinkIcon, ScanText, Loader2, Mic, Star, GripVertical, Check, Globe, Pencil, Undo2 } from 'lucide-react'
 import { useS, usable, modelsOf, modelNameOf, featOn, normDocs, normSearch, fetchOptsOf, effortClassifierOf, helperRef, splitHelperRef, toggleFavRef, type Att, type Ep } from '../store'
 import { DEFAULT_QUALITY_FAVS, normQualities, normQualityFavs, type PromptQuality } from '../flair'
-import { CI, orderTools } from '../meta'
+import { CI } from '../meta'
 import { composerWidth } from '../layout'
 import { can, readAtts, ocrImage, fetchPage } from '../engine'
 import { fitDoc } from '../docs'
-import { bannerOf, armMention, isPill, mentionsOf, stripMention, tokenizeMentions, type Mention, type Seg as MentionSeg } from '../mentions'
+import { isPill, mentionsOf, tokenizeMentions, type Mention, type Seg as MentionSeg } from '../mentions'
 import { Btn, Item, Menu, Pop, Seg, RangeSlider, ImageLightbox, TextLightbox, cx, type Ic } from './ui'
 import { SortableList } from './dnd'
 import { MentionBanner, MentionInfo, QuoteBanner } from './Mention'
@@ -324,40 +324,21 @@ export function Composer({ cfg, quote, onClearQuote }: { cfg: (t: string) => voi
   const [ime, setIme] = useState(false)
   const [armed, setArmed] = useState<'search' | 'research' | null>(null)
   const [active, setActive] = useState<{ i: number; m: Mention; left: number; top: number } | null>(null)
-  const tw = v.match(/(?:^|\s)(@\w*)$/)?.[1]
-  // @ offers the two explicit research calls only. Individual tools are the
-  // assistant's to choose, so they are no longer invocable from the composer.
-  const mentionMenu = [
-    ...orderTools(s.tools).filter((t) => t[0] === 'search' && t[3].startsWith(tw?.toLowerCase() ?? '')).map((t) => ({ k: t[0], icon: t[2], label: t[3].split('(')[0], hint: t[4], pick: () => s.patch({ draft: v.slice(0, v.length - (tw?.length ?? 0)) + '@search(' }) })),
-    ...('@research'.startsWith(tw?.toLowerCase() ?? '') ? [{ k: 'deep_research', icon: BookOpen as Ic, label: '@research', hint: 'Start deep research: pick a depth, review the plan, then run', pick: () => s.patch({ draft: v.slice(0, v.length - (tw?.length ?? 0)) + '@research(' }) }] : []),
-  ]
   const menu: { k: string; icon: Ic; label: string; hint: string; pick: () => void }[] | null = /^\/\S*$/.test(v) && featOn(s, 'commands')
     ? s.cmds.filter((c) => c.on && c.name.startsWith(v.slice(1))).map((c) => ({ k: c.id, icon: CI[c.in], label: '/' + c.name, hint: `${c.desc || c.in}${c.args ? ` · /${c.name} ${c.args}` : ''}`, pick: () => s.patch({ draft: '/' + c.name + ' ' }) }))
-    : tw && featOn(s, 'tools') && s.toolMode !== 'off' && mentionMenu.length
-      ? mentionMenu
-      : null
+    : null
   const hl = Math.min(hi, Math.max((menu?.length ?? 1) - 1, 0))
-  const segs = useMemo(() => tokenizeMentions(v, { cmds: s.cmds, tools: s.tools, commandsOn: featOn(s, 'commands'), toolsOn: featOn(s, 'tools') && s.toolMode !== 'off' }), [v, s.cmds, s.tools, s.features, s.toolMode])
+  const segs = useMemo(() => tokenizeMentions(v, { cmds: s.cmds, commandsOn: featOn(s, 'commands') }), [v, s.cmds, s.features])
   const pills = useMemo(() => mentionsOf(segs).filter(isPill), [segs])
-  const typed = useMemo(() => bannerOf(v, segs), [v, segs])
-  // Banner reflects a pre-send state only (armed/typed mentions). A sent
+  // The banner is the request itself, held in the composer until the message
+  // is sent, and stored on the message after that — never typed as text. A
   // research run keeps its banner in the chat bubble (picker/progress card),
-  // not in the composer. The AI using search internally never shows a banner —
-  // only an explicit @search( call by the user does.
-  const banner: 'search' | 'research' | null = armed ?? typed?.kind ?? null
+  // not in the composer. The AI using search internally never shows a banner.
+  const banner: 'search' | 'research' | null = armed
   // A search banner must say so when the tool is disabled: otherwise the
-  // composed @search(…) message is sent with no search tool attached and the
-  // model answers from memory.
+  // message is sent with no search tool attached and the model answers from
+  // memory.
   const searchEnabled = featOn(s, 'tools') && s.tools.search === true
-  // A @search( / @research( call leaves the draft the instant it is typed,
-  // pasted or inserted from the + menu, and shows as the box header instead.
-  // Done before paint so the raw call never flashes in the textarea.
-  useLayoutEffect(() => {
-    const hit = armMention(v)
-    if (!hit) return
-    setArmed(hit.kind)
-    if (hit.rest !== v) s.patch({ draft: hit.rest })
-  }, [v])
   // Keep the contenteditable DOM in sync with the draft. While the user types,
   // the serialized DOM already equals the draft, so this is a no-op and the
   // native caret keeps blinking. A rebuild only happens when the pill structure
@@ -509,12 +490,13 @@ export function Composer({ cfg, quote, onClearQuote }: { cfg: (t: string) => voi
     if (!ready) return
     stopDict()
     stopSpeaking()
-    // An armed banner sends as the real call so the tool loop and the deep
-    // research planner still receive exactly what they expect. A quote is
-    // kept as the leading Markdown blockquote so it survives reload and copy.
+    // The armed banner travels with the message as its request, so the tool
+    // loop and the deep research planner receive exactly what they expect
+    // without any @call in the text. A quote is kept as the leading Markdown
+    // blockquote so it survives reload and copy.
     const quoted = quote ? quoteForSend(quote) : ''
-    const raw = armed ? `@${armed}(${quoted}${v.trim()})` : `${quoted}${v}`, files = att
-    if (await s.send(raw, files)) {
+    const raw = `${quoted}${v}`, files = att
+    if (await s.send(raw, files, armed ?? undefined)) {
       // The history records what the user composed (the visible draft), not
       // the armed `@tool(…)` wrapper, so recall reproduces the typing. With
       // recall off nothing is recorded at all.
@@ -606,9 +588,10 @@ export function Composer({ cfg, quote, onClearQuote }: { cfg: (t: string) => voi
     setActive({ i, m, left: r.left - c.left + r.width / 2, top: r.top - c.top })
   }
   const dismissBanner = () => {
-    if (armed) { setArmed(null); pending.current = 'end'; ta.current?.focus(); return }
-    if (typed?.kind === 'research') { pending.current = 'end'; s.patch({ draft: typed.query ?? '' }); ta.current?.focus(); return }
-    if (typed?.kind === 'search' && typed.m) { pending.current = 'end'; s.patch({ draft: stripMention(v, typed.m) }); ta.current?.focus() }
+    if (!armed) return
+    setArmed(null)
+    pending.current = 'end'
+    ta.current?.focus()
   }
   // Three idle greetings, picked per chat so the box feels alive without the
   // text flickering on every render or keystroke.
@@ -641,7 +624,7 @@ export function Composer({ cfg, quote, onClearQuote }: { cfg: (t: string) => voi
           <Menu className="absolute inset-x-0 bottom-full mb-2">
             {menu.length ? menu.map((o, i) => (
               <Item key={o.k} icon={o.icon} on={i === hl} sub={o.hint} onClick={() => { pending.current = 'end'; o.pick(); ta.current?.focus() }}>{o.label}</Item>
-            )) : <p className="px-2.5 py-3 text-sm text-mu">{tw ? 'No tool matches.' : 'No enabled command matches. Manage commands in Settings.'}</p>}
+            )) : <p className="px-2.5 py-3 text-sm text-mu">No enabled command matches. Manage commands in Settings.</p>}
           </Menu>
         )}
         {att.length > 0 && (
@@ -867,12 +850,12 @@ export function Composer({ cfg, quote, onClearQuote }: { cfg: (t: string) => voi
                   <button aria-label="Page reader settings" title="Page reader settings" className={gear} onClick={() => { close(); cfg('tools#citations') }}><Settings size={15} /></button>
                 </div>
                 <div className={row}>
-                  <button className={main} onClick={() => { pending.current = 'end'; s.patch({ draft: v ? `${v.trim()} @research(` : '@research(' }); close(); ta.current?.focus() }}><BookOpen size={16} className="shrink-0 text-mu" /><span className="min-w-0 flex-1 truncate">Deep research…</span></button>
+                  <button className={main} onClick={() => { setArmed('research'); close(); ta.current?.focus() }}><BookOpen size={16} className="shrink-0 text-mu" /><span className="min-w-0 flex-1 truncate">Deep research…</span></button>
                   <button aria-label="Deep research settings" title="Deep research settings" className={gear} onClick={() => { close(); cfg('tools') }}><Settings size={15} /></button>
                 </div>
                 {searchEnabled && (
                   <div className={row}>
-                    <button className={main} onClick={() => { pending.current = 'end'; s.patch({ draft: v ? `${v.trim()} @search(` : '@search(' }); close(); ta.current?.focus() }}><Search size={16} className="shrink-0 text-mu" /><span className="min-w-0 flex-1 truncate">Search the web…</span></button>
+                    <button className={main} onClick={() => { setArmed('search'); close(); ta.current?.focus() }}><Search size={16} className="shrink-0 text-mu" /><span className="min-w-0 flex-1 truncate">Search the web…</span></button>
                     <button aria-label="Search settings" title="Search settings" className={gear} onClick={() => { close(); cfg('tools') }}><Settings size={15} /></button>
                   </div>
                 )}

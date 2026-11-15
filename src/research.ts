@@ -277,33 +277,16 @@ export function planNote(plan: ResearchPlan): string {
   return lines.join('\n')
 }
 
-/* ---- Parsing @research requests ---- */
+/* ---- Parsing the chip's research wording ---- */
 
-/* Parse @research(...) / @research tier: query / Deep research on X prompts.
- * Returns null when the text is not a research request. */
+/* Read the "Deep research on X" / "Perform deep research on X" prompt a
+ * deep-research follow-up chip sends, so that chip still opens the flow.
+ * Research is otherwise a request stored with the message (Msg.intent); there
+ * is no typed @research(…) call to parse. Returns null when the text is not a
+ * research request. */
 export function parseResearchRequest(raw: string): { query: string; tier: ResearchTierId | null } | null {
   const text = String(raw ?? '').trim()
   if (!text) return null
-  // Explicit @research(query), @research[tier](query), @research tier: query
-  const mParen = /@research(?:\[(quick|standard|thorough)\])?\s*\(\s*([\s\S]*?)\s*\)\s*$/i.exec(text)
-  if (mParen) {
-    const query = (mParen[2] ?? '').trim()
-    if (!query) return null
-    return { query: query.slice(0, 500), tier: (mParen[1]?.toLowerCase() as ResearchTierId) ?? null }
-  }
-  const mTier = /^@research\s+(quick|standard|thorough)\s*:\s*([\s\S]+)$/i.exec(text)
-  if (mTier) {
-    const query = (mTier[2] ?? '').trim()
-    if (!query) return null
-    return { query: query.slice(0, 500), tier: mTier[1].toLowerCase() as ResearchTierId }
-  }
-  const mBare = /^@research\s+([\s\S]+)$/i.exec(text)
-  if (mBare) {
-    const query = (mBare[1] ?? '').trim()
-    if (!query) return null
-    return { query: query.slice(0, 500), tier: null }
-  }
-  // prompt_chip follow-ups send "Deep research on X" / "Perform deep research on X".
   const mDeep = /^(?:perform\s+)?deep\s+research\s+(?:on|about|into)\s+([\s\S]+)$/i.exec(text)
   if (mDeep) {
     const query = (mDeep[1] ?? '').trim()

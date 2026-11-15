@@ -72,7 +72,7 @@ export type Attempt = { n: string; m: string; detail?: string; ms?: number; err?
 export type Try = Attempt
 export type Attachment = { name: string; kind: 'img' | 'pdf' | 'txt' | 'media'; size: string; mime?: string; data?: string; text?: string; source?: string; pages?: number; /** Original extracted character count, before the per-file budget. */ chars?: number; /** The text in the prompt is a head/tail excerpt, not the whole file. */ truncated?: boolean; /** Neutral name shown to the model instead of the real file name. */ modelName?: string }
 export type Att = Attachment
-export type Message = { id: string; r: 'user' | 'assistant'; t: string; at?: number; by?: string; /** Exact endpoint/model metadata captured when the reply is generated. */ epName?: string; model?: string; modelLabel?: string; effort?: string; /** Total input and output tokens across the reply. */ tokens?: number; /** Output tokens only, shown in the reply footer. */ tokensOut?: number; /** Total response time in milliseconds. */ took?: number; tps?: number; log?: Attempt[]; att?: Attachment[]; err?: boolean; trunc?: boolean; capped?: boolean; full?: string; ctx?: string[]; fx?: string; cmd?: string;  alts?: Snap[]; ai?: number; historyTokens?: number; explicitTokens?: number; reasoning?: string; toolRounds?: { text: string; calls: ToolResult[] }[]; toolFinal?: string; sys?: string; workspaceIds?: string[]; research?: ResearchState; /** Kept visible under the header and added to the model context (see prefs.pinContext). */ pin?: boolean; /** This reply was interrupted by a closed tab and is waiting to resume. */ interrupted?: boolean; /** Sibling continuations after this message (see conversationTree). */ fork?: Fork }
+export type Message = { id: string; r: 'user' | 'assistant'; t: string; at?: number; by?: string; /** Exact endpoint/model metadata captured when the reply is generated. */ epName?: string; model?: string; modelLabel?: string; effort?: string; /** Total input and output tokens across the reply. */ tokens?: number; /** Output tokens only, shown in the reply footer. */ tokensOut?: number; /** Total response time in milliseconds. */ took?: number; tps?: number; log?: Attempt[]; att?: Attachment[]; err?: boolean; trunc?: boolean; capped?: boolean; full?: string; ctx?: string[]; fx?: string; cmd?: string;  alts?: Snap[]; ai?: number; historyTokens?: number; explicitTokens?: number; reasoning?: string; toolRounds?: { text: string; calls: ToolResult[] }[]; toolFinal?: string; sys?: string; workspaceIds?: string[]; research?: ResearchState; /** The reader asked for a web search or a deep-research run with this prompt. Stored on the message, so no @call syntax is needed in its text. */ intent?: 'search' | 'research'; /** Kept visible under the header and added to the model context (see prefs.pinContext). */ pin?: boolean; /** This reply was interrupted by a closed tab and is waiting to resume. */ interrupted?: boolean; /** Sibling continuations after this message (see conversationTree). */ fork?: Fork }
 export type Msg = Message
 export type Snap = { t: string; by?: string; epName?: string; model?: string; modelLabel?: string; effort?: string; tokens?: number; tokensOut?: number; took?: number; tps?: number; log?: Try[]; err?: boolean; toolRounds?: { text: string; calls: ToolResult[] }[]; toolFinal?: string; workspaceIds?: string[] }
 export type ReplyMetric = 'tps' | 'tokens' | 'time' | 'cost'
@@ -770,7 +770,7 @@ type S = {
   doneChats: Record<string, true>
   /** Messages typed while a chat is replying, waiting for the current run to
    *  end. Held per chat in memory only: they are dispatched, not persisted. */
-  queued: Record<string, { v: string; att: Att[] }[]>
+  queued: Record<string, { v: string; att: Att[]; intent?: 'search' | 'research' }[]>
   /** Pending new-chat descriptor. A fresh chat stays out of the sidebar and the
    *  persisted store until its first message is sent; `send` materializes it. */
   newChatPending?: 'temporary' | 'plain' | null
@@ -791,7 +791,7 @@ type S = {
   pinMsg: (id: string) => void
   /** Toggle a reply bookmark; bookmarks are stored on the chat so they persist, sync and die with it. */
   bookmarkMsg: (id: string) => void
-  send: (v: string, att: Att[]) => Promise<boolean>
+  send: (v: string, att: Att[], intent?: 'search' | 'research') => Promise<boolean>
   stop: () => void
   /** Abort every chat currently streaming a reply. */
   stopAll: () => void
@@ -1182,7 +1182,7 @@ export const useS = create<S>()(
         if (!q.length) return
         const [next, ...rest] = q
         set((s) => ({ queued: { ...(s.queued ?? {}), [chatId]: rest } }))
-        setTimeout(() => { void get().send(next.v, next.att) }, 0)
+        setTimeout(() => { void get().send(next.v, next.att, next.intent) }, 0)
       }
       /* Only the run that still owns the chat may end it: a stopped run that is
          still unwinding must not clear the busy state of the run that replaced
@@ -1437,7 +1437,7 @@ export const useS = create<S>()(
 
       /* Append a fresh tier-pick research card after `msgs` in `chatId` and
        * mark the request as busy. Used by send and by regen / editMsg when
-       * the (re)sent message is a @research request. */
+       * the (re)sent message asked for deep research. */
       function startResearchTierPick(chatId: string, msgs: Msg[], query: string) {
         const mid = uid()
         const rq: ResearchState = { id: uid(), query, tier: null, status: 'tier-pick', steps: [], startedAt: Date.now() }
@@ -3038,7 +3038,7 @@ export const useS = create<S>()(
           chats: s.chats.map((c) => (c.msgs.some((m) => m.id === id) ? { ...c, bookmarks: toggleBookmark(c.bookmarks, id) } : c)),
         })),
 
-        send: async (v, att) => {
+        send: async (v, att, intent) => {
           const s = get()
           /* A reverted prompt is only destructive once it is actually sent:
            * truncation happens in the same write that appends the new message,
@@ -3057,7 +3057,7 @@ export const useS = create<S>()(
             if ((s.prefs.sendWhileBusy ?? 'queue') !== 'queue') return false
             if (!v.trim() && !att.length) return false
             set((st) => ({
-              queued: { ...(st.queued ?? {}), [s.chat]: [...(st.queued?.[s.chat] ?? []), { v, att }] },
+              queued: { ...(st.queued ?? {}), [s.chat]: [...(st.queued?.[s.chat] ?? []), { v, att, intent }] },
               notice: { t: 'Queued — this message will send when the current reply finishes.' },
             }))
             return true
@@ -3079,15 +3079,20 @@ export const useS = create<S>()(
           const namedAtt = normDocs(s.docPrefs).privateNames
             ? anonymizeAttachmentNames(uniqueAttachmentNames(att), { taken: takenNames })
             : realPromptNames(uniqueAttachmentNames(att), takenNames)
-          const researchReq = parseResearchRequest(raw)
-          if (researchReq && !namedAtt.length) {
-            const pre = plan(s, { id: 'tmp', r: 'user', t: raw } as Msg)
+          // Deep research is a request carried by the message, not a call
+          // typed into it. The chip wording ("Deep research on X") still opens
+          // the flow, and that intent is stored on the message as well.
+          const researchQuery = intent === 'research'
+            ? raw
+            : intent === 'search' ? null : parseResearchRequest(raw)?.query ?? null
+          if (researchQuery && !namedAtt.length) {
+            const pre = plan(s, { id: 'tmp', r: 'user', t: raw, intent: 'research' } as Msg)
             if (pre.err) return warn(pre.err)
-            const um: Msg = { id: uid(), r: 'user', t: raw, at: Date.now(), att: namedAtt, full: raw }
+            const um: Msg = { id: uid(), r: 'user', t: raw, at: Date.now(), att: namedAtt, full: raw, intent: 'research' }
             um.historyTokens = 0
             um.explicitTokens = est(raw)
             const mid = uid()
-            const rq: ResearchState = { id: uid(), query: researchReq.query, tier: null, status: 'tier-pick', steps: [], startedAt: Date.now() }
+            const rq: ResearchState = { id: uid(), query: researchQuery, tier: null, status: 'tier-pick', steps: [], startedAt: Date.now() }
             set((st) => {
               const old = st.chats.find((c) => c.id === st.chat)
               // Materializes the pending new chat (or falls back to a plain
@@ -3096,7 +3101,7 @@ export const useS = create<S>()(
               // A reverted prompt replaces its own message and everything after it.
               const cut = old ? revertCut(old) : null
               const base: Chat = cut ?? old ?? { id: uid(), title: 'New chat', msgs: [], ...(pending ? { temporary: pending === 'temporary', expiresAt: pending === 'temporary' && st.prefs.tempHours > 0 ? Date.now() + st.prefs.tempHours * 3600000 : undefined, title: 'Temporary chat' } : {}), ...(old ? {} : st.activeProject ? { project: st.activeProject } : {}) }
-              const next: Chat = { ...base, started: true, titleAuto: base.msgs.length ? base.titleAuto : st.prefs.autoTitle, title: base.msgs.length ? base.title : researchReq.query.slice(0, 40), msgs: [...base.msgs, um, { id: mid, r: 'assistant', t: '', at: Date.now(), by: '', log: [], research: rq }] }
+              const next: Chat = { ...base, started: true, titleAuto: base.msgs.length ? base.titleAuto : st.prefs.autoTitle, title: base.msgs.length ? base.title : researchQuery.slice(0, 40), msgs: [...base.msgs, um, { id: mid, r: 'assistant', t: '', at: Date.now(), by: '', log: [], research: rq }] }
               // The pending new chat's half-typed draft is spent once it becomes
               // a real chat: without this it would reappear in the composer the
               // next time a new-chat screen (or a project home) is opened.
@@ -3139,7 +3144,7 @@ export const useS = create<S>()(
             const miss = { text: !text && 'text', image: !i && 'an image', 'image+text': (!i || !text) && 'an image and some text', doc: !d && 'a document (PDF or text file)' }[cmd.in]
             if (miss) return warn({ t: `/${cmd.name} needs ${miss}. Attach it with the + button, then send again.` })
           }
-          const um: Msg = { id: uid(), r: 'user', t: raw, at: Date.now(), att: namedAtt, cmd: cmd?.id }
+          const um: Msg = { id: uid(), r: 'user', t: raw, at: Date.now(), att: namedAtt, cmd: cmd?.id, ...(intent ? { intent } : {}) }
           // The chat the user is sending from, captured before any await: the
           // OCR pass below can take seconds and the user may switch chats
           // while it runs.
@@ -3326,11 +3331,10 @@ export const useS = create<S>()(
           const old = c.msgs.slice(i + 1).find((m) => m.r === 'assistant')
           const prev = old ? old.alts ?? [snap(old)] : undefined
           set({ chats: s.chats.map((x) => (x.id === c.id ? { ...x, msgs: c.msgs.slice(0, i + 1) } : x)) })
-          // A resent message that was a @research request re-enters the
+          // A resent message that asked for deep research re-enters the
           // research flow (tier pick) instead of a plain reply.
-          const rreq = parseResearchRequest(um.t ?? '')
-          if (rreq && !um.att?.length) {
-            startResearchTierPick(c.id, c.msgs.slice(0, i + 1), rreq.query)
+          if (um.intent === 'research' && !um.att?.length) {
+            startResearchTierPick(c.id, c.msgs.slice(0, i + 1), um.t.trim())
             return
           }
           void answer(um, prev)
@@ -3353,8 +3357,7 @@ export const useS = create<S>()(
           const at = c.compact ? c.msgs.findIndex((m) => m.id === c.compact!.through) : -1
           const forked = forkTree(c, j, [])
           set({ chats: s.chats.map((x) => (x.id === c.id ? { ...x, ...(at >= 0 && j <= at ? { compact: undefined } : {}), ...forked } : x)), chat: c.id })
-          const rreq = parseResearchRequest(um.t ?? '')
-          if (rreq && !um.att?.length) { startResearchTierPick(c.id, forked.msgs, rreq.query); return }
+          if (um.intent === 'research' && !um.att?.length) { startResearchTierPick(c.id, forked.msgs, um.t.trim()); return }
           void answer(um)
         },
         retryMsg: (id) => {
@@ -3377,10 +3380,9 @@ export const useS = create<S>()(
           const pre = plan(s, um)
           if (pre.err) { set({ notice: pre.err }); return }
           set({ chats: s.chats.map((x) => (x.id === c.id ? { ...x, msgs: c.msgs.slice(0, i) } : x)), chat: c.id })
-          // A failed @research request re-enters the tier picker, like regen.
-          const rreq = parseResearchRequest(um.t ?? '')
-          if (rreq && !um.att?.length) {
-            startResearchTierPick(c.id, c.msgs.slice(0, i), rreq.query)
+          // A failed deep-research request re-enters the tier picker, like regen.
+          if (um.intent === 'research' && !um.att?.length) {
+            startResearchTierPick(c.id, c.msgs.slice(0, i), um.t.trim())
             return
           }
           void answer(um)
@@ -3526,11 +3528,10 @@ export const useS = create<S>()(
           const stale = anchorAt >= 0 && i <= anchorAt
           const forked = forkTree(c, i - 1, [um])
           set((st) => ({ chats: st.chats.map((x) => (x.id === c.id ? { ...x, ...(stale ? { compact: undefined } : {}), ...forked } : x)), stats: featOn(st, 'stats') ? { ...st.stats, sent: st.stats.sent + 1 } : st.stats } ))
-          // Editing a message into a @research request re-enters the research
-          // flow (tier pick) instead of a plain reply.
-          const rreq = parseResearchRequest(um.t ?? '')
-          if (rreq && !o.att?.length) {
-            startResearchTierPick(c.id, forked.msgs, rreq.query)
+          // Editing a deep-research request re-enters the research flow (tier
+          // pick) instead of a plain reply.
+          if (um.intent === 'research' && !o.att?.length) {
+            startResearchTierPick(c.id, forked.msgs, um.t.trim())
             return true
           }
           void answer(um)

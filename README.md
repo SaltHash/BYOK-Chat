@@ -137,9 +137,11 @@ occupy a capped slice of the window without crowding the conversation.
 
 ## Grounding, tools and depth
 
-- **Search and reading:** `@search` and automatic grounding with numbered
-  sources and inline citations; page summaries when enabled. Browser keys are
-  used by default, with server fallbacks configured by environment.
+- **Search and reading:** an explicit search request from the composer's +
+  menu (stored on the message, not typed as syntax) and automatic grounding
+  with numbered sources and inline citations; page summaries when enabled.
+  Browser keys are used by default, with server fallbacks configured by
+  environment.
 - **Deep research:** tiered runs with a reviewable plan, clarifying questions,
   steered rounds, cited reports and re-runs against fresh sources.
 - **Tools:** `ask` for mid-turn questions, workspace file actions, memory,
