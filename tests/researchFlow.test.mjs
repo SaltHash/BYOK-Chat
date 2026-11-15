@@ -131,6 +131,27 @@ test('deep research drafts a plan, runs, and reports with verified citations', a
   assert.equal(done.research.plan.title, 'Fusion Power')
 })
 
+test('a deep-research request keeps its attachments', async () => {
+  const bodies = []
+  globalThis.fetch = async (url, init) => {
+    if (String(url).includes('/chat/completions') && init?.body) bodies.push(String(init.body))
+    return baseFetch(url, init)
+  }
+  searchN = 0
+  resetStore()
+  const doc = { name: 'notes.txt', kind: 'txt', size: '1 KB', text: 'The attached laboratory note says net gain was reported in 2025.' }
+  assert.equal(await useS.getState().send('fusion with notes', [doc], 'research'), true)
+  const pick = lastResearch()
+  assert.equal(pick.research.status, 'tier-pick', 'an attachment must not skip the depth picker')
+  const um = useS.getState().chats.find((c) => c.id === useS.getState().chat).msgs.find((m) => m.r === 'user')
+  assert.equal(um.intent, 'research')
+  assert.equal(um.att.length, 1)
+  useS.getState().chooseResearchTier(pick.id, 'quick')
+  assert.equal(await wait(() => msgById(pick.id).research.status === 'plan'), true, 'plan should be ready')
+  assert.ok(bodies.some((b) => b.includes('net gain was reported in 2025')), 'the planning request should carry the file text')
+  globalThis.fetch = baseFetch
+})
+
 test('an invented citation is repaired and any leftover stripped', async () => {
   // The report cites S99 (never returned); the repair pass keeps misbehaving.
   globalThis.fetch = async (url, init) => {

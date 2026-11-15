@@ -1550,6 +1550,10 @@ export const useS = create<S>()(
         let used: Ep | null = null
         let planSys = ''
         let planOpts: Parameters<typeof runToolLoop>[6] = {}
+        // Files attached to the request ride along in every planning call, so
+        // the plan and the report can use them as evidence next to web
+        // sources. `wire` inlines their text from `att`.
+        const docsMsg: Msg[] = um.att?.length ? [{ id: mid, r: 'user', t: um.full || um.t, att: um.att }] : []
         // The plan is strict JSON, but the card can still show its title and
         // step labels as they arrive instead of a blank spinner.
         let draftText = ''
@@ -1583,8 +1587,10 @@ export const useS = create<S>()(
             planSys = sys
             planOpts = o
             const ask = planUserAsk(query, tier, new Date(), followUp, researchMsg(chatId, mid)?.research?.answers)
+              + (um.att?.length ? `\n\n# Attached files\nThis request came with ${um.att.length} attached file${um.att.length === 1 ? '' : 's'} (see the attachment index above). Plan around them as first-class evidence: use what they contain, do not search for what they already answer, and have the report cite them next to web sources.` : '')
             const existingPlan = researchMsg(chatId, mid)?.research?.plan
             const wirePlan = (rounds: { text: string; calls: ToolResult[] }[]) => wire(e, [
+              ...docsMsg,
               { id: mid, r: 'user' as const, t: ask },
               ...(existingPlan && followUp ? [{ id: mid, r: 'assistant' as const, t: planNote(existingPlan) }] : []),
               ...(rounds.length ? [{ id: mid, r: 'assistant' as const, t: '', toolRounds: rounds }] : []),
@@ -1641,6 +1647,7 @@ export const useS = create<S>()(
           try {
             const repairAsk = planRepairAsk(query, tier, text, new Date(), followUp, researchMsg(chatId, mid)?.research?.answers)
             const repairWire = () => wire(repairEp, [
+              ...docsMsg,
               { id: mid, r: 'user' as const, t: repairAsk },
               ...(scopeRounds.length ? [{ id: mid, r: 'assistant' as const, t: '', toolRounds: scopeRounds }] : []),
             ])
@@ -3086,7 +3093,7 @@ export const useS = create<S>()(
           const researchQuery = intent === 'research'
             ? raw
             : intent === 'search' ? null : parseResearchRequest(raw)?.query ?? null
-          if (researchQuery && !namedAtt.length) {
+          if (researchQuery) {
             const pre = plan(s, { id: 'tmp', r: 'user', t: raw, intent: 'research' } as Msg)
             if (pre.err) return warn(pre.err)
             const um: Msg = { id: uid(), r: 'user', t: raw, at: Date.now(), att: namedAtt, full: raw, intent: 'research' }
@@ -3334,7 +3341,7 @@ export const useS = create<S>()(
           set({ chats: s.chats.map((x) => (x.id === c.id ? { ...x, msgs: c.msgs.slice(0, i + 1) } : x)) })
           // A resent message that asked for deep research re-enters the
           // research flow (tier pick) instead of a plain reply.
-          if (um.intent === 'research' && !um.att?.length) {
+          if (um.intent === 'research') {
             startResearchTierPick(c.id, c.msgs.slice(0, i + 1), um.t.trim())
             return
           }
@@ -3358,7 +3365,7 @@ export const useS = create<S>()(
           const at = c.compact ? c.msgs.findIndex((m) => m.id === c.compact!.through) : -1
           const forked = forkTree(c, j, [])
           set({ chats: s.chats.map((x) => (x.id === c.id ? { ...x, ...(at >= 0 && j <= at ? { compact: undefined } : {}), ...forked } : x)), chat: c.id })
-          if (um.intent === 'research' && !um.att?.length) { startResearchTierPick(c.id, forked.msgs, um.t.trim()); return }
+          if (um.intent === 'research') { startResearchTierPick(c.id, forked.msgs, um.t.trim()); return }
           void answer(um)
         },
         retryMsg: (id) => {
@@ -3382,7 +3389,7 @@ export const useS = create<S>()(
           if (pre.err) { set({ notice: pre.err }); return }
           set({ chats: s.chats.map((x) => (x.id === c.id ? { ...x, msgs: c.msgs.slice(0, i) } : x)), chat: c.id })
           // A failed deep-research request re-enters the tier picker, like regen.
-          if (um.intent === 'research' && !um.att?.length) {
+          if (um.intent === 'research') {
             startResearchTierPick(c.id, c.msgs.slice(0, i), um.t.trim())
             return
           }
@@ -3531,7 +3538,7 @@ export const useS = create<S>()(
           set((st) => ({ chats: st.chats.map((x) => (x.id === c.id ? { ...x, ...(stale ? { compact: undefined } : {}), ...forked } : x)), stats: featOn(st, 'stats') ? { ...st.stats, sent: st.stats.sent + 1 } : st.stats } ))
           // Editing a deep-research request re-enters the research flow (tier
           // pick) instead of a plain reply.
-          if (um.intent === 'research' && !o.att?.length) {
+          if (um.intent === 'research') {
             startResearchTierPick(c.id, forked.msgs, um.t.trim())
             return true
           }
