@@ -43,6 +43,34 @@ test('relative images still render immediately', () => {
   assert.match(html, /<img[^>]*\/assets\/a\.png/)
 })
 
+/* A reply about pricing is prose, not math. Pairing two dollar signs used to
+ * hand a price list to KaTeX, which renders what it cannot parse in the error
+ * colour (errorColor: var(--er)): "Pro is $20/mo, Max is $100/mo" came out red. */
+test('prices stay prose and never become math', () => {
+  for (const t of [
+    'Pro is $20/mo, Max is $100/mo, Ultra is $200/mo.\n',
+    'Opus is $4/$20 per 1M input/output tokens.\n',
+    'Gemini is $0.75–$2.00 input / $3.75–$10.00 output per 1M tokens.\n',
+    'Copilot is $10–$39 a month, and $5 and $10 are both cheap.\n',
+  ]) {
+    const html = render(t)
+    assert.ok(!/class="[^"]*math/.test(html), `${t}\n${html}`)
+    assert.ok(html.includes('$'), html)
+  }
+})
+
+/* Prices must not cost real math its own rendering: inline and display math
+ * keep working, including a span that ends right before a digit. */
+test('real math still renders as math', () => {
+  assert.match(render('Euler wrote $e^{i\\pi} + 1 = 0$ for us.\n'), /math-inline/)
+  assert.match(render('Cost per token: $x$ of $y$ here.\n'), /math-inline/)
+  // Display math is left for KaTeX (a code block until its chunk loads in the
+  // browser); what matters is that the price rule did not escape its dollars.
+  const display = render('$$\na^2 + b^2 = c^2\n$$\n')
+  assert.match(display, /a\^2 \+ b\^2 = c\^2/, display)
+  assert.ok(!display.includes('$$'), display)
+})
+
 /* A model that escapes a digit while writing a numeric range ("~5–\\6") is
  * not writing markdown or math; the stray backslash must not reach the page. */
 test('stray backslashes before digits are dropped, code excepted', () => {

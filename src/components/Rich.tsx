@@ -9,12 +9,48 @@ import rehypeSanitize, { defaultSchema } from 'rehype-sanitize'
 import rehypeHighlight from 'rehype-highlight'
 import { common } from 'lowlight'
 import { Check, Copy, FileText, ImageOff } from 'lucide-react'
-import { cx, ZoomableImage } from './ui'
+import { cx, ImageLightbox, TextLightbox, ZoomableImage } from './ui'
 import { loadChunk } from '../chunkLoad'
 import { useS } from '../store'
+import { friendlyFileName, promptNameOf } from '../attachments'
 import type { CiteSource } from '../citations'
 
 export type CiteMap = { sources: CiteSource[]; onCite?: (citeId: string) => void }
+
+/** A file citation in a reply ([Paste 1], [Image 2], or an older [file-1]).
+ *  Clicking it opens the file it names. The attachment is resolved on click:
+ *  it lives on the request message, not on the reply that cites it. */
+function FileCitePill({ name }: { name: string }) {
+  const [text, setText] = useState<{ title: string; text: string } | null>(null)
+  const [img, setImg] = useState<{ src: string; alt: string } | null>(null)
+  const label = friendlyFileName(name)
+  const open = () => {
+    const s = useS.getState()
+    const want = name.toLowerCase()
+    const files = s.chats.flatMap((c) => c.msgs.flatMap((m) => m.att ?? []))
+    const hit = files.find((a) => promptNameOf(a).toLowerCase() === want)
+      ?? files.find((a) => promptNameOf(a).replace(/\.[a-z0-9]{1,8}$/i, '').toLowerCase() === want)
+    if (!hit) { s.patch({ notice: { t: `${label} is no longer available in this conversation.` } }); return }
+    if (hit.text) setText({ title: hit.name, text: hit.text })
+    else if (hit.kind === 'img' && hit.data) setImg({ src: `data:${hit.mime || 'image/png'};base64,${hit.data}`, alt: hit.name })
+    else s.patch({ notice: { t: `${hit.name} has no readable text to open.` } })
+  }
+  return (
+    <>
+      <button
+        type="button"
+        onClick={open}
+        title={`Open the attached file: ${label}`}
+        className="mx-0.5 inline-flex cursor-pointer items-baseline gap-1 rounded-md border border-bor bg-hov px-1.5 align-baseline text-xs font-medium leading-5 text-tx transition-colors hover:border-ac/60 hover:bg-surf focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ac/40"
+      >
+        <FileText size={11} className="shrink-0 translate-y-px text-mu" aria-hidden="true" />
+        {label}
+      </button>
+      {text && <TextLightbox text={text.text} title={text.title} close={() => setText(null)} />}
+      {img && <ImageLightbox src={img.src} alt={img.alt} close={() => setImg(null)} />}
+    </>
+  )
+}
 
 const normCiteUrl = (u: string) => {
   try { return new URL(u).toString().replace(/\/$/, '').toLowerCase() } catch { return u.replace(/\/$/, '').toLowerCase() }
@@ -23,7 +59,50 @@ const normCiteUrl = (u: string) => {
 /* ---- pre-processing for syntax the parser does not know ---- */
 const FENCE = /(```[\s\S]*?```|~~~[\s\S]*?~~~)/
 const INLINE = /(`[^`\n]*`)/
-const MATH = /(\$\$[\s\S]*?\$\$|\$[^$\n]+\$)/
+
+/* Inline math `$…$` follows Pandoc's dollar-math rules: the opening `$` is not
+ * followed by a space, and the closing `$` is neither preceded by a space nor
+ * followed by a digit. Pairing two prices instead ("Pro is $20/mo, Max is
+ * $100/mo", "$4/$20", "$0.75–$2.00") handed prose to KaTeX, which can only
+ * paint it in the error color (errorColor: var(--er)) or, when the words happen
+ * to parse as variables, render it as an equation. */
+const mathEnd = (s: string, from: number): number => {
+  for (let j = from; j < s.length; j++) {
+    const c = s[j]
+    if (c === '\n') return -1
+    if (c !== '$' || s[j - 1] === '\\') continue
+    if (/\s/.test(s[j - 1] ?? '') || /\d/.test(s[j + 1] ?? '')) return -1
+    return j
+  }
+  return -1
+}
+
+/** Split into [prose, math, prose, math, …]; math spans keep their delimiters.
+ *  `$$…$$` is display math, which no price can be mistaken for. */
+const splitMath = (s: string): string[] => {
+  const parts: string[] = []
+  let last = 0
+  let i = 0
+  while (i < s.length) {
+    if (s[i] !== '$' || s[i - 1] === '\\') { i++; continue }
+    if (s[i + 1] === '$') {
+      const close = s.indexOf('$$', i + 2)
+      if (close < 0) break
+      parts.push(s.slice(last, i), s.slice(i, close + 2))
+      i = last = close + 2
+      continue
+    }
+    if (/\s/.test(s[i + 1] ?? '')) { i++; continue }
+    const close = mathEnd(s, i + 1)
+    if (close < 0) { i++; continue }
+    parts.push(s.slice(last, i), s.slice(i, close + 1))
+    i = last = close + 1
+  }
+  parts.push(s.slice(last))
+  return parts
+}
+
+const hasMath = (s: string) => splitMath(s).length > 2
 
 // "Term\n: definition" becomes a <dl>; blank lines let inline markdown inside it still render
 const defs = (t: string) =>
@@ -31,21 +110,32 @@ const defs = (t: string) =>
     '<dl>\n\n' + `<dt>\n\n${term.trim()}\n\n</dt>\n\n` +
     body.split(/^: /m).filter(Boolean).map((d) => `<dd>\n\n${d.replace(/\n[ \t]+/g, ' ').trim()}\n\n</dd>\n\n`).join('') + '</dl>\n\n')
 
-const fix = (t: string) =>
-  t.split(INLINE).map((p, i) => (i % 2 ? p : p
-    // Models sometimes escape a digit ("~5–\\6") as if a numeric range were
-    // arithmetic; a backslash before a digit is never markdown, so drop it.
-    .replace(/\\(?=\d)/g, '')
-    .replace(/\\\(([\s\S]*?)\\\)/g, (_, m) => '$$' + m + '$$')                              // \( x \) -> inline math
-    .replace(/\\\[([\s\S]*?)\\\]/g, (_, m) => '\n\n$$\n' + m.trim() + '\n$$\n\n')             // \[ x \] -> display math
-    .replace(/\$(?=\d[\d,]*(?:\.\d+)?(?:\s|$|[.,;:!?)\]]))/g, '\\$')                          // "$5 and $10" is money, not math
-          .split(MATH).map((q, j) => (j % 2 ? q : q
-        // A bare attachment citation such as [file-1] (or [file-1.pdf]) is not
-        // a markdown link, so it would otherwise render as plain brackets. It
-        // becomes a link-shaped marker the `a` renderer turns into a file pill.
-        .replace(/(?<!!)\[(file-\d+(?:\.[a-z0-9]+)?)\](?!\(|\s*:)/gi, '[$1](#file-cite:$1)')
-        .replace(/\^([^\s^]+)\^/g, '<sup>$1</sup>')                                          // Pandoc superscript
-      .replace(/(?<!~)~([^\s~]+)~(?!~)/g, '<sub>$1</sub>'))).join(''))).join('')           // Pandoc subscript
+/* Everything that only applies outside math: the file-citation markers, Pandoc
+ * sup/sub, and a stray backslash a model added to a numeric range. Math spans
+ * are handed to remark-math exactly as written. */
+const proseFix = (q: string) => q
+  // Models sometimes escape a digit ("~5–\\6") as if a numeric range were
+  // arithmetic; a backslash before a digit is never markdown, so drop it.
+  .replace(/\\(?=\d)/g, '')
+  // A bare attachment citation such as [paste-1], [image-2.png] or an older
+  // [file-1] is not a markdown link, so it would otherwise render as plain
+  // brackets. It becomes a link-shaped marker the `a` renderer turns into a
+  // file pill.
+  .replace(/(?<!!)\[((?:image|paste|document|media|file)-\d+(?:\.[a-z0-9]{1,8})?)\](?!\(|\s*:)/gi, '[$1](#file-cite:$1)')
+  .replace(/\^([^\s^]+)\^/g, '<sup>$1</sup>')                                          // Pandoc superscript
+  .replace(/(?<!~)~([^\s~]+)~(?!~)/g, '<sub>$1</sub>')                                 // Pandoc subscript
+  // A dollar that did not open or close a math span is a literal price. Escaping
+  // it keeps it literal for the markdown parser too, whose own inline-math rule
+  // is more lenient and would pair "$20–$100+" into an equation.
+  .replace(/(?<!\\)\$/g, '\\$')
+
+const fix = (t: string) => t.split(INLINE).map((p, i) => {
+  if (i % 2) return p
+  const parts = splitMath(p
+    .replace(/\\\(([\s\S]*?)\\\)/g, (_, m) => '$$' + m + '$$')                         // \( x \) -> inline math
+    .replace(/\\\[([\s\S]*?)\\\]/g, (_, m) => '\n\n$$\n' + m.trim() + '\n$$\n\n'))     // \[ x \] -> display math
+  return parts.map((q, j) => (j % 2 ? q : proseFix(q))).join('')
+}).join('')
 
 const pre = (src: string) => src.split(FENCE).map((p, i) => (i % 2 ? p : fix(defs(p)))).join('')
 
@@ -293,16 +383,7 @@ const makeC = (bare: boolean, cites?: CiteMap): any => ({
     // Attachment citations ([file-1], [file-2.pdf]) render as their own pill:
     // neutral surface, file icon, no link behaviour and no source styling.
     if (typeof href === 'string' && href.startsWith('#file-cite:')) {
-      const name = decodeURIComponent(href.slice('#file-cite:'.length))
-      return (
-        <span
-          title={`Attached file: ${name}`}
-          className="mx-0.5 inline-flex items-baseline gap-1 rounded-md border border-bor bg-hov px-1.5 align-baseline text-xs font-medium leading-5 text-tx"
-        >
-          <FileText size={11} className="shrink-0 translate-y-px text-mu" aria-hidden="true" />
-          {name}
-        </span>
-      )
+      return <FileCitePill key={href} name={decodeURIComponent(href.slice('#file-cite:'.length))} />
     }
     // Citation links ([S1] pointing at a known source) render as pills that
     // jump to the Sources entry below (description first); the entry itself
@@ -368,7 +449,7 @@ export default memo(function Rich({ t, bare = false, cites, blocks = false, fade
   // Rebuilding the ~30 element renderers on every streamed word is pure churn;
   // they only depend on the rarely-changing bare/cites props.
   const components = useMemo(() => makeC(bare, cites), [bare, cites])
-  const wantsMath = MATH.test(src)
+  const wantsMath = hasMath(src)
   useEffect(() => {
     if (!wantsMath || katexReady) return
     let live = true
