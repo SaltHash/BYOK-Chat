@@ -1,6 +1,6 @@
 import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { X, Plus, Trash2, ArrowUp, ArrowDown, CornerDownRight, ChevronDown, ChevronLeft, ChevronRight, Eye, EyeOff, Play, ShieldCheck, Shield, Download, Check, CircleCheck, CircleX, Cpu, Route, GripVertical, Server, ListMusic, ScrollText, Terminal, Wrench, Palette, FolderOpen, PanelRight, TrendingUp, Keyboard, Search, Brain, Pencil, Sparkles, RotateCcw, SlidersHorizontal, FlaskConical, Library, Database, Lock, LockOpen, LayoutTemplate, Share2, Plug, Image as ImageIcon, Volume2, AudioLines, Code2, Star, TriangleAlert } from 'lucide-react'
-import { modelListEdit } from '../models'
+import { discoveredModelPatch, modelListEdit } from '../models'
 import { useS, useSConfig, PRE, BLANK, THEMES, DARK_THEMES, LIGHT_THEMES, THEME_COLOR_KEYS, THEME_COLOR_LABELS, THEME_COLORS, defaultCustomTheme, customThemeColors, normCustomTheme, SEARCH_PROVIDERS, READER_PROVIDERS, FEATURES, LIBRARY_ITEMS, FEATURE_TABS, FEATURE_WIDGETS, DEFAULT_LIBRARY_SHOW, DEFAULT_ADVANCED, featOn, normSearch, normAdvanced, normLogDetail, normDocs, usable, modelsOf, modelNameOf, helperRef, splitHelperRef, favRef, toggleFavRef, effortClassifierOf, TOOL_ROUNDS_DEFAULT, TOOL_ROUNDS_MIN, TOOL_ROUNDS_BASE_MAX, TOOL_ROUNDS_MAX, toolRoundLimitOf, isToolRoundsUnlimited, GENERAL_PROMPT_TEXT, STARTUP_MODES, normStartup, PROMPT_RECALL_MODES, normPromptRecall, uid, REPLY_METRICS, DEFAULT_REPLY_STATS, HELPER_TASKS, helperAutoEffort, type HelperTask, type PromptRecallMode, type ReplyMetric, type ReplyModelLabel, type Kind, type FeatureId, type DocPrefs, type ModelPrice } from '../store'
 import { normSkills, resolveSkill, validateCustomSkill, enabledSkills, BUILTIN_SKILLS, SKILL_TOOL_NAME, type SkillState } from '../skills'
 import { findDuplicatePairs, mergeMemory } from '../recall'
@@ -191,12 +191,14 @@ function EndpointWizard({ close }: { close: () => void }) {
   }
   const finish = () => {
     const base = { ...BLANK.eps(), name: derivedName, type, url: url.trim(), key: key.trim(), preset }
-    const hit = found.find((f) => f.id === model)
+    // Every model the endpoint advertised comes along, not only the picked one,
+    // so its card offers the whole list instead of a single row.
+    const models = discoveredModelPatch(found, model)
     const endpoint = {
       ...base,
-      ...modelListEdit(base, model ? [model] : [''], Date.now(), model),
-      ...(hit?.name ? { modelNames: { [model]: hit.name } } : {}),
-      ...(hit?.context && hit.context > 0 ? { modelContext: { [model]: hit.context } } : {}),
+      ...modelListEdit(base, models.models, Date.now(), models.model),
+      ...(models.modelNames ? { modelNames: models.modelNames } : {}),
+      ...(models.modelContext ? { modelContext: models.modelContext } : {}),
     }
     // New endpoints land at the top of the list, where the card is in view.
     const state = useS.getState()
@@ -269,7 +271,7 @@ function EndpointWizard({ close }: { close: () => void }) {
       </div>
       {found.length > 0 && <Field label="Model"><SearchSelect ariaLabel="Model" value={model} set={setModel} opts={[['', 'Choose a model'], ...found.map((f) => [f.id, f.id] as [string, string])]} placeholder="Search models" /></Field>}
       <Field label="Model ID"><Input autoFocus={!found.length} value={model} set={setModel} placeholder="e.g. gpt-5.5-mini" aria-label="Model ID" onKeyDown={enter} /></Field>
-      <p className="text-xs text-mu">More models, prices and routing can be set later from this endpoint’s card in Settings → Endpoints.</p>
+      <p className="text-xs text-mu">Every model found here is added to the endpoint, starting with the one you pick. Prices and routing can be set later from its card in Settings → Endpoints.</p>
     </div>
   )
   return (
@@ -278,7 +280,10 @@ function EndpointWizard({ close }: { close: () => void }) {
         <div className="flex items-start justify-between gap-3">
           <div>
             <h3 className="flex items-center gap-2 font-semibold"><Server size={18} className="text-ac" />Add endpoint</h3>
-            <p className="mt-0.5 text-xs text-mu">Step {step + 1} of {steps.length} · {WIZARD_STEP_LABEL[at]}</p>
+            {/* The total depends on the provider: a preset with its own URL
+                skips the connection step. Before that choice is made there is
+                no honest total, so the counter shows only the position. */}
+            <p className="mt-0.5 text-xs text-mu">Step {step + 1}{preset ? ` of ${steps.length}` : ''} · {WIZARD_STEP_LABEL[at]}</p>
           </div>
           <button onClick={close} aria-label="Close add endpoint" className="grid size-8 shrink-0 place-items-center rounded-lg text-mu hover:bg-hov hover:text-tx"><X size={16} /></button>
         </div>
@@ -1778,11 +1783,6 @@ function Tools() {
                 </Field>
                 </Anchor>
               )}
-              <Anchor id="reader-summary-length">
-              <Field label={`Summary length · ${search.readerSummaryChars.toLocaleString()} characters`}>
-                <RangeSlider label="Summary length" min={400} max={8000} step={200} value={search.readerSummaryChars} valueText={`${search.readerSummaryChars.toLocaleString()} characters`} set={(readerSummaryChars) => setSearch({ readerSummaryChars: Math.round(readerSummaryChars) })} className="w-full" />
-              </Field>
-              </Anchor>
             </>}
             <Anchor id="fetch-timeout">
             <Field label={`Page request timeout · ${(search.fetchTimeoutMs / 1000).toFixed(search.fetchTimeoutMs % 1000 ? 1 : 0)}s`}>

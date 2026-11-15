@@ -5,6 +5,33 @@ export const usable = (e: Ep) => e.on && !!e.model.trim() && /^https?:\/\//i.tes
 
 export const modelsOf = (e: Ep) => [...new Set((e.models?.length ? e.models : [e.model]).map((x) => x?.trim()).filter(Boolean))]
 
+export type DiscoveredModels = {
+  models: string[]
+  model: string
+  modelNames?: Record<string, string>
+  modelContext?: Record<string, number>
+}
+
+/** What a model-list discovery contributes to a new endpoint. The whole list
+ *  is kept, not just the model the user picked: the endpoint then offers every
+ *  model it advertised, with the picked one first so it stays the default.
+ *  Names and context lengths ride along when the provider published them. */
+export function discoveredModelPatch(found: { id: string; name?: string; context?: number }[], picked: string): DiscoveredModels {
+  const chosen = String(picked ?? '').trim()
+  const models = [...new Set([...(chosen ? [chosen] : []), ...found.map((f) => f.id).filter(Boolean)])]
+  const names: Record<string, string> = {}
+  const contexts: Record<string, number> = {}
+  for (const f of found) {
+    if (!f.id) continue
+    if (f.name) names[f.id] = f.name
+    if (f.context && f.context > 0) contexts[f.id] = f.context
+  }
+  const out: DiscoveredModels = { models: models.length ? models : [''], model: chosen || models[0] || '' }
+  if (Object.keys(names).length) out.modelNames = names
+  if (Object.keys(contexts).length) out.modelContext = contexts
+  return out
+}
+
 /** Apply an edit to an endpoint's model list and stamp it.
  *
  * The list itself cannot express a deletion to a merge: a model missing from

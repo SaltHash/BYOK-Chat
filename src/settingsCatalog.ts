@@ -179,7 +179,6 @@ export const SETTING_LINKS: SettingLink[] = [
   { tab: 'tools', anchor: 'reader-url', title: 'Custom reader API URL', keywords: 'reader url endpoint custom {url} json text' },
   { tab: 'tools', anchor: 'reader-summary', title: 'Summarize pages with another model', keywords: 'summary subagent summarize page model context clean' },
   { tab: 'tools', anchor: 'reader-summary-model', title: 'Page summary model', keywords: 'summary model endpoint model id picker helper' },
-  { tab: 'tools', anchor: 'reader-summary-length', title: 'Page summary length', keywords: 'summary length characters size limit' },
   { tab: 'tools', anchor: 'fetch-retries', title: 'Page retries', keywords: 'page reader fetch retries transient backoff rate limit' },
   { tab: 'tools', anchor: 'fetch-retry-delay', title: 'Page retry delay', keywords: 'page reader fetch retry base delay backoff ms' },
   { tab: 'tools', anchor: 'citations', title: 'Sources and citations', keywords: 'citations off pills links sources open strict warnings' },
