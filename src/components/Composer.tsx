@@ -16,6 +16,7 @@ import { dictationAvailable, startDictation, stopSpeaking, normVoice, type Dicta
 import { getPromptHistory, pushPromptHistory } from '../promptHistory'
 import { quoteForSend } from '../quote'
 import { isLargePaste } from '../paste'
+import { sentPasteCount } from '../attachments'
 
 const chip = 'flex h-9 min-w-0 items-center gap-2 rounded-lg px-2.5 text-sm text-mu hover:bg-hov hover:text-tx'
 const IDLE_PLACEHOLDERS = [
@@ -861,8 +862,11 @@ export function Composer({ cfg, quote, onClearQuote }: { cfg: (t: string) => voi
                 // use ("Paste 2" ↔ `paste-2`), so one file has one name
                 // everywhere. Numbering continues past the pastes already sent
                 // in this chat, exactly like the neutral prompt names do.
-                const sentPastes = (s.chats.find((c) => c.id === s.chat)?.msgs ?? [])
-                  .flatMap((m) => m.att ?? []).filter((a) => a.source === 'paste').length
+                // Read the store at paste time: this component keeps `chats`
+                // out of its selector so streaming chunks never re-render the
+                // composer, and a paste is a one-off user action.
+                const live = useS.getState()
+                const sentPastes = sentPasteCount(live.chats, live.chat)
                 const n = sentPastes + att.filter((a) => a.source === 'paste').length + 1
                 setAtt((list) => [...list, { name: `Paste ${n}`, kind: 'txt', size: `${Math.max(1, Math.round(text.length / 1024))} KB`, source: 'paste', text }])
                 return

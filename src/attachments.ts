@@ -147,6 +147,21 @@ export function realPromptNames<T extends NamedFile>(
   })
 }
 
+/** How many pasted files the given chat already sent. Reading this at paste
+ *  time (rather than subscribing to conversations) keeps the composer off the
+ *  streaming render path: a new paste's number continues the chat's sequence
+ *  without the composer re-rendering on every streamed chunk. */
+export function sentPasteCount(
+  chats: readonly { id: string; msgs?: readonly { att?: readonly { source?: string }[] }[] }[],
+  chatId: string,
+): number {
+  let count = 0
+  for (const msg of chats.find((chat) => chat.id === chatId)?.msgs ?? []) {
+    for (const att of msg.att ?? []) if (att.source === 'paste') count++
+  }
+  return count
+}
+
 /** How a citation token reads in the UI: `paste-2` becomes `Paste 2`,
  *  `image-1.png` becomes `Image 1`. Anything else (older `file-7` names and
  *  real file names) is left alone. */

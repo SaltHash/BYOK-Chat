@@ -47,6 +47,19 @@ test('a paste is named for what it is, and citations read naturally', () => {
   assert.equal(a.friendlyFileName('quarterly.pdf'), 'quarterly.pdf')
 })
 
+test('sent pastes are counted from the open chat only', () => {
+  const chats = [
+    { id: 'a', msgs: [{ att: [{ source: 'paste' }, { source: 'upload' }] }, { att: [{ source: 'paste' }] }, {}] },
+    { id: 'b', msgs: [{ att: [{ source: 'paste' }] }] },
+    { id: 'c' },
+  ]
+  assert.equal(a.sentPasteCount(chats, 'a'), 2)
+  assert.equal(a.sentPasteCount(chats, 'b'), 1)
+  assert.equal(a.sentPasteCount(chats, 'c'), 0)
+  assert.equal(a.sentPasteCount(chats, 'missing'), 0)
+  assert.equal(a.sentPasteCount([], 'a'), 0)
+})
+
 test('the appendix indexes every file and closes every text boundary', () => {
   const files = a.anonymizeAttachmentNames([
     { name: 'secret.pdf', kind: 'pdf', pages: 12, chars: 48210 },
