@@ -9,6 +9,7 @@ import {
   graphItemCount,
   graphSummaryBits,
   graphTitle,
+  graphValuesAt,
   isSingleValuedGraph,
   niceTicks,
   normalizeGraphSpec,
@@ -598,18 +599,24 @@ export function GraphView({ spec, dark, width = 760, height = 430, expanded = fa
   }
 
   const bits = graphSummaryBits(spec)
-  const aria = `${graphTitle(spec)}. ${bits.join(', ') || 'Plot'}. ${spec.errors.length ? 'Some items were skipped. ' : ''}Drag to pan, scroll to zoom, and hover over a curve or point to snap to it. Double-click to reset the view.`
+  const aria = `${graphTitle(spec)}. ${bits.join(', ') || 'Plot'}. ${spec.errors.length ? 'Some items were skipped. ' : ''}Drag to pan, scroll to zoom, and hover over the plot to read coordinates: on a single-valued graph the pointer's x reads every curve at once. Double-click to reset the view.`
   const tickFont = { fontVariantNumeric: 'tabular-nums' as const }
   const singleValued = isSingleValuedGraph(spec, (i) => !hidden.has(`c${i}`))
   const guideX = singleValued && hover ? hover.x : null
   const guideScreenX = guideX != null ? sx(guideX) : 0
+  /* A single-valued graph has one y per curve at every x, so hovering anywhere
+   * reads every curve off the plot rather than only the one under the pointer:
+   * the dots on the curves and the values in the card are the same reading. */
+  const guideValues = guideX == null ? [] : graphValuesAt(spec, guideX, (i) => !hidden.has(`c${i}`))
   // Hovering a point, bucket, or curve shows what it is and its exact
   // coordinates, on the axis names when the spec supplied them. The card
   // follows the pointer and is clamped inside the plot.
   const tipLines = hover ? [
     ...(hover.snap?.label ? [hover.snap.label.slice(0, 38)] : []),
     `${spec.xLabel || 'x'} ${coord(hover.x)}`,
-    `${spec.yLabel || 'y'} ${coord(hover.y)}`,
+    ...(guideValues.length
+      ? guideValues.map((g) => `${guideValues.length > 1 ? g.label.slice(0, 24) : spec.yLabel || 'y'} ${coord(g.value)}`)
+      : [`${spec.yLabel || 'y'} ${coord(hover.y)}`]),
   ] : []
   const tipW = Math.min(plot.w - 12, Math.max(64, Math.max(0, ...tipLines.map((l) => l.length)) * 5.9 + 16))
   const tipH = tipLines.length * 13 + 8
@@ -619,8 +626,10 @@ export function GraphView({ spec, dark, width = 760, height = 430, expanded = fa
   return (
     <div className={compact ? 'space-y-1' : 'space-y-1.5'}>
       {/* The plot is a canvas: drag pans, the wheel zooms about the pointer,
-          and hovering snaps to the nearest labeled point or curve. */}
-      <div className="relative overflow-hidden rounded-lg bg-surf/40 ring-1 ring-bor/70 transition-colors hover:bg-surf/60 hover:ring-bor">
+          and hovering snaps to the nearest labeled point or curve. A card is
+          the frame, so the canvas fills it edge to edge; an inline figure has
+          no card of its own and frames itself. */}
+      <div className={cx('relative overflow-hidden', compact && 'rounded-lg bg-surf/40 ring-1 ring-bor/70')}>
         <svg ref={svgRef} viewBox={`0 0 ${width} ${height}`} className="block w-full select-none" role="img" aria-label={aria}>
           <defs>
             <clipPath id={clipId}><rect x={plot.x} y={plot.y} width={plot.w} height={plot.h} rx={8} /></clipPath>
@@ -789,7 +798,7 @@ export function GraphView({ spec, dark, width = 760, height = 430, expanded = fa
           <div className="truncate px-0.5 text-[11px] text-mu" title={spec.title}>{spec.title}</div>
         )
         : (
-          <div className="min-w-0 px-0.5">
+          <div className="min-w-0 px-3">
             <div id={titleId} className="truncate text-sm font-medium">{graphTitle(spec)}</div>
             <div className="truncate text-xs text-mu">
               {bits.join(' · ') || 'Plot'}
@@ -799,7 +808,7 @@ export function GraphView({ spec, dark, width = 760, height = 430, expanded = fa
         )}
 
       {spec.legend && legend.length > 1 && (
-        <div className="flex flex-wrap items-center gap-1 pt-0.5" role="group" aria-label="Graph legend">
+        <div className={cx('flex flex-wrap items-center gap-1 pt-0.5', compact ? 'px-0.5' : 'px-3')} role="group" aria-label="Graph legend">
           {legend.map((entry) => {
             const off = hidden.has(entry.key)
             return (
@@ -823,7 +832,7 @@ export function GraphView({ spec, dark, width = 760, height = 430, expanded = fa
       )}
 
       {spec.errors.length > 0 && (
-        <p role="status" className="text-xs text-mu">
+        <p role="status" className={cx('text-xs text-mu', compact ? 'px-0.5' : 'px-3')}>
           Some parts of the graph could not be drawn. {spec.errors.slice(0, 2).join(' · ')}
         </p>
       )}
@@ -860,7 +869,7 @@ function GraphCard({ call, dark, compact }: { call: CallLike; dark: boolean; com
     )
   }
   return (
-    <section aria-label={`Graph: ${graphTitle(spec)}`} className="w-full overflow-hidden rounded-xl border border-bor bg-surf p-3">
+    <section aria-label={`Graph: ${graphTitle(spec)}`} className="w-full overflow-hidden rounded-xl border border-bor bg-surf pb-3">
       <GraphView spec={spec} dark={dark} />
     </section>
   )

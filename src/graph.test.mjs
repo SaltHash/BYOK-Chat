@@ -294,6 +294,16 @@ test('only single-valued function graphs get the vertical cursor guide', () => {
   assert.equal(g.isSingleValuedGraph(g.normalizeGraphSpec({ equations: ['y = x'] }), () => false), false)
 })
 
+test('hovering reads every curve at the pointer x, near a curve or far from it', () => {
+  const spec = g.normalizeGraphSpec({ equations: ['y = x^2', 'y = 3x', { equation: 'y = 1/x', label: 'reciprocal' }] })
+  const at = g.graphValuesAt(spec, 4)
+  assert.deepEqual(at.map((v) => v.value), [16, 12, 0.25])
+  assert.deepEqual(at.map((v) => v.label), ['y = x^2', 'y = 3x', 'reciprocal'])
+  // A hidden curve is not read, and a pole is not a value.
+  assert.deepEqual(g.graphValuesAt(spec, 4, (i) => i !== 0).map((v) => v.value), [12, 0.25])
+  assert.deepEqual(g.graphValuesAt(spec, 0), [{ label: 'y = x^2', value: 0 }, { label: 'y = 3x', value: 0 }])
+})
+
 test('marks stay visible in an automatic view and are counted in the summary', () => {
   const spec = g.normalizeGraphSpec({ equations: ['y = x^2'], marks: [{ x: 12, label: 'far' }] })
   const d = g.computeGraphDomain(spec, 1.8)

@@ -1112,6 +1112,23 @@ export function isSingleValuedGraph(spec: GraphSpec, visible?: (index: number) =
   return curves.every((c) => c.compiled.kind === 'explicit' && c.compiled.relation === '=' && !!c.compiled.f)
 }
 
+/** The y of every visible single-valued curve at `x`, for the hover readout.
+ *  This is what makes the pointer's x readable anywhere in the plot rather than
+ *  only where it happens to touch a curve: every function is evaluated at that
+ *  x. Curves that are not functions of x, and values that are not real (a pole
+ *  such as `1/x` at zero), are skipped. */
+export function graphValuesAt(spec: GraphSpec, x: number, visible?: (index: number) => boolean): { label: string; value: number }[] {
+  const out: { label: string; value: number }[] = []
+  spec.curves.forEach((curve, i) => {
+    if (visible && !visible(i)) return
+    const f = curve.compiled.f
+    if (!f) return
+    const value = f(x)
+    if (Number.isFinite(value)) out.push({ label: curve.label || curve.source, value })
+  })
+  return out
+}
+
 /** Closest point on a screen-space polyline to `at`, used by hover snapping.
  *  Works on one point too, so a single dot is a valid target. */
 export function closestOnPolyline(points: Pt[], at: Pt): { x: number; y: number; distance: number } | null {
