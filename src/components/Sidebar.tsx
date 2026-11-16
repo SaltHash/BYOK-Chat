@@ -1,6 +1,6 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useShallow } from 'zustand/react/shallow'
-import { Plus, Clock, Search, PanelLeftClose, Pin, Pencil, Trash2, MessageSquare, Server, ListMusic, ScrollText, Terminal, Wrench, Settings, Palette, PanelRight, Folder, FolderPlus, FolderMinus, ChevronRight, Bookmark, Download, Archive, ArchiveRestore, MoreVertical, Check, X, ListChecks, LockKeyhole } from 'lucide-react'
+import { Plus, Clock, Search, PanelLeftClose, Pin, Pencil, Trash2, Server, ListMusic, ScrollText, Terminal, Wrench, Settings, Palette, PanelRight, Folder, FolderPlus, FolderMinus, ChevronRight, Bookmark, Download, Archive, ArchiveRestore, MoreVertical, Check, X, ListChecks, LockKeyhole } from 'lucide-react'
 import { useS, chatMd, dl, THEMES, DARK_THEMES, LIGHT_THEMES, THEME_COLORS, themeKeyOf, DEFAULT_LIBRARY_SHOW, featOn, type Chat, type FeatureId } from '../store'
 import { searchChats } from '../recall'
 import { useApprovals } from '../toolApprovals'
@@ -77,18 +77,20 @@ function RowBody({ c, mv, del, dnd, container, index, shift, onNavigate, time }:
   const menuLeft = menu ? Math.max(8, Math.min(menu.x - 208, vw - 216)) : 0
   const menuTop = menu ? Math.max(8, Math.min(menu.y, vh - menuH)) : 0
   return (
-    <div ref={dnd ? dnd.register(c.id) : undefined} data-chat-row={c.id} title={dnd ? 'Drag to move to a project' : undefined}
+    <div ref={dnd ? dnd.register(c.id) : undefined} data-chat-row={c.id}
+      title={dnd ? 'Drag to move to a project' : finished ? 'Finished while you were away' : busy ? 'Replying in the background' : undefined}
       className={cx('group relative flex items-center rounded-lg pr-1 text-sm', dnd && 'dnd-handle cursor-grab', selected ? 'bg-hov' : 'hover:bg-surf', dragging && 'opacity-25')}>
       {ed ? <Name v={c.title} save={(t) => useS.getState().rename(c.id, t)} done={() => setEd(false)} /> : (
         <button {...dragProps} onDoubleClick={() => setEd(true)} onClick={() => { useS.getState().patch({ chat: c.id, activeProject: '' }); onNavigate() }} aria-current={selected ? 'page' : undefined} className="side-item flex min-w-0 flex-1 items-center gap-2.5 px-2.5 text-left">
-          {c.pin ? <Pin size={15} className="shrink-0 text-ac" /> : c.temporary ? <Clock size={15} className="shrink-0 text-mu" /> : <MessageSquare size={15} className="shrink-0 text-mu" />}
+          {c.pin && <Pin size={15} className="shrink-0 text-ac" />}
           <span className="flex min-w-0 flex-1 items-center gap-1.5">
-            <span className="truncate">{c.title}{c.temporary && container !== 'temporary' ? ' · temporary' : ''}</span>
-            {/* Background work reads as motion along the row's bottom edge.
-                A waiting chat is a static, distinct icon instead: it is not
+            <span className="fade-name">{c.title}{c.temporary && container !== 'temporary' ? ' · temporary' : ''}</span>
+            {/* The visual marks live on the row's left edge, below; these stay
+                here so the row's accessible name carries the same state. A
+                waiting chat is a static, distinct icon instead: it is not
                 making progress, it is blocked on the reader. */}
             {busy && <span className="sr-only">Replying in the background</span>}
-            {!busy && finished && <><span aria-hidden="true" title="Finished while you were away" className="size-1.5 shrink-0 rounded-full bg-ac/70" /><span className="sr-only">Finished while you were away</span></>}
+            {!busy && finished && <span className="sr-only">Finished while you were away</span>}
             {waiting && <><LockKeyhole aria-hidden="true" size={14} className="shrink-0 text-er" /><span className="sr-only">Waiting for your approval</span></>}
             {asking && <><ListChecks aria-hidden="true" size={14} className="shrink-0 text-er" /><span className="sr-only">Waiting for your answer</span></>}
           </span>
@@ -99,11 +101,10 @@ function RowBody({ c, mv, del, dnd, container, index, shift, onNavigate, time }:
         <button aria-label={shift ? `Permanently delete ${c.title}` : c.archived ? `Restore ${c.title} from archive` : `Archive ${c.title}`} title={shift ? 'Delete chat permanently' : c.archived ? 'Restore from archive' : 'Archive chat (hold Shift to delete permanently)'} onClick={(e) => del(c.id, e.shiftKey)} className={cx(act, shift ? 'hover:text-er' : 'hover:text-tx')}>{shift ? <Trash2 size={14} /> : c.archived ? <ArchiveRestore size={14} /> : <Archive size={14} />}</button>
         <button ref={moreRef} aria-label={`More actions for ${c.title}`} title="More actions" aria-haspopup="menu" aria-expanded={!!menu} onClick={(e) => { e.stopPropagation(); const r = e.currentTarget.getBoundingClientRect(); setMenu({ x: r.right, y: r.bottom + 4 }) }} className={act}><MoreVertical size={14} /></button>
       </span>
-      {busy && (
-        <span aria-hidden="true" className="pointer-events-none absolute inset-x-2 bottom-0.5 h-[2px] overflow-hidden rounded-full bg-ac/15">
-          <span className="row-progress-bar block h-full w-1/3 rounded-full bg-ac/80" />
-        </span>
-      )}
+      {/* One left-edge pill per row: still for a reply that finished while the
+          row was closed, shining for one that is still running. */}
+      {!busy && finished && <span aria-hidden="true" className="row-edge pointer-events-none" />}
+      {busy && <span aria-hidden="true" data-live="" className="row-edge pointer-events-none" />}
       {menu && (
         <div ref={menuRef} role="menu" aria-label={`Actions for ${c.title}`} onMouseDown={(e) => e.stopPropagation()} onKeyDown={menuKeys}
           style={{ left: menuLeft, top: menuTop }}
@@ -581,8 +582,8 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
               return (
                 <button key={h.chatId} onClick={() => jump(h.chatId, h.msgId)} className={cx('side-item block w-full rounded-lg px-2.5 text-left text-sm hover:bg-surf', s.chat === h.chatId && 'bg-hov')}>
                   <span className="flex items-center gap-2">
-                    {c.pin ? <Pin size={13} className="shrink-0 text-ac" /> : c.temporary ? <Clock size={13} className="shrink-0 text-mu" /> : <MessageSquare size={13} className="shrink-0 text-mu" />}
-                    <span className="min-w-0 flex-1 truncate font-medium">{c.title}</span>
+                    {c.pin ? <Pin size={13} className="shrink-0 text-ac" /> : <span aria-hidden="true" className="size-[13px] shrink-0" />}
+                    <span className="fade-name font-medium">{c.title}</span>
                   </span>
                   {(h.pre || h.match) && (
                     <span className="mt-1 block truncate text-xs text-mu">{h.pre}<mark className="rounded-sm bg-ac/25 px-0.5 text-tx">{h.match}</mark>{h.post}</span>
@@ -665,7 +666,7 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
                   <button onClick={() => jump(b.chatId, b.msgId)} title={`${b.chatTitle}: ${b.text}`} className="side-item flex min-w-0 flex-1 items-start gap-2 px-2.5 text-left">
                     <Bookmark size={14} className="mt-0.5 shrink-0 text-ac" aria-hidden="true" />
                     <span className="min-w-0 flex-1">
-                      <span className="block truncate text-xs font-medium">{b.chatTitle}</span>
+                      <span className="fade-name block text-xs font-medium">{b.chatTitle}</span>
                       <span className="mt-0.5 block truncate text-xs text-mu">{b.text || 'Empty message'}</span>
                     </span>
                   </button>

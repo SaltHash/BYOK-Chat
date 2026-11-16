@@ -469,12 +469,53 @@ html[data-codewrap] .code-lines .code-line > code { flex: 1 1 auto; min-width: 0
 
 /* rendered markdown */
 @keyframes reply-in { from { opacity: 0; } to { opacity: 1; } }
-/* A background reply is alive, not blocked: one thin bar travels along the
-   bottom edge of its sidebar row instead of a pulsing dot that reads as an
-   error or a notification. */
-@keyframes row-progress { from { transform: translateX(-110%); } to { transform: translateX(310%); } }
-.row-progress-bar { animation: row-progress 1.35s ease-in-out infinite; }
-@media (prefers-reduced-motion: reduce) { .row-progress-bar { animation: none; width: 100%; opacity: .55; } }
+/* A sidebar row has one quiet mark for "something happened here", and it lives
+   on the row's left edge: a short accent-coloured pill. A reply that finished
+   in another chat wears it still. A reply that is still running wears the same
+   pill with a shine travelling down it, so the two read as one family — static
+   versus alive — instead of a dot and a bar. */
+.row-edge {
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 58%;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--ac) 68%, transparent);
+}
+.row-edge[data-live] {
+  overflow: hidden;
+  background: color-mix(in srgb, var(--ac) 22%, transparent);
+}
+.row-edge[data-live]::after {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto;
+  height: 58%;
+  border-radius: inherit;
+  background: linear-gradient(180deg, transparent, var(--ac) 44%, var(--ac) 56%, transparent);
+  animation: row-edge-shine 1.3s ease-in-out infinite;
+}
+@keyframes row-edge-shine { from { transform: translateY(-110%); } to { transform: translateY(190%); } }
+@media (prefers-reduced-motion: reduce) {
+  .row-edge[data-live] { background: color-mix(in srgb, var(--ac) 60%, transparent); }
+  .row-edge[data-live]::after { display: none; }
+}
+
+/* A chat name that runs out of room fades out to the right instead of ending in
+   an ellipsis. The name's box always fills the row, so the mask's fade zone is
+   empty space until the text actually reaches it — a name that fits is left
+   untouched, and one that overflows disappears rather than stopping at "…". */
+.fade-name {
+  min-width: 0;
+  flex: 1 1 0%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: clip;
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 1.5rem), transparent);
+  mask-image: linear-gradient(to right, #000 calc(100% - 1.5rem), transparent);
+}
 /* `--reply-in-duration` is set per-message from the stream-fade setting. When it
  * is 0 the animation is disabled outright (not just `0s`, which would still
  * queue a transition and repaint). `prefers-reduced-motion` always wins. */
