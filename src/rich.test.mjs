@@ -71,6 +71,43 @@ test('real math still renders as math', () => {
   assert.ok(!display.includes('$$'), display)
 })
 
+/* A model that opens a display block on its own line but closes it at the end
+ * of the last line ("$$L=\\int…\\approx 15.3$$") writes *flow* math to the
+ * parser: the rest of the opening line is dropped as a fence info string and
+ * the block only ends at a `$$` that starts a line, so it swallowed the rest of
+ * the reply and KaTeX painted all of it in the error colour. */
+test('a display block closed at the end of a line does not swallow the reply', () => {
+  const html = render('Before.\n\n$$L=\\int_1^3 f\\,dx\n=\\left[\\frac{2x^{3}}{3}-x\\right]_{1}^{3}\\approx 15.3$$\n\n**Visual estimate:** consistent with $\\approx15.3$.\n\n### 4. $y=x$\n')
+  // One display block, holding both lines the model wrote, and no stray `$$`.
+  assert.equal((html.match(/bg-code/g) ?? []).length, 1, html)
+  assert.ok(!html.includes('$$'), html)
+  assert.match(html, /L=\\int_1\^3 f\\,dx/, html)
+  assert.match(html, /\\approx 15\.3/, html)
+  // Everything after it is prose again, not another line of the block.
+  assert.match(html, /<strong>Visual estimate:<\/strong>/, html)
+  assert.match(html, /<h3[^>]*>4\. /, html)
+  assert.match(html, /math-inline/, html)
+})
+
+/* `$$…$$` inside a sentence is inline math and must stay that way, whether the
+ * model closed it on the same line or wrapped it onto the next one. */
+test('inline $$ math keeps the sentence on one line', () => {
+  for (const t of [
+    'The value is $$a+b$$ exactly.\n',
+    'The value is $$a+b\n= c$$ exactly.\n',
+    '$$a+b$$ alone here\n',
+  ]) {
+    const html = render(t)
+    assert.ok(!/bg-code/.test(html), `${t}\n${html}`)
+    assert.ok(!html.includes('$$'), `${t}\n${html}`)
+    assert.match(html, /math-inline/, `${t}\n${html}`)
+  }
+  // A `$$` left starting a line would open a block that never closes.
+  const joined = render('text $$a+b\n$$ more text\n')
+  assert.ok(!/bg-code/.test(joined), joined)
+  assert.match(joined, /more text/, joined)
+})
+
 /* A model that escapes a digit while writing a numeric range ("~5–\\6") is
  * not writing markdown or math; the stray backslash must not reach the page. */
 test('stray backslashes before digits are dropped, code excepted', () => {

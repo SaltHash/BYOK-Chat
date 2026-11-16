@@ -129,13 +129,41 @@ const proseFix = (q: string) => q
   // is more lenient and would pair "$20–$100+" into an equation.
   .replace(/(?<!\\)\$/g, '\\$')
 
-const fix = (t: string) => t.split(INLINE).map((p, i) => {
-  if (i % 2) return p
-  const parts = splitMath(p
-    .replace(/\\\(([\s\S]*?)\\\)/g, (_, m) => '$$' + m + '$$')                         // \( x \) -> inline math
-    .replace(/\\\[([\s\S]*?)\\\]/g, (_, m) => '\n\n$$\n' + m.trim() + '\n$$\n\n'))     // \[ x \] -> display math
-  return parts.map((q, j) => (j % 2 ? q : proseFix(q))).join('')
-}).join('')
+/** Whether the delimiter at `index` in `s` is the first thing on its line. */
+const startsLine = (s: string, index: number) => /^\s*$/.test(s.slice(s.lastIndexOf('\n', index - 1) + 1, index))
+
+/* `$$` that opens a line is *flow* math: the rest of that opening line is read
+ * as a fence info string and dropped, and the block only closes at a `$$` that
+ * starts a line of its own. A model that opens a block on its own line and
+ * closes it at the end of the last line ("$$L=\\int…\\approx 15.3$$") therefore
+ * hands the parser an unterminated block, which runs to the next `$$` line or
+ * to the end of the reply — and KaTeX paints all of it in the error colour.
+ * Re-emit such a span with both delimiters on their own lines, which is what the
+ * model meant. The mirror case (opened mid-sentence, closed on a later line)
+ * leaves a `$$` starting that later line, where it opens another doomed block,
+ * so it is pulled back up onto the opening line as the inline math it is. */
+const displayMath = (span: string, before: string): string => {
+  const body = span.slice(2, -2)
+  const opensLine = /^\s*$/.test(before.slice(before.lastIndexOf('\n') + 1))
+  const closesLine = startsLine(span, span.length - 2)
+  if (opensLine) {
+    if (closesLine || !body.includes('\n')) return span
+    return `\n$$\n${body.trim()}\n$$\n`
+  }
+  return closesLine ? `$$${body.trim()}$$` : span
+}
+
+const fix = (t: string) => {
+  const chunks = t.split(INLINE)
+  return chunks.map((p, i) => {
+    if (i % 2) return p
+    const before = i ? chunks[i - 1] : ''
+    const parts = splitMath(p
+      .replace(/\\\(([\s\S]*?)\\\)/g, (_, m) => '$$' + m + '$$')                         // \( x \) -> inline math
+      .replace(/\\\[([\s\S]*?)\\\]/g, (_, m) => '\n\n$$\n' + m.trim() + '\n$$\n\n'))     // \[ x \] -> display math
+    return parts.map((q, j) => (j % 2 ? displayMath(q, j ? parts[j - 1] : before) : proseFix(q))).join('')
+  }).join('')
+}
 
 const pre = (src: string) => src.split(FENCE).map((p, i) => (i % 2 ? p : fix(defs(p)))).join('')
 
