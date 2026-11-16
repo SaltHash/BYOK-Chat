@@ -67,13 +67,18 @@ export function uniqueAttachmentNames<T extends NamedFile>(atts: T[]): T[] {
   })
 }
 
-/** Highest `image-N` / `file-N` number already used in the conversation. */
-const usedNumbers = (taken: Iterable<string>): { image: number; file: number } => {
-  const counts = { image: 0, file: 0 }
+/** The name stems the prompt uses, so a file is described by what it is
+ *  (`Paste 1`, `Image 2`) instead of an opaque `file-1`. `file` stays in the
+ *  list so conversations that already used `file-1.pdf` keep counting up. */
+type FileStem = 'image' | 'paste' | 'document' | 'media' | 'file'
+
+/** Highest number already used per stem in the conversation. */
+const usedNumbers = (taken: Iterable<string>): Record<FileStem, number> => {
+  const counts: Record<FileStem, number> = { image: 0, paste: 0, document: 0, media: 0, file: 0 }
   for (const raw of taken) {
-    const m = /^(image|file)-(\d+)(\.[a-z0-9]{1,8})?$/i.exec(String(raw ?? '').trim())
+    const m = /^(image|paste|document|media|file)-(\d+)(\.[a-z0-9]{1,8})?$/i.exec(String(raw ?? '').trim())
     if (!m) continue
-    const kind = m[1].toLowerCase() as 'image' | 'file'
+    const kind = m[1].toLowerCase() as FileStem
     counts[kind] = Math.max(counts[kind], Number(m[2]) || 0)
   }
   return counts
@@ -101,7 +106,10 @@ export function anonymizeAttachmentNames<T extends NamedFile & { kind?: string }
     const ext = /^\.[a-z0-9]{1,6}$/i.test(extRaw) ? extRaw.toLowerCase() : ''
     const imageExt = /^\.(png|jpe?g|gif|webp|bmp|avif|svg|heic|heif|tiff?)$/i.test(ext)
     const isImage = a.kind === 'img' || (!a.kind && imageExt)
-    const stem = isImage ? 'image' : 'file'
+    // The stem says what the file is, so a citation reads as `paste-2` or
+    // `image-1` rather than a number the reader has to look up.
+    const source = (a as { source?: string }).source
+    const stem: FileStem = isImage ? 'image' : source === 'paste' ? 'paste' : a.kind === 'media' ? 'media' : 'document'
     // A date or version fragment is not an extension, so images fall back to
     // .png rather than carrying something like "image-1.22" into the prompt.
     const suffix = isImage ? (imageExt ? ext : '.png') : ext
@@ -137,6 +145,16 @@ export function realPromptNames<T extends NamedFile>(
     used.add(candidate.toLowerCase())
     return { ...a, modelName: candidate }
   })
+}
+
+/** How a citation token reads in the UI: `paste-2` becomes `Paste 2`,
+ *  `image-1.png` becomes `Image 1`. Anything else (older `file-7` names and
+ *  real file names) is left alone. */
+export function friendlyFileName(name: string): string {
+  const m = /^(image|paste|document|media|file)-(\d+)(?:\.[a-z0-9]{1,8})?$/i.exec(String(name ?? '').trim())
+  if (!m) return name
+  const word = m[1][0].toUpperCase() + m[1].slice(1).toLowerCase()
+  return `${word} ${m[2]}`
 }
 
 /** Escape a value used inside a `<file name="…">` attribute. */

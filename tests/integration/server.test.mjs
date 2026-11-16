@@ -280,6 +280,71 @@ test('proxy refuses cross-origin writes and non-http targets', async () => {
   assert.equal((await bad.json()).code, 'bad_target')
 })
 
+// --- /api/mcp/stdio -------------------------------------------------------
+// A real local MCP server: the bridge must spawn it, speak newline-delimited
+// JSON-RPC to it, keep the session between requests and kill it on DELETE.
+const fakeMcp = join(tmpdir(), `byok-fake-mcp-${process.pid}.mjs`)
+writeFileSync(fakeMcp, `
+let buffer = ''
+process.stdin.setEncoding('utf8')
+process.stdin.on('data', (chunk) => {
+  buffer += chunk
+  let newline
+  while ((newline = buffer.indexOf('\\n')) >= 0) {
+    const line = buffer.slice(0, newline)
+    buffer = buffer.slice(newline + 1)
+    if (!line.trim()) continue
+    const message = JSON.parse(line)
+    if (message.id == null) continue
+    let result = {}
+    if (message.method === 'initialize') result = { protocolVersion: '2025-06-18', serverInfo: { name: 'Fake stdio', version: '0.0.1' }, capabilities: {} }
+    else if (message.method === 'tools/list') result = { tools: [{ name: 'echo', description: 'Echo text', inputSchema: { type: 'object', properties: { text: { type: 'string' } } } }] }
+    else if (message.method === 'tools/call') result = { content: [{ type: 'text', text: 'echo:' + (message.params?.arguments?.text ?? '') }] }
+    process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: message.id, result }) + '\\n')
+  }
+})
+`)
+
+const stdioPost = (body) => post('/api/mcp/stdio', body)
+
+test('stdio bridge starts a local command server and relays a session', async () => {
+  const started = await stdioPost({
+    server: { command: process.execPath, args: [fakeMcp], env: { BYOK_TEST: '1' } },
+    message: { jsonrpc: '2.0', id: 1, method: 'initialize', params: {} },
+  })
+  assert.equal(started.status, 200)
+  const first = await started.json()
+  assert.equal(first.message.result.serverInfo.name, 'Fake stdio')
+  assert.match(first.sessionId, /^[0-9a-f-]{36}$/)
+
+  const listed = await stdioPost({ sessionId: first.sessionId, message: { jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} } })
+  assert.equal(listed.status, 200)
+  assert.deepEqual((await listed.json()).message.result.tools.map((t) => t.name), ['echo'])
+
+  const called = await stdioPost({ sessionId: first.sessionId, message: { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'echo', arguments: { text: 'hi' } } } })
+  assert.equal(called.status, 200)
+  assert.equal((await called.json()).message.result.content[0].text, 'echo:hi')
+
+  const ended = await fetch(`${base}/api/mcp/stdio?session=${first.sessionId}`, { method: 'DELETE' })
+  assert.equal(ended.status, 204)
+  const gone = await stdioPost({ sessionId: first.sessionId, message: { jsonrpc: '2.0', id: 4, method: 'tools/list', params: {} } })
+  assert.equal(gone.status, 404)
+  assert.equal((await gone.json()).code, 'no_session')
+})
+
+test('stdio bridge validates the process description and fails cleanly', async () => {
+  const noCommand = await stdioPost({ server: { args: ['x'] }, message: { jsonrpc: '2.0', id: 1, method: 'initialize', params: {} } })
+  assert.equal(noCommand.status, 400)
+  assert.equal((await noCommand.json()).code, 'bad_server')
+
+  const badEnv = await stdioPost({ server: { command: process.execPath, args: [], env: { 'BAD KEY': 'x' } }, message: { jsonrpc: '2.0', id: 1, method: 'initialize', params: {} } })
+  assert.equal(badEnv.status, 400)
+
+  const missing = await stdioPost({ server: { command: '/nonexistent/byok-mcp-server', args: [] }, message: { jsonrpc: '2.0', id: 1, method: 'initialize', params: {} } })
+  assert.equal(missing.status, 502)
+  assert.match((await missing.json()).error, /Could not start|exited/)
+})
+
 test('spoofing proxy headers cannot bypass the per-IP search rate limit', async () => {
   // The Node server must key the limit on the socket address, not on a header
   // any client can set. Requests carry a fresh cf-connecting-ip every time.

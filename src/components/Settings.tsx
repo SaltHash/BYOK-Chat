@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { X, Plus, Trash2, ArrowUp, ArrowDown, CornerDownRight, ChevronDown, ChevronLeft, ChevronRight, Eye, EyeOff, Play, ShieldCheck, Shield, Download, Check, CircleCheck, CircleX, Cpu, Route, GripVertical, Server, ListMusic, ScrollText, Terminal, Wrench, Palette, FolderOpen, PanelRight, TrendingUp, Keyboard, Search, Brain, Pencil, Sparkles, RotateCcw, SlidersHorizontal, FlaskConical, Library, Database, Lock, LockOpen, LayoutTemplate, Share2, Plug, Image as ImageIcon, Volume2, AudioLines, Code2, Star, TriangleAlert } from 'lucide-react'
+import { X, Plus, Trash2, ArrowUp, ArrowDown, CornerDownRight, ChevronDown, ChevronLeft, ChevronRight, Eye, EyeOff, Play, ShieldCheck, Shield, Download, Upload, Check, CircleCheck, CircleX, Cpu, Route, GripVertical, Server, ListMusic, ScrollText, Terminal, Wrench, Palette, FolderOpen, PanelRight, TrendingUp, Keyboard, Search, Brain, Pencil, Sparkles, RotateCcw, SlidersHorizontal, FlaskConical, Library, Database, Lock, LockOpen, LayoutTemplate, Share2, Plug, Image as ImageIcon, Volume2, AudioLines, Code2, Star, TriangleAlert } from 'lucide-react'
 import { discoveredModelPatch, modelListEdit } from '../models'
 import { useS, useSConfig, PRE, BLANK, THEMES, DARK_THEMES, LIGHT_THEMES, THEME_COLOR_KEYS, THEME_COLOR_LABELS, THEME_COLORS, defaultCustomTheme, customThemeColors, normCustomTheme, SEARCH_PROVIDERS, READER_PROVIDERS, FEATURES, LIBRARY_ITEMS, FEATURE_TABS, FEATURE_WIDGETS, DEFAULT_LIBRARY_SHOW, DEFAULT_ADVANCED, featOn, normSearch, normAdvanced, normLogDetail, normDocs, usable, modelsOf, modelNameOf, helperRef, splitHelperRef, favRef, toggleFavRef, effortClassifierOf, TOOL_ROUNDS_DEFAULT, TOOL_ROUNDS_MIN, TOOL_ROUNDS_BASE_MAX, TOOL_ROUNDS_MAX, toolRoundLimitOf, isToolRoundsUnlimited, GENERAL_PROMPT_TEXT, STARTUP_MODES, normStartup, PROMPT_RECALL_MODES, normPromptRecall, uid, REPLY_METRICS, DEFAULT_REPLY_STATS, HELPER_TASKS, helperAutoEffort, type HelperTask, type PromptRecallMode, type ReplyMetric, type ReplyModelLabel, type Kind, type FeatureId, type DocPrefs, type ModelPrice } from '../store'
 import { normSkills, resolveSkill, validateCustomSkill, enabledSkills, BUILTIN_SKILLS, SKILL_TOOL_NAME, type SkillState } from '../skills'
@@ -20,7 +20,7 @@ import { parseCurlCommand, type CurlProvider } from '../curlImport'
 import { ENDPOINT_AUTH_OPTIONS, endpointAuthOf, headerBlockOf, type EndpointAuth } from '../endpointAuth'
 import { providerFetch } from '../net'
 import { WORKSPACE_TEMPLATES } from '../workspace'
-import { probeMcpServer, mcpToolName, type McpServer } from '../mcp'
+import { probeMcpServer, mcpToolName, parseMcpConfig, envBlockOf, parseEnvBlock, isMcpReady, isStdioMcp, type McpServer } from '../mcp'
 import { BLANK_IMAGE_GEN, IMAGE_SIZES, normImageGen } from '../imagegen'
 import { BLANK_CODE_RUN, CODE_OUTPUT_MAX, CODE_TIMEOUT_MAX, CODE_TIMEOUT_MIN, normCodeRun, PYODIDE_DEFAULT_URL } from '../codesandbox'
 import { normVoice, VOICE_LANGS, speak, stopSpeaking, speechAvailable, dictationAvailable } from '../voice'
@@ -1959,15 +1959,18 @@ function VoiceTab() {
 
 function McpTab() {
   const s = useSConfig()
-  const { mcps, add, upd, del } = s
+  const { mcps, upd, del, patch } = s
   const [busy, setBusy] = useState('')
+  const [importText, setImportText] = useState('')
+  const [importMsg, setImportMsg] = useState<{ bad: boolean; lines: string[] } | null>(null)
+  const fileRef = useRef<HTMLInputElement>(null)
   const toolsOn = featOn(s, 'tools')
   const test = async (m: McpServer) => {
-    if (!m.url.trim()) { upd('mcps', m.id, { error: 'Enter the server URL first.' }); return }
+    if (!isMcpReady(m)) { upd('mcps', m.id, { error: isStdioMcp(m) ? 'Enter the command first.' : 'Enter the server URL first.' }); return }
     setBusy(m.id)
     upd('mcps', m.id, { error: undefined })
     try {
-      const { tools, serverInfo } = await probeMcpServer(m.url, m.headers)
+      const { tools, serverInfo } = await probeMcpServer(m)
       upd('mcps', m.id, {
         tools,
         toolsAt: Date.now(),
@@ -1981,32 +1984,93 @@ function McpTab() {
       setBusy('')
     }
   }
+  /** Import any of the JSON shapes other MCP clients use. */
+  const importJson = (text: string) => {
+    try {
+      const result = parseMcpConfig(text, mcps)
+      if (result.servers.length) patch({ mcps: [...mcps, ...result.servers] })
+      const lines = [
+        result.servers.length
+          ? `Added ${result.servers.length} server${result.servers.length === 1 ? '' : 's'}: ${result.servers.map((m) => m.name).join(', ')}`
+          : 'No servers were added.',
+        ...result.skipped.map((skip) => `Skipped ${skip.name}: ${skip.reason}.`),
+        ...result.notes,
+      ]
+      setImportMsg({ bad: !result.servers.length, lines })
+      if (result.servers.length) setImportText('')
+    } catch (e: any) {
+      setImportMsg({ bad: true, lines: [String(e?.message ?? e)] })
+    }
+  }
+  const chooseFile = async (file?: File) => {
+    if (!file) return
+    if (file.size > 512 * 1024) { setImportMsg({ bad: true, lines: ['That file is larger than 512 KB, which is not an MCP config.'] }); return }
+    try { importJson(await file.text()) } catch { setImportMsg({ bad: true, lines: ['Could not read that file.'] }) }
+  }
   return (
     <Panel id="mcp" k="mcps" add="Add server">
+      <Section title="Import from JSON">
+      <Anchor id="import-mcp">
+        <div className="space-y-3 py-3">
+          <p className="text-sm text-mu">Paste a config from Claude Desktop, Claude Code, Cursor, VS Code or Zed. Remote servers (<code>url</code>) and local ones (<code>command</code> plus <code>args</code>) both work, and servers already in the list are skipped.</p>
+          <Area rows={6} value={importText} set={setImportText} spellCheck={false} className="w-full resize-y rounded-lg bg-surf px-3 py-2 font-mono text-xs outline-none focus:ring-2 focus:ring-ac/40" placeholder={'{\n  "mcpServers": {\n    "Roblox_Studio": {\n      "command": "/home/you/.local/bin/roblox-studio-mcp.sh",\n      "args": ["--stdio"]\n    }\n  }\n}'} />
+          <div className="flex flex-wrap items-center gap-2">
+            <Btn v="solid" icon={Plus} disabled={!importText.trim()} onClick={() => importJson(importText)}>Import JSON</Btn>
+            <Btn v="soft" icon={Upload} onClick={() => fileRef.current?.click()}>Choose file</Btn>
+            <input ref={fileRef} type="file" accept=".json,application/json" hidden onChange={(e) => { void chooseFile(e.target.files?.[0]); e.target.value = '' }} />
+          </div>
+          {importMsg && (
+            <div role={importMsg.bad ? 'alert' : 'status'} className={`space-y-1 rounded-lg px-3 py-2 text-xs ${importMsg.bad ? 'bg-er/10 text-er' : 'bg-surf text-mu'}`}>
+              {importMsg.lines.map((line, i) => <p key={i}>{line}</p>)}
+            </div>
+          )}
+        </div>
+      </Anchor>
+      </Section>
       <Section>
       {!toolsOn && <p role="status" className="py-3 text-sm text-er">The Tools feature is off, so no MCP tool can be called. Turn on Tools in Settings → Features.</p>}
       {!mcps.length && <p className="py-6 text-center text-sm text-mu">No servers yet.</p>}
       {mcps.map((m) => {
         const tools = m.tools ?? []
+        const stdio = isStdioMcp(m)
         return (
           <Anchor key={m.id} id={`mcp-${m.id}`}>
             <Card
               icon={Plug}
               title={m.name || 'MCP server'}
-              sub={tools.length ? `${tools.length} tool${tools.length === 1 ? '' : 's'} loaded` : m.url ? 'No tools loaded yet' : 'No URL yet'}
+              sub={tools.length ? `${tools.length} tool${tools.length === 1 ? '' : 's'} loaded` : stdio ? (m.command ? `Local command · ${m.command}` : 'No command yet') : m.url ? 'No tools loaded yet' : 'No URL yet'}
               muted={!m.on}
-              open0={!m.url}
+              open0={!isMcpReady(m)}
               right={<Toggle on={m.on} set={(on) => upd('mcps', m.id, { on })} label={`Enable ${m.name}`} />}
             >
               <div className="grid gap-3 sm:grid-cols-2">
                 <Field label="Name"><Input value={m.name} set={(name) => upd('mcps', m.id, { name })} placeholder="e.g. Filesystem" /></Field>
-                <Field label="Server URL"><Input value={m.url} set={(url) => upd('mcps', m.id, { url, error: undefined })} placeholder="https://example.com/mcp" /></Field>
+                <Field label="Transport">
+                  <Seg v={stdio ? 'stdio' : 'http'} set={(transport) => upd('mcps', m.id, { transport, error: undefined })} opts={[['http', 'Remote URL'], ['stdio', 'Local command']]} />
+                </Field>
               </div>
-              <Field label="Headers">
-                <Area rows={3} value={m.headers} set={(headers) => upd('mcps', m.id, { headers })} placeholder={'Authorization: Bearer …'} />
-              </Field>
+              {stdio ? (
+                <>
+                  <Field label="Command"><Input value={m.command ?? ''} set={(command) => upd('mcps', m.id, { command, error: undefined })} placeholder="/path/to/server" /></Field>
+                  <Field label="Arguments (one per line)">
+                    <Area rows={3} value={(m.args ?? []).join('\n')} set={(v) => upd('mcps', m.id, { args: v.split('\n').map((x) => x.trim()).filter(Boolean) })} placeholder={'--stdio'} />
+                  </Field>
+                  <Field label="Environment (KEY=value per line)">
+                    <Area rows={3} value={envBlockOf(m.env)} set={(v) => upd('mcps', m.id, { env: parseEnvBlock(v) })} placeholder={'API_KEY=…'} />
+                  </Field>
+                  <Field label="Working directory (optional)"><Input value={m.cwd ?? ''} set={(cwd) => upd('mcps', m.id, { cwd: cwd.trim() || undefined })} placeholder="/path/to/project" /></Field>
+                  <p className="text-xs text-mu">Local command servers start on the machine running the app’s Node host (npm start or npm run dev), and only from a localhost browser. They cannot run on a static or Cloudflare deployment.</p>
+                </>
+              ) : (
+                <>
+                  <Field label="Server URL"><Input value={m.url} set={(url) => upd('mcps', m.id, { url, error: undefined })} placeholder="https://example.com/mcp" /></Field>
+                  <Field label="Headers">
+                    <Area rows={3} value={m.headers} set={(headers) => upd('mcps', m.id, { headers })} placeholder={'Authorization: Bearer …'} />
+                  </Field>
+                </>
+              )}
               <div className="flex flex-wrap items-center gap-3">
-                <Btn v="soft" icon={Play} disabled={busy === m.id || !m.url.trim()} onClick={() => void test(m)}>{busy === m.id ? 'Connecting…' : tools.length ? 'Reconnect and refresh tools' : 'Test connection & load tools'}</Btn>
+                <Btn v="soft" icon={Play} disabled={busy === m.id || !isMcpReady(m)} onClick={() => void test(m)}>{busy === m.id ? 'Connecting…' : tools.length ? 'Reconnect and refresh tools' : 'Test connection & load tools'}</Btn>
                 {tools.length > 0 && m.toolsAt && <span className="text-xs text-mu">Loaded {new Date(m.toolsAt).toLocaleString()}</span>}
                 <span className="flex-1" />
                 <Btn v="danger" icon={Trash2} onClick={() => del('mcps', m.id)}>Remove</Btn>

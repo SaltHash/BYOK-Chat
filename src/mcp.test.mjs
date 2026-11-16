@@ -3,7 +3,8 @@ import assert from 'node:assert/strict'
 
 const {
   parseHeaders, toolSlug, mcpToolName, mcpBindings, isMcpUrl, normMcpServers,
-  parseMcpSse, formatMcpContent, McpClient, toolParameters, MCP_PROTOCOL_VERSION,
+  parseMcpSse, formatMcpContent, McpClient, McpStdioClient, toolParameters, MCP_PROTOCOL_VERSION,
+  parseMcpConfig, isStdioMcp, isMcpReady, envBlockOf, parseEnvBlock,
 } = await import('./mcp.ts')
 
 const json = (body, init = {}) => new Response(JSON.stringify(body), {
@@ -105,6 +106,9 @@ test('client initializes once, keeps the session id, paginates, and calls tools'
   // initialize once, notification once, two list pages
   assert.equal(calls.filter((c) => c.body.method === 'initialize').length, 1)
   assert.equal(calls[0].headers.Authorization, 'Bearer t')
+  // The protocol version is required once initialize has established it.
+  assert.equal(calls[0].headers['mcp-protocol-version'], undefined)
+  assert.equal(calls[2].headers['mcp-protocol-version'], MCP_PROTOCOL_VERSION)
   assert.ok(calls.every((c, i) => i < 2 || c.headers['mcp-session-id'] === 'sess-1'))
   const text = await client.callTool('echo', { text: 'hi' })
   assert.equal(text, 'pong:hi')
@@ -126,4 +130,125 @@ test('client throws MCP errors and tool error results', async () => {
 test('network failure explains the likely CORS cause', async () => {
   const client = new McpClient('https://mcp.example/mcp', {}, async () => { throw new TypeError('Failed to fetch') })
   await assert.rejects(() => client.listTools(), /CORS/)
+})
+
+test('imports the Claude Desktop / Cursor shape, including local commands', () => {
+  const text = JSON.stringify({
+    mcpServers: {
+      Roblox_Studio: { command: '/home/me/.local/bin/roblox-studio-mcp.sh', args: ['--stdio'] },
+      Files: { url: 'https://files.example/mcp', headers: { Authorization: 'Bearer t' } },
+    },
+  })
+  const { servers, skipped, notes } = parseMcpConfig(text)
+  assert.equal(skipped.length, 0)
+  assert.deepEqual(notes, [])
+  assert.equal(servers.length, 2)
+  const roblox = servers.find((s) => s.name === 'Roblox_Studio')
+  assert.equal(roblox.transport, 'stdio')
+  assert.equal(roblox.command, '/home/me/.local/bin/roblox-studio-mcp.sh')
+  assert.deepEqual(roblox.args, ['--stdio'])
+  assert.equal(roblox.url, '')
+  assert.equal(isStdioMcp(roblox), true)
+  assert.equal(isMcpReady(roblox), true)
+  const files = servers.find((s) => s.name === 'Files')
+  assert.equal(files.transport, 'http')
+  assert.equal(files.headers, 'Authorization: Bearer t')
+  assert.match(roblox.id, /^mcp-/)
+})
+
+test('understands VS Code, Zed, bare maps, single objects, arrays and header lists', () => {
+  const vscode = parseMcpConfig(JSON.stringify({ mcp: { servers: { Gh: { type: 'http', url: 'https://gh.example/mcp' } } } }))
+  assert.deepEqual(vscode.servers.map((s) => s.name), ['Gh'])
+
+  const zed = parseMcpConfig(JSON.stringify({ context_servers: { Local: { source: 'custom', command: { path: '/bin/server', args: ['--x'], env: { TOKEN: 'abc' } } } } }))
+  assert.equal(zed.servers[0].transport, 'stdio')
+  assert.equal(zed.servers[0].command, '/bin/server')
+  assert.deepEqual(zed.servers[0].args, ['--x'])
+  assert.deepEqual(zed.servers[0].env, { TOKEN: 'abc' })
+
+  const bare = parseMcpConfig(JSON.stringify({ Remote: { serverUrl: 'https://r.example/mcp' } }))
+  assert.equal(bare.servers[0].url, 'https://r.example/mcp')
+
+  const single = parseMcpConfig(JSON.stringify({ name: 'One', url: 'https://one.example/mcp' }))
+  assert.deepEqual(single.servers.map((s) => s.name), ['One'])
+
+  const list = parseMcpConfig(JSON.stringify([{ name: 'A', url: 'https://a.example/mcp' }, 'https://b.example/mcp']))
+  assert.deepEqual(list.servers.map((s) => s.name), ['A', 'b.example'])
+
+  const headers = parseMcpConfig(JSON.stringify({ mcpServers: { A: { url: 'https://a.example/mcp', headers: [{ name: 'X-Env', value: 'prod' }, { name: 'Host', value: 'evil' }] } } }))
+  assert.equal(headers.servers[0].headers, 'X-Env: prod')
+})
+
+test('import skips duplicates and explains unusable entries', () => {
+  const existing = [{ id: 'x', name: 'Files', transport: 'http', url: 'https://files.example/mcp', headers: '', on: true }]
+  const result = parseMcpConfig(JSON.stringify({
+    mcpServers: {
+      Files: { url: 'https://files.example/mcp/' },
+      Broken: { type: 'stdio' },
+      Other: { url: 'ftp://x.example/mcp' },
+      NoScheme: { url: 'example.com/mcp' },
+    },
+  }), existing)
+  assert.equal(result.servers.length, 0)
+  const reasons = result.skipped.map((s) => `${s.name}:${s.reason}`).join('|')
+  assert.match(reasons, /Files:already in the list/)
+  assert.match(reasons, /Broken:a local server needs a "command"/)
+  assert.match(reasons, /Other:the URL is not http\(s\)/)
+  assert.match(reasons, /NoScheme:the URL is not http\(s\)/)
+  assert.throws(() => parseMcpConfig('not json'), /not valid JSON/)
+  assert.throws(() => parseMcpConfig('   '), /Paste an MCP configuration/)
+  assert.equal(parseMcpConfig(JSON.stringify({ unrelated: true })).servers.length, 0)
+})
+
+test('import keeps disabled entries off and flags placeholders', () => {
+  const result = parseMcpConfig(JSON.stringify({
+    mcpServers: {
+      Off: { url: 'https://off.example/mcp', disabled: true },
+      Auth: { url: 'https://auth.example/mcp', headers: { Authorization: 'Bearer ${TOKEN}' } },
+    },
+  }))
+  assert.equal(result.servers.find((s) => s.name === 'Off').on, false)
+  assert.ok(result.notes.some((note) => /placeholder/.test(note)))
+  assert.ok(result.notes.some((note) => /disabled/.test(note)))
+})
+
+test('environment editor round-trips KEY=value lines', () => {
+  assert.equal(envBlockOf({ A: '1', B: 'two' }), 'A=1\nB=two')
+  assert.deepEqual(parseEnvBlock('A=1\n# comment\nBAD KEY=2\nB = two = three\n'), { A: '1', B: 'two = three' })
+  assert.deepEqual(parseEnvBlock(''), {})
+})
+
+test('a schema with properties but no type is repaired', () => {
+  const schema = { properties: { q: { type: 'string' } }, required: ['q'] }
+  assert.deepEqual(toolParameters({ name: 'x', inputSchema: schema }), { ...schema, type: 'object' })
+  assert.deepEqual(toolParameters({ name: 'x', inputSchema: { type: 'string' } }), { type: 'object', properties: {}, additionalProperties: true })
+})
+
+test('stdio client keeps one bridge session and closes it when done', async () => {
+  const calls = []
+  const fetchFn = async (url, init = {}) => {
+    calls.push({ url: String(url), method: init.method, body: init.body ? JSON.parse(init.body) : null })
+    if (init.method === 'DELETE') return new Response(null, { status: 204 })
+    const body = JSON.parse(init.body)
+    if (body.message.method === 'notifications/initialized') return new Response(null, { status: 202 })
+    const reply = body.message.method === 'initialize'
+      ? { jsonrpc: '2.0', id: body.message.id, result: { protocolVersion: MCP_PROTOCOL_VERSION, serverInfo: { name: 'Local' } } }
+      : { jsonrpc: '2.0', id: body.message.id, result: { tools: [{ name: 'ping' }] } }
+    return new Response(JSON.stringify({ sessionId: 'sess-9', message: reply }), { status: 200, headers: { 'content-type': 'application/json' } })
+  }
+  const client = new McpStdioClient({ command: '/bin/server', args: ['--stdio'], env: { A: '1' } }, 5000, fetchFn)
+  const tools = await client.listTools()
+  assert.deepEqual(tools.map((t) => t.name), ['ping'])
+  assert.equal(client.serverInfo.name, 'Local')
+  assert.equal(calls[0].body.server.command, '/bin/server')
+  assert.equal(calls[0].body.sessionId, undefined)
+  assert.equal(calls[1].body.sessionId, 'sess-9')
+  await client.close()
+  assert.equal(calls.at(-1).method, 'DELETE')
+  assert.match(calls.at(-1).url, /session=sess-9/)
+})
+
+test('stdio client explains a deployment without the local bridge', async () => {
+  const client = new McpStdioClient({ command: '/bin/server', args: [], env: {} }, 5000, async () => new Response(null, { status: 404, headers: { 'content-type': 'application/json' } }))
+  await assert.rejects(() => client.listTools(), /Node host/)
 })

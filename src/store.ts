@@ -461,7 +461,7 @@ export const BLANK: Record<Kind, () => any> = {
   prompts: () => ({ id: uid(), name: 'New prompt', text: '' }),
   pls: () => ({ id: uid(), name: 'New playlist', sys: '', e: [], cls: '', rule: '' }),
   cmds: () => ({ id: uid(), name: 'command', desc: '', in: 'text', sys: '', tpl: '{{input}}', pl: '', on: true, args: '' }),
-  mcps: () => ({ id: uid(), name: 'New MCP server', url: '', headers: '', on: true }),
+  mcps: () => ({ id: uid(), name: 'New MCP server', transport: 'http' as const, url: '', headers: '', on: true }),
 }
 const ZERO = (): Stats => ({ tin: 0, tout: 0, historyIn: 0, explicitIn: 0, sent: 0, chats: 0, since: Date.now(), cost: 0 })
 /* The permanent usage ledger is read once at store creation. It lives in its

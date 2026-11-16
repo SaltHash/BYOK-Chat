@@ -10,7 +10,7 @@ test('the model is shown neutral names while the real name is kept for the UI', 
     { name: 'Q3 payroll.pdf', kind: 'pdf' },
     { name: 'notes.txt', kind: 'txt' },
   ])
-  assert.deepEqual(files.map((f) => f.modelName), ['image-1.png', 'image-2.jpg', 'file-1.pdf', 'file-2.txt'])
+  assert.deepEqual(files.map((f) => f.modelName), ['image-1.png', 'image-2.jpg', 'document-1.pdf', 'document-2.txt'])
   assert.deepEqual(files.map((f) => f.name), ['Acme merger plan.png', 'Jane Doe passport.jpg', 'Q3 payroll.pdf', 'notes.txt'])
   assert.equal(a.promptNameOf(files[0]), 'image-1.png')
 })
@@ -22,15 +22,29 @@ test('an image without a usable extension still gets one, and the input is untou
   assert.equal(input[0].modelName, undefined)
 })
 
-test('prompt names continue across messages instead of reusing file-1.pdf', () => {
+test('prompt names continue across messages instead of reusing document-1.pdf', () => {
   const first = a.anonymizeAttachmentNames([{ name: 'report.pdf', kind: 'pdf' }, { name: 'chart.png', kind: 'img' }])
   const taken = first.map(a.promptNameOf)
   const second = a.anonymizeAttachmentNames([{ name: 'other.pdf', kind: 'pdf' }, { name: 'photo.jpg', kind: 'img' }], { taken })
-  assert.deepEqual(first.map((f) => f.modelName), ['file-1.pdf', 'image-1.png'])
-  assert.deepEqual(second.map((f) => f.modelName), ['file-2.pdf', 'image-2.jpg'])
-  // A gap in the old names does not restart the count.
-  const third = a.anonymizeAttachmentNames([{ name: 'x.pdf', kind: 'pdf' }], { taken: ['file-9.pdf', 'file-2.pdf'] })
-  assert.equal(third[0].modelName, 'file-10.pdf')
+  assert.deepEqual(first.map((f) => f.modelName), ['document-1.pdf', 'image-1.png'])
+  assert.deepEqual(second.map((f) => f.modelName), ['document-2.pdf', 'image-2.jpg'])
+  // A gap in the used names does not restart the count.
+  const third = a.anonymizeAttachmentNames([{ name: 'x.pdf', kind: 'pdf' }], { taken: ['document-9.pdf', 'document-2.pdf'] })
+  assert.equal(third[0].modelName, 'document-10.pdf')
+})
+
+test('a paste is named for what it is, and citations read naturally', () => {
+  const both = a.anonymizeAttachmentNames([
+    { name: 'quarterly.pdf', kind: 'pdf' },
+    { name: 'Paste 1', kind: 'txt', source: 'paste' },
+    { name: 'clip.mp4', kind: 'media' },
+  ])
+  assert.deepEqual(both.map((f) => f.modelName), ['document-1.pdf', 'paste-1', 'media-1.mp4'])
+  assert.equal(a.friendlyFileName('paste-1'), 'Paste 1')
+  assert.equal(a.friendlyFileName('image-2.png'), 'Image 2')
+  assert.equal(a.friendlyFileName('document-3.pdf'), 'Document 3')
+  assert.equal(a.friendlyFileName('file-4.txt'), 'File 4')
+  assert.equal(a.friendlyFileName('quarterly.pdf'), 'quarterly.pdf')
 })
 
 test('the appendix indexes every file and closes every text boundary', () => {
@@ -41,9 +55,9 @@ test('the appendix indexes every file and closes every text boundary', () => {
   ])
   const appendix = a.attachmentAppendix(files)
   assert.match(appendix, /<attachments count="3">/)
-  assert.match(appendix, /1\. \[file-1\.pdf\] PDF, 12 pages, 48,210 characters/)
+  assert.match(appendix, /1\. \[document-1\.pdf\] PDF, 12 pages, 48,210 characters/)
   assert.match(appendix, /2\. \[image-1\.png\] image/)
-  assert.match(appendix, /<attached_file name="file-2\.txt" kind="txt" characters="3200">\nfirst file body\n<\/attached_file>/)
+  assert.match(appendix, /<attached_file name="document-2\.txt" kind="txt" characters="3200">\nfirst file body\n<\/attached_file>/)
   assert.doesNotMatch(appendix, /secret|diagram|notes/)
 })
 
@@ -63,7 +77,7 @@ test('truncated files are labeled as partial in the index', () => {
 test('the legacy manifest uses the neutral names only', () => {
   const files = a.anonymizeAttachmentNames([{ name: 'secret.pdf', kind: 'pdf' }])
   const manifest = a.attachmentManifest(files)
-  assert.match(manifest, /file-1\.pdf/)
+  assert.match(manifest, /document-1\.pdf/)
   assert.doesNotMatch(manifest, /secret/)
 })
 

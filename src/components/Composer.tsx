@@ -857,8 +857,14 @@ export function Composer({ cfg, quote, onClearQuote }: { cfg: (t: string) => voi
                   s.patch({ notice: { t: 'That paste is too large to attach because this message is already at its text limit. Send it in a file instead, or remove an attachment first.' } })
                   return
                 }
-                const n = att.filter((a) => a.source === 'paste').length + 1
-                setAtt((list) => [...list, { name: `Pasted text ${n}`, kind: 'txt', size: `${Math.max(1, Math.round(text.length / 1024))} KB`, source: 'paste', text }])
+                // The label matches the name the prompt and the reply pills
+                // use ("Paste 2" ↔ `paste-2`), so one file has one name
+                // everywhere. Numbering continues past the pastes already sent
+                // in this chat, exactly like the neutral prompt names do.
+                const sentPastes = (s.chats.find((c) => c.id === s.chat)?.msgs ?? [])
+                  .flatMap((m) => m.att ?? []).filter((a) => a.source === 'paste').length
+                const n = sentPastes + att.filter((a) => a.source === 'paste').length + 1
+                setAtt((list) => [...list, { name: `Paste ${n}`, kind: 'txt', size: `${Math.max(1, Math.round(text.length / 1024))} KB`, source: 'paste', text }])
                 return
               }
               const el = ta.current

@@ -81,7 +81,15 @@ function shapeSettings(settings: Obj, includeKeys: boolean): Obj {
   if (includeKeys) return out
   if (Array.isArray(out.eps)) out.eps = out.eps.map((e) => ({ ...obj(e), key: '' }))
   if (out.search && typeof out.search === 'object') out.search = { ...obj(out.search), keys: {}, readerKey: '' }
-  if (Array.isArray(out.mcps)) out.mcps = out.mcps.map((m) => ({ ...obj(m), headers: '' }))
+  // A local MCP server's `env` block often holds an API key, so its values are
+  // blanked exactly like the header block (keys stay so the shape is obvious).
+  if (Array.isArray(out.mcps)) out.mcps = out.mcps.map((m) => {
+    const rec = obj(m)
+    const env = rec.env && typeof rec.env === 'object' && !Array.isArray(rec.env)
+      ? Object.fromEntries(Object.keys(obj(rec.env)).map((key) => [key, '']))
+      : rec.env
+    return { ...rec, headers: '', ...(env ? { env } : {}) }
+  })
   // A share record's token is the owner credential for editing or revoking a
   // public link; it is minted server-side and stays on the device that made it.
   if (Array.isArray(out.shares)) out.shares = out.shares.map((s) => ({ ...obj(s), token: '' }))

@@ -112,10 +112,17 @@ export function buildExportPayload(
     // blanked from the shape itself, so a provider added later cannot leak by
     // being missed in a hand-written list (Jina used to).
     data.search = withKeys ? sp : { ...sp, keys: Object.fromEntries(Object.keys(sp.keys).map((id) => [id, ''])), readerKey: '' }
-    // MCP headers usually carry a bearer token: strip them unless the export
-    // explicitly includes keys, exactly like endpoint API keys.
+    // MCP headers usually carry a bearer token, and a local server's env block
+    // often carries an API key: strip both unless the export explicitly
+    // includes keys, exactly like endpoint API keys.
     const mcps = Array.isArray(s.mcps) ? s.mcps : []
-    data.mcps = withKeys ? mcps : mcps.map((m) => ({ ...(m as Record<string, unknown>), headers: '' }))
+    data.mcps = withKeys ? mcps : mcps.map((m) => {
+      const rec = m as Record<string, unknown>
+      const env = rec.env && typeof rec.env === 'object' && !Array.isArray(rec.env)
+        ? Object.fromEntries(Object.keys(rec.env as Record<string, unknown>).map((key) => [key, '']))
+        : rec.env
+      return { ...rec, headers: '', ...(env ? { env } : {}) }
+    })
     data.imageGen = s.imageGen
     data.codeRun = s.codeRun
   }

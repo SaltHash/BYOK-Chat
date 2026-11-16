@@ -399,6 +399,27 @@ export function keepLocalCredentials(local: Obj, incoming: Obj): Obj {
       return typeof x[field] === 'string' && !x[field] && kept ? { ...x, [field]: kept } : item
     })
   }
+  // A local MCP server's env values are blanked on the way out too, so adopt
+  // the incoming shape but keep this device's values for the same keys.
+  if (Array.isArray(incoming.mcps) && Array.isArray(local.mcps)) {
+    const envById = new Map<string, Record<string,string>>()
+    for (const item of asArr(local.mcps)) {
+      const x = asObj(item)
+      if (typeof x.id !== 'string' || !x.env || typeof x.env !== 'object') continue
+      const values = Object.fromEntries(Object.entries(asObj(x.env)).filter(([, v]) => typeof v === 'string' && !!v)) as Record<string,string>
+      if (Object.keys(values).length) envById.set(x.id, values)
+    }
+    if (envById.size) {
+      out.mcps = asArr(incoming.mcps).map((item) => {
+        const x = asObj(item)
+        const kept = typeof x.id === 'string' ? envById.get(x.id) : undefined
+        if (!kept || !x.env || typeof x.env !== 'object') return item
+        const env = { ...asObj(x.env) }
+        for (const [key, value] of Object.entries(kept)) if (!env[key]) env[key] = value
+        return { ...x, env }
+      })
+    }
+  }
   return out
 }
 

@@ -92,7 +92,7 @@ test('credentials stay on the device unless explicitly included', () => {
     settings: {
       eps: [{ id: 'e', name: 'E', key: 'SECRET' }],
       search: { keys: { exa: 'SEARCHSECRET' }, readerKey: 'READERSECRET' },
-      mcps: [{ id: 'm', headers: 'Authorization: Bearer x' }],
+      mcps: [{ id: 'm', headers: 'Authorization: Bearer x', env: { TOKEN: 'SECRET' } }],
       prefs: { showBy: true },
     },
     chats: [], workspaces: {}, selectedRevision: {},
@@ -102,12 +102,15 @@ test('credentials stay on the device unless explicitly included', () => {
   assert.deepEqual(stripped.settings.search.keys, {})
   assert.equal(stripped.settings.search.readerKey, '')
   assert.equal(stripped.settings.mcps[0].headers, '')
+  // A local MCP server's env block is a credential store, like the headers.
+  assert.deepEqual(stripped.settings.mcps[0].env, { TOKEN: '' })
   assert.equal(stripped.settings.prefs.showBy, true)
 
   const kept = shapeSyncData(data, { includeKeys: true })
   assert.equal(kept.settings.eps[0].key, 'SECRET')
   assert.deepEqual(kept.settings.search.keys, { exa: 'SEARCHSECRET' })
   assert.equal(kept.settings.mcps[0].headers, 'Authorization: Bearer x')
+  assert.deepEqual(kept.settings.mcps[0].env, { TOKEN: 'SECRET' })
 })
 
 test('only the newest workspace revision travels, and a huge file says it was cut', () => {

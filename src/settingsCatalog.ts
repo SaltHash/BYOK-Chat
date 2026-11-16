@@ -147,6 +147,7 @@ export const SETTING_LINKS: SettingLink[] = [
   { tab: 'workspace', anchor: 'gist-sharing', title: 'GitHub Gist sharing', keywords: 'gist token share github' },
 
   // MCP
+  { tab: 'mcp', anchor: 'import-mcp', title: 'Import MCP servers from JSON', keywords: 'mcp import json claude desktop cursor vscode zed claude code config servers paste file stdio command args url headers' },
 
   // Tools
   { tab: 'tools', anchor: 'tool-access', title: 'Tool access and approvals', keywords: 'tool access approval permission lock full standard restricted disabled composer ask allow deny' },

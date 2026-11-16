@@ -5,6 +5,7 @@ import { Readable } from 'node:stream'
 import { brotliCompressSync, gzipSync } from 'node:zlib'
 import { apiRoute } from './server/api.mjs'
 import { proxyRoute } from './server/proxy.mjs'
+import { mcpStdioRoute } from './server/mcpStdio.mjs'
 import { jsonResult } from './server/http.mjs'
 import { pinnedFetch } from './server/pinnedFetch.mjs'
 
@@ -130,6 +131,11 @@ const server = createServer(async (req, res) => {
     // before apiRoute, whose catch-all would 404 unknown /api/* paths.
     const proxied = await proxyRoute(req, process.env, { fetchFn: pinnedFetch })
     if (proxied) return sendWebResponse(res, proxied, req.method)
+    // Local stdio MCP bridge: only this host can start a command server, so the
+    // route lives here rather than in the shared apiRoute (a Worker has no
+    // child_process). It must also run before apiRoute's /api catch-all.
+    const stdio = await mcpStdioRoute(req, process.env)
+    if (stdio) return sendResult(res, stdio)
     const result = await apiRoute(req, process.env, { fetchFn: pinnedFetch })
     if (result) return sendResult(res, result)
   } catch (error) {

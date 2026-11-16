@@ -993,6 +993,19 @@ test('wire adds a file index and labels every native block by name', () => {
   assert.doesNotMatch(JSON.stringify(w), /secret|photo/)
 })
 
+test('pasted text reaches a text-only endpoint as text, with no image block', () => {
+  // A paste is stored as its extracted text (`kind: 'txt'`), so an endpoint
+  // with no vision support still receives the whole thing inline.
+  const att = { name: 'Paste 1', modelName: 'paste-1', kind: 'txt', source: 'paste', size: '2 KB', text: 'revenue grew 12% in Q3' }
+  const msg = { id: 'u', r: 'user', t: 'summarize this', full: 'summarize this', att: [att] }
+  const w = wire(openai, [msg])
+  assert.equal(w.length, 1)
+  assert.equal(typeof w[0].content, 'string')
+  assert.match(w[0].content, /revenue grew 12% in Q3/)
+  assert.match(w[0].content, /\[paste-1\]/)
+  assert.doesNotMatch(JSON.stringify(w), /image_url|attached_file name="paste-1"><!--/)
+})
+
 test('readAtt decodes UTF-16 and Windows-1252 text instead of replacement characters', async () => {
   const utf16 = new File([Uint8Array.from([0xff, 0xfe, 0x48, 0x00, 0x69, 0x00])], 'utf16.txt', { type: 'text/plain' })
   const r = await readAtt(utf16)
