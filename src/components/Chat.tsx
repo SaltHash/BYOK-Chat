@@ -1,6 +1,6 @@
 import { memo, useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
-import { GitBranch, ChevronLeft, ChevronRight, ChevronDown, Server, Cpu, Copy, Check, RefreshCw, Trash2, ListOrdered, TriangleAlert, Paperclip, Download, ExternalLink, Volume2, Pin, PinOff, Bookmark, Search, ArrowUp, ArrowDown, X, Quote, FileText, FileCode2, Terminal, Image as ImageIcon, Wrench } from 'lucide-react'
+import { GitBranch, ChevronLeft, ChevronRight, ChevronDown, Server, Cpu, Copy, Check, RefreshCw, Trash2, ListOrdered, TriangleAlert, Paperclip, Download, ExternalLink, Volume2, Pin, PinOff, Bookmark, Search, ArrowUp, ArrowDown, X, Quote, FileText, FileCode2, Terminal, Image as ImageIcon, Wrench, Sparkles, Brain, ChartLine, MessageCircle, BookOpen } from 'lucide-react'
 import { useS, useLive, usable, modelNameOf, featOn, previewSysFor, activeWorkspaceForChat, pinnedReplyOf, DEFAULT_REPLY_STATS, type Ep, type LogDetail, type Msg, type ReplyModelLabel } from '../store'
 import { clampWorkspaceFrac, roundFrac, CHAT_WIDTH } from '../layout'
 import { focusComposer, startPointerDrag } from '../hooks'
@@ -21,7 +21,8 @@ import { ArtifactList, artifactBlocks } from './Artifact'
 import { PathSwitch } from './PathSwitch'
 import { Tutorial } from './Extra'
 import { Md, UserText } from './Md'
-import { activityLine, flairLine, thinkingLine, TEMPORARY_NOTE } from '../flair'
+import { flairLine, thinkingLine, TEMPORARY_NOTE } from '../flair'
+import { activityOf, formatElapsed, type ActivityKind } from '../activity'
 import { splitStream } from '../streamMd'
 import { WorkspaceTile, WorkspacePanel } from './Workspace'
 import { ResearchTierPicker, ResearchQuestionsCard, ResearchPlanCard, ResearchProgressCard, ResearchTile, ResearchPanel } from './Research'
@@ -528,14 +529,95 @@ function StreamedMd({ chunks, fade }: { chunks: string[]; fade: number }) {
   )
 }
 
-/* Live progress for a reply that is still being produced: the orbiting dots
- * and the status line, nothing else. It is only mounted while the reply is
- * waiting on something (see `active`), never while text is arriving. */
-function ReplyProgress({ status, block }: { status: string; block?: boolean }) {
+/* One icon per kind of activity. The indicator morphs between these rather
+ * than swapping the glyph, so a change of step reads as a change of state. */
+const ACTIVITY_ICONS: Record<ActivityKind, Ic> = {
+  thinking: Sparkles,
+  search: Search,
+  read: FileText,
+  write: FileCode2,
+  delete: Trash2,
+  code: Terminal,
+  image: ImageIcon,
+  memory: Brain,
+  chart: ChartLine,
+  question: MessageCircle,
+  skill: BookOpen,
+  mcp: Wrench,
+  tool: Wrench,
+}
+
+/** The outgoing icon turns and shrinks away while the incoming one turns in:
+ *  a morph, not a cut or a plain fade. */
+function MorphIcon({ kind, size = 15 }: { kind: ActivityKind; size?: number }) {
+  const Icon = ACTIVITY_ICONS[kind] ?? Wrench
+  const shown = useRef<ActivityKind>(kind)
+  const seq = useRef(0)
+  const [out, setOut] = useState<{ kind: ActivityKind; key: number } | null>(null)
+  // Layout effect, not effect: both glyphs must be in the same paint, or the
+  // old icon would disappear for a frame before the transition starts.
+  useLayoutEffect(() => {
+    if (shown.current === kind) return
+    const previous = shown.current
+    shown.current = kind
+    seq.current += 1
+    setOut({ kind: previous, key: seq.current })
+    const timer = setTimeout(() => setOut(null), 460)
+    return () => clearTimeout(timer)
+  }, [kind])
+  const Out = out ? ACTIVITY_ICONS[out.kind] ?? Wrench : null
   return (
-    <span className={cx('reply-thinking', block && 'mt-2 block')} role="status" aria-label={status}>
-      <span className="reply-dots" aria-hidden="true"><i /><i /><i /></span>
-      <span className="ml-2 text-mu">{status}</span>
+    <span className="activity-icon" aria-hidden="true">
+      {Out && out && <Out key={`out-${out.key}`} size={size} data-phase="out" />}
+      <Icon key={`in-${kind}`} size={size} data-phase={out ? 'in' : undefined} />
+    </span>
+  )
+}
+
+/** Whole-second timer for the current step. Restarts whenever the activity
+ *  changes, so the number always belongs to the line beside it. */
+function useStepElapsed(key: string, running: boolean): string {
+  const [start, setStart] = useState(() => Date.now())
+  const [now, setNow] = useState(() => Date.now())
+  const previous = useRef(key)
+  useEffect(() => {
+    if (previous.current === key) return
+    previous.current = key
+    const at = Date.now()
+    setStart(at)
+    setNow(at)
+  }, [key])
+  useEffect(() => {
+    if (!running) return
+    const timer = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(timer)
+  }, [running, key])
+  return formatElapsed((running ? now : Date.now()) - start)
+}
+
+/* The reply's action indicator, in place of the old orbiting dots: the newest
+ * tool calls (or plain thinking) in the present tense, the time spent on that
+ * step in a fainter tone, and a shine while it is the newest thing happening.
+ * A finished set is written in the past tense and stops moving. It is only
+ * mounted while the reply is waiting on something (see `active`). */
+function ActionIndicator({ calls, live, duration, block }: { calls: TrailCall[]; live: boolean; duration?: number; block?: boolean }) {
+  const activity = activityOf(calls)
+  const label = live ? activity.present : activity.past
+  // Keyed by kind, not by the full line: a count that grows as results arrive
+  // is still the same step, so its timer must not restart.
+  const elapsed = useStepElapsed(activity.kind, live)
+  const shown = live ? elapsed : duration && duration > 0 ? formatElapsed(duration) : ''
+  return (
+    <span
+      className={cx('activity', block && 'mt-2 block')}
+      role="status"
+      aria-label={shown ? `${label}, ${shown}` : label}
+      data-live={live ? '' : undefined}
+      data-past={live ? undefined : ''}
+    >
+      <MorphIcon kind={activity.kind} />
+      <span className="activity-label text-sm">{label}</span>
+      {shown && <span className="activity-time" title={live ? 'Time on this step' : 'Time spent on this step'}>{shown}</span>}
     </span>
   )
 }
@@ -978,14 +1060,10 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
           </div>
         ) : hideBody ? null : (() => {
           const finalIds = new Set((m.toolRounds ?? []).flatMap((r) => r.calls).map((c) => c.id))
-          const pendingNames = ((live ?? []) as { id?: string; name?: string }[])
-            .filter((t) => t.name && (!t.id || !finalIds.has(t.id)))
-            .map((t) => t.name!)
-          const status = writingPath ? `Writing ${writingPath}…` : activityLine(pendingNames, m.id)
           // The indicator belongs to waiting, not writing: it shows while a tool
           // runs (even if text already streamed) or before the first token, and
-          // hides the moment prose arrives so the dots never sit beside text
-          // the model is actively typing.
+          // hides the moment prose arrives so the indicator never sits beside
+          // text the model is actively typing.
           const active = !!writingPath || (live?.length ?? 0) > 0 || (last && busy && !m.t)
           // A reply that made artifacts is rendered in pieces so each one sits
           // where the model called it, not in a block after the whole answer.
@@ -1007,10 +1085,24 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
           const streamingSegments = liveChunks?.length ? splitToolTrail(streamText, m.toolRounds) : null
           const streamingTrail = !!streamingSegments?.some((s) => s.calls.length)
           const lastRoundCalls = (m.toolRounds ?? [])[(m.toolRounds ?? []).length - 1]?.calls ?? []
-          const waitingTrail = !streamingTrail && !!liveChunks?.length ? (pendingCalls.length ? pendingCalls : busy ? lastRoundCalls : []) : []
+          // What the action indicator says: the calls still running, the file
+          // being written, or (between steps) the newest finished set, which
+          // reads in the past tense with no shine and no timer.
+          const runningCalls = pendingCalls.length
+            ? pendingCalls as TrailCall[]
+            : writingPath
+              ? [{ name: 'workspace_upsert', arguments: JSON.stringify({ action: 'patch', path: writingPath }) }]
+              : []
+          const indicatorCalls = runningCalls.length
+            ? runningCalls
+            : busy && last
+              ? lastRoundCalls as unknown as TrailCall[]
+              : []
+          const indicatorLive = runningCalls.length > 0 || indicatorCalls.length === 0
+          const indicatorDuration = lastRoundCalls.reduce((ms, c) => ms + Math.max(0, c.ms ?? 0), 0)
           return (
             <>
-              {(m.t || hasTrail || streamingTrail || waitingTrail.length > 0) && (
+              {(m.t || hasTrail || streamingTrail) && (
                 <div ref={contentRef} className="inline">
                   {liveChunks && liveChunks.length ? (
                     streamingTrail ? (
@@ -1023,7 +1115,6 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
                     ) : (
                       <>
                         {streamMd ? <StreamedMd chunks={liveChunks} fade={streamFade} /> : <StreamedText chunks={liveChunks} fade={streamFade} />}
-                        {waitingTrail.length > 0 && <ToolTrail calls={waitingTrail as TrailCall[]} />}
                       </>
                     )
                   ) : blocks ? (
@@ -1045,7 +1136,14 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
                   )}
                 </div>
               )}
-              {active && <ReplyProgress status={status} block={!!m.t} />}
+              {active && (
+                <ActionIndicator
+                  calls={indicatorCalls}
+                  live={indicatorLive}
+                  duration={indicatorLive ? undefined : indicatorDuration}
+                  block={!!m.t}
+                />
+              )}
             </>
           )
         })()}

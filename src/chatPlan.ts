@@ -4,6 +4,8 @@ import { enabledSkills, normSkills, composeSystemPrompt } from './skills'
 import { modelsOf, usable } from './models'
 import { qualityEffects, qualityPrompt, type GlobalPrompt, type Quality, type QualityEffect } from './flair'
 import { applyPromptVars, dateContext } from './promptVars'
+import { codeRunNote } from './sandbox'
+import { normCodeRun } from './codesandbox'
 import type { Ep, Pl, Cmd, Msg, Notice, FeatureId } from './store'
 import type { ToolMode } from './toolApprovals'
 
@@ -23,6 +25,8 @@ type PlanState = {
   /** Full/standard/restricted/off; off must not advertise tools to the model. */
   toolMode?: ToolMode
   skills: unknown
+  /** Code execution settings decide which languages the model may run. */
+  codeRun?: unknown
 }
 
 export const playlistEntries = (s: Pick<PlanState, 'eps'>, p: Pl) =>
@@ -84,7 +88,13 @@ export function planRequest(s: PlanState, um: Msg, defaultFeatures: Record<Featu
   const searchSys = um.intent === 'search' && enabledTools.includes('search')
     ? 'The reader explicitly asked for a web search with this message: call the web search tool before you answer, then base the reply on what it returns.'
     : ''
-  const toolSys = enabledTools.length ? `${baseSys}${baseSys ? '\n\n' : ''}You may use the enabled tools when needed to answer the user. Call a tool for requests that need its actual result, then base your answer on the returned result.${widgetSys ? ` ${widgetSys}` : ''}${searchSys ? ` ${searchSys}` : ''}` : baseSys
+  const toolLine = enabledTools.length ? `${baseSys}${baseSys ? '\n\n' : ''}You may use the enabled tools when needed to answer the user. Call a tool for requests that need its actual result, then base your answer on the returned result.${widgetSys ? ` ${widgetSys}` : ''}${searchSys ? ` ${searchSys}` : ''}` : baseSys
+  // The code sandbox is its own capability: `run_code` is offered whenever the
+  // switch is on, even though it is not one of the user-facing tool rows. The
+  // note states which languages exist and that no libraries are available, so
+  // the model never promises `pip install` or offers a language it cannot run.
+  const sandboxNote = F.tools && s.toolMode !== 'off' ? codeRunNote(normCodeRun(s.codeRun)) : ''
+  const toolSys = sandboxNote ? `${toolLine}${toolLine ? '\n\n' : ''}${sandboxNote}` : toolLine
   const skills = F.skills && !effects.skillsOff ? enabledSkills(normSkills(s.skills).skills) : []
   const sys = composeSystemPrompt(toolSys, skills)
   let err: Notice = null

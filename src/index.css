@@ -523,7 +523,41 @@ html[data-codewrap] .code-lines .code-line > code { flex: 1 1 auto; min-width: 0
 @media (prefers-reduced-motion: reduce) { :root { --reply-in-duration: 0ms; } }
 .animate-reply-in { animation: reply-in var(--reply-in-duration) ease-out both; }
 .animate-reply-in[data-fade="0"] { animation: none; }
-.reply-thinking { display:inline-flex; align-items:center; min-height:2rem; position:relative; padding:.1rem .45rem .3rem 1px; border-radius:.5rem; }
+/* The action indicator: one line for what the reply is doing right now, in
+   place of the old orbiting dots. The icon morphs between tools, the label
+   carries a shine while it is the newest activity, and the time spent on the
+   current step sits beside it in a fainter tone. */
+.activity { display:inline-flex; align-items:center; gap:.5rem; min-height:2rem; position:relative; padding:.1rem .45rem .3rem 1px; border-radius:.5rem; }
+.activity-icon { position:relative; display:inline-flex; width:1.05rem; height:1.05rem; flex:none; align-items:center; justify-content:center; color:var(--ac); }
+.activity-icon > svg { position:absolute; inset:0; margin:auto; }
+/* The old icon spins and shrinks away while the new one turns in and settles:
+   a rotate-scale morph rather than a cut or a plain crossfade. */
+.activity-icon > svg[data-phase="in"] { animation:activity-icon-in .44s cubic-bezier(.2,.9,.3,1.3) both; }
+.activity-icon > svg[data-phase="out"] { animation:activity-icon-out .44s cubic-bezier(.55,0,.3,1) both; }
+@keyframes activity-icon-in {
+  from { opacity:0; transform:rotate(-80deg) scale(.3); filter:blur(2.5px); }
+  to { opacity:1; transform:rotate(0deg) scale(1); filter:blur(0); }
+}
+@keyframes activity-icon-out {
+  from { opacity:1; transform:rotate(0deg) scale(1); filter:blur(0); }
+  to { opacity:0; transform:rotate(75deg) scale(.3); filter:blur(2.5px); }
+}
+.activity-label { position:relative; }
+/* Shine: a light band travels across the words, only on the newest activity. */
+.activity[data-live] .activity-label {
+  background-image:linear-gradient(100deg, var(--mu) 36%, var(--tx) 50%, var(--mu) 64%);
+  background-size:250% 100%;
+  -webkit-background-clip:text; background-clip:text; color:transparent;
+  animation:activity-shine 2.6s linear infinite;
+}
+@keyframes activity-shine { from { background-position:120% 0; } to { background-position:-20% 0; } }
+.activity[data-past] .activity-label { color:var(--mu); }
+.activity-time { font-size:.75rem; font-variant-numeric:tabular-nums; color:color-mix(in srgb, var(--mu) 70%, transparent); }
+@media (prefers-reduced-motion: reduce) {
+  .activity-icon > svg[data-phase] { animation:none; }
+  .activity-icon > svg[data-phase="out"] { display:none; }
+  .activity[data-live] .activity-label { animation:none; background:none; color:var(--tx); }
+}
 /* Process-to-answer reads as a tree: one hairline runs behind the nodes, so a
    saved step and the tool call it caused sit on the same path instead of in
    two unrelated rows. The line stops at the first and last dot. */
@@ -579,27 +613,7 @@ html[data-codewrap] .code-lines .code-line > code { flex: 1 1 auto; min-width: 0
 }
 @keyframes process-shine { to { transform:rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .process-ring[data-live]::after { animation:none; opacity:.5; } }
-.reply-dots { position:relative; display:inline-block; width:1.35rem; height:1.2rem; margin:0 .45rem; flex:none; }
-.reply-dots i { position:absolute; width:.42rem; height:.42rem; border-radius:50%; background:var(--ac); box-shadow:0 0 4px color-mix(in srgb,var(--ac) 30%,transparent);
-  animation:
-    tri-orbit 6s linear infinite,
-    tri-pulse 2s ease-in-out infinite; }
-/* vertices: A=top, B=bottom-right, C=bottom-left. A->B->C->A is counterclockwise. */
-.reply-dots i:nth-child(1) { animation-delay: 0s, 0s; }
-.reply-dots i:nth-child(2) { animation-delay: -2s, -1.333s; }
-.reply-dots i:nth-child(3) { animation-delay: -4s, -0.666s; }
-@keyframes tri-pulse { 0%, 100% { opacity:.65; transform:scale(.92); } 50% { opacity:.95; transform:scale(1.05); } }
-/* 6s cycle = 3 x (1.5s hold + 0.5s move). Moves use easing via per-keyframe timing. */
-@keyframes tri-orbit {
-  0% { left:50%; top:0%; translate:-50% 0; animation-timing-function:linear; }
-  25% { left:50%; top:0%; translate:-50% 0; animation-timing-function:cubic-bezier(.45,.05,.35,1); }
-  33.333% { left:100%; top:100%; translate:-100% -100%; animation-timing-function:linear; }
-  58.333% { left:100%; top:100%; translate:-100% -100%; animation-timing-function:cubic-bezier(.45,.05,.35,1); }
-  66.666% { left:0%; top:100%; translate:0 -100%; animation-timing-function:linear; }
-  91.666% { left:0%; top:100%; translate:0 -100%; animation-timing-function:cubic-bezier(.45,.05,.35,1); }
-  100% { left:50%; top:0%; translate:-50% 0; }
-}
-@media (prefers-reduced-motion: reduce) { .reply-dots i { animation:none; } .reply-dots i:nth-child(1) { left:50%; top:0%; translate:-50% 0; } .reply-dots i:nth-child(2) { left:100%; top:100%; translate:-100% -100%; } .reply-dots i:nth-child(3) { left:0%; top:100%; translate:0 -100%; } }
+
 .md > :first-child { margin-top: 0; }
 .md > :last-child { margin-bottom: 0; }
 .md :not(pre) > code { border-radius: 0.375rem; background: var(--hov); padding: 0.1em 0.4em; font-size: 0.9em; }

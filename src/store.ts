@@ -11,7 +11,7 @@ import { withCompaction, shouldCompact, selectCompactionMessages, transcriptFor,
 import { normMcpServers, mcpBindings, callMcpTool, toolParameters, type McpServer, type McpTool } from './mcp'
 import { attachmentAppendix, projectFileBlock, uniqueAttachmentNames, anonymizeAttachmentNames, realPromptNames, promptNameOf } from './attachments'
 import { generateImages, normImageGen, BLANK_IMAGE_GEN, imageSummary, type ImageGenPrefs } from './imagegen'
-import { runCode, formatCodeResult, normCodeRun, BLANK_CODE_RUN, type CodeRunPrefs, type CodeLang } from './codesandbox'
+import { runCodeWithSandbox, codeLanguagesOf, formatCodeResult, normCodeRun, BLANK_CODE_RUN, type CodeRunPrefs, type CodeLang } from './codesandbox'
 import type { EndpointAuth } from './endpointAuth'
 import { blobPut } from './storage/durable'
 import { normVoice, BLANK_VOICE, type VoicePrefs } from './voice'
@@ -312,7 +312,6 @@ const PRESET_PRE: Record<string, ['openai' | 'anthropic', string, string, 'autho
  * future registry entry) are appended rather than dropped. */
 export const PRESET_ORDER = [
   'OpenRouter',
-  'AIHubMix',
   'OpenAI',
   'Anthropic',
   'Google',
@@ -336,6 +335,8 @@ export const PRESET_ORDER = [
   'Inworld',
   'CompactifAI',
   'The Grid',
+  // Kept last among the named providers, above the catch-all rows.
+  'AIHubMix',
   'Other OpenAI-compatible',
   'Other Anthropic-compatible',
 ]
@@ -2594,8 +2595,10 @@ export const useS = create<S>()(
                 if (toolsAllowed && featOn(g, 'mcp')) for (const name of Object.keys(DYNAMIC_TOOLS)) base[name] = true
                 // Image generation has its own on switch and endpoint picker.
                 if (toolsAllowed && normImageGen(g.imageGen).on) base.generate_image = true
-                // Code execution is likewise its own opt-in switch.
-                if (toolsAllowed && normCodeRun(g.codeRun).on) base.run_code = true
+                // Code execution is likewise its own opt-in switch. A remote
+                // sandbox without its key or endpoint is not offered: an
+                // uncallable tool only invites the model to claim it ran code.
+                if (toolsAllowed && normCodeRun(g.codeRun).on && codeLanguagesOf(g.codeRun).length) base.run_code = true
                 // use_skill is a hidden model capability (not listed in Settings → Tools).
                 if (toolsAllowed && !p.effects.skillsOff && featOn(get(), 'skills') && (p.skills ?? []).length) base[SKILL_TOOL_NAME] = true
                 return base
@@ -2709,7 +2712,12 @@ export const useS = create<S>()(
                 if (!prefs.on) throw Error('Code execution is off. Turn it on in Settings → Tools → Code execution.')
                 if (language !== 'javascript' && language !== 'python') throw Error('language must be javascript or python')
                 if (typeof code !== 'string' || !code.trim()) throw Error('Provide code to run')
-                return formatCodeResult(language, await runCode(language, code, prefs))
+                const languages = codeLanguagesOf(prefs)
+                if (language === 'python' && !languages.includes('python')) {
+                  throw Error('Python is not available in this sandbox. Use JavaScript, or enable Python in Settings → Tools → Code execution.')
+                }
+                if (!languages.length) throw Error('No code sandbox is ready. Add the key or endpoint for it in Settings → Tools → Code execution.')
+                return formatCodeResult(language, await runCodeWithSandbox(language, code, prefs))
               },
               ask: async (raw: { question?: unknown; options?: unknown; allowText?: unknown }) => {
                 const question = normalizeQuestionInput(raw)

@@ -129,44 +129,6 @@ export function thinkingLine(_seed: string): string {
   return THINKING[0]
 }
 
-const GENERIC_ACTIVITY = ['Working…']
-
-/** Plain, matter-of-fact status lines per tool. */
-const ACTIVITY: Record<string, readonly string[]> = {
-  search: ['Searching the web…'],
-  fetch_page: ['Reading the page…'],
-  use_skill: ['Loading skill…'],
-  workspace_upsert: ['Working with files…'],
-  prompt_chip: ['Preparing follow-up…'],
-  inline_poll: ['Preparing choices…'],
-  graph: ['Plotting the graph…'],
-  time: ['Checking the time…'],
-  date: ['Checking the date…'],
-  calc: ['Calculating…'],
-  count: ['Counting…'],
-  json: ['Formatting JSON…'],
-  base64: ['Encoding…'],
-  location: ['Checking location…'],
-  clipboard: ['Reading clipboard…'],
-  uuid: ['Generating UUID…'],
-  random: ['Generating random number…'],
-  hash: ['Hashing…'],
-  memory: ['Checking memory…'],
-}
-
-function hashSeed(seed: string): number {
-  let h = 0
-  for (const c of seed) h = (h * 31 + c.charCodeAt(0)) | 0
-  return Math.abs(h)
-}
-
-/** Status line for the most recent tool call (or a thinking line when none). Stable per message. */
-export function activityLine(toolNames: readonly string[], seed: string): string {
-  const last = [...toolNames].filter(Boolean).pop()
-  if (!last) return thinkingLine(seed)
-  return pick(ACTIVITY[last] ?? GENERIC_ACTIVITY, hashSeed(seed + last))
-}
-
 /* A quality is a small, named behaviour the user can switch on for every
  * reply. Most add a sentence to the system prompt; some also change how the
  * request runs (reasoning effort, skills, tool approval). The base system

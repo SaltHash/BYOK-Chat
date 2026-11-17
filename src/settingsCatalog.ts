@@ -153,6 +153,7 @@ export const SETTING_LINKS: SettingLink[] = [
   { tab: 'tools', anchor: 'tool-access', title: 'Tool access and approvals', keywords: 'tool access approval permission lock full standard restricted disabled composer ask allow deny' },
   { tab: 'tools', anchor: 'tool-limit', title: 'Tool execution limit', keywords: 'tool rounds limit unlock unlimited sequential loop stop' },
   { tab: 'tools', anchor: 'code-execution', title: 'Code execution', keywords: 'code execution run snippet javascript python sandbox pyodide timeout output limit stdout' },
+  { tab: 'tools', anchor: 'code-sandbox', title: 'Code sandbox provider', keywords: 'sandbox e2b piston judge0 remote runner byok api key template modal daytona riza custom endpoint timeout ttl' },
   { tab: 'tools', anchor: 'code-timeout', title: 'Code time limit', keywords: 'code timeout seconds limit runaway loop infinite sandbox' },
   { tab: 'tools', anchor: 'code-output', title: 'Code output limit', keywords: 'code output characters limit truncate stdout sandbox' },
   { tab: 'tools', anchor: 'code-packages', title: 'Load Python packages', keywords: 'python packages numpy pandas scipy matplotlib wheels pyodide import install' },

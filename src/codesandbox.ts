@@ -18,6 +18,8 @@
  * Python stays off by default and is opt-in.
  */
 
+import { BLANK_SANDBOX, availableCodeLanguages, normSandbox, runRemoteCode, type SandboxPrefs } from './sandbox'
+
 export type CodeLang = 'javascript' | 'python'
 
 export type CodeRunPrefs = {
@@ -34,6 +36,8 @@ export type CodeRunPrefs = {
   /** Let Pyodide fetch prebuilt wheels (numpy, pandas, …) when code imports
    *  them. Off by default because a package can be tens of megabytes. */
   pyPackages: boolean
+  /** Where snippets run: this browser, or a BYOK remote sandbox. */
+  sandbox: SandboxPrefs
 }
 
 /** Pinned latest release. Users can point this at a self-hosted copy. */
@@ -53,6 +57,7 @@ export const BLANK_CODE_RUN: CodeRunPrefs = {
   python: false,
   pyodideUrl: PYODIDE_DEFAULT_URL,
   pyPackages: false,
+  sandbox: BLANK_SANDBOX,
 }
 
 const clampInt = (v: unknown, min: number, max: number, fallback: number): number => {
@@ -78,8 +83,12 @@ export function normCodeRun(v: any): CodeRunPrefs {
     python: v?.python === true,
     pyodideUrl: pyodideIndexUrl(v?.pyodideUrl),
     pyPackages: v?.pyPackages === true,
+    sandbox: normSandbox(v?.sandbox),
   }
 }
+
+/** Words the model is told about: what it may run and what it may not. */
+export const codeLanguagesOf = (prefs: unknown): CodeLang[] => availableCodeLanguages(normCodeRun(prefs))
 
 /** Run results carry text only: the model sees stdout and the value, never the
  *  worker's internals. */
@@ -400,4 +409,28 @@ export async function runCode(lang: CodeLang, code: string, prefs: CodeRunPrefs)
   return lang === 'python'
     ? runPython(source, p.timeoutMs, p.maxOutput, pyodideIndexUrl(p.pyodideUrl), p.pyPackages)
     : runJavascript(source, p.timeoutMs, p.maxOutput)
+}
+
+/** Execute one snippet wherever the user pointed `run_code`: the local worker
+ *  sandbox, or a BYOK remote runner (E2B, Piston, Judge0, a custom endpoint).
+ *  The result shape is identical so the model reads one format. */
+export async function runCodeWithSandbox(lang: CodeLang, code: string, prefs: CodeRunPrefs): Promise<CodeResult> {
+  const p = normCodeRun(prefs)
+  if (p.sandbox.provider === 'local') return runCode(lang, code, p)
+  const languages = availableCodeLanguages(p)
+  if (!languages.includes(lang)) {
+    throw Error(`That code sandbox is not configured. Add its key or endpoint in Settings → Tools → Code execution, or switch code execution back to this browser.`)
+  }
+  const source = String(code ?? '')
+  if (!source.trim()) throw Error('Provide code to run.')
+  if (source.length > CODE_MAX_CHARS) throw Error(`Code is too long (${source.length.toLocaleString()} characters). The limit is ${CODE_MAX_CHARS.toLocaleString()}.`)
+  const r = await runRemoteCode(p.sandbox, lang, source, { timeoutMs: Math.max(p.timeoutMs, 15_000) })
+  return {
+    ok: r.ok,
+    logs: r.logs,
+    value: r.value ?? null,
+    ...(r.error ? { error: r.error } : {}),
+    ms: r.ms,
+    truncated: r.truncated || r.logs.length + String(r.value ?? '').length >= p.maxOutput,
+  }
 }

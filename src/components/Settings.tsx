@@ -23,6 +23,7 @@ import { WORKSPACE_TEMPLATES } from '../workspace'
 import { probeMcpServer, mcpToolName, parseMcpConfig, envBlockOf, parseEnvBlock, isMcpReady, isStdioMcp, type McpServer } from '../mcp'
 import { BLANK_IMAGE_GEN, IMAGE_SIZES, normImageGen } from '../imagegen'
 import { BLANK_CODE_RUN, CODE_OUTPUT_MAX, CODE_TIMEOUT_MAX, CODE_TIMEOUT_MIN, normCodeRun, PYODIDE_DEFAULT_URL } from '../codesandbox'
+import { SANDBOX_PROVIDERS, availableCodeLanguages, sandboxConfigured, codeLangLabelOf, E2B_DEFAULT_BASE, E2B_DEFAULT_HOST, E2B_DEFAULT_TEMPLATE, PISTON_DEFAULT_BASE, JUDGE0_DEFAULT_BASE, type SandboxProvider } from '../sandbox'
 import { normVoice, VOICE_LANGS, speak, stopSpeaking, speechAvailable, dictationAvailable } from '../voice'
 import { DENSITIES, DENSITY_IDS, SPACING_LIMITS, STYLE_PRESETS, STYLE_PRESET_IDS, hasSpacingOverrides, resolveSpacing } from '../style'
 import { USAGE_PERIODS } from '../usageStats'
@@ -1494,10 +1495,86 @@ function CodeRunCard() {
   const s = useSConfig()
   const c = normCodeRun(s.codeRun)
   const set = (p: Partial<typeof c>) => s.patch({ codeRun: { ...c, ...p } })
+  const sb = c.sandbox
+  const provider = sb.provider
+  const setSandbox = (p: Partial<typeof sb>) => set({ sandbox: { ...sb, ...p } })
+  const setE2b = (p: Partial<typeof sb.e2b>) => setSandbox({ e2b: { ...sb.e2b, ...p } })
+  const setPiston = (p: Partial<typeof sb.piston>) => setSandbox({ piston: { ...sb.piston, ...p } })
+  const setJudge0 = (p: Partial<typeof sb.judge0>) => setSandbox({ judge0: { ...sb.judge0, ...p } })
+  const setCustom = (p: Partial<typeof sb.custom>) => setSandbox({ custom: { ...sb.custom, ...p } })
   const secs = c.timeoutMs / 1000
+  const langs = availableCodeLanguages(c)
+  const ready = sandboxConfigured(sb)
+  const providerLabel = SANDBOX_PROVIDERS.find((p) => p.id === provider)?.label ?? 'This browser'
+  const langsText = langs.length ? langs.map((l) => codeLangLabelOf(l)).join(' and ') : 'not configured'
   return (
     <Anchor id="code-execution">
-      <Card icon={Code2} title="Code execution" sub={c.on ? `@run_code · On · JavaScript${c.python ? ' and Python' : ''} · ${secs}s limit` : '@run_code · Off'} muted={!c.on} right={<Toggle on={c.on} set={(on) => set({ on })} label="Allow code execution" />}>
+      <Card icon={Code2} title="Code execution" sub={c.on ? `@run_code · ${providerLabel} · ${langsText} · ${secs}s limit` : '@run_code · Off'} muted={!c.on} right={<Toggle on={c.on} set={(on) => set({ on })} label="Allow code execution" />}>
+        <Anchor id="code-sandbox">
+          <Field label="Where code runs">
+            <Sel
+              value={provider}
+              set={(id) => setSandbox({ provider: id as SandboxProvider })}
+              opts={SANDBOX_PROVIDERS.map((p) => [p.id, p.label] as [string, string])}
+            />
+            <p className="text-xs text-mu">{SANDBOX_PROVIDERS.find((p) => p.id === provider)?.hint}</p>
+          </Field>
+        </Anchor>
+        {!ready && <p role="alert" className="rounded-lg bg-er/10 px-3 py-2 text-xs text-er">This sandbox is not configured, so `run_code` is not offered to the model. Add {provider === 'custom' ? 'its endpoint URL' : 'its API key'} below.</p>}
+        {provider === 'e2b' && (
+          <>
+            <Field label="E2B API key"><Input type="password" autoComplete="off" value={sb.e2b.apiKey} set={(apiKey) => setE2b({ apiKey })} placeholder="e2b_…" /></Field>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Field label="Template"><Input value={sb.e2b.template} set={(template) => setE2b({ template })} placeholder={E2B_DEFAULT_TEMPLATE} /></Field>
+              <Field label="Lifetime (seconds)"><Input type="number" min={10} max={3600} value={sb.e2b.ttlSec} set={(v) => setE2b({ ttlSec: Number(v) || 120 })} /></Field>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Field label="Platform API"><Input value={sb.e2b.base} set={(base) => setE2b({ base })} placeholder={E2B_DEFAULT_BASE} /></Field>
+              <Field label="Sandbox host"><Input value={sb.e2b.host} set={(host) => setE2b({ host })} placeholder={E2B_DEFAULT_HOST} /></Field>
+            </div>
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-1.5 text-sm font-medium">Sandbox internet access</div>
+              <Toggle on={sb.e2b.internet} set={(internet) => setE2b({ internet })} label="Allow the E2B sandbox internet access" />
+            </div>
+            <p role="note" className="rounded-lg bg-bg px-3 py-2 text-xs text-mu">Each run creates a sandbox from the template and deletes it afterwards. The template's preinstalled Python packages are available; other providers start from the standard library.</p>
+          </>
+        )}
+        {provider === 'piston' && (
+          <>
+            <Field label="Piston API"><Input value={sb.piston.base} set={(base) => setPiston({ base })} placeholder={PISTON_DEFAULT_BASE} /></Field>
+            <Field label="API key (optional)"><Input type="password" autoComplete="off" value={sb.piston.key} set={(key) => setPiston({ key })} placeholder="Not needed for the public instance" /></Field>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Field label="Python runtime"><Input value={sb.piston.python} set={(python) => setPiston({ python })} placeholder="python" /></Field>
+              <Field label="JavaScript runtime"><Input value={sb.piston.javascript} set={(javascript) => setPiston({ javascript })} placeholder="javascript" /></Field>
+            </div>
+          </>
+        )}
+        {provider === 'judge0' && (
+          <>
+            <Field label="Judge0 API"><Input value={sb.judge0.base} set={(base) => setJudge0({ base })} placeholder={JUDGE0_DEFAULT_BASE} /></Field>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Field label="API key"><Input type="password" autoComplete="off" value={sb.judge0.key} set={(key) => setJudge0({ key })} placeholder="Optional on ce.judge0.com" /></Field>
+              <Field label="Key header">
+                <Seg v={sb.judge0.keyHeader} set={(keyHeader) => setJudge0({ keyHeader })} opts={[['x-auth-token', 'X-Auth-Token'], ['x-rapidapi-key', 'RapidAPI key']]} />
+              </Field>
+            </div>
+            {sb.judge0.keyHeader === 'x-rapidapi-key' && (
+              <Field label="RapidAPI host"><Input value={sb.judge0.rapidApiHost} set={(rapidApiHost) => setJudge0({ rapidApiHost })} placeholder="judge0-ce.p.rapidapi.com" /></Field>
+            )}
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Field label="Python language id"><Input type="number" min={1} max={200} value={sb.judge0.pythonId} set={(v) => setJudge0({ pythonId: Number(v) || 71 })} /></Field>
+              <Field label="JavaScript language id"><Input type="number" min={1} max={200} value={sb.judge0.javascriptId} set={(v) => setJudge0({ javascriptId: Number(v) || 63 })} /></Field>
+            </div>
+            <p role="note" className="rounded-lg bg-bg px-3 py-2 text-xs text-mu">Language ids differ between Judge0 installs; check your instance's /languages list. The defaults are CE ids for Python 3.8 and JavaScript (Node 12).</p>
+          </>
+        )}
+        {provider === 'custom' && (
+          <>
+            <Field label="Runner URL"><Input value={sb.custom.base} set={(base) => setCustom({ base })} placeholder="https://your-runner.example/run" /></Field>
+            <Field label="Bearer token (optional)"><Input type="password" autoComplete="off" value={sb.custom.key} set={(key) => setCustom({ key })} placeholder="Sent as Authorization: Bearer …" /></Field>
+            <p role="note" className="rounded-lg bg-bg px-3 py-2 text-xs text-mu">The endpoint receives <code>{`{ language, code, timeout_ms }`}</code> and should answer with JSON containing <code>stdout</code> (or <code>output</code>), optionally <code>stderr</code>, <code>exit_code</code>, <code>result</code> and <code>error</code>. Modal, Daytona, Riza and a home server all fit.</p>
+          </>
+        )}
         <Anchor id="code-timeout">
           <Field label={`Time limit · ${secs}s`}>
             <RangeSlider label="Code time limit" min={CODE_TIMEOUT_MIN / 1000} max={CODE_TIMEOUT_MAX / 1000} step={1} value={secs} valueText={`${secs} second${secs === 1 ? '' : 's'}`} set={(n) => set({ timeoutMs: Math.round(n) * 1000 })} className="w-full" />
@@ -1508,11 +1585,11 @@ function CodeRunCard() {
             <Sel value={String(c.maxOutput)} set={(v) => set({ maxOutput: Number(v) })} opts={[['5000', '5k characters'], ['20000', '20k characters'], ['50000', '50k characters'], [String(CODE_OUTPUT_MAX), '100k characters (max)']]} />
           </Field>
         </Anchor>
-        <div className="flex items-center justify-between gap-3">
+        {provider === 'local' && <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-1.5 text-sm font-medium">Enable Python</div>
           <Toggle on={c.python} set={(python) => set({ python })} label="Allow Python code execution" />
-        </div>
-        {c.python && <>
+        </div>}
+        {provider === 'local' && c.python && <>
           <Anchor id="code-packages">
             <div className="flex items-center justify-between gap-3">
               <div className="flex items-center gap-1.5 text-sm font-medium">Load Python packages</div>
@@ -1530,7 +1607,7 @@ function CodeRunCard() {
           <div className="min-w-0 text-sm font-medium">Require approval</div>
           <Toggle on={!!s.toolApproval.run_code} set={(v) => s.patch({ toolApproval: { ...s.toolApproval, run_code: v } })} label="Require approval for code execution" />
         </div>
-        <div className="flex justify-end"><Btn v="soft" icon={RotateCcw} onClick={() => s.patch({ codeRun: { ...BLANK_CODE_RUN, on: c.on } })}>Reset limits</Btn></div>
+        <div className="flex justify-end"><Btn v="soft" icon={RotateCcw} onClick={() => s.patch({ codeRun: { ...BLANK_CODE_RUN, on: c.on, sandbox: { ...sb, provider } } })}>Reset limits</Btn></div>
       </Card>
     </Anchor>
   )
@@ -2058,8 +2135,8 @@ function McpTab() {
                   <Field label="Environment (KEY=value per line)">
                     <Area rows={3} value={envBlockOf(m.env)} set={(v) => upd('mcps', m.id, { env: parseEnvBlock(v) })} placeholder={'API_KEY=…'} />
                   </Field>
-                  <Field label="Working directory (optional)"><Input value={m.cwd ?? ''} set={(cwd) => upd('mcps', m.id, { cwd: cwd.trim() || undefined })} placeholder="/path/to/project" /></Field>
-                  <p className="text-xs text-mu">Local command servers start on the machine running the app’s Node host (npm start or npm run dev), and only from a localhost browser. They cannot run on a static or Cloudflare deployment.</p>
+                  <Field label="Working directory (optional)"><Input value={m.cwd ?? ''} set={(cwd) => upd('mcps', m.id, { cwd: cwd.trim() || undefined })} placeholder="/home/you/project" /></Field>
+                  <p className="text-xs text-mu">Local command servers start on the machine running the app’s Node host (npm start or npm run dev), and only from a localhost browser. They cannot run on a static or Cloudflare deployment. The working directory must be an absolute path to an existing project folder; filesystem roots and “..” are refused, and the server inherits only PATH, HOME, locale and temp settings from the host — never this app’s keys. A filesystem server also grants whatever directories you pass it in Arguments, so point it at a project folder rather than your home directory.</p>
                 </>
               ) : (
                 <>

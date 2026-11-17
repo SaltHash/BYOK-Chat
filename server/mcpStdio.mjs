@@ -14,6 +14,12 @@
  *    so a web page cannot drive it through the user's browser;
  *  - the command, arguments, environment and working directory are validated
  *    and capped before spawn;
+ *  - the working directory must be an existing absolute folder that is not a
+ *    filesystem root, and `..` is refused, so a pasted config cannot point a
+ *    server at `/` or walk out of the folder the user meant;
+ *  - the child gets a small allowlist of the host environment (PATH, HOME,
+ *    locale, temp dirs) plus the variables the user typed. It never inherits
+ *    this server's own secrets such as a database URL or provider keys;
  *  - sessions are capped, killed after 60s idle, and killed on a timeout or
  *    when the client says it is done;
  *  - stdout is framed as newline-delimited JSON (the current spec) or
@@ -24,6 +30,8 @@
 
 import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
+import { statSync } from 'node:fs'
+import { isAbsolute, resolve } from 'node:path'
 import { bumpRateLimit, overRateLimit } from './ratelimit.mjs'
 import { clientIp, headerValue, jsonResult, readBodyText, requestHost, sameOrigin } from './http.mjs'
 
@@ -52,6 +60,55 @@ process.once('exit', () => {
 function isLoopback(address) {
   const value = String(address || '').toLowerCase()
   return value === '::1' || value === '::ffff:127.0.0.1' || value.startsWith('127.')
+}
+
+/* The child process gets this allowlist of the host environment, never the
+ * whole thing: `process.env` also holds this server's database URL, sync
+ * secret and any provider keys started from the same shell. A local MCP server
+ * is user-supplied code, so it must not be able to read them by looking at its
+ * own environment. */
+const INHERITED_ENV = [
+  'PATH', 'Path', 'PATHEXT', 'HOME', 'USER', 'LOGNAME', 'SHELL', 'PWD',
+  'LANG', 'LANGUAGE', 'LC_ALL', 'LC_CTYPE', 'LC_MESSAGES', 'TERM',
+  'TMPDIR', 'TMP', 'TEMP',
+  'SystemRoot', 'SYSTEMROOT', 'windir', 'ComSpec', 'COMSPEC',
+  'APPDATA', 'LOCALAPPDATA', 'USERPROFILE', 'HOMEDRIVE', 'HOMEPATH',
+  'XDG_CONFIG_HOME', 'XDG_CACHE_HOME', 'XDG_DATA_HOME',
+]
+
+/** The environment handed to a local server: safe host values, then the
+ *  user's own KEY=value block on top. Exported for tests. */
+export function childEnv(extra = {}, source = process.env) {
+  const out = {}
+  for (const key of INHERITED_ENV) {
+    const value = source?.[key]
+    if (typeof value === 'string' && value) out[key] = value
+  }
+  for (const [key, value] of Object.entries(extra || {})) {
+    if (typeof value === 'string') out[key] = value
+  }
+  return out
+}
+
+/** Working directory rules for a local server. Accepts an absolute, existing
+ *  folder that is not a filesystem root; returns the resolved path. Exported
+ *  for tests. */
+export function safeCwd(raw) {
+  const value = typeof raw === 'string' ? raw.trim() : ''
+  if (!value) return { cwd: '' }
+  if (value.includes('\0') || value.length > 1000) return { error: 'That working directory cannot be used.' }
+  if (!isAbsolute(value)) return { error: 'The working directory must be an absolute path, for example /home/you/project.' }
+  const segments = value.replace(/\\/g, '/').split('/')
+  if (segments.includes('..')) return { error: 'The working directory cannot contain “..”. Use the full path of the folder.' }
+  const resolved = resolve(value)
+  let stat
+  try { stat = statSync(resolved) } catch { return { error: `The working directory ${resolved} does not exist.` } }
+  if (!stat?.isDirectory()) return { error: `${resolved} is a file, not a folder.` }
+  // `/` (and `C:\`) is refused: a server started there can read the whole
+  // machine, which is not what a "project folder" field means.
+  const root = resolved.replace(/\\/g, '/').replace(/\/+$/, '')
+  if (!root || /^[A-Za-z]:$/.test(root)) return { error: 'Choose a project folder rather than a filesystem root.' }
+  return { cwd: resolved }
 }
 
 function written(session, message) {
@@ -187,7 +244,7 @@ function fail(session, message) {
 function spawnSession(server) {
   const child = spawn(server.command, server.args, {
     cwd: server.cwd || undefined,
-    env: { ...process.env, ...server.env },
+    env: childEnv(server.env),
     stdio: ['pipe', 'pipe', 'pipe'],
     windowsHide: true,
   })
@@ -248,9 +305,11 @@ export function stdioServerSpec(value) {
       env[key] = raw
     }
   }
-  const cwd = typeof value.cwd === 'string' ? value.cwd.trim().slice(0, 1000) : ''
-  if (cwd.includes('\0')) return { error: 'That working directory cannot be used.' }
-  return { server: { command, args, env, ...(cwd ? { cwd } : {}) } }
+  // The working directory is a folder the user chose, not a path a config can
+  // steer: it must be absolute, real, and not a filesystem root.
+  const dir = safeCwd(value.cwd)
+  if (dir.error) return { error: dir.error }
+  return { server: { command, args, env, ...(dir.cwd ? { cwd: dir.cwd } : {}) } }
 }
 
 function timeoutOf(value) {
