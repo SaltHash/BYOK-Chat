@@ -180,7 +180,12 @@ type PersistChat = { msgs: PersistMsg[] }
 
 /** Shape options for the persisted copy. Tool payloads are the largest thing
  *  a message carries and are almost never re-read; the call rows (tool name,
- *  failure, duration) are kept so the process panel still reads correctly. */
+ *  failure, duration) are kept so the process panel still reads correctly.
+ *
+ *  The process log is kept too, capped: it is the device's own trace of how a
+ *  reply was made, and dropping it made "Process to answer" vanish on reload.
+ *  Sync shapes the same message without it (see storage/syncShaping.ts), so it
+ *  is saved locally and never uploaded. */
 const PERSIST_LEAN = {
   toolResultChars: 0,
   toolArgChars: 0,
@@ -188,6 +193,8 @@ const PERSIST_LEAN = {
   researchChars: 1200,
   toolTextChars: 2000,
   alternatives: false,
+  keepLog: true,
+  logChars: 2000,
 } as const
 
 export const pruneChatForPersist = <C extends PersistChat>(chat: C): C => {

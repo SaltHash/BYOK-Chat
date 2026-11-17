@@ -93,6 +93,28 @@ test('pruneChatForPersist strips attachment bytes but keeps metadata', () => {
   assert.equal('text' in m.att[0], false)
 })
 
+test('the local copy keeps the process log, capped, and still drops request payloads', () => {
+  const log = [
+    { n: 'model', m: 'gpt-x', ms: 900, tin: 120, tout: 30, contextTin: 100, contextTout: 20, cacheRead: 4, cacheWrite: 2, cost: 0.002, at: 1, detail: 'd'.repeat(5000), err: 'boom', errCode: 'rate_limited' },
+    { n: 'Page summary', ms: 12 },
+  ]
+  const [m] = pruneChatForPersist({ id: 'c1', msgs: [{ id: 'a1', r: 'assistant', t: 'answer', log, sys: 'SYSTEM PROMPT', full: 'REQUEST BODY' }] }).msgs
+  assert.deepEqual(m.log.map((t) => t.n), ['model', 'Page summary'])
+  assert.equal(m.log[0].ms, 900)
+  assert.equal(m.log[0].contextTin, 100)
+  assert.equal(m.log[0].cost, 0.002)
+  assert.equal(m.log[0].errCode, 'rate_limited')
+  assert.equal(m.log[0].err, 'boom')
+  // Detail is capped for the saved copy; the live message keeps the full text.
+  assert.equal(m.log[0].detail.length, 2001)
+  assert.equal(log[0].detail.length, 5000)
+  assert.equal('sys' in m, false)
+  assert.equal('full' in m, false)
+  // A reply that logged nothing gets no empty panel after reload.
+  const [empty] = pruneChatForPersist({ id: 'c2', msgs: [{ id: 'a2', r: 'assistant', t: 'plain', log: [] }] }).msgs
+  assert.equal('log' in empty, false)
+})
+
 test('persist mapper reuses the mapped copy for unchanged chats', () => {
   const map = createPersistMapper()
   const a = { id: 'a', msgs: [{ id: 'm', r: 'user', t: 'x' }] }

@@ -33,6 +33,12 @@ export type LeanMessageOptions = {
   alternatives?: boolean
   /** Chars kept from a tool round's narration text. */
   toolTextChars?: number
+  /** Keep the process log: the step rows behind "Process to answer". It is a
+   *  local trace of how the reply was produced, so the saved copies keep it
+   *  while sync payloads still drop it. */
+  keepLog?: boolean
+  /** Chars kept from each step's detail text (and its error). */
+  logChars?: number
 }
 
 const isObj = (v: unknown): v is Obj => !!v && typeof v === 'object' && !Array.isArray(v)
@@ -43,6 +49,23 @@ const clip = (v: unknown, n: number): unknown => (typeof v === 'string' && v.len
 const REQUEST_ONLY = ['full', 'sys', 'log', 'fx', 'ctx', 'historyTokens', 'explicitTokens'] as const
 
 const ATTACHMENT_META = ['name', 'kind', 'size', 'mime', 'source', 'pages', 'chars', 'truncated', 'modelName'] as const
+
+/** Steps a single reply may carry in its saved process log. */
+const MAX_LOG_STEPS = 120
+
+/** One process-log row: what the panel draws, without paged payloads. */
+function leanLogEntry(value: unknown, chars: number): unknown {
+  if (!isObj(value)) return value
+  const out: Obj = {}
+  // Everything the panel and the usage/cost readouts draw, and nothing that
+  // grows with the size of the request.
+  for (const key of ['n', 'm', 'ms', 'at', 'tin', 'tout', 'contextTin', 'contextTout', 'cacheRead', 'cacheWrite', 'cost', 'errCode'] as const) {
+    if (value[key] !== undefined) out[key] = value[key]
+  }
+  if (typeof value.detail === 'string' && chars > 0) out.detail = clip(value.detail, chars)
+  if (typeof value.err === 'string') out.err = clip(value.err, Math.min(800, Math.max(200, chars)))
+  return out
+}
 
 /** Attachment metadata without the file itself. */
 export function leanAttachment(value: unknown): Obj | null {
@@ -111,7 +134,16 @@ function leanResearch(value: unknown, opts: LeanMessageOptions): unknown {
 export function leanMessage(value: unknown, opts: LeanMessageOptions = {}): unknown {
   if (!isObj(value)) return value
   const out: Obj = { ...value }
-  for (const key of REQUEST_ONLY) delete out[key]
+  for (const key of REQUEST_ONLY) {
+    if (key === 'log' && opts.keepLog) continue
+    delete out[key]
+  }
+  if (opts.keepLog && Array.isArray(out.log)) {
+    const shaped = (out.log as unknown[]).slice(-MAX_LOG_STEPS).map((step) => leanLogEntry(step, Math.max(0, Number(opts.logChars ?? 2000) || 0)))
+    // An empty log would draw an empty "Process to answer" panel after reload.
+    if (shaped.length) out.log = shaped
+    else delete out.log
+  }
   if (typeof out.t === 'string') out.t = clip(out.t, 600_000)
   // `toolFinal` is the reply text shown when a tool-heavy turn ended; it is
   // also the second copy of `t` in most messages, so keep one copy only.
