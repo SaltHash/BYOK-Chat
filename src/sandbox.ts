@@ -196,8 +196,9 @@ const jsonInit = (body: unknown, headers: Record<string, string> = {}): RequestI
   body: JSON.stringify(body),
 })
 
-/** E2B platform call that creates the sandbox. `secure` turns on the access
- *  token that the code interpreter port then requires. */
+/** E2B platform call that creates the sandbox. `secure` turns on the tokens the
+ *  code interpreter port then requires: envd wants `X-Access-Token`, and the
+ *  shared sandbox host also wants the traffic token from the create response. */
 export function e2bCreateRequest(p: SandboxPrefs['e2b']): RemoteRequest {
   return {
     url: `${p.base}/sandboxes`,
@@ -211,9 +212,11 @@ export function e2bCreateRequest(p: SandboxPrefs['e2b']): RemoteRequest {
   }
 }
 
+export type E2bAccess = { id: string; token?: string; trafficToken?: string }
+
 export function e2bExecuteRequest(
   p: SandboxPrefs['e2b'],
-  sandbox: { id: string; token: string },
+  sandbox: E2bAccess,
   lang: SandboxLang,
   code: string,
   timeoutMs: number,
@@ -222,7 +225,10 @@ export function e2bExecuteRequest(
     'E2b-Sandbox-Id': sandbox.id,
     'E2b-Sandbox-Port': '49999',
   }
+  // A secure sandbox answers 403 without these: envd checks X-Access-Token,
+  // and the shared sandbox host checks the traffic token as well.
   if (sandbox.token) headers['X-Access-Token'] = sandbox.token
+  if (sandbox.trafficToken) headers['e2b-traffic-access-token'] = sandbox.trafficToken
   return {
     url: `${p.host}/execute`,
     init: jsonInit({
@@ -446,9 +452,20 @@ export async function runRemoteCode(
     const id = typeof created.sandboxID === 'string' ? created.sandboxID : ''
     if (!id) throw new SandboxError('E2B did not return a sandbox id, so the run was stopped.')
     const token = typeof created.envdAccessToken === 'string' ? created.envdAccessToken : ''
+    // Secure sandboxes are reached through the shared host, which refuses a
+    // request that carries only the envd token.
+    const trafficToken = typeof created.trafficAccessToken === 'string' ? created.trafficAccessToken : ''
     try {
-      const data = await callJson(e2bExecuteRequest(s.e2b, { id, token }, lang, code, timeoutMs), timeoutMs + 15_000, fetchFn, 'The E2B sandbox')
+      const data = await callJson(e2bExecuteRequest(s.e2b, { id, token, trafficToken }, lang, code, timeoutMs), timeoutMs + 15_000, fetchFn, 'The E2B sandbox')
       return done(parseE2bRun(data))
+    } catch (error: any) {
+      // The usual cause is an older platform API that did not return the
+      // traffic token this build expected; say so instead of leaving the raw
+      // 403 to be read as a bad key.
+      if (!trafficToken && /traffic[- ]access[- ]token/i.test(String(error?.message ?? ''))) {
+        throw new SandboxError('E2B created a secure sandbox but returned no traffic access token, so the run could not be authorised. Check the Platform API URL in Settings → Tools → Code execution (it should be https://api.e2b.app).')
+      }
+      throw error
     } finally {
       // Leaving sandboxes behind costs the user money, so clean up even when
       // the run timed out. A failed delete must not mask the run's own result.

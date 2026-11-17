@@ -70,12 +70,18 @@ test('E2B creates, executes and deletes with the documented shapes', () => {
     metadata: { source: 'byok-chat' },
   })
 
-  const exec = e2bExecuteRequest(p.e2b, { id: 'sbx_1', token: 'tok' }, 'python', 'print(1)', 5000)
+  const exec = e2bExecuteRequest(p.e2b, { id: 'sbx_1', token: 'tok', trafficToken: 'traffic' }, 'python', 'print(1)', 5000)
   assert.equal(exec.url, 'https://sandbox.e2b.app/execute')
   assert.equal(headers(exec)['E2b-Sandbox-Id'], 'sbx_1')
   assert.equal(headers(exec)['E2b-Sandbox-Port'], '49999')
   assert.equal(headers(exec)['X-Access-Token'], 'tok')
+  assert.equal(headers(exec)['e2b-traffic-access-token'], 'traffic')
   assert.deepEqual(body(exec), { code: 'print(1)', language: 'python', timeout: 5 })
+
+  // A response that only carries one token must not send an empty header.
+  const bare = e2bExecuteRequest(p.e2b, { id: 'sbx_2' }, 'python', 'print(1)', 5000)
+  assert.equal(headers(bare)['X-Access-Token'], undefined)
+  assert.equal(headers(bare)['e2b-traffic-access-token'], undefined)
 
   const del = e2bDeleteRequest(p.e2b, 'sbx_1')
   assert.equal(del.url, 'https://api.e2b.app/sandboxes/sbx_1')
