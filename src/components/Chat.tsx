@@ -428,7 +428,20 @@ function Payload({ label, text, open, onToggle }: { label: string; text: string;
  * open ring, and a failure an open ring with an error-colored cross so it is
  * distinct from both without relying on the row's red text. */
 function ProcessMarker({ error, tool, live }: { error?: boolean; tool?: boolean; live?: boolean }) {
-  if (error) return <span className="process-x" aria-hidden="true" />
+  if (error) {
+    /* One SVG for ring and cross, both in currentColor: the 1px arms end at
+     * radius 5 inside the ring's 4.0–5.5 band, so each arm passes under the
+     * ring and the two strokes join with complete continuity instead of the
+     * arm stopping at the ring's inner edge. */
+    return (
+      <span className="process-x" aria-hidden="true">
+        <svg viewBox="0 0 11 11" focusable="false">
+          <circle cx="5.5" cy="5.5" r="4.75" fill="none" stroke="currentColor" strokeWidth="1.5" />
+          <path d="M1.9645 1.9645 9.0355 9.0355M9.0355 1.9645 1.9645 9.0355" fill="none" stroke="currentColor" strokeWidth="1" />
+        </svg>
+      </span>
+    )
+  }
   return <span className={live ? 'process-ring' : 'process-dot'} data-tool={tool ? '' : undefined} data-live={live ? '' : undefined} aria-hidden="true" />
 }
 
