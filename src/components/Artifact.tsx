@@ -1,8 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useS } from '../store'
-import { artifactDocument, artifactTheme, parseArtifactArgs, type ArtifactSpec } from '../artifacts'
-
-type CallLike = { id: string; name: string; arguments: string; error?: boolean }
+import { artifactDocument, artifactTheme, type ArtifactSpec } from '../artifacts'
+import { roundEmbeds, replyBlocks, type LayoutCall } from '../replyLayout'
 
 /** One app-styled, sandboxed interactive artifact. It renders bare, without a
  *  frame or title of its own, at the height its content needs, so it reads as
@@ -42,11 +41,8 @@ export function ArtifactCard({ spec }: { spec: ArtifactSpec }) {
 }
 
 /** The usable artifact specs among a round's tool calls. */
-export function artifactSpecs(calls?: CallLike[]): ArtifactSpec[] {
-  return (calls ?? [])
-    .filter((call) => call.name === 'show_artifact' && !call.error)
-    .map((call) => parseArtifactArgs(call.arguments))
-    .filter((spec): spec is ArtifactSpec => !!spec)
+export function artifactSpecs(calls?: LayoutCall[]): ArtifactSpec[] {
+  return roundEmbeds(calls).flatMap((embed) => (embed.kind === 'artifact' ? [embed.spec] : []))
 }
 
 export function ArtifactList({ specs }: { specs: ArtifactSpec[] }) {
@@ -55,36 +51,19 @@ export function ArtifactList({ specs }: { specs: ArtifactSpec[] }) {
 }
 
 /** Split a reply so each artifact sits where the model called it: after the
- *  text of the round that created it and before anything written later. The
- *  round texts are already part of the final reply text, in order, so each one
- *  is found from the cursor and the cut lands on its end. Null when there is
- *  no artifact, which keeps the ordinary body on the single-pass path. */
-export function artifactBlocks(text: string, rounds?: { text?: string; calls: CallLike[] }[]): { text?: string; specs?: ArtifactSpec[] }[] | null {
-  const list = rounds ?? []
-  if (!list.some((round) => artifactSpecs(round.calls).length > 0)) return null
+ *  text of the round that created it and before anything written later. A
+ *  round that made the artifact before writing anything places it at that
+ *  point in the reply rather than at the end. Null when there is no artifact,
+ *  which keeps the ordinary body on the single-pass path. */
+export function artifactBlocks(text: string, rounds?: { text?: string; calls: LayoutCall[] }[]): { text?: string; specs?: ArtifactSpec[] }[] | null {
+  const blocks = replyBlocks(text, rounds)
+  if (!blocks) return null
   const out: { text?: string; specs?: ArtifactSpec[] }[] = []
-  const deferred: ArtifactSpec[] = []
-  let cursor = 0
-  let buf = ''
-  for (const round of list) {
-    const t = String(round.text ?? '')
-    let at = -1
-    if (t) {
-      at = text.indexOf(t, cursor)
-      if (at >= 0) { buf += text.slice(cursor, at + t.length); cursor = at + t.length }
-    }
-    const specs = artifactSpecs(round.calls)
-    if (!specs.length) continue
-    // A round whose text is not part of this reply (a research run writes its
-    // report separately) cannot be placed exactly; keep those at the end
-    // rather than guessing a position above the whole answer.
-    if (at < 0) { deferred.push(...specs); continue }
-    if (buf.trim()) out.push({ text: buf })
+  for (const block of blocks) {
+    const specs = block.embeds.flatMap((embed) => (embed.kind === 'artifact' ? [embed.spec] : []))
+    if (!specs.length) { if (block.text) out.push({ text: block.text }); continue }
+    if (block.text) out.push({ text: block.text })
     out.push({ specs })
-    buf = ''
   }
-  buf += text.slice(cursor)
-  if (buf.trim()) out.push({ text: buf })
-  if (deferred.length) out.push({ specs: deferred })
   return out.length ? out : null
 }

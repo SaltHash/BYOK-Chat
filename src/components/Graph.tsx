@@ -21,7 +21,6 @@ import {
   type GraphPattern,
   type GraphPoint,
   type GraphSeries,
-  type GraphPlacement,
   type GraphShape,
   type GraphSpec,
   type Pt,
@@ -875,26 +874,12 @@ function GraphCard({ call, dark, compact }: { call: CallLike; dark: boolean; com
   )
 }
 
-/** Whether this reply has any figure placed on that side. The chat uses it so
- *  an unused inline slot never takes width away from the prose. */
-export function hasPlacedGraphs(rounds: { calls: CallLike[] }[] | undefined, placement: GraphPlacement): boolean {
-  return (rounds ?? []).some((round) => round.calls.some((call) =>
-    call.name === 'graph' && !call.error && normalizeGraphSpec(parseArgs(call.arguments)).placement === placement))
-}
-
-/** Graphs attached to an assistant reply, filtered by where the model placed
- *  them. Tool arguments are the source of truth, so the plotted picture
- *  survives a reload without storing pixels. */
-export function GraphCards({ rounds, placement = 'below', compact = false }: {
-  rounds?: { calls: CallLike[] }[]
-  placement?: GraphPlacement
-  compact?: boolean
-}) {
+/** One figure the reply placed inline. Tool arguments are the source of truth,
+ *  so the plotted picture survives a reload without storing pixels. The reply
+ *  lays the card out where the model used it; this only draws it. */
+export function GraphEmbedCard({ call }: { call: CallLike }) {
   const dark = useS((s) => s.themeMode !== 'light')
-  const calls = (rounds ?? []).flatMap((round) => round.calls).filter((call) => call.name === 'graph' && !call.error)
-  const placed = calls.filter((call) => normalizeGraphSpec(parseArgs(call.arguments)).placement === placement)
-  if (!placed.length) return null
-  return <div className={compact ? 'space-y-2' : 'space-y-3'}>{placed.map((call) => <GraphCard key={call.id} call={call} dark={dark} compact={compact} />)}</div>
+  return <GraphCard call={call} dark={dark} compact />
 }
 
 export type { GraphSeries }

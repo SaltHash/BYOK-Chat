@@ -16,8 +16,9 @@ import { Composer } from './Composer'
 import { ProjectOverview } from './ProjectOverview'
 import { Header } from './Header'
 import { MessageActions } from './ReplyActions'
-import { GraphCards, hasPlacedGraphs } from './Graph'
-import { ArtifactList, artifactBlocks } from './Artifact'
+import { GraphEmbedCard } from './Graph'
+import { ArtifactList } from './Artifact'
+import { replyBlocks, type ReplyEmbed } from '../replyLayout'
 import { PathSwitch } from './PathSwitch'
 import { Tutorial } from './Extra'
 import { Md, UserText } from './Md'
@@ -806,6 +807,17 @@ function SentAtt({ a }: { a: NonNullable<Msg['att']>[number] }) {
   return <span title={`${a.name} has no readable text to preview`}><Chip icon={Paperclip}>{a.name}</Chip></span>
 }
 
+/* An artifact or figure the reply placed inline. A floating figure wraps the
+ * prose after its call, so the text it explains sits beside it; `below` keeps
+ * it directly under the writing that came before. */
+function ReplyEmbedView({ embed }: { embed: ReplyEmbed }) {
+  if (embed.kind === 'artifact') return <div className="my-3"><ArtifactList specs={[embed.spec]} /></div>
+  const side = embed.call.placement === 'left' ? 'float-left mb-3 w-full sm:mr-5 sm:w-[min(52%,23rem)]'
+    : embed.call.placement === 'right' ? 'float-right mb-3 w-full sm:ml-5 sm:w-[min(52%,23rem)]'
+      : 'clear-both mt-3'
+  return <div className={side}><GraphEmbedCard call={embed.call} /></div>
+}
+
 const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWorkspaceId, cfg, searchQuery, searchOpen }: { m: Msg; last: boolean; onOpenWorkspace: (mid: string, workspaceId: string, filePath?: string) => void; onOpenResearch: (mid: string) => void; selectedWorkspaceId?: string | null; cfg: (t: string) => void; searchQuery?: string; searchOpen?: boolean }) {
   // Granular subscriptions: a streamed chunk only changes `chats`, so these
   // slices stay referentially stable and this message does not re-render
@@ -1115,10 +1127,6 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
         </div>
       )}
       <div className="flow-root leading-7">
-        {/* Inline graphs float beside the prose, so the text wraps around the
-            figure it explains instead of the plot being pushed to the end. */}
-        {!m.err && !hideBody && hasPlacedGraphs(m.toolRounds, 'left') && <div className="float-left mb-3 w-full sm:mr-5 sm:w-[min(52%,23rem)]"><GraphCards rounds={m.toolRounds} placement="left" compact /></div>}
-        {!m.err && !hideBody && hasPlacedGraphs(m.toolRounds, 'right') && <div className="float-right mb-3 w-full sm:ml-5 sm:w-[min(52%,23rem)]"><GraphCards rounds={m.toolRounds} placement="right" compact /></div>}
         {m.err ? (
           <div className="space-y-3 rounded-xl border border-er/30 bg-er/10 p-4">
             <div className="flex items-center gap-2 font-semibold text-er">
@@ -1141,10 +1149,10 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
             )}
           </div>
         ) : hideBody ? null : (() => {
-          const finalIds = new Set((m.toolRounds ?? []).flatMap((r) => r.calls).map((c) => c.id))
-          // A reply that made artifacts is rendered in pieces so each one sits
-          // where the model called it, not in a block after the whole answer.
-          const blocks = liveChunks?.length ? null : artifactBlocks(displayText, m.toolRounds)
+          // A reply that made artifacts or figures is rendered in pieces so
+          // each one sits where the model used it, not in a block after the
+          // whole answer.
+          const blocks = liveChunks?.length ? null : replyBlocks(displayText, m.toolRounds)
           // A reply that wrote, called tools, then wrote again is split so the
           // tool run sits between the two pieces, the way it happened. Replies
           // with artifacts keep the whole-text path, which places them inline.
@@ -1175,11 +1183,14 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
           // It shows while a tool runs (even if text already streamed) or before
           // the first token, and hides the moment prose arrives so it never sits
           // beside text the model is actively typing — or under a reply that has
-          // finished.
-          const active = !!writingPath || (live?.length ?? 0) > 0 || (last && busy && !m.t)
+          // finished. `live` alone is not enough: it can hold a call whose round
+          // already committed (or one that never streamed a name), and that made
+          // a bare "Thinking" sit under the message while the answer typed.
+          const typed = (liveChunks?.length ?? 0) > 0 || !!m.t
+          const active = runningCalls.length > 0 || (last && busy && !typed)
           return (
             <>
-              {(m.t || hasTrail || streamingTrail) && (
+              {(m.t || hasTrail || streamingTrail || !!(blocks && blocks.length)) && (
                 <div ref={contentRef} className={cx('inline', arrivalFade > 0 && 'sd-fade')} style={arrivalFade > 0 ? ({ '--sd-fade-ms': `${arrivalFade}ms` } as CSSProperties) : undefined}>
                   {liveChunks && liveChunks.length ? (
                     streamingTrail ? (
@@ -1194,9 +1205,9 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
                     )
                   ) : blocks ? (
                     blocks.map((b, i) => (
-                      <div key={i} className={b.specs ? 'my-3' : undefined}>
+                      <div key={`block-${i}`}>
                         {b.text ? <Md t={searchPrefs?.citeStyle === 'off' ? stripCitations(b.text) : linkifyCitations(b.text, sources)} cites={cites} /> : null}
-                        {b.specs ? <ArtifactList specs={b.specs} /> : null}
+                        {b.embeds.map((embed) => <ReplyEmbedView key={embed.key} embed={embed} />)}
                       </div>
                     ))
                   ) : hasTrail ? (
@@ -1215,9 +1226,6 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
             </>
           )
         })()}
-        {/* A figure placed below belongs directly under the prose that
-            explains it, not in a separate block at the end of the message. */}
-        {!m.err && !hideBody && hasPlacedGraphs(m.toolRounds, 'below') && <div className="clear-both mt-3"><GraphCards rounds={m.toolRounds} placement="below" /></div>}
         {!m.err && <div className="clear-both" aria-hidden="true" />}
       </div>
       {!m.err && <GeneratedImages rounds={m.toolRounds} />}
