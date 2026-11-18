@@ -1554,28 +1554,37 @@ export function Chat({ side, toggle, cfg, pal }: { side: boolean; toggle: () => 
   // The composer floats over the message list; track its height so the list can
   // keep its last message clear of it and fade out just above it.
   const composerRef = useRef<HTMLDivElement>(null)
+  // The input box on its own, without the greeting stacked above it. An empty
+  // chat centers the box itself, so the headline must not count as part of it.
+  const composerBoxRef = useRef<HTMLDivElement>(null)
   const [composerH, setComposerH] = useState(0)
+  const [composerBoxH, setComposerBoxH] = useState(0)
+  const measureComposer = useCallback(() => {
+    const el = composerRef.current
+    if (!el) return
+    setComposerH((prev) => { const h = el.offsetHeight; return h && h !== prev ? h : prev })
+    const bx = composerBoxRef.current
+    if (!bx) return
+    setComposerBoxH((prev) => { const h = bx.offsetHeight; return h && h !== prev ? h : prev })
+  }, [])
   // The composer can grow after its first paint (toolbar, context meter,
   // attachments): measure once more on the next tick so a missed resize never
   // leaves the transcript's bottom clearance too small, which hid the end of a
   // reply behind the composer with no extra scroll available.
   useLayoutEffect(() => {
-    const el = composerRef.current
-    if (!el) return
-    const measure = () => setComposerH((prev) => { const h = el.offsetHeight; return h && h !== prev ? h : prev })
-    measure()
+    if (!composerRef.current) return
+    measureComposer()
     // The context meter and toolbar can settle a beat after the chat renders.
-    const timers = [0, 120, 500, 1200].map((ms) => window.setTimeout(measure, ms))
+    const timers = [0, 120, 500, 1200].map((ms) => window.setTimeout(measureComposer, ms))
     return () => timers.forEach((t) => window.clearTimeout(t))
-  }, [s.chat, empty])
+  }, [s.chat, empty, measureComposer])
   useLayoutEffect(() => {
     const el = composerRef.current
     if (!el) return
-    const f = () => setComposerH(el.offsetHeight)
-    const ro = new ResizeObserver(f)
+    const ro = new ResizeObserver(measureComposer)
     ro.observe(el)
     return () => ro.disconnect()
-  }, [])
+  }, [measureComposer])
   // The composer grows as it is typed into. Keep the transcript pinned to the
   // end when it does, and reserve enough room above it that the last rows sit
   // clear of the composer and its fade instead of ending half-faded with no
@@ -1877,7 +1886,9 @@ export function Chat({ side, toggle, cfg, pal }: { side: boolean; toggle: () => 
               </div>
             )}
           </div>
-          <div ref={composerRef} style={empty ? { top: `calc(50% - ${composerH / 2}px)` } : undefined} className={cx('absolute inset-x-0 z-10 flex flex-col', empty ? undefined : 'bottom-0')}>
+          {/* An empty chat centers the input box, not this whole column: the
+              heading above it is measured as headroom and subtracted again. */}
+          <div ref={composerRef} style={empty ? { top: `calc(50% - ${composerBoxH / 2 + Math.max(0, composerH - composerBoxH)}px)` } : undefined} className={cx('absolute inset-x-0 z-10 flex flex-col', empty ? undefined : 'bottom-0')}>
             {!atEnd && c && c.msgs.length > 0 && (
               <button type="button" onClick={() => { stick.current = true; setAtEnd(true); followBottom.call() }} className="absolute bottom-full left-1/2 z-0 mb-2 inline-flex min-h-8 -translate-x-1/2 items-center gap-1.5 rounded-full border border-bor bg-surf px-3 py-1 text-xs text-tx shadow-md transition-colors hover:bg-hov focus-visible:ring-2 focus-visible:ring-ac">
                 <ChevronDown size={13} className="text-ac" />Jump to latest
@@ -1897,7 +1908,9 @@ export function Chat({ side, toggle, cfg, pal }: { side: boolean; toggle: () => 
                 {isTemp && <div className="mb-6 px-8 text-center text-xs leading-relaxed text-mu">{TEMPORARY_NOTE}</div>}
               </>
             )}
-            <Composer cfg={cfg} quote={draftQuote} onClearQuote={() => setDraftQuote('')} />
+            <div ref={composerBoxRef}>
+              <Composer cfg={cfg} quote={draftQuote} onClearQuote={() => setDraftQuote('')} />
+            </div>
           </div>
         </div>
         {workspaceMsg && workspace && workspacePanel && (
