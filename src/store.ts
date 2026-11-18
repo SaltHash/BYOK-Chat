@@ -64,6 +64,8 @@ export type Endpoint = { id: string; name: string; type: 'openai' | 'anthropic';
    *  which otherwise look identical to an endpoint that never had the model. */
   modelsAt?: number; modelAdds?: Record<string, number>; modelDrops?: Record<string, number>; modelNames?: Record<string, string>; modelContext?: Record<string, number>; modelProviders?: Record<string, ModelProvider>; modelEfforts?: Record<string, string[]>; modelEffortSource?: Record<string, 'auto' | 'manual'>; modelsMode?: 'separate' | 'playlist'; prices?: Record<string, ModelPrice>; accountId?: string; gatewayId?: string; on: boolean }
 export type Ep = Endpoint
+/** `cls` is an endpoint id, '' for the default helper classifier, or 'none'
+ *  for no classifier at all. */
 export type Playlist = { id: string; name: string; sys: string; e: string[]; cls: string; clsModel?: string; rule: string }
 export type Pl = Playlist
 export type Command = { id: string; name: string; desc: string; in: 'text' | 'image' | 'image+text' | 'doc'; sys: string; tpl: string; pl: string; on: boolean; /** Argument hint shown in the `/` menu, e.g. "<text>" or "[language]". */ args?: string }
@@ -988,6 +990,9 @@ export const toggleFavRef = (favs: string[] | undefined, ref: string): string[] 
 /** Resolve the playlist routing classifier: the playlist's own classifier
  * when set, otherwise the global helper classification model as fallback. */
 export const playlistClassifierOf = (s: { eps: Ep[]; memoryPrefs: { classifierEp: string; classifierModel: string } }, pl: Pl): Ep | undefined => {
+  // An explicit opt-out: no playlist classifier and no helper fallback, so the
+  // list keeps its own order.
+  if (pl.cls === 'none') return undefined
   const pick = (epId: string, model?: string): Ep | undefined => {
     if (!epId) return undefined
     const found = s.eps.find((e) => e.id === epId && usable(e))

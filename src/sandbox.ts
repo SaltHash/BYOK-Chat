@@ -219,7 +219,6 @@ export function e2bExecuteRequest(
   sandbox: E2bAccess,
   lang: SandboxLang,
   code: string,
-  timeoutMs: number,
 ): RemoteRequest {
   const headers: Record<string, string> = {
     'E2b-Sandbox-Id': sandbox.id,
@@ -231,10 +230,12 @@ export function e2bExecuteRequest(
   if (sandbox.trafficToken) headers['e2b-traffic-access-token'] = sandbox.trafficToken
   return {
     url: `${p.host}/execute`,
+    /* The code-interpreter `/execute` body is exactly code, language and the
+     * optional context/env; the run's time limit comes from the sandbox's own
+     * lifetime set at creation. */
     init: jsonInit({
       code,
       language: lang === 'python' ? 'python' : 'javascript',
-      timeout: Math.max(1, Math.round(timeoutMs / 1000)),
     }, headers),
   }
 }
@@ -290,6 +291,8 @@ export function customRequest(p: SandboxPrefs['custom'], lang: SandboxLang, code
 
 /* ---- response parsing -------------------------------------------------- */
 
+const lineText = (v: unknown): string => (typeof v === 'string' ? v : '')
+
 export type SandboxRun = { ok: boolean; logs: string; value: string | null; error?: string }
 
 const lines = (v: unknown): string => {
@@ -323,6 +326,112 @@ export function parseE2bRun(data: any): SandboxRun {
     value: values.length ? values.join('\n') : null,
     ...(ok ? {} : { error: error || String(data?.error) }),
   }
+}
+
+/** Every complete JSON object in a response body, whatever framing it arrived
+ *  in: bare NDJSON lines, SSE `data:` lines, one concatenated blob, or a mix
+ *  with keep-alive noise. A strict per-line parse found nothing in the last
+ *  two, which is how a working run still looked unreadable. */
+function jsonObjectsIn(raw: string): any[] {
+  const out: any[] = []
+  let from = 0
+  while (from < raw.length) {
+    const start = raw.indexOf('{', from)
+    if (start < 0) break
+    let depth = 0
+    let inString = false
+    let escaped = false
+    let end = -1
+    for (let i = start; i < raw.length; i++) {
+      const c = raw[i]
+      if (inString) {
+        if (escaped) escaped = false
+        else if (c === '\\') escaped = true
+        else if (c === '"') inString = false
+        continue
+      }
+      if (c === '"') inString = true
+      else if (c === '{') depth++
+      else if (c === '}' && --depth === 0) { end = i; break }
+    }
+    if (end < 0) break
+    try {
+      const value = JSON.parse(raw.slice(start, end + 1))
+      if (Array.isArray(value)) out.push(...value.filter((x) => x && typeof x === 'object' && !Array.isArray(x)))
+      else if (value && typeof value === 'object') out.push(value)
+    } catch { /* not JSON after all */ }
+    from = end + 1
+  }
+  return out
+}
+
+/** The code-interpreter `/execute` endpoint streams events: `{ type: 'stdout',
+ *  text }`, `{ type: 'stderr', text }`, `{ type: 'result', text, json,
+ *  markdown, png, … }`, `{ type: 'error', name, value, traceback }` and
+ *  `{ type: 'end_of_execution' }`. Reading the whole body as one JSON document
+ *  is what made every run look unreadable. Returns null when no event was
+ *  found. */
+export function parseE2bStream(raw: string): SandboxRun | null {
+  return runFromEvents(jsonObjectsIn(raw))
+}
+
+/** Fold a list of E2B events into one run result. */
+function runFromEvents(events: any[]): SandboxRun | null {
+  const stdout: string[] = []
+  const stderr: string[] = []
+  const values: string[] = []
+  let error = ''
+  let seen = false
+  for (const event of events) {
+    if (!event || typeof event !== 'object' || Array.isArray(event) || typeof event.type !== 'string') continue
+    seen = true
+    switch (event.type) {
+      case 'stdout':
+        stdout.push(lineText(event.text))
+        break
+      case 'stderr':
+        stderr.push(lineText(event.text))
+        break
+      case 'result': {
+        const value = lineText(event.text).trim() ? lineText(event.text)
+          : typeof event.json === 'string' ? event.json
+          : event.json != null ? JSON.stringify(event.json)
+          : lineText(event.markdown).trim() ? lineText(event.markdown)
+          : ''
+        if (value) values.push(value)
+        if (event.png || event.jpeg || event.pdf) values.push('[image output omitted]')
+        break
+      }
+      case 'error':
+        error = [event.name, event.value].filter((x) => typeof x === 'string' && x.trim()).join(': ') || 'the snippet failed'
+        break
+      case 'unexpected_end_of_execution':
+        if (!error) error = 'The sandbox stopped before the snippet finished.'
+        break
+      default:
+        // number_of_executions, end_of_execution and any future event type.
+        break
+    }
+  }
+  if (!seen) return null
+  // stderr follows stdout on its own line, without inventing a blank line when
+  // stdout already ended with one.
+  const out = stdout.join('')
+  const err = stderr.join('')
+  const logs = !out ? err : !err ? out : out.endsWith('\n') ? out + err : `${out}\n${err}`
+  return { ok: !error, logs, value: values.length ? values.join('\n') : null, ...(error ? { error } : {}) }
+}
+
+/** Accept either shape E2B can answer with: the NDJSON event stream, or the
+ *  single `{ logs, results, error }` document the SDK serialises. */
+export function parseE2bResponse(raw: string): SandboxRun | null {
+  let single: any = null
+  try { single = raw.trim() ? JSON.parse(raw) : null } catch { /* an event stream */ }
+  if (Array.isArray(single)) return runFromEvents(single)
+  if (single && typeof single === 'object' && (single.logs || single.results || 'error' in single)) {
+    return parseE2bRun(single)
+  }
+  return parseE2bStream(raw)
 }
 
 /** Piston: `{ run: { stdout, stderr, output, code }, compile? }`. */
@@ -390,20 +499,31 @@ export class SandboxError extends Error {
 
 type FetchLike = typeof fetch
 
-async function callJson(req: RemoteRequest, timeoutMs: number, fetchFn: FetchLike, what: string): Promise<any> {
+type RawBody = { raw: string; status: number; contentType: string }
+
+/** One transport for every runner: the same timeout handling and error
+ *  wording, whether the body is a single JSON document or an event stream. */
+async function callRaw(req: RemoteRequest, timeoutMs: number, fetchFn: FetchLike, what: string): Promise<RawBody> {
   const ac = new AbortController()
   const timer = setTimeout(() => ac.abort(), timeoutMs)
   try {
     const res = await fetchFn(req.url, { ...req.init, signal: ac.signal })
-    const raw = await res.text().catch(() => '')
-    let data: any = null
-    try { data = raw ? JSON.parse(raw) : null } catch { /* reported below */ }
+    let raw: string
+    try { raw = await res.text() } catch (error: any) {
+      // A decode failure is not an empty answer: name it instead of letting
+      // the caller report "unreadable" with nothing to go on.
+      throw new SandboxError(`${what} sent a body that could not be read (${String(error?.message ?? error)}).`)
+    }
     if (!res.ok) {
-      const detail = String(data?.message || data?.error || raw).replace(/\s+/g, ' ').slice(0, 300)
+      let detail = raw
+      try {
+        const body = raw ? JSON.parse(raw) : null
+        detail = String(body?.message || body?.error || raw)
+      } catch { /* a non-JSON error body is reported as written */ }
+      detail = detail.replace(/\s+/g, ' ').slice(0, 300)
       throw new SandboxError(`${what} returned HTTP ${res.status}${detail ? `: ${detail}` : ''}.`)
     }
-    if (!data || typeof data !== 'object') throw new SandboxError(`${what} sent an unreadable response.`)
-    return data
+    return { raw, status: res.status, contentType: res.headers.get('content-type') ?? '' }
   } catch (error: any) {
     if (error instanceof SandboxError) throw error
     const reason = error?.name === 'AbortError' ? `timed out after ${Math.round(timeoutMs / 1000)}s` : String(error?.message ?? error)
@@ -411,6 +531,14 @@ async function callJson(req: RemoteRequest, timeoutMs: number, fetchFn: FetchLik
   } finally {
     clearTimeout(timer)
   }
+}
+
+async function callJson(req: RemoteRequest, timeoutMs: number, fetchFn: FetchLike, what: string): Promise<any> {
+  const { raw } = await callRaw(req, timeoutMs, fetchFn, what)
+  let data: any = null
+  try { data = raw ? JSON.parse(raw) : null } catch { /* reported below */ }
+  if (!data || typeof data !== 'object') throw new SandboxError(`${what} sent an unreadable response.`)
+  return data
 }
 
 export type RemoteCodeResult = {
@@ -456,8 +584,19 @@ export async function runRemoteCode(
     // request that carries only the envd token.
     const trafficToken = typeof created.trafficAccessToken === 'string' ? created.trafficAccessToken : ''
     try {
-      const data = await callJson(e2bExecuteRequest(s.e2b, { id, token, trafficToken }, lang, code, timeoutMs), timeoutMs + 15_000, fetchFn, 'The E2B sandbox')
-      return done(parseE2bRun(data))
+      /* `/execute` streams its output, so it is the one runner whose body is
+       * not a single JSON document. */
+      const body = await callRaw(e2bExecuteRequest(s.e2b, { id, token, trafficToken }, lang, code), timeoutMs + 15_000, fetchFn, 'The E2B sandbox')
+      const run = parseE2bResponse(body.raw)
+      if (!run) {
+        // Say what actually came back: a proxy page, an empty body and an
+        // unknown event shape need different fixes, and "unreadable" alone
+        // gave nothing to act on.
+        const type = body.contentType || 'no content type'
+        const sample = body.raw.replace(/\s+/g, ' ').trim().slice(0, 160)
+        throw new SandboxError(`The E2B sandbox answered with something this app could not read (HTTP ${body.status}, ${type}, ${body.raw.length} characters)${sample ? `: ${sample}` : '.'}`)
+      }
+      return done(run)
     } catch (error: any) {
       // The usual cause is an older platform API that did not return the
       // traffic token this build expected; say so instead of leaving the raw

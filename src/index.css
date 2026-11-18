@@ -467,8 +467,6 @@ html[data-codewrap] .code-lines .code-line > code { flex: 1 1 auto; min-width: 0
   .composer-focus-outline { display: none; }
 }
 
-/* rendered markdown */
-@keyframes reply-in { from { opacity: 0; } to { opacity: 1; } }
 /* A sidebar row has one quiet mark for "something happened here", and it lives
    on the row's left edge: a short accent-coloured pill. A reply that finished
    in another chat wears it still. A reply that is still running wears the same
@@ -516,19 +514,14 @@ html[data-codewrap] .code-lines .code-line > code { flex: 1 1 auto; min-width: 0
   -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 1.5rem), transparent);
   mask-image: linear-gradient(to right, #000 calc(100% - 1.5rem), transparent);
 }
-/* `--reply-in-duration` is set per-message from the stream-fade setting. When it
- * is 0 the animation is disabled outright (not just `0s`, which would still
- * queue a transition and repaint). `prefers-reduced-motion` always wins. */
-:root { --reply-in-duration: 300ms; }
-@media (prefers-reduced-motion: reduce) { :root { --reply-in-duration: 0ms; } }
-.animate-reply-in { animation: reply-in var(--reply-in-duration) ease-out both; }
-.animate-reply-in[data-fade="0"] { animation: none; }
 /* The action indicator: one line for what the reply is doing right now, in
    place of the old orbiting dots. The icon morphs between tools, the label
    carries a shine while it is the newest activity, and the time spent on the
    current step sits beside it in a fainter tone. */
-.activity { display:inline-flex; align-items:center; gap:.5rem; min-height:2rem; position:relative; padding:.1rem .45rem .3rem 1px; border-radius:.5rem; }
-.activity-icon { position:relative; display:inline-flex; width:1.05rem; height:1.05rem; flex:none; align-items:center; justify-content:center; color:var(--ac); }
+/* Label and timer share one baseline; only the icon is centred, so a smaller
+   timer no longer sits a pixel or two below the words it belongs to. */
+.activity { display:inline-flex; align-items:baseline; gap:.5rem; min-height:2rem; position:relative; padding:.1rem .45rem .3rem 1px; border-radius:.5rem; }
+.activity-icon { position:relative; align-self:center; display:inline-flex; width:1.05rem; height:1.05rem; flex:none; align-items:center; justify-content:center; color:var(--ac); }
 .activity-icon > svg { position:absolute; inset:0; margin:auto; }
 /* The old icon spins and shrinks away while the new one turns in and settles:
    a rotate-scale morph rather than a cut or a plain crossfade. */

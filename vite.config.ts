@@ -22,6 +22,9 @@ const VENDOR_CHUNKS: [RegExp, string][] = [
 export default defineConfig({
   plugins: [react(), tailwind()],
   build: {
+    // `index` and `markdown` are deliberately large and audited (see
+    // CODEBASE_AUDIT.md); the default 500 kB notice only repeats that fact.
+    chunkSizeWarningLimit: 1024,
     rollupOptions: {
       output: {
         // Only eagerly shared vendor code is pinned to named chunks; everything

@@ -7,6 +7,7 @@ import remarkEmoji from 'remark-emoji'
 import rehypeRaw from 'rehype-raw'
 import rehypeSanitize, { defaultSchema } from 'rehype-sanitize'
 import rehypeHighlight from 'rehype-highlight'
+import remend from 'remend'
 import { common } from 'lowlight'
 import { Check, Copy, FileText, ImageOff } from 'lucide-react'
 import { cx, ImageLightbox, TextLightbox, ZoomableImage } from './ui'
@@ -220,36 +221,6 @@ const REHYPE_BASE: any = [rehypeRaw, rehypeFixAnchors, [rehypeSanitize, schema]]
  * (`ignoreMissing` below). */
 const REHYPE_HIGHLIGHT: any = [rehypeHighlight, { detect: false, ignoreMissing: true, languages: common }]
 
-/* Streamed tail: text that starts at or after `at` (source offset of what is
- * already on screen) is wrapped in an `.animate-reply-in` span, so new words
- * fade in wherever they land. A table that starts after `at` fades once as a
- * whole; its cells do not fade separately. Runs last, so only nodes that carry
- * source positions (not highlighted code or math) are affected. */
-const fadeNew = ({ at }: { at: number }) => (tree: any) => {
-  const fade = (value: string) => ({ type: 'element', tagName: 'span', properties: { className: ['animate-reply-in'] }, children: [{ type: 'text', value }] })
-  /* One span per word: a span that already finished its animation would not
-   * replay when more text is appended to it, so each new word mounts fresh. */
-  const fadeWords = (value: string) => value.split(/(?<=\s)/).filter(Boolean).map(fade)
-  const walk = (parent: any) => {
-    const kids: any[] = []
-    for (const n of parent.children ?? []) {
-      const s = n.position?.start?.offset
-      const e = n.position?.end?.offset
-      if (n.type === 'element') {
-        if (n.tagName === 'table' && typeof s === 'number' && s >= at) n.properties = { ...n.properties, dataFade: true }
-        else walk(n)
-        kids.push(n)
-      } else if (n.type === 'text' && typeof s === 'number' && typeof e === 'number' && e > at) {
-        const cut = Math.min(Math.max(at - s, 0), n.value.length)
-        if (cut > 0) kids.push({ type: 'text', value: n.value.slice(0, cut) })
-        if (cut < n.value.length) kids.push(...fadeWords(n.value.slice(cut)))
-      } else kids.push(n)
-    }
-    parent.children = kids
-  }
-  walk(tree)
-}
-
 /* KaTeX plus its fonts is far larger than the rest of the pipeline and only
  * matters for replies that actually contain math, so the plugin and its
  * stylesheet load on first use. Until they arrive the math source renders as
@@ -389,7 +360,7 @@ function RemoteImage({ src, alt, title }: { src?: string; alt?: string; title?: 
   )
 }
 
-const makeC = (bare: boolean, cites?: CiteMap): any => ({
+const makeC = (bare: boolean, cites: CiteMap | undefined, live: boolean): any => ({
   h1: E('h1', 'mb-3 mt-6 text-2xl font-semibold'),
   h2: E('h2', 'mb-2 mt-5 text-xl font-semibold'),
   h3: E('h3', 'mb-2 mt-4 text-lg font-semibold'),
@@ -412,6 +383,13 @@ const makeC = (bare: boolean, cites?: CiteMap): any => ({
     // neutral surface, file icon, no link behaviour and no source styling.
     if (typeof href === 'string' && href.startsWith('#file-cite:')) {
       return <FileCitePill key={href} name={decodeURIComponent(href.slice('#file-cite:'.length))} />
+    }
+    /* A streaming reply has links whose URL is half-written; `remend` closes
+     * the syntax so the label renders at once, pointing it at a placeholder
+     * the sanitizer then drops. Show the label as pending text instead of a
+     * link with no target; settled replies keep their normal anchor. */
+    if (live && !href) {
+      return <span className="text-ac underline decoration-ac/40 decoration-dotted underline-offset-2">{children}</span>
     }
     // Citation links ([S1] pointing at a known source) render as pills that
     // jump to the Sources entry below (description first); the entry itself
@@ -448,8 +426,10 @@ const makeC = (bare: boolean, cites?: CiteMap): any => ({
     </a>
     : <a {...p} href={href} target="_blank" rel="noopener noreferrer nofollow" className={link}>{children}</a>)
   },
-  img: ({ node, src, alt, title }: any) => <RemoteImage src={src} alt={alt} title={title} />,
-  table: ({ children, node }: any) => <div className={cx('my-4 overflow-x-auto rounded-xl bg-surf', node?.properties?.dataFade && 'animate-reply-in')}><table className="w-full border-collapse text-sm">{children}</table></div>,
+  img: ({ node, src, alt, title }: any) => (live && !src
+    ? <span className="my-3 inline-flex items-center gap-2 rounded-xl border border-bor bg-surf px-3 py-2 text-xs text-mu"><ImageOff size={14} className="shrink-0 text-ac" aria-hidden="true" />{alt ? `Loading ${alt}…` : 'Loading image…'}</span>
+    : <RemoteImage src={src} alt={alt} title={title} />),
+  table: ({ children }: any) => <div className="my-4 overflow-x-auto rounded-xl bg-surf"><table className="w-full border-collapse text-sm">{children}</table></div>,
   thead: E('thead', 'bg-hov text-left'),
   tr: E('tr', 'even:bg-bg/40'),
   th: ({ node, align, className, ...p }: any) => createElement('th', { ...p, style: align ? { textAlign: align } : p.style, className: cx('px-3 py-2 font-semibold', className) }),
@@ -466,17 +446,30 @@ const makeC = (bare: boolean, cites?: CiteMap): any => ({
   },
 })
 
-export default memo(function Rich({ t, bare = false, cites, blocks = false, fadeFrom }: { t: string; bare?: boolean; cites?: CiteMap; blocks?: boolean; fadeFrom?: number }) {
+export default memo(function Rich({ t, bare = false, cites, blocks = false, live = false }: { t: string; bare?: boolean; cites?: CiteMap; blocks?: boolean; live?: boolean }) {
+  /* A block that is still streaming is never balanced markdown. `remend` — the
+   * incomplete-markdown pass streamdown ships — closes a half-typed **bold**,
+   * `code` or [link]( so the live block renders with the formatting it will end
+   * up with, instead of showing raw markers until the closing one arrives.
+   * Settled blocks are complete already and skip it. */
   /* `pre` re-runs over the whole reply on each streamed chunk by design: it is
    * a handful of linear regex passes (measured well under 0.1 ms for a 13 KB
    * reply) while the markdown parse below dominates. An incremental version
    * would have to guess whether the new tail closes a fence, definition list
    * or `$$` block, and a wrong guess re-renders earlier text as prose. */
-  const src = useMemo(() => pre(t), [t])
+  const src = useMemo(() => pre(live ? remend(t, {
+    /* GFM is configured without single-tilde strikethrough and `~…~` is
+     * Pandoc subscript here, so remend must not escape single tildes: doing so
+     * turned `H~2~O` into literal `<sub>` tags. An unclosed `$$` block stays
+     * literal until the model closes it, which avoids KaTeX painting a
+     * half-written formula in the error colour. */
+    singleTilde: false,
+    katex: false,
+  }) : t), [t, live])
   const [katexReady, setKatexReady] = useState(() => katexPlugins !== null)
   // Rebuilding the ~30 element renderers on every streamed word is pure churn;
   // they only depend on the rarely-changing bare/cites props.
-  const components = useMemo(() => makeC(bare, cites), [bare, cites])
+  const components = useMemo(() => makeC(bare, cites, live), [bare, cites, live])
   const wantsMath = hasMath(src)
   useEffect(() => {
     if (!wantsMath || katexReady) return
@@ -485,13 +478,10 @@ export default memo(function Rich({ t, bare = false, cites, blocks = false, fade
     return () => { live = false }
   }, [wantsMath, katexReady])
   // KaTeX renders after sanitising and before highlighting, as before.
-  // `fadeFrom` counts raw reply characters; map it through the same pre-pass so
-  // it lines up with the source offsets the parser reports.
-  const fadeAt = fadeFrom === undefined ? undefined : pre(t.slice(0, fadeFrom)).length
-  const rehypePlugins = useMemo(() => {
-    const base = katexReady && katexPlugins ? [...REHYPE_BASE, ...katexPlugins, REHYPE_HIGHLIGHT] : [...REHYPE_BASE, REHYPE_HIGHLIGHT]
-    return fadeAt === undefined ? base : [...base, [fadeNew, { at: fadeAt }]]
-  }, [katexReady, fadeAt])
+  const rehypePlugins = useMemo(
+    () => (katexReady && katexPlugins ? [...REHYPE_BASE, ...katexPlugins, REHYPE_HIGHLIGHT] : [...REHYPE_BASE, REHYPE_HIGHLIGHT]),
+    [katexReady],
+  )
   const body = (
     <ReactMarkdown
       remarkPlugins={BASE_PLUGINS}

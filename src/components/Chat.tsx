@@ -488,23 +488,12 @@ function ProcessStep({ t, detail, timing, models, tokens, open, toggle }: {
   )
 }
 
-/* During streaming, each provider chunk renders as its own <span> so the
- * fade-in effect applies per chunk. `fade === 0` disables it outright — no
- * spans, no animation, no CSS variable. Once streaming ends the live chunks
- * are cleared and the normal markdown renderer takes over. */
-function StreamedText({ chunks, fade }: { chunks: string[]; fade: number }) {
-  return (
-    /* `whitespace-pre-wrap` keeps the line breaks the model sent: without it the
-     * whole reply collapses into one paragraph and wraps wherever the pane
-     * happens to break, then reflows when the finished markdown takes over. */
-    <span className="md whitespace-pre-wrap leading-7">
-      {chunks.map((t, i) => (
-        <span key={i} className={fade > 0 ? 'animate-reply-in' : undefined} style={fade > 0 ? { '--reply-in-duration': `${fade}s` } as React.CSSProperties : undefined}>
-          {t}
-        </span>
-      ))}
-    </span>
-  )
+/* Plain-text streaming, for when live markdown is turned off. `whitespace-pre-wrap`
+ * keeps the line breaks the model sent: without it the whole reply collapses
+ * into one paragraph and wraps wherever the pane happens to break, then reflows
+ * when the finished markdown takes over. */
+function StreamedText({ chunks }: { chunks: string[] }) {
+  return <span className="md whitespace-pre-wrap leading-7">{chunks.join('')}</span>
 }
 
 /* Markdown during streaming, parsed incrementally. The reply is split at its
@@ -514,28 +503,24 @@ function StreamedText({ chunks, fade }: { chunks: string[]; fade: number }) {
  * container, so the live text sits inside the structure it belongs to — list
  * items keep their indent, quotes their background, tables their column widths
  * — and a growing paragraph is never broken onto a new line mid-sentence. */
-function StreamedMd({ chunks, fade }: { chunks: string[]; fade: number }) {
+function StreamedMd({ chunks }: { chunks: string[] }) {
   const full = useMemo(() => chunks.join(''), [chunks])
   /* Tokens arrive far faster than a long reply can be parsed. Handing React the
    * newest text at a lower priority lets it skip the intermediate tokens while
    * a parse is still in flight, instead of queueing one parse per token. */
   const text = useDeferredValue(full)
   const { head, tail } = useMemo(() => splitStream(text), [text])
-  /* Characters of the reply already on screen before this render. Only text
-   * past this point fades in, and the ref moves forward after each commit. */
-  const shown = useRef(0)
-  useEffect(() => { shown.current = text.length })
-  const seen = fade > 0 ? shown.current : undefined
   return (
-    <div className="md leading-7" style={fade > 0 ? { '--reply-in-duration': `${fade}s` } as React.CSSProperties : undefined}>
-      {head && <Md t={head} blocks fadeFrom={seen} />}
+    <div className="md leading-7">
+      {head && <Md t={head} blocks />}
       {tail && (
         /* Deliberately not keyed by the settled length: remounting the tail at
          * every block boundary would throw away an in-progress text selection.
          * The first/last child margins are flattened so the seam between the
-         * two halves matches a normal block gap. */
+         * two halves matches a normal block gap. `live` tells the renderer the
+         * block is unfinished, so it completes its open markdown first. */
         <div className="[&>*:first-child]:mt-0 [&>*:last-child]:mb-0">
-          <Md t={tail} blocks fadeFrom={seen === undefined ? undefined : Math.max(0, seen - head.length)} />
+          <Md t={tail} blocks live />
         </div>
       )}
     </div>
@@ -758,7 +743,6 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
   // unless its own `m` prop (or one of these) actually changed.
   const prefs = useS((s) => s.prefs)
   const eps = useS((s) => s.eps)
-  const streamFade = prefs.streamFade
   const streamMd = prefs.streamMd
   const logDetail = prefs.logDetail ?? 'standard'
   const logTiming = prefs.logTiming !== false
@@ -1073,11 +1057,6 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
           </div>
         ) : hideBody ? null : (() => {
           const finalIds = new Set((m.toolRounds ?? []).flatMap((r) => r.calls).map((c) => c.id))
-          // The indicator belongs to waiting, not writing: it shows while a tool
-          // runs (even if text already streamed) or before the first token, and
-          // hides the moment prose arrives so the indicator never sits beside
-          // text the model is actively typing.
-          const active = !!writingPath || (live?.length ?? 0) > 0 || (last && busy && !m.t)
           // A reply that made artifacts is rendered in pieces so each one sits
           // where the model called it, not in a block after the whole answer.
           const blocks = liveChunks?.length ? null : artifactBlocks(displayText, m.toolRounds)
@@ -1098,21 +1077,27 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
           const streamingSegments = liveChunks?.length ? splitToolTrail(streamText, m.toolRounds) : null
           const streamingTrail = !!streamingSegments?.some((s) => s.calls.length)
           const lastRoundCalls = (m.toolRounds ?? [])[(m.toolRounds ?? []).length - 1]?.calls ?? []
-          // What the action indicator says: the calls still running, the file
-          // being written, or (between steps) the newest finished set, which
-          // reads in the past tense with no shine and no timer.
+          // The indicator describes one thing at a time. While the reply is
+          // running that is what is happening now — a live call, or the model
+          // thinking. A finished round already has its trail in the text, and
+          // repeating it here in the past tense put "Ran code" beside the
+          // running/thinking line; the past-tense form belongs to a reply that
+          // has stopped.
           const runningCalls = pendingCalls.length
             ? pendingCalls as TrailCall[]
             : writingPath
               ? [{ name: 'workspace_upsert', arguments: JSON.stringify({ action: 'patch', path: writingPath }) }]
               : []
-          const indicatorCalls = runningCalls.length
-            ? runningCalls
-            : busy && last
-              ? lastRoundCalls as unknown as TrailCall[]
-              : []
-          const indicatorLive = runningCalls.length > 0 || indicatorCalls.length === 0
+          const finishedCalls = !busy && last ? lastRoundCalls as unknown as TrailCall[] : []
+          const indicatorCalls = runningCalls.length ? runningCalls : finishedCalls
+          const indicatorLive = runningCalls.length > 0 || finishedCalls.length === 0
           const indicatorDuration = lastRoundCalls.reduce((ms, c) => ms + Math.max(0, c.ms ?? 0), 0)
+          // The indicator belongs to waiting and to the moment a reply comes to
+          // rest: it shows while a tool runs (even if text already streamed) or
+          // before the first token, hides the moment prose arrives so it never
+          // sits beside text the model is actively typing, and returns in the
+          // past tense once the reply has stopped with a tool run behind it.
+          const active = !!writingPath || (live?.length ?? 0) > 0 || (last && busy && !m.t) || finishedCalls.length > 0
           return (
             <>
               {(m.t || hasTrail || streamingTrail) && (
@@ -1127,7 +1112,7 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
                       ))
                     ) : (
                       <>
-                        {streamMd ? <StreamedMd chunks={liveChunks} fade={streamFade} /> : <StreamedText chunks={liveChunks} fade={streamFade} />}
+                        {streamMd ? <StreamedMd chunks={liveChunks} /> : <StreamedText chunks={liveChunks} />}
                       </>
                     )
                   ) : blocks ? (

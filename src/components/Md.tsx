@@ -9,7 +9,7 @@ import { PathSwitch } from './PathSwitch'
 import { loadChunkOr } from '../chunkLoad'
 import type { CiteMap } from './Rich'
 
-type RichProps = { t: string; bare?: boolean; cites?: CiteMap; blocks?: boolean; fadeFrom?: number }
+type RichProps = { t: string; bare?: boolean; cites?: CiteMap; blocks?: boolean; live?: boolean }
 
 /** If the renderer's chunk cannot be fetched (a deploy replaced the old
  *  hashed file while this tab stayed open, or the connection dropped twice),
@@ -23,10 +23,10 @@ const PlainRich = memo(({ t }: RichProps) => <p className="whitespace-pre-wrap">
 // chunk names no longer exist, so the load recovers instead of 404ing.
 const Rich = lazy(() => loadChunkOr<{ default: ComponentType<RichProps> }>(() => import('./Rich'), { default: PlainRich }))
 
-export function Md({ t, bare = false, cites, blocks = false, fadeFrom }: { t: string; bare?: boolean; cites?: CiteMap; blocks?: boolean; fadeFrom?: number }) {
+export function Md({ t, bare = false, cites, blocks = false, live = false }: { t: string; bare?: boolean; cites?: CiteMap; blocks?: boolean; live?: boolean }) {
   return (
     <Suspense fallback={<p className="whitespace-pre-wrap">{t}</p>}>
-      <Rich t={t} bare={bare} cites={cites} blocks={blocks} fadeFrom={fadeFrom} />
+      <Rich t={t} bare={bare} cites={cites} blocks={blocks} live={live} />
     </Suspense>
   )
 }

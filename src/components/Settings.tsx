@@ -1278,7 +1278,7 @@ function Pls() {
         const u = (x: object) => upd('pls', p.id, x)
         return (
           <Anchor key={plid} id={`playlist-${p.id}`}>
-          <Card handle={handle} icon={ListMusic} title={p.name} sub={`${p.e.length} entries${p.cls ? ' · classifier' : ''}`}>
+          <Card handle={handle} icon={ListMusic} title={p.name} sub={`${p.e.length} entries${p.cls && p.cls !== 'none' ? ' · classifier' : ''}`}>
             <Field label="Name"><Input value={p.name} set={(v) => u({ name: v })} /></Field>
             <Field label="System prompt"><Area value={p.sys} set={(v) => u({ sys: v })} /></Field>
             <Field label="Models">
@@ -1310,9 +1310,9 @@ function Pls() {
             <div className="space-y-3 rounded-xl bg-bg p-3">
               <Anchor id="classifier-routing"><div className="flex items-center gap-2 text-sm font-medium"><Route size={16} className="text-ac" />Classifier routing</div></Anchor>
               <Field label="Classifier endpoint" row>
-                <Sel value={p.cls} set={(v) => u({ cls: v })} opts={[[ '', useS.getState().memoryPrefs.classifierEp ? 'None, use helper model' : 'None, use list order'], ...eps.map((e) => [e.id, e.name] as [string, string])]} />
+                <Sel value={p.cls} set={(v) => u(v === 'none' ? { cls: v, clsModel: '' } : { cls: v })} opts={[['', 'Default'], ['none', 'None'], ...eps.map((e) => [e.id, e.name] as [string, string])]} />
               </Field>
-              {p.cls && eps.find((e) => e.id === p.cls) && <Field label="Classifier model" row><Sel value={p.clsModel ?? ""} set={(v) => u({ clsModel: v })} opts={[["", "Default model"], ...modelsOf(eps.find((e) => e.id === p.cls)!).map((model) => [model, modelNameOf(eps.find((e) => e.id === p.cls)!, model) + " · " + model] as [string, string])]} /></Field>}
+              {p.cls && p.cls !== 'none' && eps.find((e) => e.id === p.cls) && <Field label="Classifier model" row><Sel value={p.clsModel ?? ""} set={(v) => u({ clsModel: v })} opts={[["", "Default model"], ...modelsOf(eps.find((e) => e.id === p.cls)!).map((model) => [model, modelNameOf(eps.find((e) => e.id === p.cls)!, model) + " · " + model] as [string, string])]} /></Field>}
               <Field label="Routing instructions"><Area rows={3} value={p.rule} set={(v) => u({ rule: v })} /></Field>
             </div>
             <Acts k="pls" id={p.id} />

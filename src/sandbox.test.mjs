@@ -4,7 +4,7 @@ import assert from 'node:assert/strict'
 const {
   BLANK_SANDBOX, normSandbox, sandboxConfigured, availableCodeLanguages, codeRunNote,
   e2bCreateRequest, e2bExecuteRequest, e2bDeleteRequest, pistonRequest, judge0Request, customRequest,
-  parseE2bRun, parsePistonRun, parseJudge0Run, parseCustomRun,
+  parseE2bRun, parseE2bStream, parseE2bResponse, parsePistonRun, parseJudge0Run, parseCustomRun,
 } = await import('./sandbox.ts')
 
 const body = (req) => JSON.parse(String(req.init.body))
@@ -70,16 +70,16 @@ test('E2B creates, executes and deletes with the documented shapes', () => {
     metadata: { source: 'byok-chat' },
   })
 
-  const exec = e2bExecuteRequest(p.e2b, { id: 'sbx_1', token: 'tok', trafficToken: 'traffic' }, 'python', 'print(1)', 5000)
+  const exec = e2bExecuteRequest(p.e2b, { id: 'sbx_1', token: 'tok', trafficToken: 'traffic' }, 'python', 'print(1)')
   assert.equal(exec.url, 'https://sandbox.e2b.app/execute')
   assert.equal(headers(exec)['E2b-Sandbox-Id'], 'sbx_1')
   assert.equal(headers(exec)['E2b-Sandbox-Port'], '49999')
   assert.equal(headers(exec)['X-Access-Token'], 'tok')
   assert.equal(headers(exec)['e2b-traffic-access-token'], 'traffic')
-  assert.deepEqual(body(exec), { code: 'print(1)', language: 'python', timeout: 5 })
+  assert.deepEqual(body(exec), { code: 'print(1)', language: 'python' })
 
   // A response that only carries one token must not send an empty header.
-  const bare = e2bExecuteRequest(p.e2b, { id: 'sbx_2' }, 'python', 'print(1)', 5000)
+  const bare = e2bExecuteRequest(p.e2b, { id: 'sbx_2' }, 'python', 'print(1)')
   assert.equal(headers(bare)['X-Access-Token'], undefined)
   assert.equal(headers(bare)['e2b-traffic-access-token'], undefined)
 
@@ -125,6 +125,46 @@ test('E2B results read stdout, results and errors', () => {
   const bad = parseE2bRun({ logs: { stdout: [], stderr: ['boom'] }, results: [], error: { name: 'NameError', value: 'x is not defined' } })
   assert.equal(bad.ok, false)
   assert.match(bad.error, /NameError: x is not defined/)
+})
+
+test('E2B /execute is read as an NDJSON event stream', () => {
+  const raw = [
+    { type: 'stdout', text: 'Sandbox is working!\n' },
+    { type: 'stdout', text: '4\n' },
+    { type: 'stderr', text: 'a warning\n' },
+    { type: 'result', text: '4', is_main_result: true },
+    { type: 'result', json: { ok: true } },
+    { type: 'number_of_executions', execution_count: 1 },
+    { type: 'end_of_execution' },
+  ].map((event) => JSON.stringify(event)).join('\n') + '\n'
+  const run = parseE2bStream(raw)
+  assert.equal(run.ok, true)
+  assert.equal(run.logs, 'Sandbox is working!\n4\na warning\n')
+  assert.equal(run.value, '4\n{"ok":true}')
+
+  const failed = parseE2bStream([
+    { type: 'stderr', text: 'Traceback\n' },
+    { type: 'error', name: 'NameError', value: 'x is not defined', traceback: '…' },
+    { type: 'end_of_execution' },
+  ].map((event) => JSON.stringify(event)).join('\n'))
+  assert.equal(failed.ok, false)
+  assert.equal(failed.logs, 'Traceback\n')
+  assert.match(failed.error, /NameError: x is not defined/)
+
+  // SSE framing and no newlines must not hide the events behind them.
+  const sse = 'event: message\ndata: {"type":"stdout","text":"hi\\n"}\n\ndata: {"type":"end_of_execution"}\n'
+  assert.equal(parseE2bStream(sse).logs, 'hi\n')
+  const glued = '{"type":"stdout","text":"a"}{"type":"stdout","text":"b"}'
+  assert.equal(parseE2bStream(glued).logs, 'ab')
+
+  // A body that carries no event is not a run, so the caller can say so.
+  assert.equal(parseE2bStream('<html>proxy error page</html>'), null)
+})
+
+test('E2B also accepts the single-document SDK shape', () => {
+  const run = parseE2bResponse(JSON.stringify({ logs: { stdout: ['hi\n'], stderr: [] }, results: [{ text: 'hi' }], error: null }))
+  assert.equal(run.logs, 'hi\n')
+  assert.equal(run.value, 'hi')
 })
 
 test('Piston results read the run block', () => {
