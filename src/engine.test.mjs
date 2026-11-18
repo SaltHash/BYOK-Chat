@@ -185,6 +185,33 @@ test('streaming OpenAI tool-call fragments are accumulated before execution', as
   } finally { globalThis.fetch = original }
 })
 
+test('generation timing counts only visible content deltas, never idle gaps', async () => {
+  const original = globalThis.fetch
+  let push
+  globalThis.fetch = async () => new Response(new ReadableStream({ start(ctl) { push = ctl } }), { headers: { 'content-type': 'text/event-stream' } })
+  const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+  const enc = new TextEncoder()
+  try {
+    const reply = stream(openai, '', [{ role: 'user', content: 'hi' }], () => {}, new AbortController())
+    // Hidden reasoning before the first visible token: waiting for it is not
+    // generation time, and those tokens are not output tokens.
+    push.enqueue(enc.encode('data: {"choices":[{"delta":{"reasoning_content":"thinking it over"}}]}\n\n'))
+    await wait(60)
+    push.enqueue(enc.encode('data: {"choices":[{"delta":{"content":"Hello"}}]}\n\n'))
+    await wait(30)
+    push.enqueue(enc.encode('data: {"choices":[{"delta":{"content":" world"}}]}\n\n'))
+    // A think/tool/queue pause is excluded rather than charged to the rate.
+    await wait(1100)
+    push.enqueue(enc.encode('data: {"choices":[{"delta":{"content":"!"}}]}\n\n'))
+    push.enqueue(enc.encode('data: [DONE]\n\n'))
+    push.close()
+    const result = await reply
+    assert.equal(result.text, 'Hello world!')
+    assert.equal(result.outChars, 'Hello world!'.length, 'only visible text counts as output')
+    assert.ok(result.genMs >= 15 && result.genMs < 500, `only the active gap counts, got ${result.genMs}ms`)
+  } finally { globalThis.fetch = original }
+})
+
 test('Anthropic requests use native tool schemas and parse native tool-use responses', async () => {
   let request
   const original = globalThis.fetch

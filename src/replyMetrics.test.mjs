@@ -1,7 +1,20 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-const { outputTokensOf, messageCostOf, formatCost, exactCost } = await import('../src/replyMetrics.ts')
+const { outputTokensOf, messageCostOf, formatCost, exactCost, replySpeed, MIN_SPEED_MS } = await import('../src/replyMetrics.ts')
+
+test('generation speed uses streamed text over active generation time only', () => {
+  // 400 chars over 2s of actual generation = 50 tokens/s at 4 chars/token.
+  assert.equal(replySpeed(400, 2000), 50)
+  // Character counts round up to whole tokens before the rate is taken.
+  assert.equal(replySpeed(401, 2000), 50.5)
+  // Nothing to measure: a one-shot response or an empty reply reports no speed
+  // instead of inventing one from the provider's usage figure.
+  assert.equal(replySpeed(0, 2000), null)
+  assert.equal(replySpeed(400, 0), null)
+  assert.equal(replySpeed(400, MIN_SPEED_MS - 1), null)
+  assert.equal(replySpeed(Number.NaN, 2000), null)
+})
 
 test('output token stats prefer the persisted output count', () => {
   assert.equal(outputTokensOf({ tokensOut: 42, log: [{ n: 'x', m: 'm', tout: 99 }] }), 42)

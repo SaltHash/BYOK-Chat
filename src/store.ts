@@ -40,6 +40,7 @@ import { DEFAULT_MEMORY_PREFS, normMemoryPrefs, memoryEnabledFor, memoryPolicyTe
 export type { RouteStat, RoutingMode }
 import { QUOTA_FLAG, prunePersisted, storageUsage, persistStorage, createPersistMapper, STORE_VERSION, withoutExpiredTemps } from './persistence'
 import { normArchiveDays } from './archive'
+import { replySpeed } from './replyMetrics'
 import { appendUsageRows, usageRowOf, usageRowsFromChats, usageTitlesFromChats, type UsageRow } from './usageStats'
 import { readUsageLedger, usageLedgerExists, writeUsageLedger } from './storage/usageLedger'
 import { providerPresetEntries } from './providerRegistry'
@@ -2613,10 +2614,6 @@ export const useS = create<S>()(
             // has never seen in this conversation turn.
             const seenWorkspacePaths = new Set<string>()
             let responseTokensIn = 0, responseTokensOut = 0
-            // Generation-speed accounting: runToolLoop reports the total time
-            // spent inside stream() across every round, so intermediate
-            // tool-call rounds count toward tokens/s while local tool
-            // execution (which runs outside stream()) is excluded.
             try {
               r.ctl = new AbortController()
               const x = await runToolLoop(e, system, (rounds) => {
@@ -2871,17 +2868,17 @@ export const useS = create<S>()(
               bump(responseTokensIn, responseTokensOut, responseTokensIn - explicit, explicit); ok = true
               track(e, Date.now() - t0, false)
               addCost(e, e.model, responseTokensIn, responseTokensOut, (x as any).cost ?? 0, x)
-              // Tokens/sec over generated output tokens (including tokens written
-              // across tool rounds), measured over total LLM streaming time
-              // across all rounds. Local tool execution runs outside stream()
-              // so it is excluded by construction.
-              const rawStreamMs = (x as { streamMs?: number }).streamMs ?? 0
-              const genMs = rawStreamMs > 0 ? rawStreamMs : Math.max(0, elapsed - toolElapsed)
+              // Speed comes from the stream, not the provider: only the time
+              // spent emitting visible answer text counts (waiting for the
+              // first token, hidden reasoning and tool-call rounds are all
+              // excluded), and the token count is derived from that text
+              // rather than the usage figure, which includes hidden reasoning.
+              const speed = replySpeed(x.outChars, x.genMs)
               // Extract workspace IDs from tool rounds (arguments first, then
               // the tool result — a newly created workspace only has an id in
               // its result).
               const workspaceIds = extractWorkspaceIds(toolRounds.flatMap((r) => r.calls))
-              edit(id, mid, (m) => ({ ...m, tps: Math.round(responseTokensOut / Math.max(genMs / 1000, 0.001) * 10) / 10, tokens: responseTokensIn + responseTokensOut, tokensOut: responseTokensOut, took: elapsed, effort, toolRounds, ...(toolRounds.length ? { toolFinal: x.text } : {}), ...(x.finish === 'length' || x.finish === 'max_tokens' ? { trunc: true } : {}), ...((x as { capped?: boolean }).capped ? { capped: true } : {}), workspaceIds: [...new Set([...(m.workspaceIds ?? []), ...workspaceIds])] }))
+              edit(id, mid, (m) => ({ ...m, ...(speed != null ? { tps: speed } : {}), tokens: responseTokensIn + responseTokensOut, tokensOut: responseTokensOut, took: elapsed, effort, toolRounds, ...(toolRounds.length ? { toolFinal: x.text } : {}), ...(x.finish === 'length' || x.finish === 'max_tokens' ? { trunc: true } : {}), ...((x as { capped?: boolean }).capped ? { capped: true } : {}), workspaceIds: [...new Set([...(m.workspaceIds ?? []), ...workspaceIds])] }))
               usedEp = e
               break
             } catch (x: any) {

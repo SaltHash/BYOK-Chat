@@ -1091,6 +1091,13 @@ type O = { cap?: number; max?: number; temp?: number; topp?: number; effort?: st
  * wrapped in an idle watchdog that fails the attempt after this long. */
 const STREAM_IDLE_MS = 90_000
 
+/* Longest gap between two visible content deltas still counted as generation
+ * time for tokens/s. A longer gap is a model thinking, a tool call, a queued
+ * request or a stalled read, so it contributes nothing: no real model emits
+ * answer text slower than a chunk per second, and counting such gaps is what
+ * made the rate look worse than the model actually is. */
+const GEN_IDLE_MS = 1000
+
 /* The idle watchdog above only starts once a response exists. A provider (or a
  * dead route to one) can accept the connection and never send headers, which
  * used to leave the reply spinning with no error and no stop condition. This
@@ -1238,11 +1245,22 @@ export async function stream(e: Ep, sys: string, ms: Wire[], on: (t: string) => 
     return 0
   }
 
+  /* Generation-rate accounting. Only visible reply text counts: time is
+   * accumulated between consecutive content deltas, so the wait for the first
+   * token, hidden reasoning and tool-call argument streaming are excluded.
+   * Gaps longer than GEN_IDLE_MS are treated as idle rather than generation.
+   * Characters come from the streamed text itself, not the provider's usage
+   * figures, which include hidden reasoning tokens and vary between gateways. */
+  const gen = { ms: 0, chars: 0, last: 0 }
   // Deliver each provider chunk to `on` the moment it arrives: no buffering,
   // no per-word pacing, no animation-frame gate. `all` tracks the authoritative
   // text in lockstep.
   const add = (t?: string) => {
     if (!t) return
+    const now = Date.now()
+    if (gen.last) { const gap = now - gen.last; if (gap <= GEN_IDLE_MS) gen.ms += gap }
+    gen.last = now
+    gen.chars += t.length
     all += t
     on(t)
   }
@@ -1413,7 +1431,7 @@ export async function stream(e: Ep, sys: string, ms: Wire[], on: (t: string) => 
   if (!all && !calls.size) throw withCode('Empty response', 'empty_response')
   // Estimated output counts include tokens written as tool calls, not just streamed text.
   const callText = [...calls.values()].map((c) => `${c.name}${c.arguments}`).join('')
-  return { text: all, toolCalls: [...calls.values()], tin: tin || est(JSON.stringify(ms) + sys), tout: tout || est(all + callText), cost, cacheRead, cacheWrite, finish }
+  return { text: all, toolCalls: [...calls.values()], tin: tin || est(JSON.stringify(ms) + sys), tout: tout || est(all + callText), cost, cacheRead, cacheWrite, finish, genMs: gen.ms, outChars: gen.chars }
 }
 
 /* Appended to the system prompt for the one final turn after the tool-round
@@ -1429,6 +1447,11 @@ export async function runToolLoop(e: Ep, sys: string, messages: (rounds: { text:
   /* True when the round cap was reached and the reply had to be written from
    * the results already gathered (surfaced to the user as a partial answer). */
   let capped = false
+  /* Active generation time and visible output characters across every round,
+   * summed from `stream`. They are the numerator and denominator for
+   * tokens/s: only time spent emitting answer text counts, and the character
+   * count comes from what streamed, not from the provider's usage totals. */
+  let genMs = 0, outChars = 0
   /* Stop reason of the final (non-tool) round, surfaced to the store so a
      reply cut off by the output cap can offer to continue. */
   let finish: string | null = null
@@ -1437,11 +1460,6 @@ export async function runToolLoop(e: Ep, sys: string, messages: (rounds: { text:
   // needs a blank line before its first characters so the two do not run
   // together in the reply.
   let pendingSep = false
-  // Total wall-clock time spent inside stream() across every round. This is
-  // the honest denominator for tokens/s: it includes the LLM generation time
-  // of intermediate tool-call rounds, while local tool execution (which
-  // happens outside stream()) is excluded by construction.
-  let streamMs = 0
   for (;;) {
     let x
     let sepDone = !pendingSep
@@ -1455,17 +1473,9 @@ export async function runToolLoop(e: Ep, sys: string, messages: (rounds: { text:
       text += t
       on(t)
     }
-    const streamStart = Date.now()
-    try {
-      x = await stream(e, sys, messages(rounds), onChunk, ac, o, onSummary, toolsFor(enabled, e.type), onToolDelta)
-    } catch (error) {
-      // Count the stream's active time, then propagate. The reply is not
-      // preserved: a cancelled or failed attempt stores nothing.
-      streamMs += Math.max(0, Date.now() - streamStart)
-      throw error
-    }
-    streamMs += Math.max(0, Date.now() - streamStart)
+    x = await stream(e, sys, messages(rounds), onChunk, ac, o, onSummary, toolsFor(enabled, e.type), onToolDelta)
     tin += x.tin; tout += x.tout
+    genMs += x.genMs; outChars += x.outChars
     // `tin`/`tout` are the cumulative spend across every tool round (used for
     // billing and usage stats). `contextTin`/`contextTout` are the final round's
     // prompt and reply, which is what the context-window meter shows: summing
@@ -1493,16 +1503,14 @@ export async function runToolLoop(e: Ep, sys: string, messages: (rounds: { text:
         text += t
         on(t)
       }
-      const wrapStart = Date.now()
       let w: Awaited<ReturnType<typeof stream>>
       try {
         w = await stream(e, `${sys}${sys ? '\n\n' : ''}${TOOL_BUDGET_NOTE}`, messages(rounds), onWrap, ac, o, onSummary, [], onToolDelta)
       } catch {
-        streamMs += Math.max(0, Date.now() - wrapStart)
         throw withCode(`Tool execution limit reached (${maxRounds} rounds).`, 'tool_limit')
       }
-      streamMs += Math.max(0, Date.now() - wrapStart)
       tin += w.tin; tout += w.tout
+      genMs += w.genMs; outChars += w.outChars
       contextTin = w.tin; contextTout = w.tout
       if (Number.isFinite(w.cost) && w.cost > 0) cost += w.cost
       cacheRead += w.cacheRead || 0
@@ -1518,7 +1526,7 @@ export async function runToolLoop(e: Ep, sys: string, messages: (rounds: { text:
     onRound(rounds)
     pendingSep = true
   }
-  return { text, finalText, rounds, tin, tout, contextTin, contextTout, streamMs, cost, cacheRead, cacheWrite, finish, capped }
+  return { text, finalText, rounds, tin, tout, contextTin, contextTout, genMs, outChars, cost, cacheRead, cacheWrite, finish, capped }
 }
 
 export async function testEp(e: Ep) {
