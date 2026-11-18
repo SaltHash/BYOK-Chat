@@ -1076,28 +1076,22 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
           const streamText = liveChunks?.length ? liveChunks.join('') : ''
           const streamingSegments = liveChunks?.length ? splitToolTrail(streamText, m.toolRounds) : null
           const streamingTrail = !!streamingSegments?.some((s) => s.calls.length)
-          const lastRoundCalls = (m.toolRounds ?? [])[(m.toolRounds ?? []).length - 1]?.calls ?? []
-          // The indicator describes one thing at a time. While the reply is
-          // running that is what is happening now — a live call, or the model
-          // thinking. A finished round already has its trail in the text, and
-          // repeating it here in the past tense put "Ran code" beside the
-          // running/thinking line; the past-tense form belongs to a reply that
-          // has stopped.
+          // The indicator describes only what is happening now: a call that is
+          // still running, the file being written, or the model thinking before
+          // its next token. A finished round already has its trail in the text,
+          // so repeating it here left a second "Ran code" under a reply that had
+          // already stopped — the trail is the permanent record, this line is
+          // not.
           const runningCalls = pendingCalls.length
             ? pendingCalls as TrailCall[]
             : writingPath
               ? [{ name: 'workspace_upsert', arguments: JSON.stringify({ action: 'patch', path: writingPath }) }]
               : []
-          const finishedCalls = !busy && last ? lastRoundCalls as unknown as TrailCall[] : []
-          const indicatorCalls = runningCalls.length ? runningCalls : finishedCalls
-          const indicatorLive = runningCalls.length > 0 || finishedCalls.length === 0
-          const indicatorDuration = lastRoundCalls.reduce((ms, c) => ms + Math.max(0, c.ms ?? 0), 0)
-          // The indicator belongs to waiting and to the moment a reply comes to
-          // rest: it shows while a tool runs (even if text already streamed) or
-          // before the first token, hides the moment prose arrives so it never
-          // sits beside text the model is actively typing, and returns in the
-          // past tense once the reply has stopped with a tool run behind it.
-          const active = !!writingPath || (live?.length ?? 0) > 0 || (last && busy && !m.t) || finishedCalls.length > 0
+          // It shows while a tool runs (even if text already streamed) or before
+          // the first token, and hides the moment prose arrives so it never sits
+          // beside text the model is actively typing — or under a reply that has
+          // finished.
+          const active = !!writingPath || (live?.length ?? 0) > 0 || (last && busy && !m.t)
           return (
             <>
               {(m.t || hasTrail || streamingTrail) && (
@@ -1134,14 +1128,7 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
                   )}
                 </div>
               )}
-              {active && (
-                <ActionIndicator
-                  calls={indicatorCalls}
-                  live={indicatorLive}
-                  duration={indicatorLive ? undefined : indicatorDuration}
-                  block={!!m.t}
-                />
-              )}
+              {active && <ActionIndicator calls={runningCalls} live block={!!m.t} />}
             </>
           )
         })()}
