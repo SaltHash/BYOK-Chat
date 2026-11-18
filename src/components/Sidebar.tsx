@@ -8,7 +8,7 @@ import { useQuestions } from '../questions'
 import { bookmarkEntries } from '../bookmarks'
 import { clampSidebarWidth } from '../layout'
 import { focusComposer, useShiftHeld } from '../hooks'
-import { Btn, Confirm, cx, useMenuNav } from './ui'
+import { Btn, Confirm, Seg, cx, useMenuNav } from './ui'
 import { ProjectModal } from './ProjectModal'
 import { DndPlaceholder, DndLiveRegion, showDragOverlay, moveDragOverlay, hideDragOverlay, measureBox, DND_ACTIVATION_PX, useFlipAnimate, restDocTop, pointerDocY, edgeScroll } from './dnd'
 import { stepInsertion } from '../dndShared'
@@ -566,12 +566,7 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
         <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-mu" />
         <input aria-label="Search titles and messages" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search titles and messages" className="h-9 w-full rounded-lg bg-surf pl-9 pr-3 text-sm outline-none focus:ring-2 focus:ring-ac/40" />
       </div>
-      <div role="group" aria-label="Chat filter" className="flex items-center gap-1 rounded-lg bg-surf p-0.5 text-xs">
-        <button type="button" aria-pressed={!showArchived} onClick={() => setShowArchived(false)} className={cx('flex flex-1 items-center justify-center rounded-md px-2 py-1 text-center font-medium', !showArchived ? 'bg-hov text-tx' : 'text-mu hover:text-tx')}>Chats</button>
-        <button type="button" aria-pressed={showArchived} onClick={() => setShowArchived(true)} title="Show chats moved out of the main list" className={cx('flex flex-1 items-center justify-center gap-1.5 rounded-md px-2 py-1 text-center font-medium', showArchived ? 'bg-hov text-tx' : 'text-mu hover:text-tx')}>
-          Archived
-        </button>
-      </div>
+      <Seg v={showArchived ? 'archived' : 'chats'} set={(k) => setShowArchived(k === 'archived')} opts={[['chats', 'Chats'], ['archived', 'Archived']]} label="Chat filter" fill />
       <nav ref={navRef} aria-label="Chats" data-dnd-scroll="" className="-mx-1 flex-1 space-y-3 overflow-y-auto px-1">
         {k ? (
           <div>

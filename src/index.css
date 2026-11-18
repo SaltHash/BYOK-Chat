@@ -222,7 +222,7 @@ html[data-codewrap] .code-lines .code-line > code { flex: 1 1 auto; min-width: 0
 
 /* c2..c5 are the syntax colors for strings, numbers, titles and types in each theme */
 [data-t=plum] { color-scheme: dark; --bg:#181220; --side:#211829; --surf:#2b2035; --hov:#382b45; --tx:#f4ecf8; --mu:#b2a0c0; --ac:#d68cf0; --acx:#1a0f22; --er:#f2777a; --code:#120c18; --codeh:#261b30; --bor:#4a3b58; --c2:#9fe3c5; --c3:#f2b98b; --c4:#8fb9ff; --c5:#c7a6ff }
-[data-t=claude] { color-scheme: dark; --bg:#1c1b19; --side:#252320; --surf:#2f2d29; --hov:#3b3833; --tx:#f0ebe0; --mu:#a8a095; --ac:#da7756; --acx:#1a1210; --er:#ef6b6b; --code:#151412; --codeh:#24221f; --bor:#3f3b35; --c2:#7ec699; --c3:#f4a58a; --c4:#7cace8; --c5:#e8c47c }
+[data-t=claude] { color-scheme: dark; --bg:#181817; --side:#242423; --surf:#2e2e2d; --hov:#3a3938; --tx:#ece7db; --mu:#a09891; --ac:#d97757; --acx:#121211; --er:#e46a6a; --code:#111110; --codeh:#121211; --bor:#34312d; --c2:#7ec699; --c3:#f4a58a; --c4:#7cace8; --c5:#e8c47c }
 [data-t=obsidian] { color-scheme: dark; --bg:#0e131b; --side:#151c27; --surf:#1d2634; --hov:#283347; --tx:#e6ecf3; --mu:#8a9bb0; --ac:#2dd4bf; --acx:#06201d; --er:#f2706f; --code:#0a0e14; --codeh:#172030; --bor:#2c3a4d; --c2:#34d399; --c3:#fbbf24; --c4:#38bdf8; --c5:#c084fc }
 [data-t=graphite] { color-scheme: dark; --bg:#0e0e0f; --side:#161617; --surf:#1f1f21; --hov:#2b2b2e; --tx:#ececee; --mu:#98989f; --ac:#cfd3dc; --acx:#111113; --er:#f06b6b; --code:#09090a; --codeh:#19191b; --bor:#34343a; --c2:#a3e635; --c3:#fb923c; --c4:#facc15; --c5:#e879f9 }
 [data-t=paper] { color-scheme: light; --bg:#f1f0ec; --side:#faf9f6; --surf:#ffffff; --hov:#e6e4dc; --tx:#1c1b18; --mu:#66645b; --ac:#3b5bdb; --acx:#ffffff; --er:#c0392b; --code:#e8e6df; --codeh:#dbd8ce; --bor:#d2cfc5; --c2:#2b8a3e; --c3:#d9480f; --c4:#7048e8; --c5:#0b7285 }
@@ -354,6 +354,14 @@ html[data-codewrap] .code-lines .code-line > code { flex: 1 1 auto; min-width: 0
   .dnd-overlay { filter: none; }
   .dnd-lift { scale: none; filter: none; }
 }
+
+/* Segmented control: the selected pill is one element that slides to the
+   newly chosen option, so the highlight and its hairline travel together.
+   Layout, not opacity, carries the change; reduced motion turns it off. */
+.seg-pill {
+  transition: transform 180ms cubic-bezier(.22, .8, .2, 1), width 180ms cubic-bezier(.22, .8, .2, 1), height 180ms cubic-bezier(.22, .8, .2, 1);
+}
+@media (prefers-reduced-motion: reduce) { .seg-pill { transition: none; } }
 
 /* Deep-link flash for palette jumps to an individual setting. */
 .setting-flash { outline: 2px solid var(--ac); outline-offset: 3px; border-radius: 12px; transition: outline-color 1.2s ease; }

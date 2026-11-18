@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ButtonHTMLAttributes, type ImgHTMLAttributes, type InputHTMLAttributes, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type RefObject, type TextareaHTMLAttributes } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type ButtonHTMLAttributes, type ImgHTMLAttributes, type InputHTMLAttributes, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type RefObject, type TextareaHTMLAttributes } from 'react'
 import { createPortal } from 'react-dom'
 import { Check, ChevronDown, ChevronRight, Star, TriangleAlert, X, type LucideIcon } from 'lucide-react'
 
@@ -119,9 +119,37 @@ export function useMenuNav(open: boolean, menuRef: RefObject<HTMLElement>, close
 
 /* Mutually exclusive choices. Exposed as a radiogroup so assistive technology
  * hears which option is selected, with the arrow-key roving focus the radio
- * pattern promises (only the checked option is in the Tab order). */
-export function Seg<T extends string>({ v, set, opts, label }: { v: T; set: (v: T) => void; opts: [T, string, Ic?][]; /** Group name. Falls back to the option names when a call site has its own visible heading. */ label?: string }) {
+ * pattern promises (only the checked option is in the Tab order). The selected
+ * pill is one element that slides between options, so choosing another moves
+ * the highlight and its hairline across instead of blinking between buttons. */
+export function Seg<T extends string>({ v, set, opts, label, fill = false }: { v: T; set: (v: T) => void; opts: [T, string, Ic?][]; /** Group name. Falls back to the option names when a call site has its own visible heading. */ label?: string; /** Stretch the segments across the container instead of hugging them. */ fill?: boolean }) {
   const ref = useRef<HTMLDivElement>(null)
+  /* Measured position of the checked segment inside the group. Flex wrapping
+   * can place it on a second row, so its vertical offset and height travel
+   * with the horizontal move. */
+  const [pill, setPill] = useState<{ x: number; y: number; w: number; h: number } | null>(null)
+  const measure = () => {
+    const el = ref.current
+    const checked = el?.querySelector<HTMLButtonElement>('[role="radio"][aria-checked="true"]')
+    if (!el || !checked) { setPill(null); return }
+    // Measured as a box difference rather than offsetLeft/offsetTop, so the
+    // group's own padding and border cannot nudge the pill off the option.
+    const box = checked.getBoundingClientRect()
+    const root = el.getBoundingClientRect()
+    const next = { x: box.left - root.left - el.clientLeft, y: box.top - root.top - el.clientTop, w: box.width, h: box.height }
+    setPill((prev) => (prev && prev.x === next.x && prev.y === next.y && prev.w === next.w && prev.h === next.h ? prev : next))
+  }
+  useLayoutEffect(measure, [v, opts])
+  useEffect(() => {
+    // A font-size change or a wrapped row moves the checked option without a
+    // selection change, so re-measure instead of leaving the pill behind.
+    const el = ref.current
+    if (!el) return
+    const ro = typeof ResizeObserver === 'function' ? new ResizeObserver(measure) : null
+    ro?.observe(el)
+    addEventListener('resize', measure)
+    return () => { ro?.disconnect(); removeEventListener('resize', measure) }
+  }, [])
   const hasValue = opts.some(([k]) => k === v)
   const move = (delta: number) => {
     const at = Math.max(0, opts.findIndex(([k]) => k === v))
@@ -131,7 +159,14 @@ export function Seg<T extends string>({ v, set, opts, label }: { v: T; set: (v: 
     requestAnimationFrame(() => ref.current?.querySelectorAll<HTMLButtonElement>('[role="radio"]')[opts.indexOf(next)]?.focus())
   }
   return (
-    <div ref={ref} role="radiogroup" aria-label={label ?? opts.map(([, l]) => l).join(' or ')} className="inline-flex flex-wrap gap-0.5 rounded-lg bg-surf p-0.5">
+    <div ref={ref} role="radiogroup" aria-label={label ?? opts.map(([, l]) => l).join(' or ')} className={cx('relative gap-0.5 rounded-lg bg-surf p-0.5', fill ? 'flex w-full' : 'inline-flex flex-wrap')}>
+      {pill && (
+        <span
+          aria-hidden="true"
+          className="seg-pill pointer-events-none absolute left-0 top-0 rounded-md border border-tx/20 bg-hov"
+          style={{ width: pill.w, height: pill.h, transform: `translate(${pill.x}px, ${pill.y}px)` }}
+        />
+      )}
       {opts.map(([k, l, I], i) => (
         <button
           key={k} type="button" role="radio" aria-checked={v === k} tabIndex={v === k || (!hasValue && i === 0) ? 0 : -1}
@@ -142,7 +177,7 @@ export function Seg<T extends string>({ v, set, opts, label }: { v: T; set: (v: 
             else if (e.key === 'Home') { e.preventDefault(); set(opts[0][0]); requestAnimationFrame(() => ref.current?.querySelector<HTMLButtonElement>('[role="radio"]')?.focus()) }
             else if (e.key === 'End') { e.preventDefault(); const last = opts[opts.length - 1]; set(last[0]); requestAnimationFrame(() => ref.current?.querySelectorAll<HTMLButtonElement>('[role="radio"]')[opts.length - 1]?.focus()) }
           }}
-          className={cx('inline-flex min-h-7 items-center gap-1.5 rounded-md border px-3 py-1.5 text-sm transition-colors focus-visible:ring-2 focus-visible:ring-ac/40', v === k ? 'border-tx/20 bg-hov font-medium text-tx' : 'border-transparent text-mu hover:text-tx')}
+          className={cx('relative inline-flex min-h-7 items-center gap-1.5 rounded-md border border-transparent px-3 py-1.5 text-sm transition-colors focus-visible:ring-2 focus-visible:ring-ac/40', fill && 'flex-1 justify-center', v === k ? 'font-medium text-tx' : 'text-mu hover:text-tx')}
         >
           {I && <I size={14} />}{l}
         </button>
