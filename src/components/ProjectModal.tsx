@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react'
 import { FileUp, FileText, X, Folder } from 'lucide-react'
 import { useS, type Project, type ProjectFile } from '../store'
-import { Btn, Modal, Toggle, cx } from './ui'
+import { Btn, Dialog, Field, Input, Toggle, cx } from './ui'
 
 /* Optional project context files are stored with their extracted text inline
  * (like text-backed chat attachments). Binary files (images, PDFs) are kept
@@ -53,15 +53,11 @@ export function ProjectModal({ close, project }: { close: () => void; project?: 
     close()
   }
   return (
-    <Modal close={close} labelledBy="project-modal-title">
-      <div className="modal-panel flex w-full max-w-md flex-col gap-4 rounded-2xl bg-bg p-5">
-        <div id="project-modal-title" className="flex items-center gap-2 font-semibold"><Folder size={18} className="text-ac" />{editing ? 'Edit project' : 'New project'}</div>
-        <label className="block text-sm">
-          <span className="mb-1 block text-xs font-medium text-mu">Name</span>
-          <input autoFocus value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') save() }}
-            placeholder="New project" maxLength={40}
-            className="h-9 w-full rounded-lg bg-surf px-3 text-sm outline-none focus:ring-2 focus:ring-ac/40" />
-        </label>
+    <Dialog title={editing ? 'Edit project' : 'New project'} icon={Folder} close={close} width="md"
+      footer={<><Btn v="soft" onClick={close}>Cancel</Btn><Btn v="solid" onClick={save}>{editing ? 'Save' : 'Create project'}</Btn></>}>
+        <Field label="Name">
+          <Input autoFocus value={name} set={setName} onKeyDown={(e) => { if (e.key === 'Enter') save() }} placeholder="New project" maxLength={40} />
+        </Field>
         <div className="text-sm">
           <span className="mb-1 flex items-center gap-1.5 text-xs font-medium text-mu">Context files <span className="font-normal">(optional)</span></span>
           {/* Drop zone + picker. Files land as reference material only: the AI
@@ -92,11 +88,6 @@ export function ProjectModal({ close, project }: { close: () => void; project?: 
           </div>
           <Toggle on={shareWs} set={setShareWs} label="Share workspace across chats" />
         </div>
-        <div className="flex justify-end gap-2">
-          <Btn v="soft" onClick={close}>Cancel</Btn>
-          <Btn v="solid" onClick={save}>{editing ? 'Save' : 'Create project'}</Btn>
-        </div>
-      </div>
-    </Modal>
+    </Dialog>
   )
 }

@@ -8,7 +8,7 @@ import {
   getSyncChats, setSyncChats, getSyncKeys, setSyncKeys,
   fetchRemote, pushNow, pullAndMerge, linkAndMerge, startSyncRuntime,
 } from '../storage/syncRuntime'
-import { Btn, Checkbox, Input, Modal } from './ui'
+import { Btn, Checkbox, Dialog, Input } from './ui'
 
 const LINK_LABEL: Record<SyncMergeMode, string> = { merge: 'Merge both devices', remote: 'Use the other device', local: 'Use this device' }
 
@@ -159,9 +159,7 @@ export function SyncBox() {
       )}
       {status && <p className="py-2 text-xs text-mu">{status}</p>}
       {linked && (
-        <Modal close={() => setLinked(null)} labelledBy="merge-title">
-          <section className="w-full max-w-lg space-y-4 rounded-2xl border border-bor bg-bg p-5 shadow-2xl">
-            <h2 id="merge-title" className="text-lg font-semibold">You are linking a device</h2>
+        <Dialog title="You are linking a device" close={() => setLinked(null)} width="lg" footer={<Btn v="ghost" disabled={busy} onClick={() => setLinked(null)}>Cancel</Btn>}>
             <div className="space-y-2">
               <button type="button" disabled={busy} onClick={() => applyMode('merge')} className="flex w-full items-center gap-3 rounded-xl bg-surf p-3 text-left text-sm font-medium hover:opacity-90 disabled:opacity-40">
                 <GitMerge size={18} className="shrink-0 text-ac" />Merge both devices <span className="text-xs font-normal text-ac">recommended</span>
@@ -173,9 +171,7 @@ export function SyncBox() {
                 <CloudUpload size={18} className="shrink-0 text-ac" />Use this device’s data
               </button>
             </div>
-            <div className="flex justify-end"><Btn v="ghost" disabled={busy} onClick={() => setLinked(null)}>Cancel</Btn></div>
-          </section>
-        </Modal>
+        </Dialog>
       )}
     </div>
   )

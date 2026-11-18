@@ -5,7 +5,7 @@ import { useS, uid, type Msg } from '../store'
 import { clampWorkspaceSplit } from '../layout'
 import type { ToolCall } from '../engine'
 import { Md } from './Md'
-import { Btn, Confirm, Field, Input, Toggle, cx } from './ui'
+import { Area, Btn, Confirm, Dialog, Field, Input, Seg, Sel, Toggle, cx } from './ui'
 import { buildZipEntries, workspaceLines, workspaceSize, buildFolderTree, expandedFoldersForPath, extractWorkspaceIds, findWritingPath, groupWorkspaceVersions, sanitizePath, zipFilename, diffLines, diffStat, changedFilesBetween, sanitizeHtmlPreview, previewKindFor, highlightLanguageFor, parseCsvPreview, isTruncatedContent, type Workspace, type WorkspaceRevision } from '../workspace'
 
 const fence = (lang: string, code: string) => {
@@ -278,7 +278,7 @@ export function WorkspaceTile({ msg, live, workspace, selectedRevisionId, onOpen
       <div className="flex items-center gap-2 text-sm">
         <Files size={15} className="shrink-0 text-ac" />
         {renaming ? (
-          <input autoFocus value={nameDraft} onChange={(e) => setNameDraft(e.target.value)} onBlur={saveName} onKeyDown={(e) => { if (e.key === 'Enter') saveName(); if (e.key === 'Escape') setRenaming(false) }} className="min-w-0 flex-1 rounded-md bg-bg px-2 py-1 text-sm outline-none focus:ring-2 focus:ring-ac/40" />
+          <Input autoFocus aria-label="Rename" value={nameDraft} set={setNameDraft} size="sm" tone="bg" onBlur={saveName} onKeyDown={(e) => { if (e.key === 'Enter') saveName(); if (e.key === 'Escape') setRenaming(false) }} className="flex-1" />
         ) : (
           <>
             <span className="truncate font-medium">{workspace.name}</span>
@@ -328,38 +328,15 @@ export function WorkspaceTile({ msg, live, workspace, selectedRevisionId, onOpen
 function WorkspaceRevisionPicker({ workspace, selectedId, onSelect, className }: {
   workspace: Workspace; selectedId: string | null; onSelect: (revId: string) => void; className?: string
 }) {
-  const [open, setOpen] = useState(false)
   const selected = workspace.revisions.find(r => r.id === selectedId) ?? workspace.revisions[workspace.revisions.length - 1]
-
   return (
-    <div className={cx('relative', className)}>
-      <button
-        onClick={() => setOpen(!open)}
-        className="flex w-full items-center gap-2 rounded-lg border border-bor bg-bg px-2.5 py-1.5 text-left text-sm hover:bg-hov"
-        aria-haspopup="listbox"
-        aria-expanded={open}
-      >
-        <span className="truncate font-mono text-sm">{selected.name}</span>
-        <span className="shrink-0 text-xs text-mu">v{workspace.revisions.findIndex(r => r.id === selected.id) + 1} of {workspace.revisions.length}</span>
-        <span className="flex-1" />
-        <span className="shrink-0">{open ? '▲' : '▼'}</span>
-      </button>
-      {open && (
-        <div className="menu-surface absolute bottom-full left-0 right-0 z-10 mb-1 max-h-60 overflow-y-auto rounded-xl bg-surf p-1.5">
-          {workspace.revisions.map((rev, i) => (
-            <button
-              key={rev.id}
-              onClick={() => { onSelect(rev.id); setOpen(false) }}
-              className={cx('flex w-full items-center gap-2 px-3 py-2 text-left text-sm', rev.id === selectedId ? 'bg-ac/10' : 'hover:bg-hov')}
-            >
-              <span className="flex-1 truncate">{rev.name}</span>
-              <span className="shrink-0 text-xs text-mu">v{i + 1}</span>
-              {rev.id === selectedId && <Check size={14} className="shrink-0 text-ac" />}
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
+    <Sel
+      className={className}
+      ariaLabel="Workspace revision"
+      value={selected.id}
+      set={onSelect}
+      opts={workspace.revisions.map((r, i) => [r.id, `${r.name} · v${i + 1} of ${workspace.revisions.length}`])}
+    />
   )
 }
 
@@ -549,7 +526,7 @@ export function WorkspacePanel({ msg, live, workspace, selectedRevisionId, setSe
       <div style={{ padding: 'calc(var(--ui-panel-pad) * 2 / 3) var(--ui-panel-pad)' }} className="flex items-center gap-2 border-b border-bor">
         <Files size={15} className="shrink-0 text-ac" />
         {renaming ? (
-          <input autoFocus value={nameDraft} onChange={(e) => setNameDraft(e.target.value)} onBlur={saveName} onKeyDown={(e) => { if (e.key === 'Enter') saveName(); if (e.key === 'Escape') setRenaming(false) }} className="min-w-0 flex-1 rounded-md bg-bg px-2 py-1 text-sm outline-none focus:ring-2 focus:ring-ac/40" />
+          <Input autoFocus aria-label="Rename" value={nameDraft} set={setNameDraft} size="sm" tone="bg" onBlur={saveName} onKeyDown={(e) => { if (e.key === 'Enter') saveName(); if (e.key === 'Escape') setRenaming(false) }} className="flex-1" />
         ) : (
           <>
             <span className="min-w-0 flex-1 truncate text-sm font-medium">{workspace.name} · {files.length} file{files.length === 1 ? '' : 's'}</span>
@@ -599,13 +576,8 @@ export function WorkspacePanel({ msg, live, workspace, selectedRevisionId, setSe
               <span className="text-xs text-mu">{workspaceLines(selectedFile.content)} lines · {workspaceSize(selectedFile.content)}</span>
               {selectedFile.path === writingPath && <span className="ml-auto inline-flex items-center gap-1.5 text-xs text-ac"><span className="size-1.5 animate-pulse rounded-full bg-ac" />Writing…</span>}
               <span className="flex-1" />
-              <div role="tablist" aria-label="File view" className="inline-flex items-center gap-1 rounded-lg bg-codeh p-0.5">
-                {(['code', 'preview', 'diff'] as const).filter((v) => v !== 'preview' || canPreview).map((v) => (
-                  <button key={v} role="tab" aria-selected={view === v} onClick={() => setView(v)} className={cx('rounded-md px-2 py-1 text-xs capitalize', view === v ? 'bg-hov text-tx' : 'text-mu hover:text-tx')}>
-                    {v === 'code' ? 'Code' : v === 'preview' ? 'Preview' : 'Diff'}
-                  </button>
-                ))}
-              </div>
+              <Seg kind="tabs" size="sm" label="File view" v={view} set={setView}
+                opts={(['code', 'preview', 'diff'] as const).filter((v) => v !== 'preview' || canPreview).map((v) => [v, v === 'code' ? 'Code' : v === 'preview' ? 'Preview' : 'Diff'] as [typeof v, string])} />
               <Btn sm icon={flash === 'download' ? Check : Download} title="Download file" onClick={() => { downloadOne(selectedFile.path, selectedFile.content); flashFor('download') }} />
               <Btn sm icon={Pencil} title="Edit locally" onClick={() => { setDraft(selectedFile.content); setEditing(true); setView('code') }} />
               <Btn sm icon={flash === 'copy' ? Check : Copy} title="Copy file" onClick={() => { copy(selectedFile.content); flashFor('copy') }} />
@@ -621,15 +593,13 @@ export function WorkspacePanel({ msg, live, workspace, selectedRevisionId, setSe
               <div className="flex flex-wrap items-center gap-2 px-4 pt-2 text-xs text-mu">
                 <DiffIcon size={13} className="shrink-0" />
                 <span>vs</span>
-                <select
+                <Sel
+                  className="max-w-56"
+                  ariaLabel="Compare against revision"
                   value={diffBaseRev?.id ?? ''}
-                  onChange={(e) => setDiffBaseId(e.target.value || null)}
-                  className="max-w-56 truncate rounded-md bg-codeh px-1.5 py-1 text-xs outline-none"
-                  aria-label="Compare against revision"
-                >
-                  {!diffBaseRev && <option value="">No earlier version</option>}
-                  {olderRevs.map((r, i) => <option key={r.id} value={r.id}>{r.name} (v{i + 1})</option>)}
-                </select>
+                  set={(v) => setDiffBaseId(v || null)}
+                  opts={[...(diffBaseRev ? [] : [['', 'No earlier version'] as [string, string]]), ...olderRevs.map((r, i) => [r.id, `${r.name} (v${i + 1})`] as [string, string])]}
+                />
                 {revChanges.length > 0 && (
                   <span className="flex flex-wrap gap-1">
                     {revChanges.slice(0, 8).map((c) => (
@@ -650,7 +620,7 @@ export function WorkspacePanel({ msg, live, workspace, selectedRevisionId, setSe
             <div className="min-h-0 flex-1 overflow-y-auto">
               {editing ? (
                 <div className="flex h-full min-h-0 flex-col gap-2 p-4">
-                  <textarea autoFocus value={draft} onChange={(e) => setDraft(e.target.value)} spellCheck={false} className="min-h-0 flex-1 resize-none rounded-lg bg-bg p-3 font-mono text-sm outline-none focus:ring-2 focus:ring-ac/40" />
+                  <Area autoFocus value={draft} set={setDraft} spellCheck={false} tone="bg" resize={false} className="min-h-0 flex-1 font-mono" />
                   <div className="flex justify-end gap-2">
                     <Btn v="soft" onClick={() => setEditing(false)}>Cancel</Btn>
                     <Btn v="solid" icon={Save} onClick={saveLocalEdit}>Save as new revision</Btn>
@@ -698,9 +668,8 @@ function GistModal({ workspace, revision, close }: { workspace: Workspace; revis
     finally { setBusy(false) }
   }
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-black/50 p-4" onMouseDown={(e) => { if (e.target === e.currentTarget) close() }}>
-      <div role="dialog" aria-modal="true" aria-label="Share workspace via Gist" className="w-full max-w-md space-y-4 rounded-2xl border border-bor bg-bg p-5">
-        <div className="flex items-center gap-2 font-semibold"><Share2 size={18} className="text-ac" />Share via GitHub Gist</div>
+    <Dialog title="Share via GitHub Gist" icon={Share2} close={close} width="md" label="Share workspace via Gist"
+      footer={<><Btn v="soft" onClick={close}>Close</Btn><Btn v="solid" icon={Share2} disabled={busy || !token.trim()} onClick={share}>{busy ? 'Sharing…' : 'Share'}</Btn></>}>
         <p className="text-sm text-mu">Shares the {revision.files.length} file{revision.files.length === 1 ? '' : 's'} of “{revision.name}” as a gist. Requires a classic token with the <b>gist</b> scope.</p>
         <Field label="GitHub token (gist scope)">
           <Input type="password" value={token} set={setToken} placeholder="ghp_…" />
@@ -714,12 +683,7 @@ function GistModal({ workspace, revision, close }: { workspace: Workspace; revis
         </div>
         {error && <p className="text-sm text-er">{error}</p>}
         {result && <p className="text-sm">Shared: <a href={result} target="_blank" rel="noopener noreferrer nofollow" className="text-ac underline">{result}</a></p>}
-        <div className="flex justify-end gap-2">
-          <Btn v="soft" onClick={close}>Close</Btn>
-          <Btn v="solid" icon={Share2} disabled={busy || !token.trim()} onClick={share}>{busy ? 'Sharing…' : 'Share'}</Btn>
-        </div>
-      </div>
-    </div>
+    </Dialog>
   )
 }
 

@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { Check, CornerDownLeft, ListChecks } from 'lucide-react'
 import { useS } from '../store'
-import { cx } from './ui'
+import { Area, Btn, Input, RangeSlider, cx } from './ui'
 import {
   initialPollAnswers,
   normalizePoll,
@@ -77,15 +77,17 @@ function ChoiceQuestion({ q, qi, answer, disabled, onChange }: {
               </button>
               {(option.fillBlank || option.prompt) && selected && (
                 <div className="px-3 pb-2.5">
-                  <input
+                  <Input
                     value={answer.text}
                     disabled={disabled}
                     autoFocus
-                    onChange={(e) => onChange(qi, { text: e.target.value })}
+                    set={(v) => onChange(qi, { text: v })}
                     onKeyDown={(e) => e.stopPropagation()}
                     placeholder={option.placeholder ?? option.prompt ?? `Type your answer${option.label.toLowerCase() === 'other' ? '' : ` for ${option.label.toLowerCase()}`}`}
                     aria-label={option.prompt ?? `Your answer for ${option.label}`}
-                    className="w-full rounded-md border border-bor bg-bg px-2.5 py-1.5 text-sm outline-none focus:ring-2 focus:ring-ac/40 disabled:opacity-50"
+                    size="xs"
+                    tone="bg"
+                    className="border border-bor"
                   />
                 </div>
               )}
@@ -115,16 +117,17 @@ function Question({ q, qi, answer, disabled, onChange }: {
           <label htmlFor={id} className="text-sm font-medium">{q.label}</label>
           <output htmlFor={id} className="rounded-md bg-bg px-2 py-0.5 text-sm text-mu">{answer.number}</output>
         </div>
-        <input
+        <RangeSlider
           id={id}
-          type="range"
+          label={q.label}
           min={min}
           max={max}
           step={step}
           value={Number.isFinite(shown) ? shown : min}
+          valueText={String(Number.isFinite(shown) ? shown : min)}
+          set={(n) => onChange(qi, { number: String(n) })}
           disabled={disabled}
-          onChange={(e) => onChange(qi, { number: e.target.value })}
-          className="accent-[var(--ac)] w-full disabled:opacity-50"
+          className="w-full"
         />
       </div>
     )
@@ -134,17 +137,18 @@ function Question({ q, qi, answer, disabled, onChange }: {
     <div className="space-y-2">
       <label htmlFor={id} className="block text-sm font-medium">{q.label}</label>
       {q.multiline && !numeric ? (
-        <textarea
+        <Area
           id={id}
           rows={3}
           value={answer.text}
           disabled={disabled}
-          onChange={(e) => onChange(qi, { text: e.target.value })}
+          set={(v) => onChange(qi, { text: v })}
           placeholder={q.placeholder}
-          className="w-full resize-y rounded-lg border border-bor bg-bg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ac/40 disabled:opacity-50"
+          tone="bg"
+          className="border border-bor"
         />
       ) : (
-        <input
+        <Input
           id={id}
           type={numeric ? 'number' : 'text'}
           value={numeric ? answer.number : answer.text}
@@ -152,9 +156,10 @@ function Question({ q, qi, answer, disabled, onChange }: {
           min={numeric ? q.min : undefined}
           max={numeric ? q.max : undefined}
           step={numeric ? q.step : undefined}
-          onChange={(e) => onChange(qi, numeric ? { number: e.target.value } : { text: e.target.value })}
+          set={(v) => onChange(qi, numeric ? { number: v } : { text: v })}
           placeholder={q.placeholder}
-          className="w-full rounded-lg border border-bor bg-bg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ac/40 disabled:opacity-50"
+          tone="bg"
+          className="border border-bor"
         />
       )}
     </div>
@@ -187,14 +192,7 @@ function PollCard({ call, busy, used, onSend }: {
         <span aria-live="polite" className="text-xs text-mu">
           {used ? 'Sent' : answered ? `${answered} of ${questions.length} answered` : 'Choose or type an answer'}
         </span>
-        <button
-          type="button"
-          disabled={!answer.trim() || disabled}
-          onClick={() => onSend(call.id, answer)}
-          className="rounded-lg bg-ac px-3 py-1.5 text-sm font-medium text-acx transition-opacity hover:opacity-90 disabled:opacity-40"
-        >
-          Continue
-        </button>
+        <Btn v="solid" disabled={!answer.trim() || disabled} onClick={() => onSend(call.id, answer)}>Continue</Btn>
       </div>
     </section>
   )

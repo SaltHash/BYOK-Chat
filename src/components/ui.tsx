@@ -1,6 +1,6 @@
-import { useEffect, useLayoutEffect, useRef, useState, type ButtonHTMLAttributes, type ImgHTMLAttributes, type InputHTMLAttributes, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type RefObject, type TextareaHTMLAttributes } from 'react'
+import { forwardRef, useEffect, useLayoutEffect, useRef, useState, type AnchorHTMLAttributes, type ButtonHTMLAttributes, type CSSProperties, type ImgHTMLAttributes, type InputHTMLAttributes, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type RefObject, type TextareaHTMLAttributes } from 'react'
 import { createPortal } from 'react-dom'
-import { Check, ChevronDown, ChevronRight, Star, TriangleAlert, X, type LucideIcon } from 'lucide-react'
+import { Check, ChevronDown, ChevronRight, Search, Star, TriangleAlert, X, type LucideIcon } from 'lucide-react'
 
 export type Ic = LucideIcon
 export const cx = (...a: unknown[]) => a.filter(Boolean).join(' ')
@@ -10,16 +10,30 @@ const V = {
   soft: 'bg-hov hover:opacity-80',
   ghost: 'text-mu hover:bg-hov hover:text-tx',
   danger: 'text-er hover:bg-er/10',
+  /** Inline text action ("Use another URL"), not a boxed button. */
+  link: 'text-mu underline decoration-mu/40 underline-offset-2 hover:text-tx hover:decoration-tx',
 }
 
-export function Btn({ icon: I, v = 'ghost', sm, children, className, ...p }: { icon?: Ic; v?: keyof typeof V; sm?: boolean } & ButtonHTMLAttributes<HTMLButtonElement>) {
+export function Btn({ icon: I, v = 'ghost', sm, compact, children, className, ...p }: { icon?: Ic; v?: keyof typeof V; sm?: boolean; /** A labelled button that fits inside a banner or a dense row. */ compact?: boolean } & ButtonHTMLAttributes<HTMLButtonElement>) {
   return (
-    <button {...p} aria-label={p['aria-label'] ?? (!children ? p.title : undefined)} className={cx('inline-flex shrink-0 items-center justify-center gap-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-40', children ? 'h-9 px-3' : sm ? 'size-7' : 'size-9', V[v], className)}>
+    <button {...p} aria-label={p['aria-label'] ?? (!children ? p.title : undefined)} className={cx('inline-flex shrink-0 items-center justify-center gap-2 rounded-lg font-medium transition-colors disabled:opacity-40', v === 'link' ? 'min-h-0 p-0 text-sm font-normal' : compact ? 'h-7 px-2 text-xs' : children ? 'h-9 px-3 text-sm' : sm ? 'size-7' : 'size-9', V[v], className)}>
       {I && <I size={sm ? 14 : 16} />}
       {children}
     </button>
   )
 }
+
+/** A button-shaped anchor. Same variants and sizes as Btn, for actions that
+ *  navigate instead of running a handler. */
+export const ABtn = ({ icon: I, v = 'soft', compact, children, className, ...p }: { icon?: Ic; v?: keyof typeof V; compact?: boolean } & AnchorHTMLAttributes<HTMLAnchorElement>) => (
+  <a {...p} className={cx('inline-flex shrink-0 items-center justify-center gap-2 rounded-lg font-medium transition-colors', compact ? 'h-7 px-2 text-xs' : 'h-9 px-3 text-sm', V[v], className)}>{I && <I size={compact ? 13 : 16} />}{children}</a>
+)
+
+/** A choice pill: the same shape for research answers, tool questions and any
+ *  other compact either/or row. */
+export const Pill = ({ on = false, children, className, ...p }: { on?: boolean } & ButtonHTMLAttributes<HTMLButtonElement>) => (
+  <button type="button" aria-pressed={on} {...p} className={cx('rounded-full border px-2.5 py-1 text-xs transition-colors disabled:opacity-40', on ? 'border-ac bg-ac/10 text-tx' : 'border-bor text-mu hover:bg-hov hover:text-tx', className)}>{children}</button>
+)
 
 export const Chip = ({ icon: I, children }: { icon?: Ic; children: ReactNode }) => (
   <span className="inline-flex items-center gap-1.5 rounded-md bg-hov px-2 py-1 text-xs">{I && <I size={12} />}{children}</span>
@@ -48,9 +62,18 @@ export const Menu = ({ children, className }: { children: ReactNode; className?:
   <div className={cx('menu-surface rounded-xl bg-surf p-1.5', className)}>{children}</div>
 )
 
-export function Checkbox({ checked, set, label, disabled = false, className = '' }: { checked: boolean; set: (v: boolean) => void; label: string; disabled?: boolean; className?: string }) {
-  return <button type="button" role="checkbox" aria-checked={checked} aria-label={label} disabled={disabled} onClick={() => set(!checked)} className={cx('inline-flex min-h-8 items-center gap-2 rounded-md text-left text-sm disabled:cursor-not-allowed disabled:opacity-40', className)}>
-    <span aria-hidden="true" className={cx('grid size-4 shrink-0 place-items-center rounded border transition-colors', checked ? 'border-ac bg-ac text-acx' : 'border-mu/60 bg-bg text-transparent')}><Check size={12} strokeWidth={3} /></span>{label}
+export function Checkbox({ checked, set, label, sub, disabled = false, className = '' }: { checked: boolean; set: (v: boolean) => void; /** Plain text or a row layout. */ label: ReactNode; /** Secondary line under the label, for option rows with detail. */ sub?: ReactNode; disabled?: boolean; className?: string }) {
+  return <button type="button" role="checkbox" aria-checked={checked} aria-label={typeof label === 'string' ? label : undefined} disabled={disabled} onClick={() => set(!checked)} className={cx('inline-flex min-h-8 items-center gap-2 rounded-md text-left text-sm disabled:cursor-not-allowed disabled:opacity-40', className)}>
+    <span aria-hidden="true" className={cx('grid size-4 shrink-0 place-items-center self-start rounded border transition-colors', checked ? 'border-ac bg-ac text-acx' : 'border-mu/60 bg-bg text-transparent')}><Check size={12} strokeWidth={3} /></span>
+    <span className="min-w-0">{sub ? <><span className="block">{label}</span><span className="mt-0.5 block text-xs text-mu">{sub}</span></> : label}</span>
+  </button>
+}
+
+/** Single choice in a list of rich rows (inference providers, model lists). */
+export function Radio({ checked, onSelect, label, children, disabled = false, className = '' }: { checked: boolean; onSelect: () => void; label: string; children: ReactNode; disabled?: boolean; className?: string }) {
+  return <button type="button" role="radio" aria-checked={checked} aria-label={label} disabled={disabled} onClick={onSelect} className={cx('flex w-full items-center gap-3 rounded-lg px-2 py-2 text-left text-sm transition-colors hover:bg-hov disabled:opacity-40', checked && 'bg-hov', className)}>
+    <span aria-hidden="true" className={cx('grid size-4 shrink-0 place-items-center rounded-full border', checked ? 'border-ac' : 'border-mu/60')}>{checked && <span className="size-2 rounded-full bg-ac" />}</span>
+    <span className="min-w-0 flex-1">{children}</span>
   </button>
 }
 
@@ -122,7 +145,21 @@ export function useMenuNav(open: boolean, menuRef: RefObject<HTMLElement>, close
  * pattern promises (only the checked option is in the Tab order). The selected
  * pill is one element that slides between options, so choosing another moves
  * the highlight and its hairline across instead of blinking between buttons. */
-export function Seg<T extends string>({ v, set, opts, label, fill = false }: { v: T; set: (v: T) => void; opts: [T, string, Ic?][]; /** Group name. Falls back to the option names when a call site has its own visible heading. */ label?: string; /** Stretch the segments across the container instead of hugging them. */ fill?: boolean }) {
+export function Seg<T extends string>({ v, set, opts, label, fill = false, kind = 'radio', size = 'md', className, itemProps }: {
+  v: T
+  set: (v: T) => void
+  opts: [T, string, Ic?][]
+  /** Group name. Falls back to the option names when a call site has its own visible heading. */
+  label?: string
+  /** Stretch the segments across the container instead of hugging them. */
+  fill?: boolean
+  /** Radiogroup for a setting; tablist for a view switcher. Both render the same control. */
+  kind?: 'radio' | 'tabs'
+  size?: 'md' | 'sm'
+  className?: string
+  /** Extra attributes per option (focus markers used by the stats view). */
+  itemProps?: (k: T) => Record<string, unknown>
+}) {
   const ref = useRef<HTMLDivElement>(null)
   /* Measured position of the checked segment inside the group. Flex wrapping
    * can place it on a second row, so its vertical offset and height travel
@@ -130,7 +167,7 @@ export function Seg<T extends string>({ v, set, opts, label, fill = false }: { v
   const [pill, setPill] = useState<{ x: number; y: number; w: number; h: number } | null>(null)
   const measure = () => {
     const el = ref.current
-    const checked = el?.querySelector<HTMLButtonElement>('[role="radio"][aria-checked="true"]')
+    const checked = el?.querySelector<HTMLButtonElement>('[aria-checked="true"], [aria-selected="true"]')
     if (!el || !checked) { setPill(null); return }
     // Measured as a box difference rather than offsetLeft/offsetTop, so the
     // group's own padding and border cannot nudge the pill off the option.
@@ -159,7 +196,7 @@ export function Seg<T extends string>({ v, set, opts, label, fill = false }: { v
     requestAnimationFrame(() => ref.current?.querySelectorAll<HTMLButtonElement>('[role="radio"]')[opts.indexOf(next)]?.focus())
   }
   return (
-    <div ref={ref} role="radiogroup" aria-label={label ?? opts.map(([, l]) => l).join(' or ')} className={cx('relative gap-0.5 rounded-lg bg-surf p-0.5', fill ? 'flex w-full' : 'inline-flex flex-wrap')}>
+    <div ref={ref} role={kind === 'tabs' ? 'tablist' : 'radiogroup'} aria-label={label ?? opts.map(([, l]) => l).join(' or ')} className={cx('relative gap-0.5 rounded-lg bg-surf p-0.5', fill ? 'flex w-full' : 'inline-flex flex-wrap', className)}>
       {pill && (
         <span
           aria-hidden="true"
@@ -169,7 +206,8 @@ export function Seg<T extends string>({ v, set, opts, label, fill = false }: { v
       )}
       {opts.map(([k, l, I], i) => (
         <button
-          key={k} type="button" role="radio" aria-checked={v === k} tabIndex={v === k || (!hasValue && i === 0) ? 0 : -1}
+          key={k} type="button" role={kind === 'tabs' ? 'tab' : 'radio'} {...(kind === 'tabs' ? { 'aria-selected': v === k } : { 'aria-checked': v === k })} tabIndex={v === k || (!hasValue && i === 0) ? 0 : -1}
+          {...(itemProps?.(k) ?? {})}
           onClick={() => set(k)}
           onKeyDown={(e) => {
             if (e.key === 'ArrowRight' || e.key === 'ArrowDown') { e.preventDefault(); move(1) }
@@ -177,7 +215,7 @@ export function Seg<T extends string>({ v, set, opts, label, fill = false }: { v
             else if (e.key === 'Home') { e.preventDefault(); set(opts[0][0]); requestAnimationFrame(() => ref.current?.querySelector<HTMLButtonElement>('[role="radio"]')?.focus()) }
             else if (e.key === 'End') { e.preventDefault(); const last = opts[opts.length - 1]; set(last[0]); requestAnimationFrame(() => ref.current?.querySelectorAll<HTMLButtonElement>('[role="radio"]')[opts.length - 1]?.focus()) }
           }}
-          className={cx('relative inline-flex min-h-7 items-center gap-1.5 rounded-md border border-transparent px-3 py-1.5 text-sm transition-colors focus-visible:ring-2 focus-visible:ring-ac/40', fill && 'flex-1 justify-center', v === k ? 'font-medium text-tx' : 'text-mu hover:text-tx')}
+          className={cx('relative inline-flex items-center gap-1.5 rounded-md border border-transparent transition-colors focus-visible:ring-2 focus-visible:ring-ac/40', size === 'sm' ? 'min-h-7 px-2 py-1 text-xs' : 'min-h-7 px-3 py-1.5 text-sm', fill && 'flex-1 justify-center', v === k ? 'font-medium text-tx' : 'text-mu hover:text-tx')}
         >
           {I && <I size={14} />}{l}
         </button>
@@ -186,41 +224,58 @@ export function Seg<T extends string>({ v, set, opts, label, fill = false }: { v
   )
 }
 
-const IN = 'w-full rounded-lg bg-surf px-3 py-2 text-sm outline-none transition-colors hover:bg-hov focus:ring-2 focus:ring-ac/40'
+/* Every text field in the app is Input or Area: one radius, one focus ring,
+ * one hover treatment and one set of sizes. Surfaces that sit on a different
+ * background pick a tone instead of restyling the field. */
+const FIELD = 'w-full rounded-lg text-tx outline-none transition-colors placeholder:text-mu/70 focus:ring-2 focus:ring-ac/40 disabled:cursor-not-allowed disabled:opacity-50'
+const FIELD_TONE = { surf: 'bg-surf hover:bg-hov', bg: 'bg-bg hover:bg-hov', soft: 'bg-hov', none: 'bg-transparent' }
+const FIELD_SIZE = { md: 'px-3 py-2 text-sm', sm: 'px-2 py-1 text-xs', xs: 'px-2 py-1.5 text-sm', lg: 'px-2 py-1.5 text-lg' }
 export const Field = ({ label, children, row }: { label: string; children: ReactNode; /** Put a compact control to the right of its label instead of below it. */ row?: boolean }) => row ? (
   <div className="flex min-h-11 flex-wrap items-center justify-between gap-x-6 gap-y-2 py-2"><span className="min-w-0 flex-1 text-sm">{label}</span><div className="ml-auto flex max-w-full shrink-0 items-center justify-end gap-2">{children}</div></div>
 ) : (
   <div className="space-y-1.5"><span className="block text-sm">{label}</span>{children}</div>
 )
-export const Input = ({ value, set, ...p }: { value: string | number; set: (v: string) => void } & Omit<InputHTMLAttributes<HTMLInputElement>, 'value' | 'onChange'>) => (
-  <input {...p} value={value} onChange={(e) => set(e.target.value)} className={IN} />
+export const Input = forwardRef<HTMLInputElement, { value: string | number; set: (v: string) => void; size?: keyof typeof FIELD_SIZE; tone?: keyof typeof FIELD_TONE; className?: string } & Omit<InputHTMLAttributes<HTMLInputElement>, 'value' | 'onChange' | 'size'>>(function Input({ value, set, size = 'md', tone = 'surf', className, ...p }, ref) {
+  return <input ref={ref} {...p} value={value} onChange={(e) => set(e.target.value)} className={cx(FIELD, FIELD_SIZE[size], FIELD_TONE[tone], className)} />
+})
+export const Area = ({ value, set, rows = 4, size = 'md', tone = 'surf', resize = true, className, ...p }: { value: string; set: (v: string) => void; rows?: number; size?: keyof typeof FIELD_SIZE; tone?: keyof typeof FIELD_TONE; resize?: boolean; className?: string } & Omit<TextareaHTMLAttributes<HTMLTextAreaElement>, 'value' | 'onChange'>) => (
+  <textarea {...p} rows={rows} value={value} onChange={(e) => set(e.target.value)} className={cx(FIELD, FIELD_SIZE[size], FIELD_TONE[tone], resize && 'resize-y', className)} />
 )
-export const Area = ({ value, set, rows = 4, className, ...p }: { value: string; set: (v: string) => void; rows?: number; className?: string } & Omit<TextareaHTMLAttributes<HTMLTextAreaElement>, 'value' | 'onChange'>) => (
-  <textarea {...p} rows={rows} value={value} onChange={(e) => set(e.target.value)} className={cx(IN, 'resize-y', className)} />
-)
-export const Sel = ({ value, set, opts, placeholder, inline }: { value: string; set: (v: string) => void; opts: [string, string][]; placeholder?: string; inline?: boolean }) => (
-  <SearchSelect value={value} set={set} opts={opts} {...(placeholder ? { placeholder } : {})} {...(inline ? { inline } : {})} />
+/** Text field with a leading search icon (and an optional clear button). */
+export function SearchInput({ value, set, label, placeholder = 'Search', size = 'md', clear = false, className, id, autoFocus, onKeyDown }: { value: string; set: (v: string) => void; label: string; placeholder?: string; size?: keyof typeof FIELD_SIZE; clear?: boolean; className?: string; id?: string; autoFocus?: boolean; onKeyDown?: (e: ReactKeyboardEvent<HTMLInputElement>) => void }) {
+  return (
+    <div className={cx('relative min-w-0', className)}>
+      <Search size={size === 'sm' ? 14 : 16} aria-hidden="true" className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-mu" />
+      <Input id={id} autoFocus={autoFocus} onKeyDown={onKeyDown} aria-label={label} placeholder={placeholder} value={value} set={set} size={size} className={cx(size === 'sm' ? 'pl-8' : 'pl-9', clear && 'pr-9')} />
+      {clear && value && <Btn sm icon={X} title="Clear search" onClick={() => set('')} className="absolute right-1 top-1/2 -translate-y-1/2" />}
+    </div>
+  )
+}
+export const Sel = ({ value, set, opts, placeholder, inline, ariaLabel, className }: { value: string; set: (v: string) => void; opts: [string, string][]; placeholder?: string; inline?: boolean; ariaLabel?: string; className?: string }) => (
+  <SearchSelect value={value} set={set} opts={opts} {...(placeholder ? { placeholder } : {})} {...(inline ? { inline } : {})} {...(ariaLabel ? { ariaLabel } : {})} {...(className ? { className } : {})} />
 )
 
-export function SearchSelect({ value, set, opts, ariaLabel = 'Choose an option', placeholder = 'Type to search', inline = false }: { value: string; set: (v: string) => void; opts: [string, string][]; ariaLabel?: string; placeholder?: string; inline?: boolean }) {
+export function SearchSelect({ value, set, opts, ariaLabel = 'Choose an option', placeholder = 'Type to search', inline = false, allowCustom = false, className }: { value: string; set: (v: string) => void; opts: [string, string][]; ariaLabel?: string; placeholder?: string; inline?: boolean; /** Accept whatever was typed when nothing matches (font names). */ allowCustom?: boolean; className?: string }) {
   const [open, setOpen] = useState(false), [query, setQuery] = useState(''), [active, setActive] = useState(0)
   const root = useRef<HTMLDivElement>(null), search = useRef<HTMLInputElement>(null), trigger = useRef<HTMLButtonElement>(null)
   const dismiss = () => { setOpen(false); setQuery('') }
   useEscapeClose(() => { dismiss(); trigger.current?.focus() }, open)
   const filtered = opts.filter(([, label]) => label.toLowerCase().includes(query.toLowerCase()))
+  const canCreate = allowCustom && !!query.trim() && !opts.some(([, label]) => label.toLowerCase() === query.trim().toLowerCase())
+  const pickCustom = () => { const v = query.trim(); if (!v) return; set(v); setOpen(false); setQuery(''); trigger.current?.focus() }
   useEffect(() => { if (!open) return; const close = (e: PointerEvent) => { if (!root.current?.contains(e.target as Node)) { setOpen(false); setQuery('') } }; addEventListener('pointerdown', close); return () => removeEventListener('pointerdown', close) }, [open])
   useEffect(() => { if (open) search.current?.focus() }, [open])
   const choose = (item: [string, string]) => { set(item[0]); setOpen(false); setQuery(''); trigger.current?.focus() }
-  return <div ref={root} className={cx('relative', inline && 'min-w-0 max-w-full')}>
-    <button ref={trigger} type="button" aria-label={ariaLabel} aria-haspopup="listbox" aria-expanded={open} onClick={() => setOpen(!open)} onKeyDown={(e) => { if (e.key === 'ArrowDown' || e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setOpen(true) } }} className={inline ? 'ml-auto flex max-w-full items-center justify-end gap-1.5 rounded-md px-1.5 py-1 text-sm text-mu transition-colors hover:text-tx focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ac/40' : cx(IN, 'flex items-center justify-between text-left')}><span className="truncate">{opts.find(([k]) => k === value)?.[1] ?? value}</span>{inline ? <ChevronDown size={14} aria-hidden="true" className={cx('shrink-0 transition-transform', open && 'rotate-180')} /> : <ChevronRight size={14} aria-hidden="true" className={cx('ml-2 shrink-0 text-mu transition-transform', open && 'rotate-90')} />}</button>
+  return <div ref={root} className={cx('relative', inline && 'min-w-0 max-w-full', className)}>
+    <button ref={trigger} type="button" aria-label={ariaLabel} aria-haspopup="listbox" aria-expanded={open} onClick={() => setOpen(!open)} onKeyDown={(e) => { if (e.key === 'ArrowDown' || e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setOpen(true) } }} className={inline ? 'ml-auto flex max-w-full items-center justify-end gap-1.5 rounded-md px-1.5 py-1 text-sm text-mu transition-colors hover:text-tx focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ac/40' : cx(FIELD, FIELD_SIZE.md, FIELD_TONE.surf, 'flex items-center justify-between text-left')}><span className="truncate">{opts.find(([k]) => k === value)?.[1] ?? value}</span>{inline ? <ChevronDown size={14} aria-hidden="true" className={cx('shrink-0 transition-transform', open && 'rotate-180')} /> : <ChevronRight size={14} aria-hidden="true" className={cx('ml-2 shrink-0 text-mu transition-transform', open && 'rotate-90')} />}</button>
     {open && <div className={cx('absolute z-40 mt-1', inline ? 'right-0 w-64 max-w-[min(16rem,80vw)]' : 'w-full')}><Menu>
-      <input ref={search} value={query} onChange={(e) => { setQuery(e.target.value); setActive(0) }} onKeyDown={(e) => { if (e.key === 'ArrowDown') { e.preventDefault(); setActive((n) => Math.min(n + 1, filtered.length - 1)) } else if (e.key === 'ArrowUp') { e.preventDefault(); setActive((n) => Math.max(n - 1, 0)) } else if (e.key === 'Enter' && filtered[active]) { e.preventDefault(); choose(filtered[active]) } else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); dismiss(); trigger.current?.focus() } }} placeholder={placeholder} aria-label="Search options" className="mb-1 w-full rounded-lg bg-surf px-2.5 py-2 text-sm outline-none focus:ring-2 focus:ring-ac/40" />
-      <div role="listbox" aria-label={ariaLabel} className="dd-list max-h-56 overflow-y-auto overscroll-contain">{filtered.map((item, i) => <button type="button" role="option" aria-selected={item[0] === value} key={item[0]} onMouseEnter={() => setActive(i)} onClick={() => choose(item)} className={cx('block w-full rounded-lg px-2.5 py-2 text-left text-sm', active === i ? 'bg-hov text-tx' : 'text-mu')}>{item[1]}</button>)}{!filtered.length && <div className="px-2.5 py-2 text-sm text-mu">No matches</div>}</div>
+      <Input ref={search} autoFocus value={query} set={(v) => { setQuery(v); setActive(0) }} onKeyDown={(e) => { if (e.key === 'ArrowDown') { e.preventDefault(); setActive((n) => Math.min(n + 1, filtered.length - 1)) } else if (e.key === 'ArrowUp') { e.preventDefault(); setActive((n) => Math.max(n - 1, 0)) } else if (e.key === 'Enter') { e.preventDefault(); if (filtered[active]) choose(filtered[active]); else if (canCreate) pickCustom() } else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); dismiss(); trigger.current?.focus() } }} placeholder={placeholder} aria-label="Search options" className="mb-1" />
+      <div role="listbox" aria-label={ariaLabel} className="dd-list max-h-56 overflow-y-auto overscroll-contain">{filtered.map((item, i) => <button type="button" role="option" aria-selected={item[0] === value} key={item[0]} onMouseEnter={() => setActive(i)} onClick={() => choose(item)} className={cx('block w-full rounded-lg px-2.5 py-2 text-left text-sm', active === i ? 'bg-hov text-tx' : 'text-mu')}>{item[1]}</button>)}{!filtered.length && !canCreate && <div className="px-2.5 py-2 text-sm text-mu">No matches</div>}{canCreate && <button type="button" role="option" aria-selected={false} onClick={pickCustom} className="block w-full rounded-lg px-2.5 py-2 text-left text-sm text-mu hover:bg-hov hover:text-tx">Use “{query.trim()}”</button>}</div>
     </Menu></div>}
   </div>
 }
 
-export function RangeSlider({ value, set, min, max, step = 1, label, valueText, describedBy, disabled = false, className = '' }: { value: number; set: (n: number) => void; min: number; max: number; step?: number; label: string; valueText?: string; describedBy?: string; disabled?: boolean; className?: string }) {
+export function RangeSlider({ value, set, min, max, step = 1, label, valueText, describedBy, id, disabled = false, className = '' }: { value: number; set: (n: number) => void; min: number; max: number; step?: number; label: string; valueText?: string; describedBy?: string; id?: string; disabled?: boolean; className?: string }) {
   const ref = useRef<HTMLDivElement>(null)
   const [drag, setDrag] = useState<number | null>(null)
   const shown = drag ?? value
@@ -238,7 +293,7 @@ export function RangeSlider({ value, set, min, max, step = 1, label, valueText, 
   }
   const move = (n: number) => { setDrag(n); push(n) }
   const commit = (n: number) => { setDrag(null); if (timer.current) { clearTimeout(timer.current); timer.current = null } pending.current = null; lastPush.current = Date.now(); if (n !== valRef.current) setRef.current(n) }
-  return <div ref={ref} role="slider" tabIndex={disabled ? -1 : 0} aria-label={label} aria-valuemin={min} aria-valuemax={max} aria-valuenow={Math.round(shown * 100) / 100} aria-valuetext={valueText ?? String(shown)} aria-orientation="horizontal" aria-describedby={describedBy} aria-disabled={disabled} onPointerDown={(e) => { if (disabled) return; e.currentTarget.setPointerCapture(e.pointerId); move(snap(e.clientX)) }} onPointerMove={(e) => { if (!disabled && e.buttons) move(snap(e.clientX)) }} onPointerUp={() => { if (!disabled && drag !== null) commit(drag) }} onPointerCancel={() => { if (timer.current) { clearTimeout(timer.current); timer.current = null } pending.current = null; setDrag(null) }} onKeyDown={(e) => { if (disabled) return; const delta = e.shiftKey ? step * 10 : step; if (e.key === 'ArrowRight' || e.key === 'ArrowUp') { e.preventDefault(); setDrag(null); set(Math.min(max, shown + delta)) } else if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') { e.preventDefault(); setDrag(null); set(Math.max(min, shown - delta)) } else if (e.key === 'Home') { e.preventDefault(); setDrag(null); set(min) } else if (e.key === 'End') { e.preventDefault(); setDrag(null); set(max) } else if (e.key === 'PageUp') { e.preventDefault(); setDrag(null); set(Math.min(max, shown + step * 10)) } else if (e.key === 'PageDown') { e.preventDefault(); setDrag(null); set(Math.max(min, shown - step * 10)) } }} className={cx('group relative h-7 touch-none select-none outline-none focus-visible:ring-2 focus-visible:ring-ac/40 rounded-md', disabled && 'opacity-40', className)}>
+  return <div ref={ref} id={id} role="slider" tabIndex={disabled ? -1 : 0} aria-label={label} aria-valuemin={min} aria-valuemax={max} aria-valuenow={Math.round(shown * 100) / 100} aria-valuetext={valueText ?? String(shown)} aria-orientation="horizontal" aria-describedby={describedBy} aria-disabled={disabled} onPointerDown={(e) => { if (disabled) return; e.currentTarget.setPointerCapture(e.pointerId); move(snap(e.clientX)) }} onPointerMove={(e) => { if (!disabled && e.buttons) move(snap(e.clientX)) }} onPointerUp={() => { if (!disabled && drag !== null) commit(drag) }} onPointerCancel={() => { if (timer.current) { clearTimeout(timer.current); timer.current = null } pending.current = null; setDrag(null) }} onKeyDown={(e) => { if (disabled) return; const delta = e.shiftKey ? step * 10 : step; if (e.key === 'ArrowRight' || e.key === 'ArrowUp') { e.preventDefault(); setDrag(null); set(Math.min(max, shown + delta)) } else if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') { e.preventDefault(); setDrag(null); set(Math.max(min, shown - delta)) } else if (e.key === 'Home') { e.preventDefault(); setDrag(null); set(min) } else if (e.key === 'End') { e.preventDefault(); setDrag(null); set(max) } else if (e.key === 'PageUp') { e.preventDefault(); setDrag(null); set(Math.min(max, shown + step * 10)) } else if (e.key === 'PageDown') { e.preventDefault(); setDrag(null); set(Math.max(min, shown - step * 10)) } }} className={cx('group relative h-7 touch-none select-none outline-none focus-visible:ring-2 focus-visible:ring-ac/40 rounded-md', disabled && 'opacity-40', className)}>
     <div className="absolute inset-x-0 top-1/2 h-2 -translate-y-1/2 rounded-full border border-mu/50 bg-mu/35 shadow-inner"><div className="h-full rounded-full bg-ac shadow-[0_0_5px_color-mix(in_srgb,var(--ac)_55%,transparent)]" style={{ width: `${pct}%` }} /></div><div className="absolute top-1/2 size-[18px] -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-bg bg-ac shadow-md ring-1 ring-ac/50 group-focus-visible:ring-4 group-focus-visible:ring-ac/30" style={{ left: `${pct}%` }} />
   </div>
 }
@@ -266,7 +321,7 @@ export function Pop({ trigger, children, up, right, w = 'w-72', scroll = true, a
   )
 }
 
-export const Item = ({ icon: I, children, sub, on, off, star, toggle, className, ...p }: { icon?: Ic; sub?: string; on?: boolean; off?: boolean; star?: { on: boolean; set: (on: boolean) => void }; /** A switch in place of the check, for rows that turn something on rather than choose it. */ toggle?: { on: boolean; set: (on: boolean) => void; label: string } } & ButtonHTMLAttributes<HTMLButtonElement>) => (
+export const Item = ({ icon: I, children, sub, on, off, star, toggle, action, className, ...p }: { icon?: Ic; sub?: string; on?: boolean; off?: boolean; star?: { on: boolean; set: (on: boolean) => void }; /** A switch in place of the check, for rows that turn something on rather than choose it. */ toggle?: { on: boolean; set: (on: boolean) => void; label: string }; /** A trailing control beside the row (usually an icon button). */ action?: ReactNode } & ButtonHTMLAttributes<HTMLButtonElement>) => (
   <div className={cx('group flex items-center rounded-lg hover:bg-hov', off && 'opacity-50', className)}>
     <button {...p} className="flex min-w-0 flex-1 items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm">
       {I && <I size={16} className="shrink-0 text-mu transition-colors group-hover:text-tx" />}
@@ -274,6 +329,7 @@ export const Item = ({ icon: I, children, sub, on, off, star, toggle, className,
       {sub && <span className="max-w-32 truncate text-xs text-mu transition-colors group-hover:text-tx">{sub}</span>}
       {on && !toggle && <Check size={16} className="shrink-0 text-ac" />}
     </button>
+    {action && <span className="mr-1 shrink-0">{action}</span>}
     {toggle && <span className="mr-2 shrink-0"><Toggle on={toggle.on} set={toggle.set} label={toggle.label} /></span>}
     {star && <button type="button" aria-label={star.on ? 'Remove from favorites' : 'Add to favorites'} aria-pressed={star.on} title={star.on ? 'Remove from favorites' : 'Add to favorites'} onClick={() => star.set(!star.on)} className={cx('mr-1 grid size-9 shrink-0 place-items-center rounded-md transition-colors hover:bg-hov hover:text-tx', star.on ? 'text-ac' : 'text-mu group-hover:text-tx')}><Star size={15} fill={star.on ? 'currentColor' : 'none'} /></button>}
   </div>
@@ -281,6 +337,85 @@ export const Item = ({ icon: I, children, sub, on, off, star, toggle, className,
 
 /* Focusable elements eligible for the modal tab cycle. */
 const FOCUSABLE = 'a[href],button:not([disabled]),textarea:not([disabled]),input:not([disabled]),select:not([disabled]),[tabindex]:not([tabindex="-1"])'
+
+/** The one dialog surface. Every modal panel renders this inside Modal, so the
+ *  background, radius, padding, hairline and shadow cannot drift between the
+ *  composer, Settings and the standalone dialogs. */
+export function DialogPanel({ children, className, padded = true, gap = true, style }: { children: ReactNode; className?: string; padded?: boolean; gap?: boolean; style?: CSSProperties }) {
+  return <div style={style} className={cx('modal-panel flex w-full flex-col rounded-2xl bg-bg shadow-2xl', gap && 'gap-4', padded && 'p-5', className)}>{children}</div>
+}
+
+const DIALOG_W = {
+  sm: 'max-w-sm',
+  md: 'max-w-md',
+  lg: 'max-w-lg',
+  xl: 'max-w-xl',
+  '2xl': 'max-w-2xl',
+  '3xl': 'w-[min(64rem,100%)]',
+  wide: 'w-[min(96vw,1100px)]',
+}
+
+/** Complete dialog: backdrop, focus trap, title row, body and footer. Call
+ *  sites describe content and actions instead of rebuilding the shell. */
+export function Dialog({ title, icon: I, iconClass, sub, close, children, footer, width = 'md', scroll = false, bodyClassName, panelClassName, label, blur, opacity, keyboard }: {
+  title?: ReactNode
+  icon?: Ic
+  iconClass?: string
+  sub?: ReactNode
+  close: () => void
+  children?: ReactNode
+  footer?: ReactNode
+  width?: keyof typeof DIALOG_W
+  /** Keep the header and footer fixed and scroll the body. */
+  scroll?: boolean
+  bodyClassName?: string
+  panelClassName?: string
+  /** Accessible name when there is no visible title. */
+  label?: string
+  blur?: boolean
+  opacity?: number
+  keyboard?: boolean
+}) {
+  const titleId = useRef(`dialog-title-${++layerId}`)
+  return (
+    <Modal close={close} labelledBy={title ? titleId.current : undefined} label={title ? undefined : label} blur={blur} opacity={opacity} keyboard={keyboard}>
+      <DialogPanel className={cx(DIALOG_W[width], scroll && 'max-h-[88dvh] overflow-hidden', panelClassName)}>
+        {title && (
+          <div className="flex shrink-0 items-start justify-between gap-3">
+            <div className="min-w-0">
+              <h2 id={titleId.current} className="flex items-center gap-2 text-base font-semibold">
+                {I && <I size={18} aria-hidden="true" className={cx('shrink-0', iconClass ?? 'text-ac')} />}
+                <span className="min-w-0 truncate">{title}</span>
+              </h2>
+              {sub && <p className="mt-0.5 text-xs text-mu">{sub}</p>}
+            </div>
+            <Btn sm icon={X} title="Close" onClick={close} />
+          </div>
+        )}
+        {children != null && <div className={cx('min-w-0 space-y-4', scroll && 'min-h-0 flex-1 overflow-y-auto overscroll-contain pr-1', bodyClassName)}>{children}</div>}
+        {footer && <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">{footer}</div>}
+      </DialogPanel>
+    </Modal>
+  )
+}
+
+/** A floating menu anchored at viewport coordinates (chat row actions, theme
+ *  and project pickers). Owns the menu chrome and the menu role. */
+export function ContextMenu({ label, left, top, width = 208, onKeyDown, children, className, menuRef }: {
+  label: string
+  left: number
+  top: number
+  width?: number
+  onKeyDown?: (e: ReactKeyboardEvent<HTMLDivElement>) => void
+  children: ReactNode
+  className?: string
+  /** So the caller can run useMenuNav over this menu. */
+  menuRef?: RefObject<HTMLDivElement>
+}) {
+  return (
+    <div ref={menuRef} role="menu" aria-label={label} onMouseDown={(e) => e.stopPropagation()} onKeyDown={onKeyDown} style={{ left, top, width }} className={cx('menu-surface fixed z-40 rounded-xl bg-surf p-1.5', className)}>{children}</div>
+  )
+}
 
 export function Modal({ children, close, blur = true, opacity = 55, keyboard = true, labelledBy, label }: { children: ReactNode; close: () => void; blur?: boolean; opacity?: number; keyboard?: boolean; labelledBy?: string; /** Accessible name when the dialog has no heading to point at. */ label?: string }) {
   useEscapeClose(close, keyboard)
@@ -328,20 +463,13 @@ export function ImageLightbox({ src, alt, close }: { src: string; alt?: string; 
   )
 }
 
-/** Full-screen viewer for pasted text. Uses the same portal and modal shell as
+/** Full-screen viewer for pasted text. Uses the same portal and dialog shell as
  *  the image lightbox so the two previews behave identically. */
 export function TextLightbox({ text, title, close }: { text: string; title: string; close: () => void }) {
-  const titleId = useRef(`text-preview-${++layerId}`)
   return createPortal(
-    <Modal close={close} blur={false} opacity={82} labelledBy={titleId.current}>
-      <section className="modal-panel flex max-h-[92vh] w-full max-w-[min(96vw,1100px)] flex-col overflow-hidden rounded-2xl border border-bor bg-bg shadow-2xl">
-        <header className="flex shrink-0 items-center gap-3 border-b border-bor px-4 py-3">
-          <div id={titleId.current} className="min-w-0 flex-1 truncate text-sm font-medium">{title}</div>
-          <Btn sm icon={X} title="Close full screen" onClick={close} />
-        </header>
-        <pre className="min-h-0 flex-1 overflow-auto whitespace-pre-wrap break-words p-5 font-mono text-sm leading-relaxed text-tx">{text}</pre>
-      </section>
-    </Modal>,
+    <Dialog title={title} close={close} width="wide" scroll blur={false} opacity={82} panelClassName="max-h-[92vh] overflow-hidden" bodyClassName="min-h-0 flex-1 overflow-auto">
+      <pre className="whitespace-pre-wrap break-words font-mono text-sm leading-relaxed text-tx">{text}</pre>
+    </Dialog>,
     document.body,
   )
 }
@@ -368,17 +496,10 @@ export function ZoomableImage({ src, alt, className, ...rest }: { src: string; a
 }
 
 export function Confirm({ title, text, ok, close, run }: { title: string; text: string; ok: string; close: () => void; run: () => void }) {
-  const titleId = useRef(`confirm-title-${++layerId}`)
   return (
-    <Modal close={close} labelledBy={titleId.current}>
-      <div className="modal-panel w-full max-w-sm space-y-4 rounded-2xl bg-bg p-5">
-        <div id={titleId.current} className="flex items-center gap-2 font-semibold"><TriangleAlert size={18} className="text-er" />{title}</div>
-        <p className="text-sm text-mu">{text}</p>
-        <div className="flex justify-end gap-2">
-          <Btn v="soft" onClick={close}>Cancel</Btn>
-          <Btn v="danger" onClick={() => { run(); close() }}>{ok}</Btn>
-        </div>
-      </div>
-    </Modal>
+    <Dialog title={title} icon={TriangleAlert} iconClass="text-er" width="sm" label={title} close={close}
+      footer={<><Btn v="soft" onClick={close}>Cancel</Btn><Btn v="danger" onClick={() => { run(); close() }}>{ok}</Btn></>}>
+      <p className="text-sm text-mu">{text}</p>
+    </Dialog>
   )
 }

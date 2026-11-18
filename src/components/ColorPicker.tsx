@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { colorSuggestions, hexToHsl, hslToHex, normalizeHex, type ColorRole } from '../theme'
-import { cx, useEscapeClose } from './ui'
+import { Input, cx, useEscapeClose } from './ui'
 
 const clamp = (n: number, min: number, max: number) => Math.min(max, Math.max(min, n))
 const FALLBACK_PRESETS = ['#d97757', '#d68cf0', '#3b5bdb', '#0f766e', '#16a34a', '#eab308', '#ef4444', '#f8fafc', '#111827']
@@ -169,11 +169,11 @@ export function ColorPicker({ value, onChange, label, role = 'accent', theme }: 
 
           <label className="flex items-center gap-2 text-xs text-mu">
             <span className="shrink-0">Hex</span>
-            <input
+            <Input
               value={text}
-              onChange={(e) => {
-                setText(e.target.value)
-                const next = e.target.value.trim()
+              set={(v) => {
+                setText(v)
+                const next = v.trim()
                 if (/^#[0-9a-f]{6}$/i.test(next)) {
                   const hsl = hexToHsl(next)
                   if (hsl.s > 0.02) setHue(hsl.h)
@@ -184,7 +184,7 @@ export function ColorPicker({ value, onChange, label, role = 'accent', theme }: 
               onKeyDown={(e) => { if (e.key === 'Enter') (e.currentTarget as HTMLInputElement).blur() }}
               aria-label={`${label} hex value`}
               spellCheck={false}
-              className="min-w-0 flex-1 rounded-md border border-bor bg-surf px-2 py-1.5 font-mono text-xs uppercase outline-none focus:ring-2 focus:ring-ac/40"
+              className="min-w-0 flex-1 border border-bor font-mono uppercase"
             />
           </label>
         </div>,

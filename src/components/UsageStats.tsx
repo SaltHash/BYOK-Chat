@@ -3,7 +3,7 @@ import { useShallow } from 'zustand/react/shallow'
 import {
   ArrowDown, ArrowLeft, ArrowUp, CalendarDays, CircleCheck, CircleX, Coins,
   ExternalLink, Info, Layers, MessageSquare, RotateCcw, Search, Table2,
-  TrendingUp, TriangleAlert, X,
+  TrendingUp, TriangleAlert,
 } from 'lucide-react'
 import { useS, featOn, type Stats } from '../store'
 import { allAttemptAts, allAttemptLogs } from '../usage'
@@ -19,7 +19,7 @@ import {
   type ToolSortKey, type ToolUsage, type ToolUsageRecord, type UsagePeriod, type UsageRecord,
   type UsageSummary, type BucketUnit,
 } from '../usageStats'
-import { Btn, Checkbox, Confirm, Sel, Seg, Surface, cx, useEscapeClose } from './ui'
+import { Btn, Checkbox, Confirm, Input, SearchInput, Sel, Seg, Surface, cx, useEscapeClose } from './ui'
 
 
 /** A kept attempt from a deleted chat has no live title; say so instead of
@@ -403,13 +403,11 @@ function PeriodBar({ period, from, to, range, records, now, setPeriod, setDates 
           <div className="grid gap-2 sm:max-w-md sm:grid-cols-2">
             <label className="space-y-1 text-xs text-mu">
               <span>From</span>
-              <input type="date" value={from} onChange={(e) => setDates(e.target.value, to)} aria-label="Usage from date" aria-invalid={range.invalid && !!from ? true : undefined}
-                className="w-full rounded-lg bg-bg px-3 py-2 text-sm text-tx outline-none focus:ring-2 focus:ring-ac/40" />
+              <Input type="date" value={from} set={(v) => setDates(v, to)} aria-label="Usage from date" aria-invalid={range.invalid && !!from ? true : undefined} tone="bg" />
             </label>
             <label className="space-y-1 text-xs text-mu">
               <span>Through (inclusive)</span>
-              <input type="date" value={to} onChange={(e) => setDates(from, e.target.value)} aria-label="Usage through date, inclusive" aria-invalid={range.invalid && !!to ? true : undefined}
-                className="w-full rounded-lg bg-bg px-3 py-2 text-sm text-tx outline-none focus:ring-2 focus:ring-ac/40" />
+              <Input type="date" value={to} set={(v) => setDates(from, v)} aria-label="Usage through date, inclusive" aria-invalid={range.invalid && !!to ? true : undefined} tone="bg" />
             </label>
           </div>
         )}
@@ -422,29 +420,10 @@ function PeriodBar({ period, from, to, range, records, now, setPeriod, setDates 
 }
 
 function SubNav({ view, setView }: { view: UsageView; setView: (v: UsageView) => void }) {
-  const refs = useRef<(HTMLButtonElement | null)[]>([])
-  const pick = (i: number) => {
-    const next = VIEWS[(i + VIEWS.length) % VIEWS.length]
-    setView(next[0])
-    refs.current[(i + VIEWS.length) % VIEWS.length]?.focus()
-  }
   return (
     <>
-      <div role="tablist" aria-label="Usage views" className="hidden flex-wrap gap-1 rounded-xl bg-surf p-1 md:flex">
-        {VIEWS.map(([k, l], i) => (
-          <button key={k} ref={(el) => { refs.current[i] = el }} role="tab" aria-selected={view === k} tabIndex={view === k ? 0 : -1} data-usage-focus={`view:${k}`}
-            onClick={() => setView(k)}
-            onKeyDown={(e) => {
-              if (e.key === 'ArrowRight' || e.key === 'ArrowDown') { e.preventDefault(); pick(i + 1) }
-              else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') { e.preventDefault(); pick(i - 1) }
-              else if (e.key === 'Home') { e.preventDefault(); pick(0) }
-              else if (e.key === 'End') { e.preventDefault(); pick(VIEWS.length - 1) }
-            }}
-            className={cx('min-h-10 rounded-lg px-3 text-sm font-medium transition-colors', view === k ? 'bg-bg text-tx shadow-sm' : 'text-mu hover:text-tx')}>
-            {l}
-          </button>
-        ))}
-      </div>
+      <Seg kind="tabs" label="Usage views" v={view} set={setView} opts={VIEWS} className="hidden md:inline-flex"
+        itemProps={(k) => ({ 'data-usage-focus': `view:${k}` })} />
       <div className="md:hidden">
         <label className="space-y-1 text-xs text-mu">
           <span>Usage view</span>
@@ -627,12 +606,7 @@ function ModelsView({ summary, buckets, unit, decimals, ui, setUi, openDetail }:
         noun="model"
         empty={ui.metric === 'cost' && summary.pricedRequests === 0 ? 'No provider cost is known for this period. Switch to Tokens, or add prices in Settings → Endpoints.' : undefined} />
       <div className="flex flex-wrap items-center gap-2">
-        <label className="relative min-w-48 flex-1">
-          <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-mu" />
-          <input value={ui.search} onChange={(e) => setUi({ search: e.target.value })} placeholder="Search models, ids or endpoints"
-            aria-label="Search models" className="w-full rounded-lg bg-surf py-2 pl-9 pr-9 text-sm outline-none focus:ring-2 focus:ring-ac/40" />
-          {ui.search && <button type="button" onClick={() => setUi({ search: '' })} aria-label="Clear model search" className="absolute right-2 top-1/2 grid size-6 -translate-y-1/2 place-items-center rounded text-mu hover:text-tx"><X size={13} /></button>}
-        </label>
+        <div className="min-w-48 flex-1"><SearchInput value={ui.search} set={(search) => setUi({ search })} label="Search models" placeholder="Search models, ids or endpoints" clear /></div>
         <span className="text-xs text-mu">{rows.length} model{rows.length === 1 ? '' : 's'}</span>
       </div>
       {!rows.length ? <Surface><p className="text-sm text-mu">{summary.models.length ? 'No models match that search.' : 'No model usage in this period.'}</p></Surface> : (

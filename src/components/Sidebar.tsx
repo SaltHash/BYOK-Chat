@@ -8,22 +8,21 @@ import { useQuestions } from '../questions'
 import { bookmarkEntries } from '../bookmarks'
 import { clampSidebarWidth } from '../layout'
 import { focusComposer, useShiftHeld } from '../hooks'
-import { Btn, Confirm, Seg, cx, useMenuNav } from './ui'
+import { Btn, Confirm, ContextMenu, Input, Item, SearchInput, Seg, cx, useMenuNav } from './ui'
 import { ProjectModal } from './ProjectModal'
 import { DndPlaceholder, DndLiveRegion, showDragOverlay, moveDragOverlay, hideDragOverlay, measureBox, DND_ACTIVATION_PX, useFlipAnimate, restDocTop, pointerDocY, edgeScroll } from './dnd'
 import { stepInsertion } from '../dndShared'
 
 const act = 'grid size-7 place-items-center rounded-md text-mu hover:text-tx'
-const rowMenuItem = 'side-item group flex w-full items-center gap-2.5 rounded-lg px-2.5 text-left text-sm hover:bg-hov'
 
 function Name({ v, save, done }: { v: string; save: (t: string) => void; done: () => void }) {
   const [t, setT] = useState(v)
   const cancel = useRef(false)
   return (
-    <input autoFocus value={t} onChange={(e) => setT(e.target.value)} onFocus={(e) => e.currentTarget.select()}
+    <Input autoFocus aria-label="Rename" value={t} set={setT} size="sm" tone="bg" onFocus={(e) => e.currentTarget.select()}
       onBlur={() => { if (!cancel.current && t.trim()) save(t.trim()); done() }}
       onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); if (e.key === 'Escape') { cancel.current = true; e.currentTarget.blur() } }}
-      className="mx-1 min-w-0 flex-1 rounded-md bg-bg px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-ac/40" />
+      className="mx-1 flex-1" />
   )
 }
 
@@ -106,17 +105,15 @@ function RowBody({ c, mv, del, dnd, container, index, shift, onNavigate, time }:
       {!busy && finished && <span aria-hidden="true" className="row-edge pointer-events-none" />}
       {busy && <span aria-hidden="true" data-live="" className="row-edge pointer-events-none" />}
       {menu && (
-        <div ref={menuRef} role="menu" aria-label={`Actions for ${c.title}`} onMouseDown={(e) => e.stopPropagation()} onKeyDown={menuKeys}
-          style={{ left: menuLeft, top: menuTop }}
-          className="dnd-actions menu-surface fixed z-40 w-52 rounded-xl bg-surf p-1.5">
-          <button role="menuitem" onClick={() => { setEd(true); setMenu(null) }} className={rowMenuItem}><Pencil size={16} className="text-mu transition-colors group-hover:text-tx" />Rename</button>
-          <button role="menuitem" title="Export this chat (.md + .json)" onClick={() => { exportThis(); setMenu(null) }} className={rowMenuItem}><Download size={16} className="text-mu transition-colors group-hover:text-tx" />Export (.md + .json)</button>
-          <button role="menuitem" onClick={() => { mv(c.id, menuLeft, menuTop); setMenu(null) }} className={rowMenuItem}><Folder size={16} className="text-mu transition-colors group-hover:text-tx" />Move to project</button>
-          <button role="menuitem" onClick={() => { useS.getState().chatOp(c.id, 'pin'); setMenu(null) }} className={rowMenuItem}><Pin size={16} className="text-mu transition-colors group-hover:text-tx" />{c.pin ? 'Unpin' : 'Pin'}</button>
-          <button role="menuitem" title={c.archived ? 'Restore from archive' : 'Archive chat (kept, hidden from the main list)'} onClick={() => { useS.getState().chatOp(c.id, 'archive'); setMenu(null) }} className={rowMenuItem}>{c.archived ? <ArchiveRestore size={16} className="text-mu transition-colors group-hover:text-tx" /> : <Archive size={16} className="text-mu transition-colors group-hover:text-tx" />}{c.archived ? 'Restore from archive' : 'Archive'}</button>
-          {c.temporary && <button role="menuitem" onClick={() => { useS.getState().promoteChat(c.id); setMenu(null) }} className={rowMenuItem}><Bookmark size={16} className="text-mu transition-colors group-hover:text-tx" />Save as permanent chat</button>}
-          <button role="menuitem" onClick={() => { useS.getState().chatOp(c.id, 'del'); setMenu(null) }} className={cx(rowMenuItem, 'hover:text-er')}><Trash2 size={16} />Delete permanently</button>
-        </div>
+        <ContextMenu menuRef={menuRef} label={`Actions for ${c.title}`} left={menuLeft} top={menuTop} onKeyDown={menuKeys} className="dnd-actions">
+          <Item role="menuitem" icon={Pencil} onClick={() => { setEd(true); setMenu(null) }}>Rename</Item>
+          <Item role="menuitem" icon={Download} title="Export this chat (.md + .json)" onClick={() => { exportThis(); setMenu(null) }}>Export (.md + .json)</Item>
+          <Item role="menuitem" icon={Folder} onClick={() => { mv(c.id, menuLeft, menuTop); setMenu(null) }}>Move to project</Item>
+          <Item role="menuitem" icon={Pin} onClick={() => { useS.getState().chatOp(c.id, 'pin'); setMenu(null) }}>{c.pin ? 'Unpin' : 'Pin'}</Item>
+          <Item role="menuitem" icon={c.archived ? ArchiveRestore : Archive} title={c.archived ? 'Restore from archive' : 'Archive chat (kept, hidden from the main list)'} onClick={() => { useS.getState().chatOp(c.id, 'archive'); setMenu(null) }}>{c.archived ? 'Restore from archive' : 'Archive'}</Item>
+          {c.temporary && <Item role="menuitem" icon={Bookmark} onClick={() => { useS.getState().promoteChat(c.id); setMenu(null) }}>Save as permanent chat</Item>}
+          <Item role="menuitem" icon={Trash2} className="hover:text-er" onClick={() => { useS.getState().chatOp(c.id, 'del'); setMenu(null) }}>Delete permanently</Item>
+        </ContextMenu>
       )}
     </div>
   )
@@ -562,10 +559,7 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
         <Btn icon={s.prefs.temporaryByDefault ? Plus : Clock} title={s.prefs.temporaryByDefault ? 'New regular chat' : 'New temporary chat'} onClick={() => { s.newChat(!s.prefs.temporaryByDefault); focusComposer(); onNavigate() }} />
         <Btn icon={PanelLeftClose} title="Hide sidebar" onClick={toggle} />
       </div>
-      <div className="relative">
-        <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-mu" />
-        <input aria-label="Search titles and messages" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search titles and messages" className="h-9 w-full rounded-lg bg-surf pl-9 pr-3 text-sm outline-none focus:ring-2 focus:ring-ac/40" />
-      </div>
+      <SearchInput value={q} set={setQ} label="Search titles and messages" placeholder="Search titles and messages" />
       <Seg v={showArchived ? 'archived' : 'chats'} set={(k) => setShowArchived(k === 'archived')} opts={[['chats', 'Chats'], ['archived', 'Archived']]} label="Chat filter" fill />
       <nav ref={navRef} aria-label="Chats" data-dnd-scroll="" className="-mx-1 flex-1 space-y-3 overflow-y-auto px-1">
         {k ? (
@@ -714,9 +708,8 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
         }} /></span>
       </div>
       {themeMenu && (
-        <div ref={themeMenuRef} role="menu" aria-label="Choose a theme" onMouseDown={(e) => e.stopPropagation()} onKeyDown={themeMenuKeys}
-          style={{ left: Math.max(8, Math.min(themeMenu.x - 208, (typeof window !== 'undefined' ? window.innerWidth : 0) - 216)), top: Math.max(8, themeMenu.y - 8 - (th.length * 40 + 40)) }}
-          className="menu-surface fixed z-40 w-52 rounded-xl bg-surf p-1.5">
+        <ContextMenu menuRef={themeMenuRef} label="Choose a theme" onKeyDown={themeMenuKeys}
+          left={Math.max(8, Math.min(themeMenu.x - 208, (typeof window !== 'undefined' ? window.innerWidth : 0) - 216))} top={Math.max(8, themeMenu.y - 8 - (th.length * 40 + 40))}>
           <div className="px-2.5 pb-1 text-xs font-medium text-mu">{s.themeMode === 'light' ? 'Light themes' : 'Dark themes'}</div>
           {th.map((k) => {
             const active = k === thCur
@@ -732,14 +725,14 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
               </button>
             )
           })}
-        </div>
+        </ContextMenu>
       )}
       {menu && (
-        <div ref={projectMenuRef} role="menu" aria-label="Move chat to a project" onMouseDown={(e) => e.stopPropagation()} onKeyDown={projectMenuKeys} style={{ left: Math.min(menu.x, Math.max(8, (typeof window !== 'undefined' ? window.innerWidth : 0) - 216)), top: Math.min(menu.y, Math.max(8, (typeof window !== 'undefined' ? window.innerHeight : 0) - (60 + (s.projects.length + 1) * 36))) }} className="menu-surface fixed z-40 w-52 rounded-xl bg-surf p-1.5">
+        <ContextMenu menuRef={projectMenuRef} label="Move chat to a project" onKeyDown={projectMenuKeys} left={Math.min(menu.x, Math.max(8, (typeof window !== 'undefined' ? window.innerWidth : 0) - 216))} top={Math.min(menu.y, Math.max(8, (typeof window !== 'undefined' ? window.innerHeight : 0) - (60 + (s.projects.length + 1) * 36)))}>
           <button role="menuitem" onClick={() => { s.moveChat(menu.id, ''); setMenu(null) }} className={item}><FolderMinus size={16} className="text-mu transition-colors group-hover:text-tx" />No project</button>
           {s.projects.map((f) => <button key={f.id} role="menuitem" onClick={() => { s.moveChat(menu.id, f.id); setMenu(null) }} className={item}><Folder size={16} className="text-mu transition-colors group-hover:text-tx" /><span className="truncate">{f.name}</span></button>)}
           {!s.projects.length && <p className="px-2.5 py-2 text-xs text-mu">Create a project first with the project button.</p>}
-        </div>
+        </ContextMenu>
       )}
       {projectId && <Confirm title="Delete this project?" text="The project is removed; its chats are kept and move back to Recent." ok="Delete project" close={() => setProjectId('')} run={() => s.delProject(projectId)} />}
       {newModal && <ProjectModal close={() => setNewModal(false)} />}

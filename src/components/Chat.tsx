@@ -1,4 +1,4 @@
-import { memo, useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import { GitBranch, ChevronLeft, ChevronRight, ChevronDown, Server, Cpu, Copy, Check, RefreshCw, Trash2, ListOrdered, TriangleAlert, Paperclip, Download, ExternalLink, Volume2, Pin, PinOff, Bookmark, Search, ArrowUp, ArrowDown, X, Quote, FileText, FileCode2, Terminal, Image as ImageIcon, Wrench, Sparkles, Brain, ChartLine, MessageCircle, BookOpen } from 'lucide-react'
 import { useS, useLive, usable, modelNameOf, featOn, previewSysFor, activeWorkspaceForChat, pinnedReplyOf, DEFAULT_REPLY_STATS, type Ep, type LogDetail, type Msg, type ReplyModelLabel } from '../store'
@@ -11,7 +11,7 @@ import { toolLabel } from '../toolLabels'
 import { summarizeToolCalls, splitToolTrail, type ToolKind, type TrailCall } from '../toolSummary'
 import { formatMsgDateTime, formatMsgTime } from '../time'
 import { exactCost, formatCost, messageCostOf, outputTokensOf } from '../replyMetrics'
-import { Btn, Chip, cx, ImageLightbox, TextLightbox, ZoomableImage, type Ic } from './ui'
+import { Btn, Chip, Input, Pill, cx, ImageLightbox, TextLightbox, ZoomableImage, type Ic } from './ui'
 import { Composer } from './Composer'
 import { ProjectOverview } from './ProjectOverview'
 import { Header } from './Header'
@@ -23,7 +23,8 @@ import { Tutorial } from './Extra'
 import { Md, UserText } from './Md'
 import { flairLine, thinkingLine, TEMPORARY_NOTE } from '../flair'
 import { activityOf, formatElapsed, type ActivityKind } from '../activity'
-import { splitStream } from '../streamMd'
+import { useSmoothedStream } from '../useSmoothedStream'
+import { blockEnds, splitBlocks } from '../streamSplit'
 import { WorkspaceTile, WorkspacePanel } from './Workspace'
 import { ResearchTierPicker, ResearchQuestionsCard, ResearchPlanCard, ResearchProgressCard, ResearchTile, ResearchPanel } from './Research'
 import { SourcesPanel, scrollToSource } from './Sources'
@@ -416,9 +417,9 @@ function Payload({ label, text, open, onToggle }: { label: string; text: string;
     <span className="block space-y-1">
       <pre className="overflow-x-auto whitespace-pre-wrap break-words rounded-lg bg-bg p-2 font-mono text-xs text-mu">{label}: {open || !clipped ? text : `${text.slice(0, LIMIT)}…`}</pre>
       {clipped && (
-        <button onClick={onToggle} className="rounded-md px-1.5 py-0.5 text-xs text-mu hover:bg-bg hover:text-tx">
+        <Btn v="ghost" compact onClick={onToggle}>
           {open ? 'Show less' : `Read more (${text.length.toLocaleString()} characters)`}
-        </button>
+        </Btn>
       )}
     </span>
   )
@@ -480,7 +481,7 @@ function ProcessStep({ t, detail, timing, models, tokens, open, toggle }: {
         {shown && (
           <span className="mt-0.5 block break-words text-xs text-mu">
             {shown}
-            {clipped && <button type="button" onClick={toggle} className="ml-1 rounded text-ac hover:underline">{open ? 'Show less' : 'More'}</button>}
+            {clipped && <Btn v="link" className="ml-1 text-ac decoration-ac/40 hover:decoration-ac" onClick={toggle}>{open ? 'Show less' : 'More'}</Btn>}
           </span>
         )}
       </div>
@@ -488,42 +489,113 @@ function ProcessStep({ t, detail, timing, models, tokens, open, toggle }: {
   )
 }
 
-/* Plain-text streaming, for when live markdown is turned off. `whitespace-pre-wrap`
- * keeps the line breaks the model sent: without it the whole reply collapses
- * into one paragraph and wraps wherever the pane happens to break, then reflows
- * when the finished markdown takes over. */
-function StreamedText({ chunks }: { chunks: string[] }) {
-  return <span className="md whitespace-pre-wrap leading-7">{chunks.join('')}</span>
+/* Replies whose fade-in has already begun in this session. Leaving a chat and
+ * coming back remounts the streaming body with the same text it had already
+ * shown; without this it would fade in from the start again, so a remount
+ * continues without the effect. The mark is dropped when the stream actually
+ * ends, which is what lets a retry of the same message fade in normally. */
+const fadeStarted = new Set<string>()
+
+/* Replies whose word-by-word fade really reached the screen. A reply can mount
+ * the live body and still finish before a frame with any text in it is painted
+ * — a fast endpoint, or an answer that arrives inside one frame — and then the
+ * fade never happens at all. The mark is set from a frame callback, so it only
+ * covers text the reader actually saw appear. */
+const fadePainted = new Set<string>()
+
+/* The reply body while it is arriving.
+ *
+ * `useSmoothedStream` hands out the text one frame at a time, always ending on
+ * a word boundary, so a word that has just faded in is never rewritten while
+ * it animates. Both settings are latched here, on the first render that has a
+ * chunk: this component only exists while a reply is streaming in this
+ * session, so toggling a setting mid-reply cannot restyle the text already on
+ * screen, and a reply read back from history never mounts it at all. */
+function LiveReply({ mid, chunks, busy }: { mid: string; chunks: string[]; busy: boolean }) {
+  const prefs = useS((s) => s.prefs)
+  const latch = useRef<{ md: boolean; fadeMs: number; resume: boolean } | null>(null)
+  if (!latch.current) {
+    const replay = !fadeStarted.has(mid)
+    fadeStarted.add(mid)
+    latch.current = {
+      md: prefs.streamMd !== false,
+      fadeMs: prefs.streamFade > 0 ? Math.round(Math.min(1, prefs.streamFade) * 1000) : 0,
+      // A reply that was already on screen when this chat was left keeps its
+      // text and continues from there.
+      resume: !replay,
+    }
+  }
+  // A live reply that is unmounted still streaming will come back here; one
+  // whose stream has ended must fade again if it is ever retried.
+  useEffect(() => () => {
+    if (!useLive.getState().chunks[mid]) fadeStarted.delete(mid)
+  }, [mid])
+  const { md, fadeMs, resume } = latch.current
+  const full = useMemo(() => chunks.join(''), [chunks])
+  const text = useSmoothedStream(full, { pace: fadeMs > 0, done: !busy, resume })
+  const painted = useRef(false)
+  useEffect(() => {
+    if (painted.current || !fadeMs || !text) return
+    const raf = requestAnimationFrame(() => { painted.current = true; fadePainted.add(mid) })
+    return () => cancelAnimationFrame(raf)
+  }, [text, fadeMs, mid])
+  /* Finished blocks. The markdown parse runs once per render, so re-parsing the
+   * whole reply for every released word made a long answer cost ~190 ms per
+   * update — a decade of frames, and the reason the text arrived in clumps.
+   * The blocks before the one still being written never change again, so they
+   * are handed to `<Md>` once each; React's memo then leaves them alone and a
+   * release only re-parses the block at the end. The block that just finished
+   * is kept in the live part for one more block, so its last words can finish
+   * fading before it is committed as settled text. */
+  const [settled, setSettled] = useState<string[]>(() => (resume && md ? splitBlocks(text).slice(0, -1) : []))
+  const settledLen = settled.reduce((n, part) => n + part.length, 0)
+  const tail = text.slice(settledLen)
+  const ends = useMemo(() => (md ? blockEnds(tail) : []), [md, tail])
+  useEffect(() => {
+    if (ends.length < 2) return
+    setSettled((prev) => [...prev, tail.slice(0, ends[ends.length - 2])])
+  }, [ends, tail])
+  const liveParts = useMemo(() => splitBlocks(tail), [tail])
+  const parts = settled.concat(liveParts)
+  const style = fadeMs > 0 ? ({ '--sd-fade-ms': `${fadeMs}ms` } as CSSProperties) : undefined
+  if (md) {
+    /* `live` runs remend (the incomplete-markdown pass) over the blocks still
+     * being written, so a half-typed **bold**, link or fence renders as the
+     * thing it will become instead of flashing its raw syntax. Settled blocks
+     * are complete already, and carry no fade: their words were faded while
+     * they were the live part. */
+    return (
+      <div className="sd-stream md leading-7" style={style}>
+        {parts.map((part, i) => (
+          <Md key={i} t={part} blocks live={i >= settled.length} fade={i >= settled.length ? fadeMs : 0} />
+        ))}
+      </div>
+    )
+  }
+  /* Plain text, kept as the chunks the provider sent: each chunk owns a span,
+   * so the ones already on screen keep their DOM nodes and only the newest
+   * fades. The list is never rebuilt from the released text. `.md` plus
+   * `whitespace-pre-wrap` gives the plain text the same font, size, line
+   * height and width as the markdown that replaces it. */
+  return (
+    <div className="sd-stream md whitespace-pre-wrap leading-7" style={style}>
+      <StreamedChunks chunks={chunks} released={text.length} fadeMs={fadeMs} />
+    </div>
+  )
 }
 
-/* Markdown during streaming, parsed incrementally. The reply is split at its
- * last settled block boundary (see `splitStream`): the settled blocks are
- * parsed once and re-parsed only when another block completes, while the block
- * still being written is parsed on its own. Both halves share one `.md`
- * container, so the live text sits inside the structure it belongs to — list
- * items keep their indent, quotes their background, tables their column widths
- * — and a growing paragraph is never broken onto a new line mid-sentence. */
-function StreamedMd({ chunks }: { chunks: string[] }) {
-  const full = useMemo(() => chunks.join(''), [chunks])
-  /* Tokens arrive far faster than a long reply can be parsed. Handing React the
-   * newest text at a lower priority lets it skip the intermediate tokens while
-   * a parse is still in flight, instead of queueing one parse per token. */
-  const text = useDeferredValue(full)
-  const { head, tail } = useMemo(() => splitStream(text), [text])
+function StreamedChunks({ chunks, released, fadeMs }: { chunks: string[]; released: number; fadeMs: number }) {
+  let start = 0
   return (
-    <div className="md leading-7">
-      {head && <Md t={head} blocks />}
-      {tail && (
-        /* Deliberately not keyed by the settled length: remounting the tail at
-         * every block boundary would throw away an in-progress text selection.
-         * The first/last child margins are flattened so the seam between the
-         * two halves matches a normal block gap. `live` tells the renderer the
-         * block is unfinished, so it completes its open markdown first. */
-        <div className="[&>*:first-child]:mt-0 [&>*:last-child]:mb-0">
-          <Md t={tail} blocks live />
-        </div>
-      )}
-    </div>
+    <>
+      {chunks.map((chunk, i) => {
+        const from = start
+        start += chunk.length
+        const shown = Math.max(0, Math.min(chunk.length, released - from))
+        if (!shown) return null
+        return <span key={i} className={fadeMs > 0 ? 'sd-fade' : undefined}>{chunk.slice(0, shown)}</span>
+      })}
+    </>
   )
 }
 
@@ -574,7 +646,7 @@ function MorphIcon({ kind, size = 15 }: { kind: ActivityKind; size?: number }) {
 
 /** Whole-second timer for the current step. Restarts whenever the activity
  *  changes, so the number always belongs to the line beside it. */
-function useStepElapsed(key: string, running: boolean): string {
+function useStepElapsed(key: string): string {
   const [start, setStart] = useState(() => Date.now())
   const [now, setNow] = useState(() => Date.now())
   const previous = useRef(key)
@@ -586,36 +658,33 @@ function useStepElapsed(key: string, running: boolean): string {
     setNow(at)
   }, [key])
   useEffect(() => {
-    if (!running) return
     const timer = setInterval(() => setNow(Date.now()), 1000)
     return () => clearInterval(timer)
-  }, [running, key])
-  return formatElapsed((running ? now : Date.now()) - start)
+  }, [key])
+  return formatElapsed(now - start)
 }
 
-/* The reply's action indicator, in place of the old orbiting dots: the newest
- * tool calls (or plain thinking) in the present tense, the time spent on that
- * step in a fainter tone, and a shine while it is the newest thing happening.
- * A finished set is written in the past tense and stops moving. It is only
- * mounted while the reply is waiting on something (see `active`). */
-function ActionIndicator({ calls, live, duration, block }: { calls: TrailCall[]; live: boolean; duration?: number; block?: boolean }) {
+/* The reply's action indicator, in place of the old orbiting dots: the calls
+ * (or the model thinking) that are happening right now, in the present tense,
+ * the time spent on that step in a fainter tone, and a shine while it is the
+ * newest thing happening. It is only mounted while the reply is waiting on
+ * something (see `active`), so it has no finished form: a settled step keeps
+ * its place in the trail, where it stays readable afterwards. */
+function ActionIndicator({ calls, block }: { calls: TrailCall[]; block?: boolean }) {
   const activity = activityOf(calls)
-  const label = live ? activity.present : activity.past
   // Keyed by kind, not by the full line: a count that grows as results arrive
   // is still the same step, so its timer must not restart.
-  const elapsed = useStepElapsed(activity.kind, live)
-  const shown = live ? elapsed : duration && duration > 0 ? formatElapsed(duration) : ''
+  const elapsed = useStepElapsed(activity.kind)
   return (
     <span
       className={cx('activity', block && 'mt-2 block')}
       role="status"
-      aria-label={shown ? `${label}, ${shown}` : label}
-      data-live={live ? '' : undefined}
-      data-past={live ? undefined : ''}
+      aria-label={`${activity.present}, ${elapsed}`}
+      data-live=""
     >
       <MorphIcon kind={activity.kind} />
-      <span className="activity-label text-sm">{label}</span>
-      {shown && <span className="activity-time" title={live ? 'Time on this step' : 'Time spent on this step'}>{shown}</span>}
+      <span className="activity-label text-sm">{activity.present}</span>
+      <span className="activity-time" title="Time on this step">{elapsed}</span>
     </span>
   )
 }
@@ -743,7 +812,6 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
   // unless its own `m` prop (or one of these) actually changed.
   const prefs = useS((s) => s.prefs)
   const eps = useS((s) => s.eps)
-  const streamMd = prefs.streamMd
   const logDetail = prefs.logDetail ?? 'standard'
   const logTiming = prefs.logTiming !== false
   const logModels = prefs.logModels !== false
@@ -765,6 +833,27 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
   const togglePayload = (k: string) => setExpanded((v) => ({ ...v, [k]: !v[k] }))
   const live = useLive((s) => s.tools[m.id])
   const liveChunks = useLive((s) => s.chunks[m.id])
+  /* A reply can finish before it is ever painted — a fast endpoint, or one
+   * whose whole answer arrived within a frame — so the live body above never
+   * mounts and its word-by-word fade never runs; the text simply appears. The
+   * finished reply then fades in once as a unit, which is what the setting
+   * promises. Only a reply that completed while it was on screen, and whose
+   * word-by-word fade never painted, does this; history and already-faded
+   * replies keep their text still. */
+  const [arrivalFade, setArrivalFade] = useState(0)
+  const wasBusy = useRef(busy)
+  useLayoutEffect(() => {
+    const finished = wasBusy.current && !busy
+    wasBusy.current = busy
+    if (!finished || !last || fadePainted.has(m.id)) return
+    const fade = useS.getState().prefs.streamFade
+    const ms = fade > 0 ? Math.round(Math.min(1, fade) * 1000) : 0
+    if (!ms) return
+    fadeStarted.add(m.id)
+    setArrivalFade(ms)
+    const timer = setTimeout(() => setArrivalFade(0), ms + 80)
+    return () => clearTimeout(timer)
+  }, [busy, last, m.id])
   const [showRawErr, setShowRawErr] = useState(false)
   const [confirmDel, setConfirmDel] = useState(false)
   // Jump-to-message from ranked sidebar search: scroll + temporary highlight.
@@ -1038,18 +1127,14 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
             <div className="text-sm text-er/90">{m.t || 'HTTP 500 — Internal error encountered.'}</div>
             {(m.log ?? []).some((t) => t.errCode === 'tool_limit' || /Tool execution limit/i.test(t.err ?? '')) && (
               <div>
-                <button onClick={() => cfg('tools')} className="rounded-lg bg-ac px-3 py-1.5 text-sm font-medium text-acx hover:opacity-90 transition-opacity">
-                  Raise tool limit
-                </button>
+                <Btn v="solid" onClick={() => cfg('tools')}>Raise tool limit</Btn>
               </div>
             )}
             <div className="flex flex-wrap items-center gap-2">
-              <button onClick={() => useS.getState().retryMsg(m.id)} title="Send the same request again" className="inline-flex h-9 items-center justify-center gap-2 rounded-lg border border-er/25 bg-er/15 px-3 text-sm font-medium text-er transition-colors hover:bg-er/25">
-                <RefreshCw size={16} /> Try again
-              </button>
-              <button onClick={() => setShowRawErr(!showRawErr)} title="Show the provider's original error payload" className="inline-flex h-9 items-center justify-center rounded-lg px-3 text-sm font-medium text-er/75 transition-colors hover:bg-er/10 hover:text-er">
+              <Btn icon={RefreshCw} onClick={() => useS.getState().retryMsg(m.id)} title="Send the same request again" className="border border-er/25 bg-er/15 text-er hover:bg-er/25">Try again</Btn>
+              <Btn onClick={() => setShowRawErr(!showRawErr)} title="Show the provider's original error payload" className="text-er/75 hover:bg-er/10 hover:text-er">
                 {showRawErr ? 'Hide raw error' : 'Show raw error'}
-              </button>
+              </Btn>
             </div>
             {showRawErr && (
               <pre className="overflow-x-auto whitespace-pre-wrap break-words rounded-lg bg-bg p-3 font-mono text-xs text-mu border border-bor">{(() => { try { return JSON.stringify(JSON.parse(m.t || '{}'), null, 2) } catch { return m.t || '' } })()}</pre>
@@ -1095,7 +1180,7 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
           return (
             <>
               {(m.t || hasTrail || streamingTrail) && (
-                <div ref={contentRef} className="inline">
+                <div ref={contentRef} className={cx('inline', arrivalFade > 0 && 'sd-fade')} style={arrivalFade > 0 ? ({ '--sd-fade-ms': `${arrivalFade}ms` } as CSSProperties) : undefined}>
                   {liveChunks && liveChunks.length ? (
                     streamingTrail ? (
                       streamingSegments!.map((seg, i) => (
@@ -1105,9 +1190,7 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
                         </div>
                       ))
                     ) : (
-                      <>
-                        {streamMd ? <StreamedMd chunks={liveChunks} /> : <StreamedText chunks={liveChunks} />}
-                      </>
+                      <LiveReply mid={m.id} chunks={liveChunks} busy={busy} />
                     )
                   ) : blocks ? (
                     blocks.map((b, i) => (
@@ -1128,7 +1211,7 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
                   )}
                 </div>
               )}
-              {active && <ActionIndicator calls={runningCalls} live block={!!m.t} />}
+              {active && <ActionIndicator calls={runningCalls} block={!!m.t} />}
             </>
           )
         })()}
@@ -1142,14 +1225,14 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
         <div className="mt-2 flex flex-wrap items-center gap-2 rounded-xl border border-er/30 bg-er/10 px-3 py-2 text-xs text-mu">
           <TriangleAlert size={13} className="shrink-0 text-er" />
           Tool budget reached — the answer above was written from the evidence gathered so far and may be incomplete.
-          <button onClick={() => cfg('tools')} className="rounded-lg bg-ac px-2.5 py-1 text-xs font-medium text-acx transition-opacity hover:opacity-90">Raise tool limit</button>
+          <Btn v="solid" compact onClick={() => cfg('tools')}>Raise tool limit</Btn>
         </div>
       )}
       {m.trunc && !m.err && !busy && m.t.trim() && (
         <div className="mt-2 flex flex-wrap items-center gap-2 rounded-xl border border-ac/30 bg-ac/10 px-3 py-2 text-xs text-mu">
           <TriangleAlert size={13} className="shrink-0 text-ac" />
           The reply hit the model's output limit and was cut off.
-          <button onClick={() => { void useS.getState().send('Continue from where you left off.', []) }} className="rounded-lg bg-ac px-2.5 py-1 text-xs font-medium text-acx transition-opacity hover:opacity-90">Continue</button>
+          <Btn v="solid" compact onClick={() => { void useS.getState().send('Continue from where you left off.', []) }}>Continue</Btn>
         </div>
       )}
       {m.interrupted && !busy && (
@@ -1212,7 +1295,12 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
           {replyCost && <span title={`Message cost: ${exactCost(replyCost.total)} · ${replyCost.estimated ? 'estimated from endpoint pricing' : 'reported by the provider'}`}>{replyCost.estimated ? '≈ ' : ''}{formatCost(replyCost.total)}</span>}
         </div>
       )}
-      <div className={cx('flex flex-wrap items-center gap-0.5 transition-opacity', prefs.alwaysShowActions || (m.alts && m.alts.length > 1) || (m.fork && m.fork.paths.length > 0) ? '' : 'opacity-100 md:opacity-0 md:group-hover:opacity-100 md:focus-within:opacity-100')}>
+      {/* The variant picker and path arrows are useful information, but they
+        used to pin the whole row open for any reply with alternates or a path,
+        so its buttons stayed on screen after the pointer left — unlike every
+        other reply, and unlike the reply details above. Only the explicit
+        "always show message actions" setting keeps the row visible now. */}
+      <div className={cx('flex flex-wrap items-center gap-0.5 transition-opacity', prefs.alwaysShowActions ? '' : 'opacity-100 md:opacity-0 md:group-hover:opacity-100 md:focus-within:opacity-100')}>
         {prefs.showReplyPicker !== false && m.alts && m.alts.length > 1 && !busy && (
           <>
             <Btn sm icon={ChevronLeft} title="Previous reply" disabled={(m.ai ?? 0) < 1} onClick={() => useS.getState().variant(m.id, (m.ai ?? 0) - 1)} />
@@ -1713,10 +1801,10 @@ export function Chat({ side, toggle, cfg, pal }: { side: boolean; toggle: () => 
           {findOpen && s.prefs.customSearch !== false && (
             <div className="absolute inset-x-3 top-3 z-30 mx-auto flex w-full max-w-xl items-center gap-3 rounded-2xl border border-bor bg-surf p-3 shadow-2xl">
               <Search size={20} className="ml-1 shrink-0 text-mu" aria-hidden="true" />
-              <input id="chat-find" value={findQ} onChange={(e) => setFindQ(e.target.value)} placeholder="Find in conversation" aria-label="Find in conversation" onKeyDown={(e) => {
+              <Input id="chat-find" value={findQ} set={setFindQ} placeholder="Find in conversation" aria-label="Find in conversation" size="lg" tone="none" onKeyDown={(e) => {
                 if (e.key === 'Enter') { e.preventDefault(); stepFind(e.shiftKey ? -1 : 1) }
                 if (e.key === 'Escape') { e.preventDefault(); setFindOpen(false) }
-              }} className="min-w-0 flex-1 bg-transparent px-2 py-1.5 text-lg outline-none placeholder:text-base" />
+              }} className="flex-1 placeholder:text-base" />
               <span aria-live="polite" className="shrink-0 text-sm text-mu">{findQ.trim() ? (findHits.length ? `${Math.min(findIdx + 1, findHits.length)}/${findHits.length}` : 'No matches') : ''}</span>
               <Btn icon={ArrowUp} title="Previous match" disabled={!findHits.length} onClick={() => stepFind(-1)} />
               <Btn icon={ArrowDown} title="Next match" disabled={!findHits.length} onClick={() => stepFind(1)} />
@@ -1744,9 +1832,9 @@ export function Chat({ side, toggle, cfg, pal }: { side: boolean; toggle: () => 
               <div className="mx-auto flex flex-col" style={{ maxWidth: CHAT_WIDTH[s.prefs.chatWidth], padding: 'var(--ui-chat-pad-y) var(--ui-chat-pad-x)', rowGap: 'var(--ui-msg-gap)' }}>
                 {windowFrom > 0 && (
                   <div className="flex justify-center pb-2">
-                    <button type="button" onClick={showEarlier} className="rounded-full border border-bor bg-surf px-3 py-1 text-xs text-mu transition-colors hover:bg-hov hover:text-tx">
+                    <Pill onClick={showEarlier}>
                       Show {Math.min(WINDOW_SIZE, windowFrom)} earlier message{Math.min(WINDOW_SIZE, windowFrom) === 1 ? '' : 's'} ({windowFrom} hidden for speed)
-                    </button>
+                    </Pill>
                   </div>
                 )}
                 <PathSwitch anchor="" className="mx-auto" />

@@ -3,7 +3,7 @@ import { BookOpen, ChevronDown, ChevronUp, Copy, Check, ExternalLink, FileText, 
 import { fetchPage } from '../engine'
 import { fetchOptsOf, normSearch, dl, useS } from '../store'
 import { truncateSnippet, citationCoverage, supportingExcerpt, sourcesToBibtex, sourcesToLinkList, type CiteSource } from '../citations'
-import { cx } from './ui'
+import { ABtn, Btn, cx } from './ui'
 
 const normUrl = (u: string) => {
   try { return new URL(u).toString().replace(/\/$/, '') } catch { return u.replace(/\/$/, '') }
@@ -70,10 +70,10 @@ function Row({ msgId, source, flash, cited, claim }: { msgId: string; source: Ci
         </div>
       </div>
       <div className="mt-2 flex flex-wrap gap-1.5 pl-8">
-        <a href={source.url} target="_blank" rel="noopener noreferrer nofollow" className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-hov px-2.5 text-xs font-medium hover:opacity-80"><ExternalLink size={13} />Open</a>
-        <button onClick={read} disabled={busy} className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-hov px-2.5 text-xs font-medium hover:opacity-80 disabled:opacity-40"><FileText size={13} />{busy ? 'Reading…' : excerpt != null ? 'Excerpt' : 'Read page'}</button>
-        <button onClick={() => copy('link', source.url)} className="inline-flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-xs text-mu hover:bg-hov hover:text-tx"><Link2 size={13} />{copied === 'link' ? 'Copied' : 'Copy link'}</button>
-        <button onClick={() => copy('cite', `[${source.citeId}](${source.url})`)} className="inline-flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-xs text-mu hover:bg-hov hover:text-tx">{copied === 'cite' ? <Check size={13} /> : <Copy size={13} />}{copied === 'cite' ? 'Copied' : 'Copy cite'}</button>
+        <ABtn compact icon={ExternalLink} href={source.url} target="_blank" rel="noopener noreferrer nofollow">Open</ABtn>
+        <Btn v="soft" compact icon={FileText} onClick={read} disabled={busy}>{busy ? 'Reading…' : excerpt != null ? 'Excerpt' : 'Read page'}</Btn>
+        <Btn v="ghost" compact icon={Link2} onClick={() => copy('link', source.url)}>{copied === 'link' ? 'Copied' : 'Copy link'}</Btn>
+        <Btn v="ghost" compact icon={copied === 'cite' ? Check : Copy} onClick={() => copy('cite', `[${source.citeId}](${source.url})`)}>{copied === 'cite' ? 'Copied' : 'Copy cite'}</Btn>
       </div>
     </li>
   )

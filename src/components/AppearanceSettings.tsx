@@ -1,77 +1,16 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useMemo, useState, type ReactNode } from 'react'
 import { Check, ChevronDown, Moon, Star, Sun, X } from 'lucide-react'
 import {
   useSConfig, THEMES, DARK_THEMES, LIGHT_THEMES, THEME_COLOR_KEYS, THEME_COLOR_LABELS, THEME_COLORS,
   defaultCustomTheme, customThemeColors, normCustomTheme, splitHelperRef, modelNameOf,
 } from '../store'
 import { DENSITIES, DENSITY_IDS, SPACING_LIMITS, STYLE_PRESETS, STYLE_PRESET_IDS, hasSpacingOverrides, resolveSpacing } from '../style'
-import { Btn, RangeSlider, Seg, Toggle, cx } from './ui'
+import { Btn, Input, RangeSlider, SearchSelect, Seg, Toggle, cx } from './ui'
 import { Anchor, Panel, Section, SettingRow } from './settingsPrimitives'
 import { ColorPicker } from './ColorPicker'
 
 const FONT_OPTIONS: [string, string][] = [['system', 'System default'], ['Arial', 'Arial'], ['Verdana', 'Verdana'], ['Georgia', 'Georgia'], ['Trebuchet MS', 'Trebuchet MS'], ['Times New Roman', 'Times New Roman'], ['Inter', 'Inter'], ['Roboto', 'Roboto'], ['Open Sans', 'Open Sans'], ['Segoe UI', 'Segoe UI'], ['Helvetica Neue', 'Helvetica Neue']]
 const MONO_OPTIONS: [string, string][] = [['system', 'System monospace'], ['Consolas', 'Consolas'], ['Menlo', 'Menlo'], ['Monaco', 'Monaco'], ['Courier New', 'Courier New'], ['Cascadia Code', 'Cascadia Code'], ['JetBrains Mono', 'JetBrains Mono'], ['Fira Code', 'Fira Code']]
-
-/** Font picker with an inline, right-aligned trigger in settings rows. */
-function FontPicker({ value, set, options }: { value: string; set: (v: string) => void; options: [string, string][] }) {
-  const [open, setOpen] = useState(false)
-  const [query, setQuery] = useState('')
-  const root = useRef<HTMLDivElement>(null)
-  const selected = options.find(([font]) => font === value)?.[1] ?? value
-  const matches = options.filter(([font, label]) => `${font} ${label}`.toLowerCase().includes(query.trim().toLowerCase()))
-  const choose = (font: string) => { set(font); setOpen(false); setQuery('') }
-  useEffect(() => {
-    if (!open) return
-    const close = (e: PointerEvent) => {
-      if (root.current?.contains(e.target as Node)) return
-      setOpen(false)
-      setQuery('')
-    }
-    addEventListener('pointerdown', close)
-    return () => removeEventListener('pointerdown', close)
-  }, [open])
-  return (
-    <div ref={root} className="relative w-56 max-w-full">
-      <button
-        type="button"
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-center justify-end gap-1.5 rounded-md px-1.5 py-1 text-sm text-mu transition-colors hover:text-tx focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ac/40"
-      >
-        <span className="truncate">{selected}</span>
-        <ChevronDown size={14} className={cx('shrink-0 transition-transform', open && 'rotate-180')} />
-      </button>
-      {open && (
-        <div className="menu-surface absolute right-0 z-30 mt-1 w-64 max-w-[min(16rem,80vw)] rounded-xl bg-surf p-1.5">
-          <input
-            autoFocus
-            value={query}
-            placeholder="Search fonts or type a name"
-            onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                e.preventDefault()
-                const q = query.trim()
-                if (!q) return
-                const exact = options.find(([font, label]) => font.toLowerCase() === q.toLowerCase() || label.toLowerCase() === q.toLowerCase())
-                choose(exact?.[0] ?? q)
-              }
-              if (e.key === 'Escape') setOpen(false)
-            }}
-            className="mb-1 w-full rounded-lg bg-bg px-2.5 py-2 text-sm outline-none focus:ring-2 focus:ring-ac/40"
-          />
-          <div role="listbox" className="dd-list max-h-52 overflow-y-auto overscroll-contain">
-            {matches.map(([font, label]) => (
-              <button key={font} type="button" role="option" aria-selected={font === value} onMouseDown={(e) => e.preventDefault()} onClick={() => choose(font)} className={cx('block w-full rounded-lg px-2.5 py-2 text-left text-sm', font === value ? 'bg-hov text-tx' : 'text-mu hover:bg-hov hover:text-tx')}>{label}</button>
-            ))}
-            {!matches.length && query.trim() && <p className="px-2.5 py-2 text-xs text-mu">Press Enter to use “{query.trim()}”.</p>}
-          </div>
-        </div>
-      )}
-    </div>
-  )
-}
 
 function SpacingSlider({ label, value, min, max, set }: { label: string; value: number; min: number; max: number; set: (n: number) => void }) {
   return (
@@ -227,15 +166,17 @@ export function AppearanceSettings() {
                 <RangeSlider label="Custom theme contrast" min={0} max={100} step={1} value={custom.contrast} set={(v) => setCustomTheme({ ...custom, contrast: Math.round(v) })} className="w-52 max-w-full" />
               </SettingRow>
               <SettingRow label="Save this theme">
-                <input
+                <div className="w-44 max-w-full"><Input
                   value={themeName}
-                  onChange={(e) => setThemeName(e.target.value)}
+                  set={setThemeName}
                   onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); saveTheme() } }}
                   placeholder="Theme name"
                   aria-label="Saved theme name"
                   maxLength={40}
-                  className="w-44 max-w-full rounded-md border border-bor bg-bg px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-ac/40"
-                />
+                  size="xs"
+                  tone="bg"
+                  className="border border-bor"
+                /></div>
                 <Btn type="button" v="soft" disabled={!themeNameTrim} onClick={saveTheme}>{replacesSaved ? 'Update theme' : 'Save theme'}</Btn>
               </SettingRow>
               <details className="group">
@@ -387,9 +328,9 @@ export function AppearanceSettings() {
       </Section>
 
       <Section title="Typography">
-        {row('fonts', 'Body font', <FontPicker value={s.prefs.fontBody} set={(fontBody) => s.patch({ prefs: { ...s.prefs, fontBody } })} options={FONT_OPTIONS} />)}
-        {row('fonts-heading', 'Heading font', <FontPicker value={s.prefs.fontHeader} set={(fontHeader) => s.patch({ prefs: { ...s.prefs, fontHeader } })} options={FONT_OPTIONS} />)}
-        {row('fonts-mono', 'Monospace font', <FontPicker value={s.prefs.fontMono} set={(fontMono) => s.patch({ prefs: { ...s.prefs, fontMono } })} options={MONO_OPTIONS} />)}
+        {row('fonts', 'Body font', <SearchSelect inline allowCustom className="w-56" ariaLabel="Body font" placeholder="Search fonts or type a name" value={s.prefs.fontBody} set={(fontBody) => s.patch({ prefs: { ...s.prefs, fontBody } })} opts={FONT_OPTIONS} />)}
+        {row('fonts-heading', 'Heading font', <SearchSelect inline allowCustom className="w-56" ariaLabel="Heading font" placeholder="Search fonts or type a name" value={s.prefs.fontHeader} set={(fontHeader) => s.patch({ prefs: { ...s.prefs, fontHeader } })} opts={FONT_OPTIONS} />)}
+        {row('fonts-mono', 'Monospace font', <SearchSelect inline allowCustom className="w-56" ariaLabel="Monospace font" placeholder="Search fonts or type a name" value={s.prefs.fontMono} set={(fontMono) => s.patch({ prefs: { ...s.prefs, fontMono } })} opts={MONO_OPTIONS} />)}
         {row('text-size', `Text size · ${s.prefs.textScale ?? 100}%`, <RangeSlider label="Text size" min={85} max={135} step={5} value={s.prefs.textScale ?? 100} set={(textScale) => s.patch({ prefs: { ...s.prefs, textScale } })} className="w-52 max-w-full" />)}
         {row('code-wrap', 'Wrap long code lines', <Toggle on={!!s.prefs.codeWrap} set={(codeWrap) => s.patch({ prefs: { ...s.prefs, codeWrap } })} label="Wrap long code lines" />)}
         {row('code-line-numbers', 'Code line numbers', <Toggle on={s.prefs.codeLines === true} set={(codeLines) => s.patch({ prefs: { ...s.prefs, codeLines } })} label="Code line numbers" />)}

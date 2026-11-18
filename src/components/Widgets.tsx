@@ -8,7 +8,7 @@ import { estimateHistoryTokens, fmt } from '../engine'
 import { qualityPrompt } from '../flair'
 import { allAttemptAts, allAttemptLogs, lastLogMessage, usageRange } from '../usage'
 import { attemptContexts, collectUsageRows, groupUsageRows } from '../usageStats'
-import { Btn, Surface, cx, type Ic } from './ui'
+import { Area, Btn, Input, Surface, cx, type Ic } from './ui'
 import { SortableList, type SortHandleProps } from './dnd'
 
 /* Side-panel widgets.
@@ -25,7 +25,6 @@ const WidgetCard = ({ icon: I, t, handle, children }: { icon: Ic; t: string; han
     {children}
   </Surface>
 }
-const field = 'w-full rounded-lg bg-bg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ac/40'
 
 const WP_DEFAULTS = { contextLimit: 128000, showDisabledEndpoints: true, scratchRows: 6, snippetLimit: 20, costDecimals: 4, activePromptsOnly: false, charsPerToken: 4, hideDoneTodos: false }
 
@@ -113,7 +112,7 @@ const ScratchpadWidget = memo(({ handle }: WidgetProps) => {
   const wp = useWidgetPrefs()
   return (
     <WidgetCard handle={handle} icon={StickyNote} t="Scratchpad">
-      <textarea rows={wp.scratchRows} value={pad} onChange={(e) => patch({ pad: e.target.value })} placeholder="Notes that stay next to the chat" className={cx(field, 'resize-y')} />
+      <Area rows={wp.scratchRows} value={pad} set={(v) => patch({ pad: v })} placeholder="Notes that stay next to the chat" tone="bg" />
     </WidgetCard>
   )
 })
@@ -127,7 +126,7 @@ const SnippetsWidget = memo(({ handle }: WidgetProps) => {
   return (
     <WidgetCard handle={handle} icon={Bookmark} t="Snippets">
       <div className="flex gap-1.5">
-        <input value={n} onChange={(e) => setN(e.target.value)} placeholder="New snippet" className={field} />
+        <Input value={n} set={setN} placeholder="New snippet" tone="bg" className="flex-1" />
         <Btn v="soft" icon={Plus} title="Save snippet" onClick={() => { if (n.trim()) { patch({ snips: [n.trim(), ...snips] }); setN('') } }} />
       </div>
       {snips.slice(0, wp.snippetLimit).map((t, i) => (
@@ -214,7 +213,7 @@ const TodoWidget = memo(({ handle }: WidgetProps) => {
   const shown = todos.filter((x) => !wp.hideDoneTodos || !x.done)
   return (
     <WidgetCard handle={handle} icon={ListChecks} t="Checklist">
-      <input value={td} onChange={(e) => setTd(e.target.value)} placeholder="Add a task, press Enter" className={field}
+      <Input value={td} set={setTd} placeholder="Add a task, press Enter" tone="bg"
         onKeyDown={(e) => { if (e.key === 'Enter' && td.trim()) { patch({ todos: [...todos, { id: uid(), t: td.trim(), done: false }] }); setTd('') } }} />
       {shown.map((x) => (
         <div key={x.id} className="flex items-center gap-2 text-sm">

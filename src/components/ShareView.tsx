@@ -3,6 +3,7 @@ import { Link2, Lock, MessageSquare, TriangleAlert } from 'lucide-react'
 import { fetchShare, type SharedChat } from '../share'
 import { useS } from '../store'
 import { Md } from './Md'
+import { ABtn } from './ui'
 
 /** Read-only view of a shared conversation, rendered from the public snapshot
  *  at `/api/share/<id>`. Reached with the `#share/<id>` hash so the whole app
@@ -34,7 +35,7 @@ export function ShareView({ id }: { id: string }) {
             <div className="truncate font-medium">{chat?.title ?? 'Shared conversation'}</div>
             <div className="text-xs text-mu">{chat ? `${chat.private ? 'Private · ' : ''}Read-only · shared ${new Date(chat.createdAt ?? chat.sharedAt).toLocaleDateString()}` : 'Read-only snapshot'}</div>
           </div>
-          <a href="#chat" className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-lg bg-hov px-3 text-sm font-medium hover:opacity-80"><Link2 size={14} />Open the app</a>
+          <ABtn icon={Link2} href="#chat">Open the app</ABtn>
         </div>
       </header>
       <main className="mx-auto max-w-3xl space-y-7 px-4 py-8">

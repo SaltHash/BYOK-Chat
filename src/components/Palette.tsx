@@ -9,7 +9,7 @@ import { CI, WIDGETS, KEYS, orderTools } from '../meta'
 import { WORKSPACE_TEMPLATES } from '../workspace'
 import { pickFortune } from '../flair'
 import { focusComposer } from '../hooks'
-import { Confirm, Modal, cx, type Ic } from './ui'
+import { Confirm, DialogPanel, Input, Modal, cx, type Ic } from './ui'
 
 const TAB_FEATURE: Record<string, FeatureId> = {
   prompts: 'prompts', skills: 'skills', pls: 'playlists', cmds: 'commands',
@@ -108,19 +108,18 @@ export function Palette({ close, cfg, toggleSide }: { close: () => void; cfg: (t
   useEffect(() => { refs.current[i]?.scrollIntoView({ block: 'nearest' }) }, [i, L.length])
   return (
     <Modal close={close} labelledBy="palette-title">
-      <div className="modal-panel mt-[10vh] w-full max-w-lg self-start overflow-hidden rounded-2xl bg-surf">
+      <DialogPanel padded={false} gap={false} className="mt-[10vh] max-w-lg self-start overflow-hidden bg-surf">
         <h2 id="palette-title" className="sr-only">Command palette</h2>
         <div className="flex items-center gap-3 px-4 py-3">
           <Search size={18} className="text-mu" />
-          <input
-            autoFocus value={q} aria-label="Search chats, commands, and settings" placeholder="Search chats, commands, settings"
-            onChange={(e) => { setQ(e.target.value); setI(0) }}
+          <Input
+            autoFocus value={q} set={(v) => { setQ(v); setI(0) }} tone="none" aria-label="Search chats, commands, and settings" placeholder="Search chats, commands, settings"
             onKeyDown={(e) => {
               if (e.key === 'ArrowDown') { e.preventDefault(); setI((i + 1) % m) }
               else if (e.key === 'ArrowUp') { e.preventDefault(); setI((i - 1 + m) % m) }
               else if (e.key === 'Enter') run(i)
             }}
-            className="flex-1 bg-transparent outline-none"
+            className="flex-1"
           />
         </div>
         <div className="space-y-0.5 overflow-y-auto p-1.5" style={{ maxHeight: `min(${s.prefs.paletteMax}px, 60dvh)` }}>
@@ -134,7 +133,7 @@ export function Palette({ close, cfg, toggleSide }: { close: () => void; cfg: (t
           })}
           {!L.length && <p className="px-3 py-6 text-center text-sm text-mu">No matches. Try a shorter search.</p>}
         </div>
-      </div>
+      </DialogPanel>
       {clearChat && <Confirm title="Clear this chat’s messages?" text="All messages in this chat will be permanently removed. The chat itself will remain." ok="Clear messages" close={() => setClearChat('')} run={() => { const st = useS.getState(); st.patch({ chats: st.chats.map(c => c.id === clearChat ? { ...c, msgs: [] } : c) }); close() }} />}
     </Modal>
   )

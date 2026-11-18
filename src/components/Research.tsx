@@ -14,7 +14,7 @@ const useMsgBusy = (mid: string) => useS((s) => {
   return !!c && s.busyChats?.[c.id] === true
 })
 import { SourcesPanel, scrollToSource } from './Sources'
-import { Btn, cx, ImageLightbox, TextLightbox } from './ui'
+import { Area, Btn, Input, Pill, cx, ImageLightbox, TextLightbox } from './ui'
 
 const PLAN_ICONS = { search: Globe, analyze: ListFilter, report: FileText, other: Sparkles } as const
 
@@ -244,43 +244,40 @@ export function ResearchQuestionsCard({ msg }: { msg: Msg }) {
             {q.options.length > 0 && (
               <div className="flex flex-wrap gap-1.5">
                 {q.options.map((o) => (
-                  <button
-                    key={o}
-                    type="button"
-                    onClick={() => set(q.id, o)}
-                    aria-pressed={(answers[q.id] ?? '') === o}
-                    className={cx('rounded-full border px-2.5 py-1 text-xs transition-colors', (answers[q.id] ?? '') === o ? 'border-ac bg-ac/10 text-tx' : 'border-bor text-mu hover:bg-hov hover:text-tx')}
-                  >{o}</button>
+                  <Pill key={o} on={(answers[q.id] ?? '') === o} onClick={() => set(q.id, o)}>{o}</Pill>
                 ))}
               </div>
             )}
-            <input
+            <Input
               id={`rq-${msg.id}-${q.id}`}
               value={answers[q.id] ?? ''}
-              onChange={(e) => set(q.id, e.target.value)}
+              set={(v) => set(q.id, v)}
               onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); if (canSubmit) submit() } }}
               maxLength={1500}
               placeholder="Type your answer, or pick one above"
-              className="w-full rounded-lg bg-bg px-2.5 py-1.5 text-sm outline-none focus:ring-2 focus:ring-ac/40"
+              aria-label={q.question}
+              size="xs"
+              tone="bg"
             />
           </div>
         ))}
         <div className="space-y-1.5">
           <label htmlFor={`rqx-${msg.id}`} className="block text-xs font-medium text-mu">Anything else I should know? <span className="font-normal">(optional)</span></label>
-          <textarea
+          <Area
             id={`rqx-${msg.id}`}
             value={extra}
-            onChange={(e) => setExtra(e.target.value)}
+            set={setExtra}
             rows={2}
             maxLength={1500}
             placeholder="Constraints, must-cover sources, audience, or the format you want…"
-            className="w-full resize-y rounded-lg bg-bg px-2.5 py-1.5 text-sm outline-none focus:ring-2 focus:ring-ac/40"
+            size="xs"
+            tone="bg"
           />
         </div>
       </div>
       <div className="flex items-center justify-end gap-2">
-        <button type="button" onClick={() => skip(msg.id)} className="rounded-lg px-3 py-1.5 text-sm text-mu hover:bg-hov hover:text-tx">Skip questions</button>
-        <button type="button" disabled={!canSubmit} onClick={submit} title={canSubmit ? 'Use these answers to tailor the research' : 'Answer at least one question, or skip'} className="rounded-lg bg-ac px-4 py-2 text-sm font-medium text-acx transition-opacity hover:opacity-90 disabled:opacity-40">Use answers</button>
+        <Btn v="ghost" onClick={() => skip(msg.id)}>Skip questions</Btn>
+        <Btn v="solid" disabled={!canSubmit} onClick={submit} title={canSubmit ? 'Use these answers to tailor the research' : 'Answer at least one question, or skip'}>Use answers</Btn>
         <Btn icon={X} title="Cancel research" onClick={() => stop(msg.id)} />
       </div>
     </section>
@@ -378,18 +375,20 @@ export function ResearchPlanCard({ msg }: { msg: Msg }) {
             <div className="space-y-4">
               {plan.steps.map((s) => (
                 <div key={s.id} className="space-y-1.5">
-                  <input
+                  <Input
                     value={s.label}
-                    onChange={(e) => updateStep(s.id, { label: e.target.value })}
+                    set={(v) => updateStep(s.id, { label: v })}
                     aria-label={`Plan step label: ${s.label || 'untitled'}`}
-                    className="w-full rounded-lg bg-bg px-2.5 py-1.5 text-sm font-medium outline-none focus:ring-2 focus:ring-ac/40"
+                    size="xs"
+                    tone="bg"
                   />
-                  <textarea
+                  <Area
                     value={s.items.join('\n')}
-                    onChange={(e) => updateStep(s.id, { items: e.target.value.split('\n') })}
+                    set={(v) => updateStep(s.id, { items: v.split('\n') })}
                     rows={Math.min(10, Math.max(2, s.items.length + 1))}
                     aria-label={`Plan step details: ${s.label || 'untitled'}`}
-                    className="w-full resize-y rounded-lg bg-bg px-2.5 py-1.5 text-xs leading-relaxed outline-none focus:ring-2 focus:ring-ac/40"
+                    size="sm"
+                    tone="bg"
                   />
                 </div>
               ))}
@@ -416,19 +415,12 @@ export function ResearchPlanCard({ msg }: { msg: Msg }) {
         {!planning && plan && <PlanEstimate msg={msg} />}
         <div className="flex items-center justify-end gap-2">
           {!planning && plan && (
-            <button
-              onClick={mode === 'view' ? onEditText : mode === 'focus' ? onEditManual : undefined}
-              className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm text-mu hover:bg-hov hover:text-tx"
-            >
-              {mode === 'view' && <><Pencil size={14} />Edit plan</>}
-              {mode === 'focus' && <>Edit plan manually</>}
-              {mode === 'edit' && <><Pencil size={14} />Editing…</>}
-            </button>
+            <Btn v="ghost" icon={Pencil} onClick={mode === 'view' ? onEditText : mode === 'focus' ? onEditManual : undefined}>
+              {mode === 'view' ? 'Edit plan' : mode === 'focus' ? 'Edit plan manually' : 'Editing…'}
+            </Btn>
           )}
           {!planning && plan && (
-            <button disabled={busy} onClick={startNow} className="inline-flex items-center gap-1.5 rounded-lg bg-ac px-4 py-2 text-sm font-medium text-acx transition-opacity hover:opacity-90 disabled:opacity-50">
-              <Play size={15} fill="currentColor" />Start research
-            </button>
+            <Btn v="solid" icon={Play} disabled={busy} onClick={startNow}>Start research</Btn>
           )}
           <Btn icon={X} title={planning ? 'Cancel plan generation' : 'Cancel research'} disabled={busy && !planning} onClick={() => stop(msg.id)} />
         </div>
@@ -529,14 +521,10 @@ export function ResearchProgressCard({ msg }: { msg: Msg }) {
           <p className="truncate text-[11px] text-mu">{subtitle}</p>
         </div>
         {rs.status === 'running' && busy && (
-          <button onClick={() => stop(msg.id)} className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-hov px-2.5 py-1.5 text-xs font-medium hover:opacity-80">
-            <Square size={12} fill="currentColor" />Stop
-          </button>
+          <Btn v="soft" compact icon={Square} onClick={() => stop(msg.id)}>Stop</Btn>
         )}
         {canResume && (
-          <button disabled={busy} onClick={() => resume(msg.id)} title="Continue with the remaining search budget" className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-hov px-2.5 py-1.5 text-xs font-medium hover:opacity-80 disabled:opacity-50">
-            <RotateCcw size={12} />Resume
-          </button>
+          <Btn v="soft" compact icon={RotateCcw} disabled={busy} onClick={() => resume(msg.id)} title="Continue with the remaining search budget">Resume</Btn>
         )}
       </header>
       <div className="space-y-3 p-3">
@@ -563,15 +551,16 @@ export function ResearchProgressCard({ msg }: { msg: Msg }) {
             </div>
           )}
           <form onSubmit={(e) => { e.preventDefault(); const v = focus.trim(); if (v) { steer(msg.id, v); setFocus('') } }} className="flex items-center gap-1.5">
-            <input
+            <Input
               value={focus}
-              onChange={(e) => setFocus(e.target.value)}
+              set={setFocus}
               maxLength={800}
               aria-label="Research focus"
               placeholder={activeFocus ? 'Update the focus for this run…' : 'Add a focus or constraint for this run…'}
-              className="min-w-0 flex-1 rounded-md bg-surf px-2 py-1.5 text-xs outline-none focus:ring-2 focus:ring-ac/40"
+              size="sm"
+              className="flex-1"
             />
-            <button type="submit" disabled={!focus.trim()} title="The lead researcher applies this on its next round; the run is not restarted" className="rounded-md bg-hov px-2 py-1.5 text-xs font-medium hover:opacity-80 disabled:opacity-40">Set</button>
+            <Btn v="soft" compact type="submit" disabled={!focus.trim()} title="The lead researcher applies this on its next round; the run is not restarted">Set</Btn>
           </form>
         </div>
       )}

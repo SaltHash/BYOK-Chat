@@ -4,7 +4,7 @@ import { featOn, useS, useSConfig } from '../store'
 import { useQuestions } from '../questions'
 import { TOOL_MODES, decideToolApproval, modeInfo, normToolMode, settleToolApprovals, useApprovals, type ToolMode } from '../toolApprovals'
 import { toolLabel } from '../toolLabels'
-import { Btn, Pop, Seg, cx, type Ic } from './ui'
+import { Btn, Input, Pill, Pop, Seg, cx, type Ic } from './ui'
 import { Anchor } from './settingsPrimitives'
 
 const MODE_ICONS: Record<ToolMode, Ic> = {
@@ -157,13 +157,13 @@ export function QuestionPrompt({ chatId }: { chatId: string }) {
           {!!pending.options.length && (
             <div className="mt-2 flex flex-wrap gap-1.5">
               {pending.options.map((option) => (
-                <button key={option} type="button" onClick={() => send(option)} className="rounded-full border border-bor bg-bg px-3 py-1.5 text-xs transition-colors hover:border-ac hover:text-ac">{option}</button>
+                <Pill key={option} onClick={() => send(option)}>{option}</Pill>
               ))}
             </div>
           )}
           {pending.allowText !== false && (
             <div className="mt-2 flex gap-2">
-              <input value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) { e.preventDefault(); send(text) } }} placeholder="Type your answer…" aria-label="Your answer" className="h-9 min-w-0 flex-1 rounded-lg bg-bg px-3 text-sm outline-none focus:ring-2 focus:ring-ac/40" />
+              <Input value={text} set={setText} onKeyDown={(e) => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) { e.preventDefault(); send(text) } }} placeholder="Type your answer…" aria-label="Your answer" tone="bg" className="flex-1" />
               <Btn v="solid" onClick={() => send(text)}>Answer</Btn>
             </div>
           )}

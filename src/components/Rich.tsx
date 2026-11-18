@@ -8,9 +8,10 @@ import rehypeRaw from 'rehype-raw'
 import rehypeSanitize, { defaultSchema } from 'rehype-sanitize'
 import rehypeHighlight from 'rehype-highlight'
 import remend from 'remend'
+import { rehypeFade } from '../streamFade'
 import { common } from 'lowlight'
 import { Check, Copy, FileText, ImageOff } from 'lucide-react'
-import { cx, ImageLightbox, TextLightbox, ZoomableImage } from './ui'
+import { Btn, cx, ImageLightbox, TextLightbox, ZoomableImage } from './ui'
 import { loadChunk } from '../chunkLoad'
 import { useS } from '../store'
 import { friendlyFileName, promptNameOf } from '../attachments'
@@ -271,14 +272,14 @@ const hastJsx = (n: any, key: number): ReactNode =>
     ? n.value
     : createElement(n.tagName ?? 'span', { key, className: (n.properties?.className ?? []).join(' ') || undefined }, (n.children ?? []).map(hastJsx))
 
-function Code({ lang, code, node, children, bare }: { lang: string; code: string; node?: any; children: ReactNode; bare?: boolean }) {
+function Code({ lang, code, node, children, bare, className }: { lang: string; code: string; node?: any; children: ReactNode; bare?: boolean; /** `sd-fade`, when a streaming reply fades this block in as one unit. */ className?: string }) {
   const [ok, setOk] = useState(false)
   const [copiedLine, setCopiedLine] = useState<number | null>(null)
   const lineNumbers = useS((s) => s.prefs.codeLines === true)
   const maxHeight = useS((s) => s.prefs.codeMaxHeight ?? 0)
   if (bare) {
     return (
-      <pre className="overflow-x-auto px-6 py-5 font-mono text-sm leading-6">{children}</pre>
+      <pre className={cx('overflow-x-auto px-6 py-5 font-mono text-sm leading-6', className)}>{children}</pre>
     )
   }
   /* The gutter and the code share one scroll container (and one height cap), so
@@ -296,7 +297,7 @@ function Code({ lang, code, node, children, bare }: { lang: string; code: string
     while (rows.length < total) rows.push([])
   }
   return (
-    <div className="my-4 overflow-hidden rounded-xl bg-code">
+    <div className={cx('my-4 overflow-hidden rounded-xl bg-code', className)}>
       <div className="code-head flex items-center justify-between bg-side px-4 py-2 text-xs">
         <span className="font-medium text-mu">{lang || 'text'}</span>
         <button onClick={() => { const p = navigator.clipboard?.writeText(code); if (!p) return; void p.then(() => { setOk(true); setTimeout(() => setOk(false), 1200) }).catch(() => {}) }} className="inline-flex items-center gap-1.5 text-mu hover:text-tx">
@@ -343,19 +344,19 @@ function Code({ lang, code, node, children, bare }: { lang: string; code: string
  * arbitrary host, so remote images are click-to-load by default (inline and
  * app-relative sources still render immediately). The toggle lives in
  * Settings → Chats ("Load remote images"). */
-function RemoteImage({ src, alt, title }: { src?: string; alt?: string; title?: string }) {
+function RemoteImage({ src, alt, title, className }: { src?: string; alt?: string; title?: string; className?: string }) {
   const allow = useS((s) => s.prefs.remoteImages === true)
   const [loaded, setLoaded] = useState(false)
   const remote = /^https?:\/\//i.test(src ?? '')
-  if (!remote || allow || loaded) return <ZoomableImage src={src ?? ''} alt={alt} title={title} loading="lazy" referrerPolicy="no-referrer" className="my-3 max-h-96 max-w-full rounded-xl bg-surf" />
+  if (!remote || allow || loaded) return <ZoomableImage src={src ?? ''} alt={alt} title={title} loading="lazy" referrerPolicy="no-referrer" className={cx('my-3 max-h-96 max-w-full rounded-xl bg-surf', className)} />
   let host = src ?? ''
   try { host = new URL(src ?? '').host || host } catch { /* keep the raw URL */ }
   return (
-    <span className="my-3 flex flex-wrap items-center gap-2 rounded-xl border border-bor bg-surf px-3 py-2 text-xs text-mu">
+    <span className={cx('my-3 flex flex-wrap items-center gap-2 rounded-xl border border-bor bg-surf px-3 py-2 text-xs text-mu', className)}>
       <ImageOff size={14} className="shrink-0 text-ac" aria-hidden="true" />
       <span className="min-w-0 flex-1 truncate">Remote image{alt ? ` — ${alt}` : ''} from {host}</span>
-      <button type="button" onClick={() => setLoaded(true)} className="rounded-lg bg-hov px-2.5 py-1 font-medium text-tx hover:opacity-80">Load image</button>
-      <button type="button" onClick={() => useS.setState({ prefs: { ...useS.getState().prefs, remoteImages: true } })} className="rounded-lg bg-ac px-2.5 py-1 font-medium text-acx hover:opacity-90">Always load</button>
+      <Btn v="soft" compact onClick={() => setLoaded(true)}>Load image</Btn>
+      <Btn v="solid" compact onClick={() => useS.setState({ prefs: { ...useS.getState().prefs, remoteImages: true } })}>Always load</Btn>
     </span>
   )
 }
@@ -426,10 +427,10 @@ const makeC = (bare: boolean, cites: CiteMap | undefined, live: boolean): any =>
     </a>
     : <a {...p} href={href} target="_blank" rel="noopener noreferrer nofollow" className={link}>{children}</a>)
   },
-  img: ({ node, src, alt, title }: any) => (live && !src
-    ? <span className="my-3 inline-flex items-center gap-2 rounded-xl border border-bor bg-surf px-3 py-2 text-xs text-mu"><ImageOff size={14} className="shrink-0 text-ac" aria-hidden="true" />{alt ? `Loading ${alt}…` : 'Loading image…'}</span>
-    : <RemoteImage src={src} alt={alt} title={title} />),
-  table: ({ children }: any) => <div className="my-4 overflow-x-auto rounded-xl bg-surf"><table className="w-full border-collapse text-sm">{children}</table></div>,
+  img: ({ node, src, alt, title, className }: any) => (live && !src
+    ? <span className={cx('my-3 inline-flex items-center gap-2 rounded-xl border border-bor bg-surf px-3 py-2 text-xs text-mu', className)}><ImageOff size={14} className="shrink-0 text-ac" aria-hidden="true" />{alt ? `Loading ${alt}…` : 'Loading image…'}</span>
+    : <RemoteImage src={src} alt={alt} title={title} className={className} />),
+  table: ({ className, children }: any) => <div className="my-4 overflow-x-auto rounded-xl bg-surf"><table className={cx('w-full border-collapse text-sm', className)}>{children}</table></div>,
   thead: E('thead', 'bg-hov text-left'),
   tr: E('tr', 'even:bg-bg/40'),
   th: ({ node, align, className, ...p }: any) => createElement('th', { ...p, style: align ? { textAlign: align } : p.style, className: cx('px-3 py-2 font-semibold', className) }),
@@ -439,14 +440,14 @@ const makeC = (bare: boolean, cites: CiteMap | undefined, live: boolean): any =>
   dt: E('dt', 'font-semibold'),
   dd: E('dd', 'ml-5 text-mu'),
   section: ({ node, className, ...p }: any) => createElement('section', { ...p, className: cx('data-footnotes' in p && 'mt-6 text-sm text-mu [&_h2]:sr-only [&_ol]:list-decimal [&_ol]:pl-5', className) }),
-  pre: ({ node, children }: any) => {
+  pre: ({ node, children, className }: any) => {
     const c = node?.children?.[0]
     const lang = /language-([\w+-]+)/.exec((c?.properties?.className ?? []).join(' '))?.[1] ?? ''
-    return <Code lang={lang} code={c ? txt(c).replace(/\n$/, '') : ''} node={c} bare={bare}>{children}</Code>
+    return <Code lang={lang} code={c ? txt(c).replace(/\n$/, '') : ''} node={c} bare={bare} className={className}>{children}</Code>
   },
 })
 
-export default memo(function Rich({ t, bare = false, cites, blocks = false, live = false }: { t: string; bare?: boolean; cites?: CiteMap; blocks?: boolean; live?: boolean }) {
+export default memo(function Rich({ t, bare = false, cites, blocks = false, live = false, fade = 0 }: { t: string; bare?: boolean; cites?: CiteMap; blocks?: boolean; live?: boolean; /** Fade-in duration in ms for a streaming reply; 0 disables it. */ fade?: number }) {
   /* A block that is still streaming is never balanced markdown. `remend` — the
    * incomplete-markdown pass streamdown ships — closes a half-typed **bold**,
    * `code` or [link]( so the live block renders with the formatting it will end
@@ -477,11 +478,16 @@ export default memo(function Rich({ t, bare = false, cites, blocks = false, live
     void loadKatex().then(() => { if (live) setKatexReady(true) })
     return () => { live = false }
   }, [wantsMath, katexReady])
-  // KaTeX renders after sanitising and before highlighting, as before.
-  const rehypePlugins = useMemo(
-    () => (katexReady && katexPlugins ? [...REHYPE_BASE, ...katexPlugins, REHYPE_HIGHLIGHT] : [...REHYPE_BASE, REHYPE_HIGHLIGHT]),
-    [katexReady],
-  )
+  /* KaTeX renders after sanitising and before highlighting, as before. The
+   * fade pass is last, so it wraps the text the sanitizer already approved and
+   * the highlighted code it must leave alone. Its identity only changes when
+   * the setting does — a plugin recreated per render would re-run over every
+   * block and replay each word's animation. */
+  const fadeOn = fade > 0
+  const rehypePlugins = useMemo(() => {
+    const base = katexReady && katexPlugins ? [...REHYPE_BASE, ...katexPlugins, REHYPE_HIGHLIGHT] : [...REHYPE_BASE, REHYPE_HIGHLIGHT]
+    return fadeOn ? [...base, rehypeFade] : base
+  }, [katexReady, fadeOn])
   const body = (
     <ReactMarkdown
       remarkPlugins={BASE_PLUGINS}

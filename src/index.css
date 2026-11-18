@@ -546,7 +546,6 @@ html[data-codewrap] .code-lines .code-line > code { flex: 1 1 auto; min-width: 0
   animation:activity-shine 2.6s linear infinite;
 }
 @keyframes activity-shine { from { background-position:120% 0; } to { background-position:-20% 0; } }
-.activity[data-past] .activity-label { color:var(--mu); }
 .activity-time { font-size:.75rem; font-variant-numeric:tabular-nums; color:color-mix(in srgb, var(--mu) 70%, transparent); }
 @media (prefers-reduced-motion: reduce) {
   .activity-icon > svg[data-phase] { animation:none; }
@@ -597,6 +596,22 @@ html[data-codewrap] .code-lines .code-line > code { flex: 1 1 auto; min-width: 0
 }
 @keyframes process-shine { to { transform:rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .process-ring[data-live]::after { animation:none; opacity:.5; } }
+
+/* Reply fade-in. A streamed word is a span that mounts once; the animation runs
+   on mount and a re-parse that produces the same spans in the same order reuses
+   their DOM nodes, so a word that is already on screen never fades again. The
+   duration comes from Settings → Chats (Reply fade-in); 200ms is the fallback.
+   Only opacity moves: no layout, no paint of anything else. */
+.sd-fade { animation: sd-fade-in 200ms ease-out both; animation-duration: var(--sd-fade-ms, 200ms); }
+@keyframes sd-fade-in { from { opacity: 0; } to { opacity: 1; } }
+/* A streaming body is re-rendered every frame; containing it keeps that work
+   from invalidating the finished replies above and below it. */
+.sd-stream { contain: content; }
+
+@media (prefers-reduced-motion: reduce) {
+  /* The text is still paced word by word; it simply appears without moving. */
+  .sd-fade { animation: none; }
+}
 
 .md > :first-child { margin-top: 0; }
 .md > :last-child { margin-bottom: 0; }

@@ -3,7 +3,7 @@ import { BookOpen, Quote, Search, TriangleAlert, Wrench, X, type LucideIcon } fr
 import { CI, TOOLS } from '../meta'
 import type { Mention } from '../mentions'
 import type { Cmd } from '../store'
-import { cx } from './ui'
+import { Btn, cx } from './ui'
 
 /** Icon that stands for a mention: the command's own icon, or the tool's. */
 export function mentionIcon(m: Mention, cmds: Cmd[]): LucideIcon {
@@ -101,7 +101,7 @@ export function MentionBanner({ kind, onDismiss, warning, onEnable }: { kind: 's
       {warning && (
         <>
           <span className="flex items-center gap-1.5 text-xs text-er"><TriangleAlert size={12} className="shrink-0" aria-hidden="true" />{warning}</span>
-          {onEnable && <button type="button" onClick={onEnable} className="rounded-md bg-ac px-2 py-0.5 text-xs font-medium text-acx transition-opacity hover:opacity-90">Enable search</button>}
+          {onEnable && <Btn v="solid" compact onClick={onEnable}>Enable search</Btn>}
         </>
       )}
       <button type="button" onClick={onDismiss} aria-label={action} title={action} className="ml-auto grid size-5 shrink-0 place-items-center rounded-full text-ac/70 transition-colors hover:bg-ac/15 hover:text-ac">

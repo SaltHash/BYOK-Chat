@@ -8,7 +8,7 @@ import { composerWidth } from '../layout'
 import { can, readAtts, ocrImage, fetchPage } from '../engine'
 import { fitDoc } from '../docs'
 import { isPill, mentionsOf, tokenizeMentions, type Mention, type Seg as MentionSeg } from '../mentions'
-import { Btn, Item, Menu, Pop, Seg, RangeSlider, ImageLightbox, TextLightbox, cx, type Ic } from './ui'
+import { Btn, Input, Item, Menu, Pop, Seg, SearchInput, RangeSlider, ImageLightbox, TextLightbox, cx, type Ic } from './ui'
 import { SortableList } from './dnd'
 import { MentionBanner, MentionInfo, QuoteBanner } from './Mention'
 import { ToolAccessButton, ToolApprovalPrompt, QuestionPrompt } from './ToolAccess'
@@ -232,10 +232,7 @@ function ModelMenu({ close, cfg }: { close: () => void; cfg: (t: string) => void
   return (
     <div className="flex flex-col" style={{ maxHeight: `min(${s.prefs.modelPickerHeight ?? 480}px, 85dvh)` }}>
       {plsOn && <Seg label="Model source" v={t} set={setT} opts={[['ep', 'Models', Cpu], ['pl', 'Playlists', ListMusic]]} />}
-      <div className="relative my-2">
-        <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-mu" />
-        <input aria-label="Search models and playlists" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search" className="h-9 w-full rounded-lg bg-surf pl-9 pr-3 text-sm outline-none" />
-      </div>
+      <div className="my-2"><SearchInput value={q} set={setQ} label="Search models and playlists" placeholder="Search" /></div>
       {activeModel && effortChoices.length > 0 && <div className="shrink-0 border-b border-bor px-2.5 py-3" onClick={(e) => e.stopPropagation()}>
         <div className="mb-1 flex items-center justify-between text-xs"><span className="truncate pr-2 font-medium text-tx">Effort · {modelNameOf(activeEp!, activeModel).replace(/^~+/, '')}</span><span className="text-ac capitalize">{activeEffort}</span></div>
         <RangeSlider label={`${modelNameOf(activeEp!, activeModel).replace(/^~+/, '')} reasoning effort`} min={0} max={effortChoices.length - 1} step={1} value={effortIndex} valueText={effortChoices[effortIndex]} set={(n) => s.patch({ effort: { ...s.effort, [activeModel]: effortChoices[n] } })} className="mt-1 w-full" />
@@ -763,7 +760,7 @@ export function Composer({ cfg, quote, onClearQuote }: { cfg: (t: string) => voi
         )}
         {urlOpen && (
           <div className="mb-2 flex gap-2">
-            <input autoFocus value={urlVal} onChange={(e) => setUrlVal(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') addUrl(); if (e.key === 'Escape') setUrlOpen(false) }} placeholder="https://… — attach the page text as a document" className="h-9 min-w-0 flex-1 rounded-lg bg-hov px-3 text-sm outline-none" />
+            <Input autoFocus value={urlVal} set={setUrlVal} onKeyDown={(e) => { if (e.key === 'Enter') addUrl(); if (e.key === 'Escape') setUrlOpen(false) }} placeholder="https://… — attach the page text as a document" aria-label="Page URL" tone="soft" className="flex-1" />
             <Btn v="solid" disabled={!urlVal.trim() || urlBusy} onClick={addUrl}>{urlBusy ? 'Reading…' : 'Attach'}</Btn>
             <Btn v="soft" onClick={() => setUrlOpen(false)}>Cancel</Btn>
           </div>
@@ -883,34 +880,21 @@ export function Composer({ cfg, quote, onClearQuote }: { cfg: (t: string) => voi
         <input ref={fi} type="file" multiple hidden onChange={(e) => { add(e.target.files); e.target.value = '' }} />
         <div className="mt-2 flex items-center gap-1">
           <Pop up w="w-64" onOpenChange={setMenusOpen} trigger={() => <Btn icon={Plus} title="Attach files or manage tools" className="rounded-full" />}>
-            {(close) => {
-              const row = 'flex w-full items-center gap-1 rounded-lg px-1 hover:bg-hov'
-              const main = 'flex min-w-0 flex-1 items-center gap-2.5 rounded-lg px-1.5 py-2 text-left text-sm'
-              const gear = 'grid size-7 shrink-0 place-items-center rounded-md text-mu hover:bg-hov hover:text-tx'
-              return (
+            {(close) => (
               <>
-                <div className={row}>
-                  <button className={main} onClick={() => { pick(''); close() }}><FileUp size={16} className="shrink-0 text-mu" /><span className="min-w-0 flex-1 truncate">Upload a file</span></button>
-                  <button aria-label="Document settings" title="Document settings" className={gear} onClick={() => { close(); cfg('chats#documents') }}><Settings size={15} /></button>
-                </div>
-                <div className={row}>
-                  <button className={main} onClick={() => { setUrlOpen(true); close() }}><LinkIcon size={16} className="shrink-0 text-mu" /><span className="min-w-0 flex-1 truncate">Attach page from URL</span></button>
-                  <button aria-label="Page reader settings" title="Page reader settings" className={gear} onClick={() => { close(); cfg('tools#citations') }}><Settings size={15} /></button>
-                </div>
-                <div className={row}>
-                  <button className={main} onClick={() => { setArmed('research'); close(); ta.current?.focus() }}><BookOpen size={16} className="shrink-0 text-mu" /><span className="min-w-0 flex-1 truncate">Deep research…</span></button>
-                  <button aria-label="Deep research settings" title="Deep research settings" className={gear} onClick={() => { close(); cfg('tools') }}><Settings size={15} /></button>
-                </div>
+                <Item icon={FileUp} onClick={() => { pick(''); close() }}
+                  action={<Btn sm icon={Settings} title="Document settings" onClick={() => { close(); cfg('chats#documents') }} />}>Upload a file</Item>
+                <Item icon={LinkIcon} onClick={() => { setUrlOpen(true); close() }}
+                  action={<Btn sm icon={Settings} title="Page reader settings" onClick={() => { close(); cfg('tools#citations') }} />}>Attach page from URL</Item>
+                <Item icon={BookOpen} onClick={() => { setArmed('research'); close(); ta.current?.focus() }}
+                  action={<Btn sm icon={Settings} title="Deep research settings" onClick={() => { close(); cfg('tools') }} />}>Deep research…</Item>
                 {searchEnabled && (
-                  <div className={row}>
-                    <button className={main} onClick={() => { setArmed('search'); close(); ta.current?.focus() }}><Search size={16} className="shrink-0 text-mu" /><span className="min-w-0 flex-1 truncate">Search the web…</span></button>
-                    <button aria-label="Search settings" title="Search settings" className={gear} onClick={() => { close(); cfg('tools') }}><Settings size={15} /></button>
-                  </div>
+                  <Item icon={Search} onClick={() => { setArmed('search'); close(); ta.current?.focus() }}
+                    action={<Btn sm icon={Settings} title="Search settings" onClick={() => { close(); cfg('tools') }} />}>Search the web…</Item>
                 )}
                 <Item icon={Wrench} onClick={() => { close(); cfg('tools') }}>Manage tools…</Item>
               </>
-              )
-            }}
+            )}
           </Pop>
           <Pop up w="w-[26rem]" scroll={false} onOpenChange={setMenusOpen} trigger={(o) => {
             const activeEp = s.sel?.k === 'ep' && s.sel?.id ? s.eps.find((e) => e.id === s.sel!.id) : undefined

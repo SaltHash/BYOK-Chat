@@ -1,7 +1,7 @@
 import { useEffect, type CSSProperties } from 'react'
 import { Info, X } from 'lucide-react'
 import { useS } from '../store'
-import { Btn, cx } from './ui'
+import { ABtn, Btn, cx } from './ui'
 
 /** Floating status toast. It sits above the shell (and settings) instead of
  *  taking a row from the composer, follows the glass composer's material when
@@ -36,7 +36,7 @@ export function Notice({ cfg }: { cfg: (t: string) => void }) {
       <Info size={18} className="shrink-0 text-ac" aria-hidden="true" />
       <p className="min-w-0 flex-1 basis-40 break-words leading-5">{n.t}</p>
       <span className="ml-auto flex shrink-0 items-center gap-2">
-        {n.href && <a href={n.href} target="_blank" rel="noreferrer" className="inline-flex h-9 shrink-0 items-center rounded-lg bg-hov px-3 text-sm font-medium hover:opacity-80">{n.label ?? 'Open link'}</a>}
+        {n.href && <ABtn href={n.href} target="_blank" rel="noreferrer">{n.label ?? 'Open link'}</ABtn>}
         {n.tab && <Btn v="soft" onClick={() => { dismiss(); cfg(n.tab!) }}>{n.label ?? 'Open settings'}</Btn>}
         {n.undo && <Btn v="soft" onClick={() => useS.getState().undoDelete()}>Undo</Btn>}
         <Btn sm icon={X} title="Dismiss" onClick={dismiss} />

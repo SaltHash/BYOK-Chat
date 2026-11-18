@@ -3,7 +3,7 @@ import { useShallow } from 'zustand/react/shallow'
 import { Check, ChevronLeft, ChevronRight, GitCompare } from 'lucide-react'
 import { useS } from '../store'
 import { continuationHeads, siblingCount, siblingIndex } from '../conversationTree'
-import { Btn, Modal, cx } from './ui'
+import { Btn, Dialog, cx } from './ui'
 
 type Preview = { ordinal: number; path: { id: string; r: string; t: string }[] }
 
@@ -44,11 +44,8 @@ export function PathSwitch({ anchor, className }: { anchor: string; className?: 
       <Btn sm icon={ChevronRight} title="Next path at this point" aria-label="Next path at this point" disabled={index >= n - 1} onClick={() => goto(anchor, index + 1)} />
       <Btn sm icon={GitCompare} title="Compare the paths that branch here" aria-label="Compare the paths that branch here" onClick={openCompare} />
       {preview && (
-        <Modal close={() => setPreview(null)} labelledBy="path-compare-title">
-          <div className="modal-panel w-[min(64rem,100%)] rounded-2xl bg-bg p-4">
-            <h2 id="path-compare-title" className="text-base font-semibold">Paths from this point</h2>
-            <p className="mt-1 text-xs leading-5 text-mu">These continuations share everything above them. Only one is shown at a time; switching keeps whatever you wrote on the other, so nothing is overwritten.</p>
-            <div className="mt-3 grid gap-3" style={{ gridTemplateColumns: `repeat(${Math.min(preview.length, 3)}, minmax(0, 1fr))` }}>
+        <Dialog title="Paths from this point" sub="These continuations share everything above them. Only one is shown at a time; switching keeps whatever you wrote on the other, so nothing is overwritten." close={() => setPreview(null)} width="3xl">
+            <div className="grid gap-3" style={{ gridTemplateColumns: `repeat(${Math.min(preview.length, 3)}, minmax(0, 1fr))` }}>
               {preview.map((p) => {
                 const shown = p.ordinal === index
                 return (
@@ -70,8 +67,7 @@ export function PathSwitch({ anchor, className }: { anchor: string; className?: 
                 )
               })}
             </div>
-          </div>
-        </Modal>
+        </Dialog>
       )}
     </span>
   )

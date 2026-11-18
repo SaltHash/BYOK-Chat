@@ -4,12 +4,12 @@ import { useS, featOn, type Msg } from '../store'
 import { tokenizeMentions, isPill } from '../mentions'
 import { MentionChip, SentMentionBanner, SentQuoteBanner } from './Mention'
 import { splitQuotedReply } from '../quote'
-import { Btn, cx } from './ui'
+import { Area, Btn, cx } from './ui'
 import { PathSwitch } from './PathSwitch'
 import { loadChunkOr } from '../chunkLoad'
 import type { CiteMap } from './Rich'
 
-type RichProps = { t: string; bare?: boolean; cites?: CiteMap; blocks?: boolean; live?: boolean }
+type RichProps = { t: string; bare?: boolean; cites?: CiteMap; blocks?: boolean; live?: boolean; fade?: number }
 
 /** If the renderer's chunk cannot be fetched (a deploy replaced the old
  *  hashed file while this tab stayed open, or the connection dropped twice),
@@ -23,10 +23,10 @@ const PlainRich = memo(({ t }: RichProps) => <p className="whitespace-pre-wrap">
 // chunk names no longer exist, so the load recovers instead of 404ing.
 const Rich = lazy(() => loadChunkOr<{ default: ComponentType<RichProps> }>(() => import('./Rich'), { default: PlainRich }))
 
-export function Md({ t, bare = false, cites, blocks = false, live = false }: { t: string; bare?: boolean; cites?: CiteMap; blocks?: boolean; live?: boolean }) {
+export function Md({ t, bare = false, cites, blocks = false, live = false, fade = 0 }: { t: string; bare?: boolean; cites?: CiteMap; blocks?: boolean; live?: boolean; fade?: number }) {
   return (
     <Suspense fallback={<p className="whitespace-pre-wrap">{t}</p>}>
-      <Rich t={t} bare={bare} cites={cites} blocks={blocks} live={live} />
+      <Rich t={t} bare={bare} cites={cites} blocks={blocks} live={live} fade={fade} />
     </Suspense>
   )
 }
@@ -96,7 +96,7 @@ export function UserText({ m, searchQuery, searchOpen }: { m: Msg; searchQuery?:
   if (ed)
     return (
       <div className="space-y-2">
-        <textarea autoFocus rows={3} value={v} onChange={(e) => setV(e.target.value)} className="w-full resize-y rounded-2xl bg-surf px-4 py-2.5 outline-none focus:ring-2 focus:ring-ac/40" />
+        <Area autoFocus rows={3} value={v} set={setV} aria-label="Edit this message" />
         <p className="text-xs text-mu">Saving resends this message. The wording and replies you have now stay reachable as another path.</p>
         <div className="flex justify-end gap-2">
           <Btn v="soft" onClick={() => { setV(m.t); setEd(false) }}>Cancel</Btn>
@@ -123,7 +123,7 @@ export function UserText({ m, searchQuery, searchOpen }: { m: Msg; searchQuery?:
           </div>
         )}
       </div>
-      <span className={cx('flex shrink-0 flex-wrap gap-0.5 transition-opacity md:group-hover/u:opacity-100 md:focus-within:opacity-100', m.fork && m.fork.paths.length > 0 ? 'opacity-100' : 'opacity-100 md:opacity-0')}>
+      <span className="flex shrink-0 flex-wrap gap-0.5 transition-opacity opacity-100 md:opacity-0 md:group-hover/u:opacity-100 md:focus-within:opacity-100">
         <Btn sm icon={copied ? Check : Copy} title="Copy" onClick={() => { void navigator.clipboard?.writeText(m.t).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1200) }).catch(() => {}) }} />
         <PathSwitch anchor={m.id} />
         <Btn sm icon={GitBranch} title="Start a new path from here — this thread stays reachable from the path arrows" onClick={() => branch(m.id)} />

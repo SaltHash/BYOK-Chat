@@ -12,7 +12,7 @@ import { combo, fmt, rec as R, testEp } from '../engine'
 import { probeProviderCors, resolveProvider } from '../providerAdapter'
 import { KEYS, TOOLS, DEFAULT_TOOLS } from '../meta'
 import { DEFAULT_TOOL_APPROVAL, normToolApproval, normToolMode } from '../toolApprovals'
-import { Btn, Toggle, Checkbox, Confirm, Modal, Surface, Input, cx, type Ic } from './ui'
+import { Btn, Toggle, Checkbox, Confirm, Dialog, Surface, Input, cx, type Ic } from './ui'
 import { Panel, Anchor, Section, SettingRow } from './settingsPrimitives'
 import { detectAvailableCategories, buildExportPayload, chatsInDateRange, mergeImportedSearch } from '../configIO'
 import { getAutoBackup, setAutoBackup, runLocalBackup, listLocalBackups, readLocalBackup, deleteLocalBackup, getLastBackup, type BackupMeta } from '../storage/localBackup'
@@ -368,7 +368,7 @@ function ConflictsBox() {
               <div key={side} className="space-y-1 rounded-md bg-surf p-2">
                 <div className="flex items-center justify-between gap-2"><span className="font-medium capitalize">{side === 'local' ? 'This device' : 'Other device'}</span><span className="text-mu">{c[side].msgs} messages</span></div>
                 <p className="line-clamp-3 text-mu">{c[side].last || 'No visible text'}</p>
-                <button type="button" onClick={() => restore(c, side)} className="rounded-md bg-hov px-2 py-1 font-medium hover:bg-ac hover:text-acx">Restore this side</button>
+                <Btn v="soft" compact onClick={() => restore(c, side)}>Restore this side</Btn>
               </div>
             ))}
           </div>
@@ -586,17 +586,16 @@ export function DataTab() {
         await durableEraseAll().catch(() => {})
         location.reload()
       })() }} />}
-      {cf === 3 && <Modal close={() => setCf(0)} labelledBy="export-title"><section className="w-full max-w-xl space-y-5 rounded-2xl border border-bor bg-bg p-5 shadow-2xl">
-        <h2 id="export-title" className="text-lg font-semibold">Export data</h2>
+      {cf === 3 && <Dialog title="Export data" close={() => setCf(0)} width="xl" footer={<><Btn v="soft" onClick={() => setCf(0)}>Cancel</Btn><Btn v="solid" icon={Download} onClick={() => { void exp(); setCf(0) }}>Export</Btn></>}>
         <div className="grid grid-cols-2 gap-2 rounded-xl bg-surf p-3 sm:grid-cols-3">{categories.map(([id, label]) => <Checkbox key={id} checked={exports[id]} set={(checked) => setExports({ ...exports, [id]: checked })} label={label} />)}</div>
         {exports.eps && <div className="rounded-xl bg-surf p-3"><Checkbox checked={withKeys} set={setWithKeys} label="Include API keys" /></div>}
         {exports.chats && (
           <div className="space-y-1.5 rounded-xl bg-surf p-3">
             <div className="text-xs font-medium">Only chats active between (optional)</div>
             <div className="flex items-center gap-2">
-              <input type="date" aria-label="Export chats from date" value={fromDate} onChange={(e) => setFromDate(e.target.value)} className="min-w-0 flex-1 rounded-md bg-bg px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-ac/40" />
+              <Input type="date" aria-label="Export chats from date" value={fromDate} set={setFromDate} tone="bg" className="flex-1" />
               <span className="text-xs text-mu">to</span>
-              <input type="date" aria-label="Export chats to date" value={toDate} onChange={(e) => setToDate(e.target.value)} className="min-w-0 flex-1 rounded-md bg-bg px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-ac/40" />
+              <Input type="date" aria-label="Export chats to date" value={toDate} set={setToDate} tone="bg" className="flex-1" />
             </div>
           </div>
         )}
@@ -604,20 +603,15 @@ export function DataTab() {
           <Input type="password" value={expPw} set={setExpPw} placeholder="Password (optional)" />
 
         </div>
-        <div className="flex justify-end gap-2"><Btn v="soft" onClick={() => setCf(0)}>Cancel</Btn><Btn v="solid" icon={Download} onClick={() => { void exp(); setCf(0) }}>Export</Btn></div>
-      </section></Modal>}
-      {pendingEnc && <Modal close={() => setPendingEnc(null)} labelledBy="decrypt-title"><section className="w-full max-w-sm space-y-4 rounded-2xl border border-bor bg-bg p-5 shadow-2xl">
-        <h2 id="decrypt-title" className="text-lg font-semibold">Encrypted file</h2>
+      </Dialog>}
+      {pendingEnc && <Dialog title="Encrypted file" close={() => setPendingEnc(null)} width="sm" footer={<><Btn v="soft" onClick={() => setPendingEnc(null)}>Cancel</Btn><Btn v="solid" disabled={!impPw} onClick={() => void decryptAndLoad()}>Decrypt</Btn></>}>
         <Input type="password" value={impPw} set={setImpPw} placeholder="File password" />
         {impErr && <p className="text-sm text-er">{impErr}</p>}
-        <div className="flex justify-end gap-2"><Btn v="soft" onClick={() => setPendingEnc(null)}>Cancel</Btn><Btn v="solid" disabled={!impPw} onClick={() => void decryptAndLoad()}>Decrypt</Btn></div>
-      </section></Modal>}
-      {fileData && <Modal close={() => setFileData(null)} labelledBy="import-title"><section className="w-full max-w-xl space-y-5 rounded-2xl border border-bor bg-bg p-5 shadow-2xl">
-        <h2 id="import-title" className="text-lg font-semibold">Import data</h2>
+      </Dialog>}
+      {fileData && <Dialog title="Import data" close={() => setFileData(null)} width="xl" footer={<><Btn v="soft" onClick={() => setFileData(null)}>Cancel</Btn><Btn v="solid" icon={Upload} onClick={imp} disabled={!Object.values(imports).some(Boolean)}>Import</Btn></>}>
         <div className="grid grid-cols-2 gap-2 rounded-xl bg-surf p-3 sm:grid-cols-3">{categories.map(([id, label]) => <Checkbox key={id} checked={imports[id]} disabled={!available[id]} set={(checked) => setImports({ ...imports, [id]: checked })} label={label} />)}</div>
         <div className="rounded-xl bg-surf p-3"><Checkbox checked={merge} set={setMerge} label="Merge with existing data" /></div>
-        <div className="flex justify-end gap-2"><Btn v="soft" onClick={() => setFileData(null)}>Cancel</Btn><Btn v="solid" icon={Upload} onClick={imp} disabled={!Object.values(imports).some(Boolean)}>Import</Btn></div>
-      </section></Modal>}
+      </Dialog>}
     </Panel>
   )
 }

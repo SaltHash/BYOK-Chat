@@ -1,7 +1,7 @@
 import { useEffect, useId, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
 import { Download, Maximize2, RotateCcw, X, ZoomIn, ZoomOut } from 'lucide-react'
 import { useS } from '../store'
-import { cx, Modal, type Ic } from './ui'
+import { cx, DialogPanel, Modal, type Ic } from './ui'
 import {
   computeGraphDomain,
   contourSegments,
@@ -839,7 +839,7 @@ export function GraphView({ spec, dark, width = 760, height = 430, expanded = fa
 
       {full && (
         <Modal close={() => setFull(false)} labelledBy="graph-full-title">
-          <div className="modal-panel relative w-[min(96vw,1120px)] rounded-2xl border border-bor bg-bg p-4">
+          <DialogPanel className="relative w-[min(96vw,1120px)] p-4">
             <h2 id="graph-full-title" className="sr-only">Full-screen graph</h2>
             <button
               type="button"
@@ -851,7 +851,7 @@ export function GraphView({ spec, dark, width = 760, height = 430, expanded = fa
               <X size={15} />
             </button>
             <GraphView spec={spec} dark={dark} width={1040} height={620} expanded compact />
-          </div>
+          </DialogPanel>
         </Modal>
       )}
     </div>

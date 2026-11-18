@@ -10,7 +10,7 @@ import { SETTINGS_TABS, SETTINGS_GROUPS, visibleTabs, searchSettings, splitSetti
 import { normQualityFavs, type GlobalPrompt, type PromptQuality, type Quality } from '../flair'
 import { DataTab, KeysTab, TestRow, TestAllEndpoints } from './Extra'
 import { ToolAccessCard } from './ToolAccess'
-import { Btn, Field, Input, Area, Sel, SearchSelect, Toggle, Seg, RangeSlider, Checkbox, Modal, Surface, Chip, Item, Confirm, cx, useMenuNav, type Ic } from './ui'
+import { Btn, Field, Input, Area, Sel, SearchInput, SearchSelect, Toggle, Seg, RangeSlider, Checkbox, Radio, Dialog, DialogPanel, Modal, Surface, Chip, Item, Confirm, cx, useMenuNav, type Ic } from './ui'
 import { Anchor, Panel, Section, SettingRow } from './settingsPrimitives'
 import { SortableList, useFlipAnimate, type SortHandleProps, type SortItemApi } from './dnd'
 import { fetchModelCatalogCached, clearCatalogCache, prefetchModelCatalog, fetchModelProviders, filterCatalogByEndpoint, prioritizeProviderRows, discoverEndpointModels, clearModelDiscoveryCache, type CatalogEntry, type CatalogProvider, type CatalogSource } from '../catalog'
@@ -82,24 +82,26 @@ function BaseUrlField({ url, set, type }: { url: string; set: (v: string) => voi
     return (
       <div className="space-y-1.5">
         <Input value={url} set={set} placeholder="https://api.company.com/v1" aria-label="Base URL" />
-        <button type="button" onClick={() => setFull(false)} className="text-xs text-mu underline decoration-mu/40 underline-offset-2 hover:text-tx">
+        <Btn v="link" className="text-xs" onClick={() => setFull(false)}>
           {'Use the https://api.<company>.com/v1 shape'}
-        </button>
+        </Btn>
       </div>
     )
   return (
     <div className="space-y-1.5">
       <div className="flex flex-wrap items-center gap-1 rounded-lg bg-surf px-2.5 py-2 font-mono text-sm">
         <span className="shrink-0 select-none text-mu">https://api.</span>
-        <input
+        <Input
           value={company ?? ''}
-          onChange={(ev) => set(apiUrlFor(ev.target.value))}
+          set={(v) => set(apiUrlFor(v))}
           placeholder="company"
           aria-label="Company domain"
           autoCapitalize="none"
           autoCorrect="off"
           spellCheck={false}
-          className="min-w-24 flex-1 rounded-md bg-bg px-2 py-1 text-tx outline-none placeholder:text-mu/60 focus:ring-2 focus:ring-ac/40"
+          size="sm"
+          tone="bg"
+          className="min-w-24 flex-1"
         />
         <span className="shrink-0 select-none text-mu">.com/v1</span>
       </div>
@@ -107,7 +109,7 @@ function BaseUrlField({ url, set, type }: { url: string; set: (v: string) => voi
         <span className="min-w-0">
           {company ? <span className="font-mono">{url}</span> : 'The company part of the API host, e.g. “acme” for api.acme.com.'}
         </span>
-        <button type="button" onClick={() => setFull(true)} className="shrink-0 underline decoration-mu/40 underline-offset-2 hover:text-tx">Use another URL</button>
+        <Btn v="link" className="shrink-0" onClick={() => setFull(true)}>Use another URL</Btn>
       </div>
     </div>
   )
@@ -211,14 +213,7 @@ function EndpointWizard({ close }: { close: () => void }) {
   const matches = known.filter((k) => k.toLowerCase().includes(query.trim().toLowerCase()))
   const providerStep = (
     <div className="space-y-3">
-      <input
-        autoFocus
-        value={query}
-        onChange={(ev) => setQuery(ev.target.value)}
-        placeholder="Search providers"
-        aria-label="Search providers"
-        className="w-full rounded-lg bg-surf px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-ac/40"
-      />
+      <SearchInput autoFocus value={query} set={setQuery} label="Search providers" placeholder="Search providers" />
       <div className="dd-list max-h-56 space-y-0.5 overflow-y-auto overscroll-contain pr-1">
         {matches.map((k) => {
           const [t, u] = PRE[k]
@@ -276,33 +271,25 @@ function EndpointWizard({ close }: { close: () => void }) {
     </div>
   )
   return (
-    <Modal close={close} label="Add endpoint">
-      <div className="modal-panel flex max-h-[88dvh] w-full max-w-xl flex-col gap-4 overflow-hidden rounded-2xl bg-bg p-5 shadow-2xl">
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <h3 className="flex items-center gap-2 font-semibold"><Server size={18} className="text-ac" />Add endpoint</h3>
-            {/* The total depends on the provider: a preset with its own URL
-                skips the connection step. Before that choice is made there is
-                no honest total, so the counter shows only the position. */}
-            <p className="mt-0.5 text-xs text-mu">Step {step + 1}{preset ? ` of ${steps.length}` : ''} · {WIZARD_STEP_LABEL[at]}</p>
-          </div>
-          <button onClick={close} aria-label="Close add endpoint" className="grid size-8 shrink-0 place-items-center rounded-lg text-mu hover:bg-hov hover:text-tx"><X size={16} /></button>
-        </div>
-        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain pr-1">
-          {at === 'provider' ? providerStep : at === 'connection' ? connectionStep : at === 'key' ? keyStep : modelStep}
-        </div>
-        <div className="flex items-center justify-between gap-2 pt-1">
-          {step > 0 ? <Btn v="soft" icon={ChevronLeft} onClick={back}>Back</Btn> : <span />}
-          {/* Picking a provider advances on its own, so that step gets a hint
-              instead of a button that could never be enabled. */}
-          {at === 'provider'
-            ? <span className="text-xs text-mu">Choose a provider to continue</span>
-            : at === 'model'
-              ? <Btn v="solid" icon={Check} onClick={finish}>Add endpoint</Btn>
-              : <Btn v="solid" icon={ChevronRight} disabled={!canNext} onClick={next}>Continue</Btn>}
-        </div>
-      </div>
-    </Modal>
+    <Dialog
+      title="Add endpoint" icon={Server} close={close} width="xl" scroll
+      /* The total depends on the provider: a preset with its own URL skips the
+         connection step. Before that choice is made there is no honest total,
+         so the counter shows only the position. */
+      sub={`Step ${step + 1}${preset ? ` of ${steps.length}` : ''} · ${WIZARD_STEP_LABEL[at]}`}
+      footer={<div className="flex w-full items-center justify-between gap-2">
+        {step > 0 ? <Btn v="soft" icon={ChevronLeft} onClick={back}>Back</Btn> : <span />}
+        {/* Picking a provider advances on its own, so that step gets a hint
+            instead of a button that could never be enabled. */}
+        {at === 'provider'
+          ? <span className="text-xs text-mu">Choose a provider to continue</span>
+          : at === 'model'
+            ? <Btn v="solid" icon={Check} onClick={finish}>Add endpoint</Btn>
+            : <Btn v="solid" icon={ChevronRight} disabled={!canNext} onClick={next}>Continue</Btn>}
+      </div>}
+    >
+      {at === 'provider' ? providerStep : at === 'connection' ? connectionStep : at === 'key' ? keyStep : modelStep}
+    </Dialog>
   )
 }
 
@@ -422,49 +409,33 @@ function ProviderPicker({ e, model, openRouter, update }: { e: any; model: strin
     <button type="button" onClick={() => void load()} title="Choose the inference provider for this model" className="inline-flex items-center gap-1.5 rounded-md px-1.5 py-0.5 hover:bg-hov hover:text-tx">
       <Server size={12} />Provider: <span className={current ? 'font-medium text-tx' : ''}>{current?.name ?? 'Automatic'}</span>
     </button>
-    {open && <Modal close={() => setOpen(false)} label="Inference provider">
-      <div className="modal-panel flex max-h-[80dvh] w-full max-w-lg flex-col gap-3 rounded-2xl bg-bg p-5 shadow-2xl">
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <h3 className="flex items-center gap-1.5 font-semibold">Inference provider</h3>
-            <p className="mt-0.5 truncate text-xs text-mu">{model}</p>
-          </div>
-          <button onClick={() => setOpen(false)} className="grid size-8 shrink-0 place-items-center rounded-lg text-mu hover:bg-hov hover:text-tx" aria-label="Close provider picker"><X size={16} /></button>
-        </div>
-        <button onClick={() => void load()} className="self-start rounded-lg bg-hov px-3 py-2 text-xs text-tx">Refresh providers</button>
-        <p className="text-xs text-mu">{status}</p>
-        <div className="min-h-0 flex-1 space-y-1 overflow-auto">
-          <button onClick={clear} className={cx('flex w-full items-center gap-3 rounded-md px-2 py-2 text-left text-sm hover:bg-hov', !current && 'bg-hov')}>
-            <span className={cx('mt-0.5 grid size-4 shrink-0 place-items-center self-start rounded-full border', !current ? 'border-ac' : 'border-mu/60')}>{!current && <span className="size-2 rounded-full bg-ac" />}</span>
-            <span className="min-w-0"><span className="block">Automatic</span></span>
-          </button>
+    {open && <Dialog title="Inference provider" sub={model} close={() => setOpen(false)} width="lg" scroll>
+        <div className="flex flex-wrap items-center gap-2"><Btn v="soft" onClick={() => void load()}>Refresh providers</Btn><p className="min-w-0 flex-1 text-xs text-mu">{status}</p></div>
+        <div role="radiogroup" aria-label="Inference provider" className="space-y-1">
+          <Radio checked={!current} onSelect={clear} label="Automatic">Automatic</Radio>
           {providers.map((p) => {
             const on = current?.tag === p.tag
-            return <button key={p.tag} onClick={() => pick(p.tag, p.name)} className={cx('flex w-full items-center gap-3 rounded-md px-2 py-2 text-left text-sm hover:bg-hov', on && 'bg-hov')}>
-              <span className={cx('mt-0.5 grid size-4 shrink-0 place-items-center self-start rounded-full border', on ? 'border-ac' : 'border-mu/60')}>{on && <span className="size-2 rounded-full bg-ac" />}</span>
-              <span className="min-w-0 flex-1">
-                <span className="block truncate">{p.name}</span>
-                <span className="mt-1 flex flex-wrap gap-1 text-[11px] text-mu">
-                  {p.throughput !== undefined && <ProviderStat icon={TrendingUp} title="Measured output speed over the last 30 minutes">{Math.round(p.throughput)} tok/s</ProviderStat>}
-                  {p.context !== undefined && <ProviderStat icon={Database} title="Maximum context window">{contextLabel(p.context)} ctx</ProviderStat>}
-                  {p.inputPrice !== undefined && <ProviderStat icon={ArrowDown} title={`$${p.inputPrice.toFixed(2)} per million input tokens`}>${p.inputPrice.toFixed(2)}/M in</ProviderStat>}
-                  {p.outputPrice !== undefined && <ProviderStat icon={ArrowUp} title={`$${p.outputPrice.toFixed(2)} per million output tokens`}>${p.outputPrice.toFixed(2)}/M out</ProviderStat>}
-                  {p.cacheReadPrice !== undefined && <ProviderStat icon={Route} title={`$${p.cacheReadPrice.toFixed(2)} per million cached input tokens`}>${p.cacheReadPrice.toFixed(2)}/M cache</ProviderStat>}
-                  {p.quantization && <ProviderStat icon={Cpu} title="Quantization">{p.quantization}</ProviderStat>}
-                </span>
+            return <Radio key={p.tag} checked={on} onSelect={() => pick(p.tag, p.name)} label={p.name}>
+              <span className="block truncate">{p.name}</span>
+              <span className="mt-1 flex flex-wrap gap-1 text-[11px] text-mu">
+                {p.throughput !== undefined && <ProviderStat icon={TrendingUp} title="Measured output speed over the last 30 minutes">{Math.round(p.throughput)} tok/s</ProviderStat>}
+                {p.context !== undefined && <ProviderStat icon={Database} title="Maximum context window">{contextLabel(p.context)} ctx</ProviderStat>}
+                {p.inputPrice !== undefined && <ProviderStat icon={ArrowDown} title={`$${p.inputPrice.toFixed(2)} per million input tokens`}>${p.inputPrice.toFixed(2)}/M in</ProviderStat>}
+                {p.outputPrice !== undefined && <ProviderStat icon={ArrowUp} title={`$${p.outputPrice.toFixed(2)} per million output tokens`}>${p.outputPrice.toFixed(2)}/M out</ProviderStat>}
+                {p.cacheReadPrice !== undefined && <ProviderStat icon={Route} title={`$${p.cacheReadPrice.toFixed(2)} per million cached input tokens`}>${p.cacheReadPrice.toFixed(2)}/M cache</ProviderStat>}
+                {p.quantization && <ProviderStat icon={Cpu} title="Quantization">{p.quantization}</ProviderStat>}
               </span>
-            </button>
+            </Radio>
           })}
         </div>
         <div className="space-y-1.5">
           <span className="text-xs font-medium">Or enter a provider slug</span>
           <div className="flex gap-2">
-            <input value={manual} onChange={(ev) => setManual(ev.target.value)} placeholder="e.g. amazon-bedrock" className="min-w-0 flex-1 rounded-lg bg-surf px-3 py-2 text-sm outline-none" />
-            <button disabled={!manual.trim()} onClick={() => pick(manual.trim(), manual.trim())} className="rounded-lg bg-ac px-3 py-2 text-xs text-acx disabled:opacity-40">Use</button>
+            <Input value={manual} set={setManual} placeholder="e.g. amazon-bedrock" aria-label="Provider slug" className="flex-1" />
+            <Btn v="solid" disabled={!manual.trim()} onClick={() => pick(manual.trim(), manual.trim())}>Use</Btn>
           </div>
         </div>
-      </div>
-    </Modal>}
+    </Dialog>}
   </>
 }
 
@@ -492,12 +463,6 @@ function ModelsEditor({ e, update }: { e: any; update: (p: object) => void }) {
   const priceFrom = (item: CatalogEntry | undefined) => item && item.inputPrice !== undefined && item.outputPrice !== undefined
     ? { input: item.inputPrice, output: item.outputPrice, source: priceSource, ...(item.cacheReadPrice !== undefined ? { cacheRead: item.cacheReadPrice } : {}) }
     : undefined
-  useEffect(() => {
-    if (!picker) return
-    const dismiss = (ev: KeyboardEvent) => { if (ev.key === 'Escape') { ev.preventDefault(); ev.stopImmediatePropagation(); setPicker(false) } }
-    document.addEventListener('keydown', dismiss, true)
-    return () => document.removeEventListener('keydown', dismiss, true)
-  }, [picker])
   // Every model-list edit stamps each added or removed id, so a deletion is
   // something the sync merge can represent instead of a shorter array that a
   // stale copy can overwrite.
@@ -575,32 +540,31 @@ function ModelsEditor({ e, update }: { e: any; update: (p: object) => void }) {
       <div className="grid grid-cols-[auto_auto_minmax(0,1fr)_minmax(0,1fr)_auto_auto] items-center gap-2">
       <span {...api.handleProps(`Reorder model ${i + 1}`)} title="Drag to reorder" className="dnd-handle cursor-grab text-mu"><GripVertical size={16} /></span>
       <span className="grid size-7 shrink-0 place-items-center rounded-lg bg-hov text-xs text-mu">{i + 1}</span>
-      <input ref={(el) => { refs.current[i] = el }} value={model} onChange={(ev) => { const next = [...models]; next[i] = ev.target.value; setModels(next) }} onKeyDown={(ev) => {
+      <Input ref={(el) => { refs.current[i] = el }} value={model} set={(v) => { const next = [...models]; next[i] = v; setModels(next) }} onKeyDown={(ev) => {
         if (ev.key === 'Enter') { ev.preventDefault(); if (i < models.length - 1) refs.current[i + 1]?.focus(); else if (model.trim()) { setModels([...models, '']); setTimeout(() => refs.current[i + 1]?.focus(), 0) } }
-      }} placeholder="Model ID" aria-label={`Model ID ${i + 1}`} className="min-w-0 bg-transparent px-2 py-1 text-sm outline-none" />
-      <input value={model ? modelNameOf(e, model).replace(/^~+/, '') : ''} onChange={(ev) => update({ modelNames: { ...e.modelNames, [model]: ev.target.value } })} placeholder="Model name" aria-label={`Model name ${i + 1}`} className="min-w-0 rounded-md bg-surf px-2 py-1 text-sm outline-none" />
+      }} placeholder="Model ID" aria-label={`Model ID ${i + 1}`} size="sm" tone="none" className="min-w-0" />
+      <Input value={model ? modelNameOf(e, model).replace(/^~+/, '') : ''} set={(v) => update({ modelNames: { ...e.modelNames, [model]: v } })} placeholder="Model name" aria-label={`Model name ${i + 1}`} size="sm" className="min-w-0" />
       <button type="button" title={favs.includes(favRef(e.id, model)) ? 'Remove from favorites' : 'Add to favorites'} aria-label={favs.includes(favRef(e.id, model)) ? 'Remove from favorites' : 'Add to favorites'} aria-pressed={favs.includes(favRef(e.id, model))} disabled={!model} onClick={() => { if (model) useS.getState().patch({ favs: toggleFavRef(favs, favRef(e.id, model)) }) }} className={cx('grid size-7 place-items-center rounded-md hover:bg-hov hover:text-tx disabled:opacity-0', favs.includes(favRef(e.id, model)) ? 'text-ac' : 'text-mu')}><Star size={14} fill={favs.includes(favRef(e.id, model)) ? 'currentColor' : 'none'} /></button>
       <button title="Remove model" onClick={() => setModels(models.filter((_, j) => j !== i))} className="grid size-7 place-items-center rounded-md text-mu hover:bg-hov hover:text-er"><Trash2 size={14} /></button>
       </div>
       {!!model && (isOpenRouter || e.modelEffortSource?.[model] !== 'auto') && <div className="ml-8 mt-1 flex flex-wrap items-center gap-3 text-xs text-mu">
         <ProviderPicker e={e} model={model} openRouter={isOpenRouter} update={update} />
-        {e.modelEffortSource?.[model] !== 'auto' && <span className="flex flex-wrap items-center gap-2"><span>Reasoning effort support:</span>{(['low','medium','high','xhigh','max','minimal','none'] as const).map(level => { const levels: string[] = e.modelEfforts?.[model] ?? []; const checked = levels.includes(level); return <button key={level} type="button" role="checkbox" aria-checked={checked} onClick={() => update({ modelEfforts: { ...e.modelEfforts, [model]: checked ? levels.filter(x => x !== level) : [...new Set([...levels, level])] }, modelEffortSource: { ...e.modelEffortSource, [model]: 'manual' } })} className="inline-flex items-center gap-1.5 capitalize"><span className={cx('grid size-4 place-items-center rounded border transition-colors', checked ? 'border-ac bg-ac text-acx' : 'border-mu bg-surf')}>{checked && <Check size={12} strokeWidth={3}/>}</span>{level}</button> })}<span className="opacity-70">(manual)</span></span>}
+        {e.modelEffortSource?.[model] !== 'auto' && <span className="flex flex-wrap items-center gap-2"><span>Reasoning effort support:</span>{(['low','medium','high','xhigh','max','minimal','none'] as const).map(level => { const levels: string[] = e.modelEfforts?.[model] ?? []; const checked = levels.includes(level); return <Checkbox key={level} checked={checked} set={() => update({ modelEfforts: { ...e.modelEfforts, [model]: checked ? levels.filter(x => x !== level) : [...new Set([...levels, level])] }, modelEffortSource: { ...e.modelEffortSource, [model]: 'manual' } })} label={<span className="capitalize">{level}</span>} /> })}<span className="opacity-70">(manual)</span></span>}
       </div>}
     </div>
       }}
     />
     <button onClick={() => { setPicker(true); setSelectedModels([]); void loadCatalog() }} className="flex w-full items-center justify-center gap-2 rounded-lg border border-dashed border-bor py-2 text-sm text-mu hover:text-tx"><Plus size={14} />Add model</button>
-    {picker && <Modal close={() => setPicker(false)} keyboard={false} label="Choose a model"><div className="modal-panel flex max-h-[80dvh] w-full max-w-xl flex-col gap-3 rounded-2xl bg-bg p-5 shadow-2xl">
-      <div className="flex items-center justify-between"><div><h3 className="flex items-center gap-1.5 font-semibold">Choose a model</h3><p className="mt-0.5 text-xs text-mu">{e.name}{endpointId ? ` · ${endpointId}` : ''}</p></div><button onClick={() => setPicker(false)} className="grid size-8 place-items-center rounded-lg text-mu hover:bg-hov hover:text-tx" aria-label="Close model picker"><X size={16}/></button></div>
-      <div className="flex flex-wrap gap-2"><button onClick={loadCatalog} className="rounded-lg bg-hov px-3 py-2 text-xs text-tx">{catalog.length ? 'Refresh model catalog' : 'Load available models'}</button>
-      <button onClick={() => { clearModelDiscoveryCache(e.url); clearCatalogCache(e.id); void loadCatalog() }} title="Clear cached working and failed model-list URLs for this endpoint, then probe them again." className="rounded-lg px-3 py-2 text-xs text-mu hover:bg-hov hover:text-tx">Retry model-list checks</button></div>
+    {picker && <Dialog title="Choose a model" sub={`${e.name}${endpointId ? ` · ${endpointId}` : ''}`} close={() => setPicker(false)} width="xl" scroll
+      footer={(selectedModels.length > 0 || searchIdea) ? <Btn v="solid" onClick={addSelected}>Add selected models ({selectedModels.length + (searchIdea ? 1 : 0)})</Btn> : undefined}>
+      <div className="flex flex-wrap gap-2"><Btn v="soft" onClick={loadCatalog}>{catalog.length ? 'Refresh model catalog' : 'Load available models'}</Btn>
+      <Btn v="soft" onClick={() => { clearModelDiscoveryCache(e.url); clearCatalogCache(e.id); void loadCatalog() }} title="Clear cached working and failed model-list URLs for this endpoint, then probe them again.">Retry model-list checks</Btn></div>
       {catalogState && <p className="text-xs text-mu">{catalogState}</p>}
-      <input value={query} onChange={ev => setQuery(ev.target.value)} placeholder="Search available models" className="w-full rounded-lg bg-surf px-3 py-2 text-sm outline-none"/>
-      <div className="min-h-0 flex-1 space-y-1 overflow-auto">{[...catalog].sort((a,b) => modelIdCompare(storedId(a.id).replace(/^~+/, ''), storedId(b.id).replace(/^~+/, ''))).filter(x => `${x.name.replace(/^~+/, '')} ${storedId(x.id).replace(/^~+/, '')}`.toLowerCase().includes(query.toLowerCase()) && !models.includes(storedId(x.id))).slice(0,250).map(x => { const id = storedId(x.id), visibleId = id.replace(/^~+/, ''), checked = selectedModels.includes(id); return <button key={x.id} onClick={() => setSelectedModels(checked ? selectedModels.filter(m => m !== id) : [...selectedModels, id])} className="flex w-full items-center gap-3 rounded-md px-2 py-2 text-left text-sm hover:bg-hov"><span className={cx('grid size-4 shrink-0 place-items-center rounded border', checked ? 'border-ac bg-ac text-acx' : 'border-mu/60')}>{checked && <Check size={12}/>}</span><span className="min-w-0 flex-1"><span className="block truncate">{visibleId}</span>{(x.context || x.inputPrice !== undefined || x.outputPrice !== undefined) && <span className="block text-xs text-mu">{[x.context ? `${contextLabel(x.context)} context` : '', x.inputPrice !== undefined ? `$${x.inputPrice.toFixed(2)}/M in` : '', x.outputPrice !== undefined ? `$${x.outputPrice.toFixed(2)}/M out` : ''].filter(Boolean).join(' · ')}</span>}</span></button>})}
-        {query.trim() && !models.includes(catalogId(query.trim())) && <button type="button" role="checkbox" aria-checked={searchIdea === catalogId(query.trim())} onClick={() => setSearchIdea(searchIdea === catalogId(query.trim()) ? null : catalogId(query.trim()))} className="flex w-full items-center gap-3 rounded-md px-2 py-2 text-left text-sm hover:bg-hov"><span aria-hidden="true" className={cx('grid size-4 shrink-0 place-items-center rounded border', searchIdea === catalogId(query.trim()) ? 'border-ac bg-ac text-acx' : 'border-mu/60')}>{searchIdea === catalogId(query.trim()) && <Check size={12}/>}</span><span className="min-w-0 truncate">Add “{catalogId(query.trim())}” model</span></button>}
+      <SearchInput value={query} set={setQuery} label="Search available models" placeholder="Search available models" />
+      <div className="space-y-1">{[...catalog].sort((a,b) => modelIdCompare(storedId(a.id).replace(/^~+/, ''), storedId(b.id).replace(/^~+/, ''))).filter(x => `${x.name.replace(/^~+/, '')} ${storedId(x.id).replace(/^~+/, '')}`.toLowerCase().includes(query.toLowerCase()) && !models.includes(storedId(x.id))).slice(0,250).map(x => { const id = storedId(x.id), visibleId = id.replace(/^~+/, ''), checked = selectedModels.includes(id); return <Checkbox key={x.id} checked={checked} set={() => setSelectedModels(checked ? selectedModels.filter(m => m !== id) : [...selectedModels, id])} label={visibleId} sub={(x.context || x.inputPrice !== undefined || x.outputPrice !== undefined) ? [x.context ? `${contextLabel(x.context)} context` : '', x.inputPrice !== undefined ? `$${x.inputPrice.toFixed(2)}/M in` : '', x.outputPrice !== undefined ? `$${x.outputPrice.toFixed(2)}/M out` : ''].filter(Boolean).join(' · ') : undefined} className="w-full px-2 py-2 hover:bg-hov" />})}
+        {query.trim() && !models.includes(catalogId(query.trim())) && <Checkbox checked={searchIdea === catalogId(query.trim())} set={() => setSearchIdea(searchIdea === catalogId(query.trim()) ? null : catalogId(query.trim()))} label={`Add “${catalogId(query.trim())}” model`} className="w-full px-2 py-2 hover:bg-hov" />}
       </div>
-      {(selectedModels.length > 0 || searchIdea) && <button onClick={addSelected} className="self-start rounded-lg bg-ac px-3 py-2 text-xs text-acx">Add selected models ({selectedModels.length + (searchIdea ? 1 : 0)})</button>}
-    </div></Modal>}
+    </Dialog>}
   </div>
 }
 
@@ -650,28 +614,18 @@ function FeaturesTab() {
       })}
       </Section>
       {confirm === 'stats' && (
-        <Modal close={() => setConfirm(null)} label="Turn off stats?">
-          <div className="modal-panel w-full max-w-sm space-y-4 rounded-2xl bg-bg p-5">
-            <div className="flex items-center gap-2 font-semibold"><TrendingUp size={18} className="text-ac" />Turn off stats?</div>
-            <div className="flex flex-col gap-2">
-              <Btn v="danger" onClick={() => { s.resetStats(); setF('stats', false); setConfirm(null) }}>Delete totals and turn off</Btn>
-              <Btn v="soft" onClick={() => { setF('stats', false); setConfirm(null) }}>Keep totals and turn off</Btn>
-              <Btn v="soft" onClick={() => setConfirm(null)}>Cancel</Btn>
-            </div>
-          </div>
-        </Modal>
+        <Dialog title="Turn off stats?" icon={TrendingUp} close={() => setConfirm(null)} width="sm" footer={<div className="flex w-full flex-col gap-2">
+          <Btn v="danger" onClick={() => { s.resetStats(); setF('stats', false); setConfirm(null) }}>Delete totals and turn off</Btn>
+          <Btn v="soft" onClick={() => { setF('stats', false); setConfirm(null) }}>Keep totals and turn off</Btn>
+          <Btn v="soft" onClick={() => setConfirm(null)}>Cancel</Btn>
+        </div>} />
       )}
       {confirm === 'memory' && (
-        <Modal close={() => setConfirm(null)} label="Turn off memory?">
-          <div className="modal-panel w-full max-w-sm space-y-4 rounded-2xl bg-bg p-5">
-            <div className="flex items-center gap-2 font-semibold"><Brain size={18} className="text-ac" />Turn off memory?</div>
-            <div className="flex flex-col gap-2">
-              <Btn v="danger" onClick={() => { s.patch({ memories: [] }); setF('memory', false); setConfirm(null) }}>Delete all memories and turn off</Btn>
-              <Btn v="soft" onClick={() => { setF('memory', false); setConfirm(null) }}>Keep memories and turn off</Btn>
-              <Btn v="soft" onClick={() => setConfirm(null)}>Cancel</Btn>
-            </div>
-          </div>
-        </Modal>
+        <Dialog title="Turn off memory?" icon={Brain} close={() => setConfirm(null)} width="sm" footer={<div className="flex w-full flex-col gap-2">
+          <Btn v="danger" onClick={() => { s.patch({ memories: [] }); setF('memory', false); setConfirm(null) }}>Delete all memories and turn off</Btn>
+          <Btn v="soft" onClick={() => { setF('memory', false); setConfirm(null) }}>Keep memories and turn off</Btn>
+          <Btn v="soft" onClick={() => setConfirm(null)}>Cancel</Btn>
+        </div>} />
       )}
     </Panel>
   )
@@ -877,15 +831,7 @@ function CurlImportModal({ close, importProvider }: { close: () => void; importP
     } finally { setBusy(false) }
   }
   const mask = (key: string) => !key ? 'No key found' : `••••${key.slice(-4)}`
-  return <Modal close={close} label="Add provider from cURL">
-    <div className="modal-panel flex max-h-[88dvh] w-full max-w-2xl flex-col gap-4 overflow-y-auto rounded-2xl bg-bg p-5 shadow-2xl">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <h3 className="flex items-center gap-2 font-semibold"><Terminal size={18} className="text-ac" />Add provider from cURL</h3>
-
-        </div>
-        <button onClick={close} className="grid size-8 shrink-0 place-items-center rounded-lg text-mu hover:bg-hov hover:text-tx" aria-label="Close cURL importer"><X size={16} /></button>
-      </div>
+  return <Dialog title="Add provider from cURL" icon={Terminal} close={close} width="2xl" scroll>
       {done ? <div className="space-y-3">
         <div className="flex items-start gap-2 rounded-xl bg-surf p-3 text-sm"><CircleCheck size={18} className="mt-0.5 shrink-0 text-ac" /><span>{done}</span></div>
         <div className="flex justify-end gap-2"><Btn v="soft" onClick={() => { setDone(''); setText(''); setName('') }}>Add another</Btn><Btn v="solid" onClick={close}>Close</Btn></div>
@@ -894,7 +840,7 @@ function CurlImportModal({ close, importProvider }: { close: () => void; importP
         {text.trim() && !parsed.ok && <p className="rounded-lg bg-er/10 p-2.5 text-sm text-er">{parsed.error}</p>}
         {parsed.ok && <div className="space-y-3 rounded-xl bg-surf p-3">
           <div className="grid gap-2 text-sm sm:grid-cols-2">
-            <label className="space-y-1 text-xs text-mu">Provider name<input value={name} onChange={(ev) => setName(ev.target.value)} className="w-full rounded-lg bg-bg px-2.5 py-2 text-sm text-tx outline-none focus:ring-2 focus:ring-ac/40" /></label>
+            <label className="space-y-1 text-xs text-mu">Provider name<Input value={name} set={setName} tone="bg" aria-label="Provider name" /></label>
             <div className="space-y-1 text-xs text-mu">API format<Seg v={format} set={setFormat} opts={[['openai', 'OpenAI'], ['anthropic', 'Anthropic']]} /></div>
             <div className="space-y-1 text-xs text-mu sm:col-span-2">Base URL<div className="truncate rounded-lg bg-bg px-2.5 py-2 font-mono text-xs text-tx">{parsed.provider.baseUrl}</div></div>
             <div className="space-y-1 text-xs text-mu">API key<div className="rounded-lg bg-bg px-2.5 py-2 font-mono text-xs text-tx">{mask(parsed.provider.key)}</div></div>
@@ -907,8 +853,7 @@ function CurlImportModal({ close, importProvider }: { close: () => void; importP
         </div>}
         <div className="flex flex-wrap justify-end gap-2"><Btn v="soft" onClick={close}>Cancel</Btn><Btn v="soft" icon={Play} disabled={!parsed.ok || busy || testing || !parsed.provider.model} onClick={testIt}>{testing ? 'Testing…' : 'Test connection'}</Btn><Btn v="solid" icon={Plus} disabled={!parsed.ok || busy || testing} onClick={importIt}>{busy ? 'Adding…' : 'Add provider'}</Btn></div>
       </>}
-    </div>
-  </Modal>
+  </Dialog>
 }
 
 function Eps() {
@@ -980,7 +925,7 @@ function Eps() {
         return (
           <Anchor key={eid} id={`ep-${e.id}`}>
           <Card handle={handle} icon={Server} title={editingName === e.id
-            ? <input autoFocus value={e.name} onChange={(ev) => u({ name: ev.target.value })} onBlur={() => setEditingName('')} onKeyDown={(ev) => { ev.stopPropagation(); if (ev.key === 'Enter' || ev.key === 'Escape') { ev.preventDefault(); setEditingName('') } }} onClick={(ev) => ev.stopPropagation()} aria-label="Endpoint name" className="w-full min-w-0 rounded-md bg-bg px-2 py-1 font-medium outline-none focus:ring-2 focus:ring-ac/40" />
+            ? <Input autoFocus value={e.name} set={(v) => u({ name: v })} onBlur={() => setEditingName('')} onKeyDown={(ev) => { ev.stopPropagation(); if (ev.key === 'Enter' || ev.key === 'Escape') { ev.preventDefault(); setEditingName('') } }} onClick={(ev) => ev.stopPropagation()} aria-label="Endpoint name" size="sm" tone="bg" className="min-w-0 font-medium" />
             : <span className="inline-flex min-w-0 items-center gap-1.5"><span className="truncate">{e.name}</span><button type="button" title="Rename endpoint" aria-label="Rename endpoint" onClick={(ev) => { ev.stopPropagation(); setEditingName(e.id) }} className="grid size-6 shrink-0 place-items-center rounded-sm text-mu hover:bg-hov hover:text-tx"><Pencil size={13}/></button></span>} sub={e.model || 'No model id'} open0={!e.model && !e.key} muted={!e.on} right={<Toggle on={e.on} set={(v) => u({ on: v })} label={`Enable ${e.name}`} />}>
             <div className="space-y-3">
               <Anchor id="models"><section className="space-y-3 rounded-xl bg-bg p-3">
@@ -1054,10 +999,10 @@ function Eps() {
                 return <div key={model} className="rounded-lg bg-surf p-3">
                   <div className="mb-2 truncate text-sm font-medium">{model}</div>
                   <div className="grid gap-2 sm:grid-cols-2">
-                    <label className="text-xs text-mu">Input $/1M<input type="number" min="0" step="0.01" value={price.input} onChange={(ev) => setPrice('input', ev.target.value)} className="mt-1 w-full rounded-lg bg-bg px-2.5 py-2 text-sm text-tx" /></label>
-                    <label className="text-xs text-mu">Output $/1M<input type="number" min="0" step="0.01" value={price.output} onChange={(ev) => setPrice('output', ev.target.value)} className="mt-1 w-full rounded-lg bg-bg px-2.5 py-2 text-sm text-tx" /></label>
-                    <label className="text-xs text-mu">Cache read $/1M<input type="number" min="0" step="0.01" value={price.cacheRead ?? ''} placeholder={String(price.input)} onChange={(ev) => setCache('cacheRead', ev.target.value)} className="mt-1 w-full rounded-lg bg-bg px-2.5 py-2 text-sm text-tx" /></label>
-                    <label className="text-xs text-mu">Cache write $/1M<input type="number" min="0" step="0.01" value={price.cacheWrite ?? ''} placeholder={String(price.input)} onChange={(ev) => setCache('cacheWrite', ev.target.value)} className="mt-1 w-full rounded-lg bg-bg px-2.5 py-2 text-sm text-tx" /></label>
+                    <label className="text-xs text-mu">Input $/1M<Input type="number" min="0" step="0.01" value={price.input} set={(v) => setPrice('input', v)} size="xs" tone="bg" className="mt-1" /></label>
+                    <label className="text-xs text-mu">Output $/1M<Input type="number" min="0" step="0.01" value={price.output} set={(v) => setPrice('output', v)} size="xs" tone="bg" className="mt-1" /></label>
+                    <label className="text-xs text-mu">Cache read $/1M<Input type="number" min="0" step="0.01" value={price.cacheRead ?? ''} set={(v) => setCache('cacheRead', v)} placeholder={String(price.input)} size="xs" tone="bg" className="mt-1" /></label>
+                    <label className="text-xs text-mu">Cache write $/1M<Input type="number" min="0" step="0.01" value={price.cacheWrite ?? ''} set={(v) => setCache('cacheWrite', v)} placeholder={String(price.input)} size="xs" tone="bg" className="mt-1" /></label>
                   </div>
                   <div className="mt-2 flex items-center justify-between gap-2"><span className="text-xs text-mu">{price.source === 'openrouter' || price.source === 'provider' ? 'Detected price' : e.prices?.[model] ? 'Entered manually' : 'No price set'}</span>{/openrouter\.ai/i.test(e.url) && <Btn sm icon={Search} onClick={detect}>Auto-detect</Btn>}</div>
                 </div>
@@ -1112,18 +1057,15 @@ function QualityEditor({ initial, existingIds, close, save }: { initial?: Qualit
     save({ id, label: label.trim().slice(0, 60), desc: desc.trim().slice(0, 200), text, ...(Object.keys(effect).length ? { effect } : {}) })
   }
   return (
-    <Modal close={close} label={initial ? `Edit ${initial.label}` : 'Add a quality'}>
-      <div className="modal-panel flex max-h-[85dvh] w-full max-w-xl flex-col gap-4 overflow-y-auto rounded-2xl bg-bg p-5">
-        <div className="flex items-center gap-2 font-semibold"><Sparkles size={18} className="text-ac" />{initial ? 'Edit quality' : 'New quality'}</div>
+    <Dialog title={initial ? 'Edit quality' : 'New quality'} icon={Sparkles} close={close} width="xl" scroll
+      footer={<><Btn v="soft" onClick={close}>Cancel</Btn><Btn v="solid" disabled={!ok} onClick={submit}>{initial ? 'Save quality' : 'Add quality'}</Btn></>}>
         <Field label="Name"><Input value={label} set={setLabel} placeholder="e.g. Evidence-led" maxLength={60} /></Field>
         <Field label="Short description"><Input value={desc} set={setDesc} placeholder="What this quality changes" maxLength={200} /></Field>
         <Field label="Prompt addition"><Area rows={6} value={text} set={setText} placeholder="Write the instruction the model should always follow…" /></Field>
         <Field label="Reasoning effort"><Seg v={effort} set={setEffort} opts={[['none', 'Model default'], ['lowest', 'Lowest'], ['highest', 'Highest']]} /></Field>
         <div className="flex items-center justify-between gap-3 text-sm"><span>Turn off all skills</span><Toggle on={skillsOff} set={setSkillsOff} label="Turn off all skills" /></div>
         <div className="flex items-start justify-between gap-3 text-sm"><span className="min-w-0 flex-1">Always ask before using a tool</span><Toggle on={safetyAsk} set={setSafetyAsk} label="Always ask before using a tool" /></div>
-        <div className="flex justify-end gap-2 pt-1"><Btn v="soft" onClick={close}>Cancel</Btn><Btn v="solid" disabled={!ok} onClick={submit}>{initial ? 'Save quality' : 'Add quality'}</Btn></div>
-      </div>
-    </Modal>
+    </Dialog>
   )
 }
 
@@ -1399,16 +1341,10 @@ function ToolLimitCard() {
         <Btn sm icon={unlocked ? LockOpen : Lock} title={unlocked ? 'Lock back to 32 rounds' : 'Unlock up to 64 rounds plus unlimited'} onClick={() => (unlocked ? relock() : setWarn(true))} />
       </div>
       {warn && (
-        <Modal close={() => setWarn(false)} label="Unlock higher tool limits?">
-          <div className="modal-panel w-full max-w-sm space-y-4 rounded-2xl bg-bg p-5">
-            <div className="flex items-center gap-2 font-semibold"><Lock size={18} className="text-ac" />Unlock higher tool limits?</div>
-            <p className="text-sm text-mu">Above {TOOL_ROUNDS_BASE_MAX} rounds (up to {TOOL_ROUNDS_MAX}, plus unlimited) a looping model can run for a long time, burn through tokens, and grow the context until requests fail. Only raise this for long tool chains you trust. You can stop any reply with Stop.</p>
-            <div className="flex justify-end gap-2">
-              <Btn v="soft" onClick={() => setWarn(false)}>Cancel</Btn>
-              <Btn v="solid" onClick={() => { s.patch({ params: { ...s.params, highToolsUnlocked: true } }); setWarn(false) }}>Unlock higher limits</Btn>
-            </div>
-          </div>
-        </Modal>
+        <Dialog title="Unlock higher tool limits?" icon={Lock} close={() => setWarn(false)} width="sm"
+          footer={<><Btn v="soft" onClick={() => setWarn(false)}>Cancel</Btn><Btn v="solid" onClick={() => { s.patch({ params: { ...s.params, highToolsUnlocked: true } }); setWarn(false) }}>Unlock higher limits</Btn></>}>
+          <p className="text-sm text-mu">Above {TOOL_ROUNDS_BASE_MAX} rounds (up to {TOOL_ROUNDS_MAX}, plus unlimited) a looping model can run for a long time, burn through tokens, and grow the context until requests fail. Only raise this for long tool chains you trust. You can stop any reply with Stop.</p>
+        </Dialog>
       )}
     </Card>
     </Anchor>
@@ -1921,24 +1857,12 @@ function Tools() {
         </Section>
       )}
       {asked && (
-        <Modal close={() => { setAsk(null); setAskAlways(false) }} label={`Enable ${asked[1]}?`}>
-          <div className="modal-panel w-full max-w-sm space-y-4 rounded-2xl bg-bg p-5">
-            <div className="flex items-center gap-2 font-semibold"><ShieldCheck size={18} className="text-ac" />Enable {asked[1]}?</div>
-            <p className="text-sm text-mu">{asked[5]}</p>
-            <label className="flex items-start gap-3 rounded-xl bg-surf p-3 text-sm">
-              <input type="checkbox" checked={askApprove} onChange={(e) => setAskApprove(e.target.checked)} className="mt-0.5 size-4 accent-[var(--accent)]" />
-              <span className="font-medium">Require approval before each call</span>
-            </label>
-            <label className="flex items-start gap-3 rounded-xl bg-surf p-3 text-sm">
-              <input type="checkbox" checked={askAlways} onChange={(e) => setAskAlways(e.target.checked)} className="mt-0.5 size-4 accent-[var(--accent)]" />
-              <span className="font-medium">Do not show again</span>
-            </label>
-            <div className="flex justify-end gap-2">
-              <Btn v="soft" onClick={() => { setAsk(null); setAskAlways(false) }}>Cancel</Btn>
-              <Btn v="solid" icon={Check} onClick={() => allowTool(asked[0], askAlways)}>Enable</Btn>
-            </div>
-          </div>
-        </Modal>
+        <Dialog title={`Enable ${asked[1]}?`} icon={ShieldCheck} close={() => { setAsk(null); setAskAlways(false) }} width="sm"
+          footer={<><Btn v="soft" onClick={() => { setAsk(null); setAskAlways(false) }}>Cancel</Btn><Btn v="solid" icon={Check} onClick={() => allowTool(asked[0], askAlways)}>Enable</Btn></>}>
+          <p className="text-sm text-mu">{asked[5]}</p>
+          <div className="rounded-xl bg-surf p-3"><Checkbox checked={askApprove} set={setAskApprove} label="Require approval before each call" /></div>
+          <div className="rounded-xl bg-surf p-3"><Checkbox checked={askAlways} set={setAskAlways} label="Do not show again" /></div>
+        </Dialog>
       )}
     </Panel>
   )
@@ -2611,17 +2535,14 @@ export function Settings({ tab, setTab }: { tab: string; setTab: (t: string) => 
   }, [setTab])
   return (
     <Modal close={() => setTab('')} blur={false} opacity={settingsOpacity} labelledBy="settings-title">
-      <div style={{ width: `min(${settingsWidth}px, 100%)`, height: `min(${settingsHeight}px, 92dvh)` }} className="settings-root modal-panel flex flex-col overflow-hidden rounded-xl bg-side">
+      <DialogPanel padded={false} gap={false} style={{ width: `min(${settingsWidth}px, 100%)`, height: `min(${settingsHeight}px, 92dvh)` }} className="settings-root overflow-hidden rounded-xl bg-side">
         <div className="flex h-12 shrink-0 items-center justify-between border-b border-bor px-4">
           <h2 id="settings-title" className="text-sm font-semibold">Settings</h2>
-          <button type="button" aria-label="Close settings" title="Close settings" onClick={() => setTab('')} className="grid size-7 place-items-center rounded-md text-mu transition-colors hover:bg-hov hover:text-tx"><X size={16} /></button>
+          <Btn sm icon={X} title="Close settings" onClick={() => setTab('')} />
         </div>
         <div className="flex min-h-0 flex-1">
         <nav aria-label="Settings sections" className="hidden w-52 shrink-0 flex-col border-r border-bor bg-bg p-2.5 sm:flex">
-          <label className="relative mb-2 block">
-            <Search size={14} aria-hidden="true" className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-mu" />
-            <input aria-label="Search settings" value={query} onChange={e => setQuery(e.target.value)} placeholder="Search" className="w-full rounded-md bg-surf py-1.5 pl-8 pr-2.5 text-sm outline-none placeholder:text-mu focus:ring-2 focus:ring-ac/40" />
-          </label>
+          <div className="mb-2"><SearchInput size="sm" value={query} set={setQuery} label="Search settings" placeholder="Search" /></div>
           <div className="min-h-0 flex-1 overflow-y-auto">
             {query.trim() ? (<>
               {results.map(result => <button key={result.target} onClick={() => openResult(result.target)} className="block w-full rounded-md px-2 py-1.5 text-left text-sm hover:bg-surf"><span className="block">{result.title}</span><span className="block text-xs text-mu">{result.section}</span></button>)}
@@ -2648,10 +2569,7 @@ export function Settings({ tab, setTab }: { tab: string; setTab: (t: string) => 
         <div className="relative min-w-0 flex-1">
           <div className="h-full overflow-x-hidden overflow-y-auto px-4 py-4 sm:px-8 sm:py-5">
             <div className="mb-4 space-y-2 sm:hidden">
-              <label className="relative block">
-                <Search size={14} aria-hidden="true" className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-mu" />
-                <input aria-label="Search settings" value={query} onChange={e => setQuery(e.target.value)} placeholder="Search settings" className="w-full rounded-md bg-surf py-2 pl-8 pr-3 text-sm outline-none placeholder:text-mu focus:ring-2 focus:ring-ac/40" />
-              </label>
+              <SearchInput value={query} set={setQuery} label="Search settings" placeholder="Search settings" />
               {query.trim() ? <div className="max-h-48 overflow-y-auto rounded-md border border-bor">{results.map(result => <button key={result.target} onClick={() => openResult(result.target)} className="block w-full px-3 py-2 text-left text-sm hover:bg-hov">{result.title}<span className="ml-2 text-xs text-mu">{result.section}</span></button>)}{!results.length && <p className="p-3 text-sm text-mu">No settings found.</p>}</div> : <SearchSelect ariaLabel="Settings section" value={active} set={setTab} opts={SETTINGS_TABS.filter(([k]) => showOff || tabs.some(([v]) => v === k)).map(([k, l]) => [k, `${l}${tabs.some(([v]) => v === k) ? '' : ' (off)'}`] as [string, string])} />}
             </div>
             {disabledFeature ? <div className="space-y-3"><h2 className="text-lg font-semibold">{featureLabel} is off</h2><p className="text-sm text-mu">Turn it on in Features to use its settings.</p><Btn v="soft" onClick={() => setTab(`features#feature-${disabledFeature}`)}>Open Features</Btn></div> : active === 'stats'
@@ -2660,7 +2578,7 @@ export function Settings({ tab, setTab }: { tab: string; setTab: (t: string) => 
           </div>
         </div>
         </div>
-      </div>
+      </DialogPanel>
     </Modal>
   )
 }

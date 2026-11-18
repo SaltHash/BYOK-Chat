@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Check, ChevronDown, Copy, ExternalLink, Loader2, Lock, RefreshCw, Share2, TriangleAlert } from 'lucide-react'
 import { useS } from '../store'
 import { createShare, latestShare, shareHash, updateShare, type ShareRecord } from '../share'
-import { Btn, Modal, Toggle, cx } from './ui'
+import { Btn, Dialog, Input, Toggle, cx } from './ui'
 
 const when = (at: number) => {
   try { return new Date(at).toLocaleString() } catch { return '' }
@@ -20,7 +20,7 @@ function LinkRow({ rec, current, onCopied }: { rec: ShareRecord; current?: boole
   return (
     <div className={cx('space-y-2 rounded-xl bg-surf p-3', current && 'ring-1 ring-ac/40')}>
       <div className="flex items-center gap-2">
-        <input readOnly value={rec.url} onFocus={(e) => e.currentTarget.select()} aria-label="Share link" className="min-w-0 flex-1 rounded-lg bg-bg px-3 py-2 font-mono text-xs outline-none focus:ring-2 focus:ring-ac/40" />
+        <Input readOnly value={rec.url} set={() => {}} onFocus={(e) => e.currentTarget.select()} aria-label="Share link" tone="bg" className="flex-1 font-mono text-xs" />
         <Btn sm icon={copied ? Check : Copy} title="Copy link" onClick={() => void copy()} className={cx(copied && 'text-ac')} />
         <Btn sm icon={ExternalLink} title="Open link in a new tab" onClick={() => window.open(rec.url, '_blank', 'noopener')} />
       </div>
@@ -115,9 +115,7 @@ export function ShareDialog({ chatId, close }: { chatId: string; close: () => vo
   const previous = history.filter((x) => x.id !== record?.id)
 
   return (
-    <Modal close={close} blur={false} labelledBy="share-dialog-title">
-      <div className="modal-panel w-full max-w-md space-y-4 rounded-2xl bg-bg p-5">
-        <div id="share-dialog-title" className="flex items-center gap-2 font-semibold"><Share2 size={18} className="text-ac" />Share conversation</div>
+    <Dialog title="Share conversation" icon={Share2} close={close} width="md" blur={false}>
 
         {phase === 'loading' && (
           <div className="flex flex-col items-center justify-center gap-3 py-8 text-mu" aria-live="polite">
@@ -172,7 +170,6 @@ export function ShareDialog({ chatId, close }: { chatId: string; close: () => vo
             )}
           </>
         )}
-      </div>
-    </Modal>
+    </Dialog>
   )
 }
