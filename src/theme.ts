@@ -196,9 +196,9 @@ const uniqueColors = (colors: string[]): string[] => {
  *  accent needs to stand off the canvas, foreground text needs to be readable
  *  on it, and a background needs to preserve the current text contrast. */
 export function colorSuggestions(opts: { role: ColorRole; accent: string; text: string; background: string }): string[] {
-  const accent = normalizeHex(opts.accent, '#dc8ad8')
-  const text = normalizeHex(opts.text, '#f3eaf7')
-  const background = normalizeHex(opts.background, '#17101c')
+  const accent = normalizeHex(opts.accent, '#d68cf0')
+  const text = normalizeHex(opts.text, '#f4ecf8')
+  const background = normalizeHex(opts.background, '#181220')
   const hue = hexToHsl(accent).h
   const backgroundLum = relativeLuminance(background)
   const accentLum = relativeLuminance(accent)
@@ -284,9 +284,9 @@ export type CustomPaletteOptions = {
  *  than overshooting it, which keeps the hierarchy intact at every position
  *  and stops surfaces from saturating at white or black. */
 export function customPalette(opts: CustomPaletteOptions): Record<CustomPaletteKey, string> & { bor: string } {
-  const accent = normalizeHex(opts.accent, '#dc8ad8')
-  const text = normalizeHex(opts.text, '#f3eaf7')
-  const background = normalizeHex(opts.background, '#17101c')
+  const accent = normalizeHex(opts.accent, '#d68cf0')
+  const text = normalizeHex(opts.text, '#f4ecf8')
+  const background = normalizeHex(opts.background, '#181220')
   const requested = clamp(Number.isFinite(opts.contrast) ? opts.contrast : 50, 0, 100) / 100
   // OKLCH lightness is the axis every surface moves along: a fixed step is the
   // same perceived change whatever the hue, unlike an RGB or HSL lift.

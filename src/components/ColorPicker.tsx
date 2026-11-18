@@ -4,7 +4,7 @@ import { colorSuggestions, hexToHsl, hslToHex, normalizeHex, type ColorRole } fr
 import { cx, useEscapeClose } from './ui'
 
 const clamp = (n: number, min: number, max: number) => Math.min(max, Math.max(min, n))
-const FALLBACK_PRESETS = ['#d97757', '#dc8ad8', '#3b5bdb', '#0d9488', '#16a34a', '#eab308', '#ef4444', '#f8fafc', '#111827']
+const FALLBACK_PRESETS = ['#da7756', '#d68cf0', '#3b5bdb', '#0f766e', '#16a34a', '#eab308', '#ef4444', '#f8fafc', '#111827']
 
 /** An in-app HSL colour picker. Native `<input type="color">` looks different
  *  on every platform and cannot show a labelled swatch, so the theme editor
