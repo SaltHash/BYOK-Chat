@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-const { createFrameThrottle } = await import('./throttle.ts')
+const { createFrameThrottle, followStep } = await import('./throttle.ts')
 
 const makeFrames = () => {
   let queue = []
@@ -12,6 +12,16 @@ const makeFrames = () => {
     pending: () => queue.filter(Boolean).length,
   }
 }
+
+test('follow step eases toward the end without overshooting', () => {
+  assert.equal(followStep(0, 100), 30, 'moves a share of the remaining gap')
+  assert.equal(followStep(99, 100), 100, 'the floor reaches a tiny gap exactly')
+  assert.equal(followStep(100, 100), 100, 'already at the end')
+  assert.equal(followStep(120, 100), 100, 'a shorter container lands on its end')
+  let y = 0
+  for (let i = 0; i < 40; i++) y = followStep(y, 500)
+  assert.equal(y, 500, 'repeated steps converge on the end')
+})
 
 test('frame throttle applies the latest value once per frame', () => {
   const frames = makeFrames()

@@ -5,7 +5,7 @@ import { useS, useLive, usable, modelNameOf, featOn, previewSysFor, activeWorksp
 import { clampWorkspaceFrac, roundFrac, CHAT_WIDTH } from '../layout'
 import { focusComposer, startPointerDrag } from '../hooks'
 import { useProcessLogEpoch } from '../uiSignals'
-import { createFrameThrottle } from '../throttle'
+import { followStep } from '../throttle'
 import { CI, fmtDuration } from '../meta'
 import { toolLabel } from '../toolLabels'
 import { summarizeToolCalls, splitToolTrail, type ToolKind, type TrailCall } from '../toolSummary'
@@ -1328,12 +1328,18 @@ export function Chat({ side, toggle, cfg, pal }: { side: boolean; toggle: () => 
   // user reads back through the transcript (scroll events only; no renders
   // from streamed chunks).
   const [atEnd, setAtEnd] = useState(true)
+  /* The last position the eased follow wrote. Its scroll events are not the
+     reader moving: the view trails the end on purpose, so they must not clear
+     `stick` or make the jump-to-latest pill flash during a fast stream. */
+  const followPos = useRef(-1)
   const onScrollBox = (e: React.UIEvent<HTMLDivElement>) => {
     const b = e.currentTarget
-    const near = b.scrollHeight - b.scrollTop - b.clientHeight < 80
-    stick.current = near
-    if (s.chat) scrollMemo.current.set(s.chat, { top: b.scrollTop, atEnd: near })
-    setAtEnd((was) => (was === near ? was : near))
+    if (Math.abs(b.scrollTop - followPos.current) > 2) {
+      const near = b.scrollHeight - b.scrollTop - b.clientHeight < 80
+      stick.current = near
+      setAtEnd((was) => (was === near ? was : near))
+    }
+    if (s.chat) scrollMemo.current.set(s.chat, { top: b.scrollTop, atEnd: stick.current })
   }
   const liveTools = useLive((l) => l.tools)
   const busy = useS((st) => st.busyChats?.[st.chat] === true)
@@ -1369,18 +1375,46 @@ export function Chat({ side, toggle, cfg, pal }: { side: boolean; toggle: () => 
     if (scrollMemo.current.size > 60) {
       for (const key of scrollMemo.current.keys()) { if (key !== s.chat) { scrollMemo.current.delete(key); break } }
     }
-    if (saved.atEnd) { stick.current = true; b.scrollTop = b.scrollHeight; setAtEnd(true); return }
+    if (saved.atEnd) { stick.current = true; b.scrollTop = b.scrollHeight; followPos.current = b.scrollTop; setAtEnd(true); return }
     b.scrollTop = Math.max(0, Math.min(saved.top, b.scrollHeight - b.clientHeight))
+    followPos.current = b.scrollTop
     stick.current = false
     setAtEnd(false)
   }, [s.chat])
-  /* Follow-the-bottom scrolling is coalesced to at most one write per frame:
-     assigning `scrollTop` forces a layout, and streamed chunks can arrive
-     faster than the display refreshes. */
-  const followBottom = useMemo(() => createFrameThrottle(() => {
-    const b = box.current
-    if (b) b.scrollTop = b.scrollHeight
-  }), [])
+  /* Follow-the-bottom scrolling eases toward the new end instead of snapping:
+     a fast stream adds text in bursts, and jumping the full distance of each
+     burst reads as jagged. Each frame moves a share of the remaining gap, so
+     the view sits a few pixels behind and text flows up into place. One write
+     per frame also keeps the layout work bounded. */
+  const followFrame = useRef<number | null>(null)
+  const followBottom = useMemo(() => {
+    const stop = () => {
+      if (followFrame.current !== null) { cancelAnimationFrame(followFrame.current); followFrame.current = null }
+    }
+    const tick = () => {
+      followFrame.current = null
+      const b = box.current
+      if (!b || !stick.current) return
+      const target = b.scrollHeight - b.clientHeight
+      const next = followStep(b.scrollTop, target)
+      if (next !== b.scrollTop) { b.scrollTop = next; followPos.current = next }
+      if (target - next > 0.5 && stick.current) followFrame.current = requestAnimationFrame(tick)
+    }
+    return {
+      call: () => {
+        const b = box.current
+        if (!b) return
+        // Reduced motion asks for no animated travel: land on the end at once.
+        if (typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches) {
+          b.scrollTop = b.scrollHeight
+          followPos.current = b.scrollTop
+          return
+        }
+        if (followFrame.current === null) followFrame.current = requestAnimationFrame(tick)
+      },
+      cancel: stop,
+    }
+  }, [])
   useEffect(() => () => followBottom.cancel(), [followBottom])
   useEffect(() => {
     // A sidebar jump owns the scroll position for its highlight window.

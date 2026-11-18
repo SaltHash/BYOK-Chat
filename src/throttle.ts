@@ -27,6 +27,20 @@ export type FrameThrottleOptions = {
 const defaultRequest = (fn: () => void) => (typeof requestAnimationFrame === 'function' ? requestAnimationFrame(fn) : setTimeout(fn, 16) as unknown as number)
 const defaultCancel = (handle: number) => { if (typeof cancelAnimationFrame === 'function') cancelAnimationFrame(handle); else clearTimeout(handle) }
 
+/** One eased step toward a growing container's end.
+ *
+ * Following the absolute bottom on every frame puts the newly written line
+ * exactly on the edge, so a fast stream reads as a series of jumps: the whole
+ * distance a burst added lands in a single frame. Moving a share of the
+ * remaining gap instead leaves a few pixels of buffer, so text enters from
+ * just off the bottom rather than appearing already flush with it. The floor
+ * keeps the tail from crawling when the gap is tiny, and the step never
+ * overshoots the end (a container that got shorter lands on its new end). */
+export function followStep(current: number, target: number, share = 0.3, floor = 1.5): number {
+  if (!(target > current)) return target
+  return Math.min(target, current + Math.max(floor, (target - current) * share))
+}
+
 /** Latest-value, one-per-frame throttle. */
 export function createFrameThrottle<A extends unknown[]>(run: (...args: A) => void, options: FrameThrottleOptions = {}): FrameThrottle<A> {
   const request = options.request ?? defaultRequest
