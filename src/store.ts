@@ -285,6 +285,34 @@ export const normCustomTheme = (v: unknown, fallback: CustomTheme, colors?: Part
   }
   return { base, accent, text, background, contrast, overrides }
 }
+/** A named palette the user saved from the theme editor, so a look can be
+ *  re-applied later without rebuilding its colours. */
+export type SavedTheme = {
+  id: string
+  name: string
+  /** Appearance mode it was saved in; applying it switches to that mode. */
+  mode: ThemeMode
+  theme: CustomTheme
+}
+/** Enough room for a working collection without letting storage drift. */
+const SAVED_THEME_LIMIT = 40
+/** Keep only well-formed saved palettes, in save order, dropping duplicates. */
+export const normSavedThemes = (v: unknown): SavedTheme[] => {
+  if (!Array.isArray(v)) return []
+  const out: SavedTheme[] = []
+  for (const raw of v) {
+    if (!raw || typeof raw !== 'object') continue
+    const o = raw as Partial<SavedTheme>
+    const name = typeof o.name === 'string' ? o.name.trim().slice(0, 40) : ''
+    if (!name) continue
+    const mode: ThemeMode = o.mode === 'light' ? 'light' : 'dark'
+    const id = typeof o.id === 'string' && o.id ? o.id : uid()
+    if (out.some((t) => t.id === id)) continue
+    const fallback = mode === 'light' ? DEFAULT_CUSTOM_LIGHT_THEME : DEFAULT_CUSTOM_DARK_THEME
+    out.push({ id, name, mode, theme: normCustomTheme(o.theme, fallback) })
+  }
+  return out.slice(-SAVED_THEME_LIMIT)
+}
 /* Inference-router presets come from the provider registry, so adding a
  * provider there makes it selectable here without touching the UI. */
 const ROUTER_PRE = Object.fromEntries(providerPresetEntries()) as Record<string, ['openai' | 'anthropic', string, string, 'author' | 'provider']>
@@ -726,6 +754,8 @@ type S = {
   customLightColors: ThemeColors
   customDarkTheme: CustomTheme
   customLightTheme: CustomTheme
+  /** Named custom palettes saved from the theme editor. */
+  savedThemes: SavedTheme[]
   setupDone: boolean
   prefs: { showBy: boolean; showLog: boolean; showTps: boolean; /** Model name shown at the top of a reply, and whether its endpoint is appended. */ replyModelLabel?: ReplyModelLabel; /** Metric pills shown below a reply. */ replyStats?: ReplyMetric[]; enterSends: boolean; autoTitle: boolean; temporaryByDefault: boolean; seasonal?: boolean; cues?: boolean; showModelPricing: boolean; showContextMeter: boolean; customSearch?: boolean; /** Hide the provider name beside starred models in the picker's Favorites section. */ hideFavoriteProvider?: boolean; /** Qualities pinned in the composer's quick switcher; `global` is the global prompt row. */ qualityFavs?: string[]; /** How much detail the Process-to-answer panel shows per step. */ logDetail?: LogDetail; /** Show each step's duration in the process log. */ logTiming?: boolean; /** Show the model beside each step in the process log. */ logModels?: boolean; /** Show line numbers in code blocks. */ codeLines?: boolean; /** Max code-block height in pixels before scrolling (0 = no cap). */ codeMaxHeight?: number; /** Include the pinned reply in the model context. */ pinContext?: boolean; /** Maximum slice of the context window the pinned reply may use (5–50%). */ pinContextPercent?: number; /** Replace older turns with a model-written handoff when the context nears the limit. */ compactAuto?: boolean; /** Context share at which auto-compaction starts (5–100, in 5% steps). */ compactAt?: number; /** Queue a message sent while the same chat is replying, or require a stop first. */ sendWhileBusy?: 'queue' | 'stop'; /** Buttons shown under a reply. The picker, copy, retry and delete are on by default; pin, bookmark and new path start hidden. */ showReplyPicker?: boolean; showCopyAction?: boolean; showPinAction?: boolean; showBookmarkAction?: boolean; showRetryAction?: boolean; showBranchAction?: boolean; showDeleteAction?: boolean; /** Render Markdown in the reader's own messages. */ userMarkdown?: boolean; titleEp: string; titleModel?: string; compactEp?: string; compactModel?: string; effortEp: string; effortModel?: string; recallEp: string; recallModel?: string; /** Reasoning level per helper task; empty keeps the task's automatic level. */ helperEffort?: Partial<Record<HelperTask, string>>; tempHours: number; /** Days before an archived chat is deleted; the top slider value means never. */ archiveDays?: number; startup?: StartupMode; tempShow?: number; /** Keep temporary chats that are still replying listed past the temporary-chats-shown limit. */ tempShowStreaming?: boolean; /** Keep temporary chats whose reply finished in the background listed until they are opened. */ tempShowDone?: boolean; draftSurvive?: 'off' | 'new' | 'chats' | 'both'; fontBody: string; fontMono: string; fontHeader: string; modelPrimary: 'id' | 'name'; modelSecondary: 'none' | 'provider' | 'id' | 'name'; modelDisplay?: 'none' | 'name' | 'provider' | 'both'; paletteMax: number; chatWidth: 'narrow' | 'standard' | 'wide'; settingsWidth: number; settingsHeight: number; modelPickerHeight: number; /** Show a Favorites section at the top of the model picker. */ favoritesSection?: boolean; /** Hide starred models from their normal provider groups. */ hideFavoritesInProviders?: boolean; /** Endpoint ids whose provider groups are collapsed in the picker. */ collapsedProviders?: string[]; sidebarWidth?: number; widgetWidth?: number; workspaceWidth?: number; workspaceSplit?: number; modalBlur: number; settingsOpacity: number; routingMode?: RoutingMode; streamFade: number; streamMd: boolean; remoteImages?: boolean; glassComposer?: boolean; /** Composer glass backdrop blur in pixels (0–40). */ glassBlur?: number; /** Composer glass surface opacity percent (0–100). */ glassOpacity?: number; /** Keep settings for disabled features visible, marked off, instead of hiding them. */ showDisabledFeatures?: boolean; proxyMode?: 'auto' | 'always' | 'off';  stylePreset: StylePreset; density: Density; uiSpacing?: SpacingOverrides; showTimestamps?: boolean; alwaysShowActions?: boolean; /** Turn the edit button on a user message into a revert-send button. */ revertSend?: boolean; /** Root font-size percent (50–200, 100 = unchanged). */ textScale?: number; /** Soft-wrap long lines inside code blocks instead of scrolling sideways. */ codeWrap?: boolean; /** Disable glass, blur and dropped shadows (flat, opaque surfaces). */ reduceTransparency?: boolean; /** When ↑/↓ recall sent prompts; 'off' also stops recording them. */ promptRecall?: PromptRecallMode; /** Raise muted-text and border contrast beyond the theme's values. */ highContrast?: boolean; /** Keep every attempt in a permanent ledger so usage survives deleting, archiving or expiring its chat. Off keeps only the attempts still on saved chats. */ keepUsageHistory?: boolean }
   widgets: Record<string, boolean>; widgetPrefs: { usageGroup: 'endpoint' | 'model'; usageMode: 'success' | 'tokens'; usageFormat: string; usageTotal: boolean; usagePeriod: 'session' | 'day' | 'week' | 'month' | 'custom' | 'all'; usageFrom?: string; usageTo?: string; lastSpeed: boolean; timeUnit: 'ms' | 's' | 'auto'; widgetOrder: string[]; shortcuts: string[]; contextLimit: number; showDisabledEndpoints: boolean; scratchRows: number; snippetLimit: number; costDecimals: number; activePromptsOnly: boolean; charsPerToken: number; hideDoneTodos: boolean }; rail: boolean; pad: string; snips: string[]
@@ -833,6 +863,12 @@ type S = {
   steerResearch: (mid: string, text: string) => void
   stopResearch: (mid: string) => void
   resetStats: () => void
+  /** Save the active mode's custom palette under a name, replacing a saved
+   *  theme with the same name in that mode. */
+  saveTheme: (name: string) => void
+  /** Apply a saved palette, switching to the mode it was saved in. */
+  applySavedTheme: (id: string) => void
+  deleteSavedTheme: (id: string) => void
   /** Seed the ledger from chats saved before it existed (first run only). */
   seedUsageHistory: () => void
   /** Turn permanent history on or off; enabling seeds the existing chats. */
@@ -2923,7 +2959,7 @@ export const useS = create<S>()(
         params: { ...DEFAULT_PARAMS }, effort: {},
         workspacePrefs: { defaultView: 'latest', autoOpen: true, autoFollow: true },
         advanced: { ...DEFAULT_ADVANCED },
-        sel: null, favs: [], pr: 'software-engineering', globalPrompt: { on: true, text: GENERAL_PROMPT_TEXT, qualities: [] }, qualities: DEFAULT_QUALITIES.map((q) => ({ ...q, ...(q.effect ? { effect: { ...q.effect } } : {}) })), features: { ...DEFAULT_FEATURES }, featureOrder: FEATURES.map(([id]) => id), libraryShow: { ...DEFAULT_LIBRARY_SHOW }, themeMode: 'dark', themeDark: 'plum', themeLight: 'paper', customDarkColors: { ...DEFAULT_CUSTOM_COLORS }, customLightColors: { ...DEFAULT_CUSTOM_LIGHT_COLORS }, customDarkTheme: { ...DEFAULT_CUSTOM_DARK_THEME }, customLightTheme: { ...DEFAULT_CUSTOM_LIGHT_THEME }, setupDone: false, prefs: { ...DEFAULT_PREFS },
+        sel: null, favs: [], pr: 'software-engineering', globalPrompt: { on: true, text: GENERAL_PROMPT_TEXT, qualities: [] }, qualities: DEFAULT_QUALITIES.map((q) => ({ ...q, ...(q.effect ? { effect: { ...q.effect } } : {}) })), features: { ...DEFAULT_FEATURES }, featureOrder: FEATURES.map(([id]) => id), libraryShow: { ...DEFAULT_LIBRARY_SHOW }, themeMode: 'dark', themeDark: 'plum', themeLight: 'paper', customDarkColors: { ...DEFAULT_CUSTOM_COLORS }, customLightColors: { ...DEFAULT_CUSTOM_LIGHT_COLORS }, customDarkTheme: { ...DEFAULT_CUSTOM_DARK_THEME }, customLightTheme: { ...DEFAULT_CUSTOM_LIGHT_THEME }, savedThemes: [], setupDone: false, prefs: { ...DEFAULT_PREFS },
         stats: ZERO(), keys: Object.fromEntries(KEYS.map(([k, , d]) => [k, d])), gistToken: '',
         usage: initialLedger.rows, usageTitles: initialLedger.titles,
         projects: [], activeProject: '', price: { in: 0, out: 0 }, todos: [],
@@ -3562,6 +3598,32 @@ export const useS = create<S>()(
           return true
         },
         resetStats: () => set({ stats: ZERO() }),
+        saveTheme: (name) => {
+          const s = get()
+          const label = name.trim().slice(0, 40)
+          if (!label) return
+          const mode: ThemeMode = s.themeMode === 'light' ? 'light' : 'dark'
+          const current = mode === 'light' ? s.customLightTheme : s.customDarkTheme
+          const existing = s.savedThemes.find((t) => t.mode === mode && t.name.toLowerCase() === label.toLowerCase())
+          const theme: CustomTheme = { ...current, overrides: { ...current.overrides } }
+          if (existing) {
+            const entry: SavedTheme = { id: existing.id, name: label, mode, theme }
+            set({ savedThemes: s.savedThemes.map((t) => (t.id === existing.id ? entry : t)) })
+          } else {
+            set({ savedThemes: [...s.savedThemes, { id: uid(), name: label, mode, theme }].slice(-SAVED_THEME_LIMIT) })
+          }
+        },
+        applySavedTheme: (id) => {
+          const s = get()
+          const saved = s.savedThemes.find((t) => t.id === id)
+          if (!saved) return
+          const fallback = saved.mode === 'light' ? DEFAULT_CUSTOM_LIGHT_THEME : DEFAULT_CUSTOM_DARK_THEME
+          const theme = normCustomTheme(saved.theme, fallback)
+          set(saved.mode === 'light'
+            ? { themeMode: 'light', themeLight: 'custom', customLightTheme: theme, customLightColors: customThemeColors(theme) }
+            : { themeMode: 'dark', themeDark: 'custom', customDarkTheme: theme, customDarkColors: customThemeColors(theme) })
+        },
+        deleteSavedTheme: (id) => set((st) => ({ savedThemes: st.savedThemes.filter((t) => t.id !== id) })),
         seedUsageHistory: () => {
           // Only a browser that has never written the ledger is seeded, so this
           // cannot re-add attempts the viewer explicitly deleted.
@@ -3897,6 +3959,7 @@ export const useS = create<S>()(
         if (lk) p.themeLight = lk as any
         p.customDarkTheme = normCustomTheme(p.customDarkTheme, DEFAULT_CUSTOM_DARK_THEME, p.customDarkColors)
         p.customLightTheme = normCustomTheme(p.customLightTheme, DEFAULT_CUSTOM_LIGHT_THEME, p.customLightColors)
+        p.savedThemes = normSavedThemes(p.savedThemes)
         p.researchRounds = normResearchAgentRounds(p.researchRounds)
         // The word fade-in feature was removed: drop its stale persisted
         // settings and per-message events so they never carry forward.

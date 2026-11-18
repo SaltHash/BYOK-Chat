@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Check, ChevronDown, Moon, Star, Sun, X } from 'lucide-react'
 import {
   useSConfig, THEMES, DARK_THEMES, LIGHT_THEMES, THEME_COLOR_KEYS, THEME_COLOR_LABELS, THEME_COLORS,
@@ -97,6 +97,16 @@ export function AppearanceSettings() {
   const customColors = mode === 'light' ? s.customLightColors : s.customDarkColors
   const customActive = (mode === 'light' ? s.themeLight : s.themeDark) === 'custom'
   const pickerTheme = { accent: custom.accent, text: custom.text, background: custom.background }
+  const savedThemes = s.savedThemes ?? []
+  const savedPalettes = useMemo(() => new Map(savedThemes.map((t) => [t.id, customThemeColors(t.theme)])), [savedThemes])
+  const [themeName, setThemeName] = useState('')
+  const themeNameTrim = themeName.trim()
+  const replacesSaved = !!themeNameTrim && savedThemes.some((t) => t.mode === mode && t.name.toLowerCase() === themeNameTrim.toLowerCase())
+  const saveTheme = () => {
+    if (!themeNameTrim) return
+    s.saveTheme(themeNameTrim)
+    setThemeName('')
+  }
   const advancedKeys = THEME_COLOR_KEYS.filter((key) => key !== 'ac' && key !== 'tx' && key !== 'bg')
   const roleFor = (key: typeof advancedKeys[number]): 'accent' | 'text' | 'background' | 'onAccent' =>
     key === 'acx' ? 'onAccent' : key === 'mu' ? 'text' : key === 'er' || key.startsWith('c') ? 'accent' : 'background'
@@ -154,6 +164,48 @@ export function AppearanceSettings() {
             })}
           </div>
         </Anchor>
+        {savedThemes.length > 0 && (
+          <Anchor id="saved-themes">
+            <div className="space-y-2 py-4">
+              <div className="text-sm font-medium">Saved themes</div>
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
+                {savedThemes.map((t) => {
+                  const palette = savedPalettes.get(t.id)
+                  return (
+                    <div key={t.id} className="relative">
+                      <button
+                        type="button"
+                        onClick={() => s.applySavedTheme(t.id)}
+                        title={`Apply ${t.name}`}
+                        className="w-full space-y-2 rounded-lg border border-bor bg-surf p-2 pr-8 text-left text-sm transition-colors hover:bg-hov focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ac/40"
+                      >
+                        <span className="flex h-14 overflow-hidden rounded-md">
+                          <span className="w-1/4" style={{ background: palette?.side }} />
+                          <span className="flex-1 p-2" style={{ background: palette?.bg }}>
+                            <span className="block h-2 w-2/3 rounded-sm" style={{ background: palette?.ac }} />
+                          </span>
+                        </span>
+                        <span className="flex items-center justify-between gap-2 px-0.5">
+                          <span className="min-w-0 truncate">{t.name}</span>
+                          <span className="shrink-0 text-[11px] text-mu">{t.mode === 'light' ? 'Light' : 'Dark'}</span>
+                        </span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => s.deleteSavedTheme(t.id)}
+                        aria-label={`Delete saved theme ${t.name}`}
+                        title="Delete saved theme"
+                        className="absolute right-1.5 top-1.5 grid size-6 place-items-center rounded-md bg-bg/70 text-mu transition-colors hover:bg-hov hover:text-er"
+                      >
+                        <X size={13} />
+                      </button>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          </Anchor>
+        )}
         {customActive && (
           <Anchor id="custom-colors">
             <div className="space-y-4 py-4">
@@ -173,6 +225,18 @@ export function AppearanceSettings() {
               </div>
               <SettingRow label={`Contrast · ${custom.contrast}%`}>
                 <RangeSlider label="Custom theme contrast" min={0} max={100} step={1} value={custom.contrast} set={(v) => setCustomTheme({ ...custom, contrast: Math.round(v) })} className="w-52 max-w-full" />
+              </SettingRow>
+              <SettingRow label="Save this theme">
+                <input
+                  value={themeName}
+                  onChange={(e) => setThemeName(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); saveTheme() } }}
+                  placeholder="Theme name"
+                  aria-label="Saved theme name"
+                  maxLength={40}
+                  className="w-44 max-w-full rounded-md border border-bor bg-bg px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-ac/40"
+                />
+                <Btn type="button" v="soft" disabled={!themeNameTrim} onClick={saveTheme}>{replacesSaved ? 'Update theme' : 'Save theme'}</Btn>
               </SettingRow>
               <details className="group">
                 <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-4 py-3 text-sm [&::-webkit-details-marker]:hidden">

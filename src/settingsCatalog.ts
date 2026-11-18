@@ -223,6 +223,7 @@ export const SETTING_LINKS: SettingLink[] = [
   { tab: 'widgets', anchor: 'context-compact', title: 'Auto-compact context', keywords: 'context compaction compact summarize handoff threshold percent auto' },
   { tab: 'look', anchor: 'context-limit', title: 'Context meter limit', keywords: 'context limit estimated meter tokens' },
   { tab: 'look', anchor: 'theme-picker', title: 'Theme picker', keywords: 'theme plum claude obsidian graphite paper sage frost sunset custom' },
+  { tab: 'look', anchor: 'saved-themes', title: 'Saved themes', keywords: 'saved themes custom palette named apply delete reuse light dark' },
   { tab: 'look', anchor: 'custom-colors', title: 'Custom theme colors', keywords: 'custom theme accent text background contrast picker syntax error colors reset advanced' },
   { tab: 'look', anchor: 'seasonal', title: 'Seasonal touches', keywords: 'seasonal festive greeting holiday plain' },
   { tab: 'look', anchor: 'completion-cues', title: 'Completion cues', keywords: 'completion cues chime confetti deep research workspace finished' },
