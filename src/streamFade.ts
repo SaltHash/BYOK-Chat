@@ -54,16 +54,26 @@ const addFadeClass = (n: Node) => {
   props.className = list
 }
 
+/** The units a reply fades in as: a word with the whitespace that follows it,
+ *  or a run of whitespace standing on its own. Both the markdown plugin here
+ *  and the plain-text live body (components/Chat.tsx) use these, so a reply
+ *  fades the same way whichever branch renders it. */
+export type FadeUnit = { t: string; fade: boolean }
+
+export function splitFadeUnits(value: string): FadeUnit[] {
+  const out: FadeUnit[] = []
+  for (const part of value.split(/(\S+\s*)/)) {
+    if (part) out.push({ t: part, fade: /^\S/.test(part) })
+  }
+  return out
+}
+
 /** `"hello world "` → one span per word, the leading whitespace left as text. */
 const splitWords = (value: string): Node[] | null => {
   if (!/\S/.test(value)) return null
-  const out: Node[] = []
-  for (const part of value.split(/(\S+\s*)/)) {
-    if (!part) continue
-    out.push(/^\S/.test(part)
-      ? { type: 'element', tagName: 'span', properties: { className: [FADE] }, children: [{ type: 'text', value: part }] }
-      : { type: 'text', value: part })
-  }
+  const out: Node[] = splitFadeUnits(value).map((u) => u.fade
+    ? { type: 'element', tagName: 'span', properties: { className: [FADE] }, children: [{ type: 'text', value: u.t }] }
+    : { type: 'text', value: u.t })
   return out.length ? out : null
 }
 

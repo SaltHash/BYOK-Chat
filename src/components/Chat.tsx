@@ -6,6 +6,7 @@ import { clampWorkspaceFrac, roundFrac, CHAT_WIDTH } from '../layout'
 import { focusComposer, startPointerDrag } from '../hooks'
 import { useProcessLogEpoch } from '../uiSignals'
 import { followStep, stickAfterScroll } from '../throttle'
+import { splitFadeUnits } from '../streamFade'
 import { CI, fmtDuration } from '../meta'
 import { toolLabel } from '../toolLabels'
 import { summarizeToolCalls, splitToolTrail, type ToolKind, type TrailCall } from '../toolSummary'
@@ -573,29 +574,29 @@ function LiveReply({ mid, chunks, busy }: { mid: string; chunks: string[]; busy:
       </div>
     )
   }
-  /* Plain text, kept as the chunks the provider sent: each chunk owns a span,
-   * so the ones already on screen keep their DOM nodes and only the newest
-   * fades. The list is never rebuilt from the released text. `.md` plus
-   * `whitespace-pre-wrap` gives the plain text the same font, size, line
-   * height and width as the markdown that replaces it. */
+  /* Plain text, out of the markdown parser but faded by the same units it
+   * uses: one span per word. A provider chunk is not a unit the reader sees —
+   * an endpoint that sends a sentence, or the whole reply, in one chunk faded
+   * only its first word and showed the rest at once — while the mock endpoint's
+   * word-sized chunks faded perfectly. Stable positions keep the nodes of words
+   * already on screen, so only words that are new mount and animate. `.md` plus
+   * `whitespace-pre-wrap` gives the plain text the same font, size, line height
+   * and width as the markdown that replaces it. */
   return (
     <div className="sd-stream md whitespace-pre-wrap leading-7" style={style}>
-      <StreamedChunks chunks={chunks} released={text.length} fadeMs={fadeMs} />
+      <StreamedText text={text} fadeMs={fadeMs} />
     </div>
   )
 }
 
-function StreamedChunks({ chunks, released, fadeMs }: { chunks: string[]; released: number; fadeMs: number }) {
-  let start = 0
+function StreamedText({ text, fadeMs }: { text: string; fadeMs: number }) {
+  // Fade off: one text node, no per-word spans to build or lay out.
+  if (!fadeMs) return <>{text}</>
   return (
     <>
-      {chunks.map((chunk, i) => {
-        const from = start
-        start += chunk.length
-        const shown = Math.max(0, Math.min(chunk.length, released - from))
-        if (!shown) return null
-        return <span key={i} className={fadeMs > 0 ? 'sd-fade' : undefined}>{chunk.slice(0, shown)}</span>
-      })}
+      {splitFadeUnits(text).map((unit, i) => (unit.fade
+        ? <span key={i} className="sd-fade">{unit.t}</span>
+        : unit.t))}
     </>
   )
 }
@@ -845,6 +846,11 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
   const togglePayload = (k: string) => setExpanded((v) => ({ ...v, [k]: !v[k] }))
   const live = useLive((s) => s.tools[m.id])
   const liveChunks = useLive((s) => s.chunks[m.id])
+  /* The fade setting in the units the renderer takes. A reply whose prose
+   * streamed around tool calls renders its pieces directly (there is no paced
+   * live body for them); without this their words appeared with no fade at
+   * all, unlike every other streaming path. */
+  const liveFadeMs = prefs.streamFade > 0 ? Math.round(Math.min(1, prefs.streamFade) * 1000) : 0
   /* A reply can finish before it is ever painted — a fast endpoint, or one
    * whose whole answer arrived within a frame — so the live body above never
    * mounts and its word-by-word fade never runs; the text simply appears. The
@@ -1196,7 +1202,9 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
                     streamingTrail ? (
                       streamingSegments!.map((seg, i) => (
                         <div key={`live-seg-${i}`} className={i ? 'mt-3' : undefined}>
-                          {seg.text && <Md t={seg.text} cites={cites} />}
+                          {/* Only the piece still being written fades: the ones
+                              before it are finished text the reader already saw. */}
+                          {seg.text && <Md t={seg.text} cites={cites} fade={i === streamingSegments!.length - 1 ? liveFadeMs : 0} />}
                           {seg.calls.length > 0 && <ToolTrail calls={seg.calls} />}
                         </div>
                       ))
