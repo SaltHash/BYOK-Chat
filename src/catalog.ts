@@ -27,14 +27,16 @@ export type CatalogEndpoint = { id?: string; url?: string; key?: string; type?: 
 /** Unit used by a provider's pricing fields, normalized to USD per 1M tokens. */
 type PriceUnit = 'perToken' | 'perMillion' | 'centsPer100M' | 'none'
 
-const round2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100
+/** Prices keep four decimals so cheap models stay distinguishable; display
+ *  formatting trims back to the precision a value actually has. */
+const roundPrice = (n: number) => Math.round((n + Number.EPSILON) * 1e4) / 1e4
 
 const toPerMillion = (value: unknown, unit: PriceUnit): number | undefined => {
   if (unit === 'none') return undefined
   const n = Number(value)
   if (!Number.isFinite(n) || n <= 0) return undefined
   const perMillion = unit === 'perMillion' ? n : unit === 'centsPer100M' ? n / 1e4 : n * 1e6
-  return round2(perMillion)
+  return roundPrice(perMillion)
 }
 
 export type CatalogParseOptions = {
@@ -118,9 +120,35 @@ export function prioritizeProviderRows(entries: CatalogEntry[], endpointId: stri
 
 /** One inference provider (endpoint) serving a model: `tag` is the exact
  *  OpenRouter provider slug sent in `provider.order`, `name` is its label. */
+/** Service tier an endpoint sells: `priority` covers every provider word for
+ *  it (fast, turbo, highspeed, prime). */
+export type ProviderTier = 'priority' | 'ultrafast' | 'flex' | 'other'
+
+/** Provider words that mark a tier endpoint in its tag suffix. */
+const TIER_WORDS = ['fast', 'turbo', 'highspeed', 'prime', 'priority', 'flex', 'ultrafast', 'scale', 'standard']
+
+/** Read an endpoint's tier from its canonical `service_tier` and its tag
+ *  suffix (`openai/fast`, `deepinfra/turbo`, `openai/flex`). The suffix wins as
+ *  the label, because it is the provider's own word for the tier. */
+export function providerTier(serviceTier: unknown, tag: unknown): { tier?: ProviderTier; label?: string } {
+  const canonical = String(serviceTier ?? '').trim().toLowerCase()
+  const suffix = String(tag ?? '').split('/').slice(1).join('/').trim().toLowerCase()
+  const word = canonical || (TIER_WORDS.includes(suffix) ? suffix : '')
+  if (!word) return {}
+  const tier: ProviderTier = word === 'flex' ? 'flex'
+    : word === 'ultrafast' ? 'ultrafast'
+      : ['fast', 'turbo', 'highspeed', 'prime', 'priority'].includes(word) ? 'priority'
+        : 'other'
+  const label = TIER_WORDS.includes(suffix) ? suffix : word
+  return { tier, label: label.charAt(0).toUpperCase() + label.slice(1) }
+}
+
 export type CatalogProvider = {
   tag: string
   name: string
+  /** Service tier this endpoint sells, with the provider's word for it. */
+  tier?: ProviderTier
+  tierLabel?: string
   context?: number
   inputPrice?: number
   outputPrice?: number
@@ -143,12 +171,14 @@ export function parseModelProviders(body: unknown): CatalogProvider[] {
     const cacheReadPrice = Number(r?.pricing?.input_cache_read)
     const throughput = Number(r?.throughput_last_30m)
     const quantization = typeof r?.quantization === 'string' ? r.quantization : ''
+    const { tier, label: tierLabel } = providerTier(r?.service_tier, tag)
     return {
       tag, name,
+      ...(tier ? { tier, tierLabel } : {}),
       ...(context > 0 ? { context } : {}),
-      ...(Number.isFinite(inputPrice) && inputPrice > 0 ? { inputPrice: round2(inputPrice * 1e6) } : {}),
-      ...(Number.isFinite(outputPrice) && outputPrice > 0 ? { outputPrice: round2(outputPrice * 1e6) } : {}),
-      ...(Number.isFinite(cacheReadPrice) && cacheReadPrice > 0 ? { cacheReadPrice: round2(cacheReadPrice * 1e6) } : {}),
+      ...(Number.isFinite(inputPrice) && inputPrice > 0 ? { inputPrice: roundPrice(inputPrice * 1e6) } : {}),
+      ...(Number.isFinite(outputPrice) && outputPrice > 0 ? { outputPrice: roundPrice(outputPrice * 1e6) } : {}),
+      ...(Number.isFinite(cacheReadPrice) && cacheReadPrice > 0 ? { cacheReadPrice: roundPrice(cacheReadPrice * 1e6) } : {}),
       ...(Number.isFinite(throughput) && throughput > 0 ? { throughput } : {}),
       ...(quantization ? { quantization } : {}),
     }

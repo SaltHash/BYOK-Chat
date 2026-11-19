@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-const { parseModelProviders, fetchModelProviders } = await import('./catalog.ts')
+const { parseModelProviders, fetchModelProviders, providerTier } = await import('./catalog.ts')
 const { buildStreamRequest, tieredModelId } = await import('./streamRequest.ts')
 
 const jsonResponse = (value) => new Response(JSON.stringify(value), { headers: { 'content-type': 'application/json' } })
@@ -18,6 +18,37 @@ test('parseModelProviders normalizes an OpenRouter endpoints payload', () => {
   assert.deepEqual(providers[1], { tag: 'google-vertex/us-east5', name: 'Google' })
   assert.deepEqual(parseModelProviders({ data: {} }), [])
   assert.deepEqual(parseModelProviders(null), [])
+})
+
+test('tier endpoints carry their service tier and the provider word for it', () => {
+  const providers = parseModelProviders({ data: { endpoints: [
+    { provider_name: 'OpenAI', tag: 'openai/fast', service_tier: 'priority', pricing: { prompt: '0.000004', completion: '0.00002' } },
+    { provider_name: 'OpenAI', tag: 'openai/flex', service_tier: 'flex' },
+    { provider_name: 'Groq', tag: 'groq/ultrafast', service_tier: 'ultrafast' },
+    { provider_name: 'DeepInfra', tag: 'deepinfra/turbo' },
+    { provider_name: 'OpenAI', tag: 'openai' },
+    { provider_name: 'Google', tag: 'google-vertex/us-east5' },
+  ] } })
+  assert.equal(providers[0].tierLabel, 'Fast')
+  assert.equal(providers[1].tier, 'flex')
+  assert.equal(providers[1].tierLabel, 'Flex')
+  assert.equal(providers[2].tier, 'ultrafast')
+  assert.equal(providers[3].tier, 'priority')
+  assert.equal(providers[3].tierLabel, 'Turbo')
+  assert.equal(providers[4].tier, undefined)
+  assert.equal(providers[5].tier, undefined)
+  // Prices keep the precision a cheap model needs.
+  assert.equal(providers[0].inputPrice, 4)
+  assert.equal(providerTier('scale', 'x/scale').tier, 'other')
+  assert.deepEqual(providerTier(null, 'openai'), {})
+})
+
+test('sub-cent prices keep up to four decimals', () => {
+  const providers = parseModelProviders({ data: { endpoints: [
+    { provider_name: 'Cheap', tag: 'cheap', pricing: { prompt: '0.00000125', completion: '0.0000000375' } },
+  ] } })
+  assert.equal(providers[0].inputPrice, 1.25)
+  assert.equal(providers[0].outputPrice, 0.0375)
 })
 
 test('fetchModelProviders queries OpenRouter endpoints and forwards the key', async () => {

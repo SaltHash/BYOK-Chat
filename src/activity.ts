@@ -49,13 +49,24 @@ const baseName = (path: string) => path.replace(/\\/g, '/').split('/').filter(Bo
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`
 
 /** Websites a search call actually returned, so the line counts sources rather
- *  than requests. Falls back to the number of search calls while results are
- *  still on their way. */
-function searchCount(calls: ActivityCall[]): number {
+ *  than requests. A call whose results have not arrived yet counts as the
+ *  number of sites one search returns (`perSearch`), so a live run reports the
+ *  sources it is fetching instead of one site per call. */
+function searchCount(calls: ActivityCall[], perSearch: SiteCount = 1): number {
   let sources = 0
-  for (const call of calls) sources += (call.result ?? '').match(/\[Source [^\]]+\]/g)?.length ?? 0
+  for (const call of calls) {
+    if (call.error) continue
+    const found = (call.result ?? '').match(/\[Source [^\]]+\]/g)?.length ?? 0
+    sources += found || (call.result ? 0 : sitesOf(perSearch, call))
+  }
   return sources || calls.length
 }
+
+/** Sites one search fetches: a number, or a figure worked out from the call
+ *  (the model may ask for fewer than the user's maximum). */
+type SiteCount = number | ((call: ActivityCall) => number)
+const sitesOf = (perSearch: SiteCount, call: ActivityCall) =>
+  Math.max(1, Math.round(Number(typeof perSearch === 'function' ? perSearch(call) : perSearch) || 1))
 
 /** MCP tool id (`mcp_filesystem_read_file`) as readable words. */
 const mcpLabel = (name: string) => name.slice(4).replace(/_/g, ' ').trim() || 'tool'
@@ -106,7 +117,7 @@ function familyOf(call: ActivityCall): Family {
  *  has not called one. The line follows the newest call, and counts the calls
  *  of that same kind: one search then one code run reads as the code run, not
  *  as a bundle of two unrelated tools. */
-export function activityOf(calls: ActivityCall[], opts: { thinking?: boolean } = {}): Activity {
+export function activityOf(calls: ActivityCall[], opts: { thinking?: boolean; /** Sites one search returns, used while its results are in flight. */   perSearch?: SiteCount } = {}): Activity {
   const list = (calls ?? []).filter((c) => c && c.name)
   if (!list.length) {
     return opts.thinking === false
@@ -119,7 +130,7 @@ export function activityOf(calls: ActivityCall[], opts: { thinking?: boolean } =
   const group = list.filter((c) => familyOf(c) === family)
 
   if (family === 'search') {
-    const n = searchCount(group)
+    const n = searchCount(group, opts.perSearch)
     return { kind: 'search', count: n, present: `Searching ${plural(n, 'website')}`, past: `Searched ${plural(n, 'website')}` }
   }
 

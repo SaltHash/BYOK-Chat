@@ -12,6 +12,13 @@ test('web searches count the sources they brought back', () => {
   assert.deepEqual(out.clauses.map((c) => c.kind), ['search'])
 })
 
+test('a search with no stored results counts the sites it fetches', () => {
+  const out = summarizeToolCalls([call('search', { query: 'a' }), call('search', { query: 'b' })], { perSearch: 8 })
+  assert.equal(out.title, 'Searched 16 websites')
+  const mixed = summarizeToolCalls([call('search', { query: 'a' }, sources(3)), call('search', { query: 'b' })], { perSearch: 8 })
+  assert.equal(mixed.title, 'Searched 11 websites')
+})
+
 test('writes name one or two files and count more', () => {
   assert.equal(summarizeToolCalls([write('index.html')]).title, 'Wrote index.html')
   assert.equal(summarizeToolCalls([write('index.html'), write('style.css')]).title, 'Wrote index.html and style.css')

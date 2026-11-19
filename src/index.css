@@ -266,6 +266,27 @@ html[data-codewrap] .code-lines .code-line > code { flex: 1 1 auto; min-width: 0
 .shell-resizer { background-color: transparent; }
 .shell-resizer:hover { background-color: color-mix(in srgb, var(--ac) 50%, transparent); }
 
+/* Service-tier badges in the provider picker. These hues are fixed rather than
+   themed, because a tier means the same thing under every theme; the light
+   themes get deeper tones so the small label stays readable on white. */
+:root { --tier-priority: #b794f6; --tier-ultrafast: #f6ad55; --tier-flex: #68d391; --tier-other: #76b4f2; }
+:root[data-t=paper], :root[data-t=sage], :root[data-t=frost], :root[data-t=sunset],
+:root[data-t=custom][style*="color-scheme: light"], :root[data-t=custom][style*="color-scheme:light"] {
+  --tier-priority: #6d28d9; --tier-ultrafast: #c2410c; --tier-flex: #15803d; --tier-other: #1d4ed8;
+}
+.tier-badge {
+  flex: none;
+  border: 1px solid color-mix(in srgb, var(--tier) 38%, transparent);
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--tier) 14%, transparent);
+  padding: 0 5px;
+  color: var(--tier);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 15px;
+  letter-spacing: 0.02em;
+}
+
 /* One dropdown surface for every menu: settings, composer, chat actions,
    context, sidebar and the workspace revision picker. `--menu-shadow` is
    available for a local override; flat mode removes the shadow. Dark themes

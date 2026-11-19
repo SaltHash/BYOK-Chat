@@ -1,6 +1,6 @@
-import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { X, Plus, Trash2, ArrowUp, ArrowDown, CornerDownRight, ChevronDown, ChevronLeft, ChevronRight, Eye, EyeOff, Play, ShieldCheck, Shield, Download, Upload, Check, CircleCheck, CircleX, Cpu, Route, GripVertical, Server, ListMusic, ScrollText, Terminal, Wrench, Palette, FolderOpen, PanelRight, TrendingUp, Keyboard, Search, Brain, Pencil, Sparkles, RotateCcw, SlidersHorizontal, FlaskConical, Library, Database, Lock, LockOpen, LayoutTemplate, Share2, Plug, Image as ImageIcon, Volume2, AudioLines, Code2, Star, TriangleAlert } from 'lucide-react'
-import { discoveredModelPatch, modelListEdit, tierAllowed } from '../models'
+import { discoveredModelPatch, modelListEdit, priceText, tierAllowed } from '../models'
 import { useS, useSConfig, PRE, BLANK, THEMES, DARK_THEMES, LIGHT_THEMES, THEME_COLOR_KEYS, THEME_COLOR_LABELS, THEME_COLORS, defaultCustomTheme, customThemeColors, normCustomTheme, SEARCH_PROVIDERS, READER_PROVIDERS, FEATURES, LIBRARY_ITEMS, FEATURE_TABS, FEATURE_WIDGETS, DEFAULT_LIBRARY_SHOW, DEFAULT_ADVANCED, featOn, normSearch, normAdvanced, normLogDetail, normDocs, usable, modelsOf, modelNameOf, helperRef, splitHelperRef, favRef, toggleFavRef, pageSummaryEffortOf, readerSummaryModelsOf, MODEL_TIERS, TOOL_ROUNDS_DEFAULT, TOOL_ROUNDS_MIN, TOOL_ROUNDS_BASE_MAX, TOOL_ROUNDS_MAX, toolRoundLimitOf, isToolRoundsUnlimited, GENERAL_PROMPT_TEXT, STARTUP_MODES, normStartup, PROMPT_RECALL_MODES, normPromptRecall, uid, REPLY_METRICS, DEFAULT_REPLY_STATS, HELPER_TASKS, HELPER_REQUIRED, helperAutoEffort, type HelperTask, type PromptRecallMode, type ReplyMetric, type ReplyModelLabel, type Kind, type FeatureId, type DocPrefs, type ModelPrice } from '../store'
 import { normSkills, resolveSkill, validateCustomSkill, enabledSkills, BUILTIN_SKILLS, SKILL_TOOL_NAME, type SkillState } from '../skills'
 import { findDuplicatePairs, mergeMemory } from '../recall'
@@ -378,6 +378,14 @@ function ProviderStat({ icon: I, title, children }: { icon: Ic; title: string; c
   return <span title={title} className="inline-flex min-w-0 items-center gap-1 rounded-md border border-bor bg-surf px-1.5 py-1 text-[11px] text-mu"><I size={11} className="shrink-0" aria-hidden="true" /><span className="truncate">{children}</span></span>
 }
 
+/** The service tier a provider endpoint sells (Fast, Turbo, Flex, ...). The
+ *  hue comes from `--tier-*` in index.css so no component holds a colour:
+ *  purple for the priority tier, orange for ultrafast, green for flex, blue
+ *  for any other named tier. */
+function TierBadge({ tier, children }: { tier: CatalogProvider['tier']; children: ReactNode }) {
+  return <span className="tier-badge" style={{ '--tier': `var(--tier-${tier ?? 'other'})` } as CSSProperties}>{children}</span>
+}
+
 /** Per-model inference provider picker (OpenRouter only). Kept behind one
  *  low-key button under a model row so it stays out of the way for the many
  *  users who never care which provider serves a model. */
@@ -417,13 +425,16 @@ function ProviderPicker({ e, model, openRouter, update }: { e: any; model: strin
           {providers.map((p) => {
             const on = current?.tag === p.tag
             return <Radio key={p.tag} checked={on} onSelect={() => pick(p.tag, p.name)} label={p.name}>
-              <span className="block truncate">{p.name}</span>
+              <span className="flex min-w-0 items-center gap-1.5">
+                <span className="truncate">{p.name}</span>
+                {p.tier && p.tierLabel && <TierBadge tier={p.tier}>{p.tierLabel}</TierBadge>}
+              </span>
               <span className="mt-1 flex flex-wrap gap-1 text-[11px] text-mu">
                 {p.throughput !== undefined && <ProviderStat icon={TrendingUp} title="Measured output speed over the last 30 minutes">{Math.round(p.throughput)} tok/s</ProviderStat>}
                 {p.context !== undefined && <ProviderStat icon={Database} title="Maximum context window">{contextLabel(p.context)} ctx</ProviderStat>}
-                {p.inputPrice !== undefined && <ProviderStat icon={ArrowDown} title={`$${p.inputPrice.toFixed(2)} per million input tokens`}>${p.inputPrice.toFixed(2)}/M in</ProviderStat>}
-                {p.outputPrice !== undefined && <ProviderStat icon={ArrowUp} title={`$${p.outputPrice.toFixed(2)} per million output tokens`}>${p.outputPrice.toFixed(2)}/M out</ProviderStat>}
-                {p.cacheReadPrice !== undefined && <ProviderStat icon={Route} title={`$${p.cacheReadPrice.toFixed(2)} per million cached input tokens`}>${p.cacheReadPrice.toFixed(2)}/M cache</ProviderStat>}
+                {p.inputPrice !== undefined && <ProviderStat icon={ArrowDown} title={`$${priceText(p.inputPrice)} per million input tokens`}>${priceText(p.inputPrice)}/M in</ProviderStat>}
+                {p.outputPrice !== undefined && <ProviderStat icon={ArrowUp} title={`$${priceText(p.outputPrice)} per million output tokens`}>${priceText(p.outputPrice)}/M out</ProviderStat>}
+                {p.cacheReadPrice !== undefined && <ProviderStat icon={Route} title={`$${priceText(p.cacheReadPrice)} per million cached input tokens`}>${priceText(p.cacheReadPrice)}/M cache</ProviderStat>}
                 {p.quantization && <ProviderStat icon={Cpu} title="Quantization">{p.quantization}</ProviderStat>}
               </span>
             </Radio>
@@ -563,7 +574,7 @@ function ModelsEditor({ e, update }: { e: any; update: (p: object) => void }) {
       <Btn v="soft" onClick={() => { clearModelDiscoveryCache(e.url); clearCatalogCache(e.id); void loadCatalog() }} title="Clear cached working and failed model-list URLs for this endpoint, then probe them again.">Retry model-list checks</Btn></div>
       {catalogState && <p className="text-xs text-mu">{catalogState}</p>}
       <SearchInput value={query} set={setQuery} label="Search available models" placeholder="Search available models" />
-      <div className="space-y-1">{[...catalog].sort((a,b) => modelIdCompare(storedId(a.id).replace(/^~+/, ''), storedId(b.id).replace(/^~+/, ''))).filter(x => `${x.name.replace(/^~+/, '')} ${storedId(x.id).replace(/^~+/, '')}`.toLowerCase().includes(query.toLowerCase()) && !models.includes(storedId(x.id))).slice(0,250).map(x => { const id = storedId(x.id), visibleId = id.replace(/^~+/, ''), checked = selectedModels.includes(id); return <Checkbox key={x.id} checked={checked} set={() => setSelectedModels(checked ? selectedModels.filter(m => m !== id) : [...selectedModels, id])} label={visibleId} sub={(x.context || x.inputPrice !== undefined || x.outputPrice !== undefined) ? [x.context ? `${contextLabel(x.context)} context` : '', x.inputPrice !== undefined ? `$${x.inputPrice.toFixed(2)}/M in` : '', x.outputPrice !== undefined ? `$${x.outputPrice.toFixed(2)}/M out` : ''].filter(Boolean).join(' · ') : undefined} className="w-full px-2 py-2 hover:bg-hov" />})}
+      <div className="space-y-1">{[...catalog].sort((a,b) => modelIdCompare(storedId(a.id).replace(/^~+/, ''), storedId(b.id).replace(/^~+/, ''))).filter(x => `${x.name.replace(/^~+/, '')} ${storedId(x.id).replace(/^~+/, '')}`.toLowerCase().includes(query.toLowerCase()) && !models.includes(storedId(x.id))).slice(0,250).map(x => { const id = storedId(x.id), visibleId = id.replace(/^~+/, ''), checked = selectedModels.includes(id); return <Checkbox key={x.id} checked={checked} set={() => setSelectedModels(checked ? selectedModels.filter(m => m !== id) : [...selectedModels, id])} label={visibleId} sub={(x.context || x.inputPrice !== undefined || x.outputPrice !== undefined) ? [x.context ? `${contextLabel(x.context)} context` : '', x.inputPrice !== undefined ? `$${priceText(x.inputPrice)}/M in` : '', x.outputPrice !== undefined ? `$${priceText(x.outputPrice)}/M out` : ''].filter(Boolean).join(' · ') : undefined} className="w-full px-2 py-2 hover:bg-hov" />})}
         {query.trim() && !models.includes(catalogId(query.trim())) && <Checkbox checked={searchIdea === catalogId(query.trim())} set={() => setSearchIdea(searchIdea === catalogId(query.trim()) ? null : catalogId(query.trim()))} label={`Add “${catalogId(query.trim())}” model`} className="w-full px-2 py-2 hover:bg-hov" />}
       </div>
     </Dialog>}
@@ -992,7 +1003,7 @@ function Eps() {
                     const body = await res.json()
                     const item = body.data?.find((x: any) => x.id === model)
                     if (!item?.pricing?.prompt || !item?.pricing?.completion) throw Error('This model has no published token pricing in the catalog.')
-                    const round2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100
+                    const round2 = (n: number) => Math.round((n + Number.EPSILON) * 1e4) / 1e4
                     // Re-read after the fetch: prices edited while it was in
                     // flight must not be overwritten by the stale snapshot.
                     const cur = useS.getState().eps.find((x) => x.id === e.id) ?? e

@@ -491,7 +491,9 @@ export function clearProviderDiscoveryCache(id?: string) {
   for (const key of discoveryCache.keys()) if (key.startsWith(`${id}:`)) discoveryCache.delete(key)
 }
 
-const round2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100
+/* Four decimals so sub-cent models keep their real price; the settings UI
+ * trims the display back to the precision a value has. */
+const round2 = (n: number) => Math.round((n + Number.EPSILON) * 1e4) / 1e4
 const perMillion = (value: unknown, alreadyPerMillion = false): number | undefined => {
   const n = Number(value)
   if (!Number.isFinite(n) || n <= 0) return undefined

@@ -1,6 +1,17 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { discoveredModelPatch, modelsOf } from './models.ts'
+import { discoveredModelPatch, modelsOf, priceText } from './models.ts'
+
+test('a per-million price shows at least two decimals and at most four', () => {
+  assert.equal(priceText(3), '3.00')
+  assert.equal(priceText(0.3), '0.30')
+  assert.equal(priceText(1.25), '1.25')
+  assert.equal(priceText(0.0125), '0.0125')
+  assert.equal(priceText(0.0375), '0.0375')
+  assert.equal(priceText(12.1), '12.10')
+  assert.equal(priceText(0), '0.00')
+  assert.equal(priceText(Number.NaN), '')
+})
 
 test('a discovered list is carried into the endpoint with the picked model first', () => {
   const patch = discoveredModelPatch(

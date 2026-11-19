@@ -1,7 +1,7 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import { GitBranch, ChevronLeft, ChevronRight, ChevronDown, Server, Cpu, Copy, Check, RefreshCw, Trash2, ListOrdered, TriangleAlert, Paperclip, Download, ExternalLink, Volume2, Pin, PinOff, Bookmark, Search, ArrowUp, ArrowDown, X, Quote, FileText, FileCode2, Terminal, Image as ImageIcon, Wrench, Sparkles, Brain, ChartLine, MessageCircle, BookOpen } from 'lucide-react'
-import { useS, useLive, usable, modelNameOf, featOn, previewSysFor, activeWorkspaceForChat, pinnedReplyOf, DEFAULT_REPLY_STATS, type Ep, type LogDetail, type Msg, type ReplyModelLabel } from '../store'
+import { useS, useLive, usable, modelNameOf, featOn, previewSysFor, activeWorkspaceForChat, pinnedReplyOf, searchCountOf, DEFAULT_REPLY_STATS, type Ep, type LogDetail, type Msg, type ReplyModelLabel } from '../store'
 import { clampWorkspaceFrac, roundFrac, CHAT_WIDTH } from '../layout'
 import { focusComposer, startPointerDrag } from '../hooks'
 import { useProcessLogEpoch } from '../uiSignals'
@@ -214,6 +214,7 @@ const trailLink = (url: string, title?: string): TrailLink | null => {
  *  result in the same section is shown only once. */
 function ToolTrail({ calls }: { calls: TrailCall[] }) {
   const [open, setOpen] = useState(false)
+  const searchPrefs = useS((s) => s.search)
   const seen = new Set<string>()
   const searches: { query: string; provider: string; links: TrailLink[] }[] = []
   const reads: TrailLink[] = []
@@ -246,12 +247,15 @@ function ToolTrail({ calls }: { calls: TrailCall[] }) {
     }
   }
   const sourceCount = searches.reduce((n, search) => n + search.links.length, 0) + reads.length
-  const summary = summarizeToolCalls(other.length ? other : calls)
+  // A search still waiting on results counts the sites it will fetch, so the
+  // line reads "searched 16 websites" for two eight-result calls, not two.
+  const summary = summarizeToolCalls(other.length ? other : calls, { perSearch: (c) => searchCountOf(searchPrefs, trailArgs(c.arguments).count) })
+  const pendingSearch = calls.some((c) => c.name === 'search' && !c.error && !c.result)
   // The collapsed line counts the sources that actually came back, so the
   // search clause reports that figure instead of the number of search calls.
   const title = summary.clauses
     .map((c, i) => {
-      const text = c.kind === 'search' && sourceCount > 0 ? `searched ${sourceCount} website${sourceCount === 1 ? '' : 's'}` : c.text
+      const text = c.kind === 'search' && sourceCount > 0 && !pendingSearch ? `searched ${sourceCount} website${sourceCount === 1 ? '' : 's'}` : c.text
       return i ? text : text.charAt(0).toUpperCase() + text.slice(1)
     })
     .join(', ')
@@ -673,7 +677,8 @@ function useStepElapsed(key: string): string {
  * something (see `active`), so it has no finished form: a settled step keeps
  * its place in the trail, where it stays readable afterwards. */
 function ActionIndicator({ calls, block }: { calls: TrailCall[]; block?: boolean }) {
-  const activity = activityOf(calls)
+  const searchPrefs = useS((s) => s.search)
+  const activity = activityOf(calls, { perSearch: (c) => searchCountOf(searchPrefs, trailArgs(c.arguments).count) })
   // Keyed by kind, not by the full line: a count that grows as results arrive
   // is still the same step, so its timer must not restart.
   const elapsed = useStepElapsed(activity.kind)

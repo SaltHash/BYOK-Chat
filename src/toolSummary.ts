@@ -49,15 +49,23 @@ const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? o
 
 /** Turn one round's calls into a short, human title plus the clauses that
  *  compose it. The caller renders the title and can expand the calls. */
-export function summarizeToolCalls(calls: TrailCall[]): ToolSummary {
+export function summarizeToolCalls(calls: TrailCall[], opts: { /** Sites one search fetches, used when a call carries no stored results. */ perSearch?: number | ((call: TrailCall) => number) } = {}): ToolSummary {
   const list = calls.filter((c) => c && c.name)
   if (!list.length) return { title: 'Tool calls', clauses: [] }
   const clauses: ToolClause[] = []
+  const sitesOf = (c: TrailCall) => {
+    const raw = typeof opts.perSearch === 'function' ? opts.perSearch(c) : opts.perSearch
+    return Math.max(1, Math.round(Number(raw) || 1))
+  }
 
   const searches = list.filter((c) => c.name === 'search')
   if (searches.length) {
     let sources = 0
-    for (const c of searches) sources += (c.result ?? '').match(/\[Source [^\]]+\]/g)?.length ?? 0
+    for (const c of searches) {
+      if (c.error) continue
+      const found = (c.result ?? '').match(/\[Source [^\]]+\]/g)?.length ?? 0
+      sources += found || (c.result ? 0 : sitesOf(c))
+    }
     const n = sources || searches.length
     clauses.push({ kind: 'search', count: n, text: `searched ${plural(n, 'website')}` })
   }

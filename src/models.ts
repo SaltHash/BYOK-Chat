@@ -97,3 +97,14 @@ export const modelNameOf = (e: Ep, model: string) => {
  *  store and creates a module cycle. */
 export const tierAllowed = (model: string): boolean =>
   !String(model ?? '').split(':').slice(1).some((s) => /^free$/i.test(s.trim()))
+
+/** A price per million tokens: four decimals when the value carries that much
+ *  precision, never fewer than two ("$0.27", "$0.0125", "$3.00"). */
+export const priceText = (n: number): string => {
+  if (!Number.isFinite(n)) return ''
+  const abs = Math.abs(n)
+  const [whole, decimals = ''] = abs.toFixed(4).split('.')
+  const trimmed = decimals.replace(/0+$/, '')
+  const keep = trimmed.length >= 2 ? trimmed : decimals.slice(0, 2)
+  return `${n < 0 ? '-' : ''}${whole}.${keep}`
+}

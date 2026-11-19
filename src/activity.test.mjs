@@ -27,6 +27,19 @@ test('a search without results falls back to one website per call', () => {
   assert.equal(a.past, 'Searched 1 website')
 })
 
+test('pending searches count the sites each call fetches', () => {
+  const a = activityOf([call('search', { query: 'x' }), call('search', { query: 'y' })], { perSearch: 8 })
+  assert.equal(a.present, 'Searching 16 websites')
+  // The model may ask for fewer sites than the user's maximum.
+  const fewer = activityOf([call('search', { query: 'x', count: 3 }), call('search', { query: 'y' })], {
+    perSearch: (c) => (c.arguments.includes('"count"') ? 3 : 8),
+  })
+  assert.equal(fewer.present, 'Searching 11 websites')
+  // A failed call fetched nothing.
+  const failed = activityOf([{ name: 'search', arguments: '{"query":"x"}', error: true }], { perSearch: 8 })
+  assert.equal(failed.present, 'Searching 1 website')
+})
+
 test('page reads say pages', () => {
   const a = activityOf([call('fetch_page', { url: 'https://a.test' })])
   assert.equal(a.kind, 'read')
