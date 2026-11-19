@@ -702,6 +702,26 @@ export const fetchOptsOf = (prefs: SearchPrefs) => ({
   maxRetries: prefs.fetchMaxRetries,
   retryBaseMs: prefs.fetchRetryBaseMs,
 })
+/* A helper flow is one model or a whole playlist. A playlist is stored in the
+ * same two slots every helper already uses — endpoint id and model id — as
+ * `pl::<playlist id>`, so saved settings keep their shape and every reader
+ * resolves a flow the same way. */
+export const HELPER_PLAYLIST_EP = 'pl'
+export const helperPlRef = (id: string) => `${HELPER_PLAYLIST_EP}::${id}`
+export const isPlaylistRef = (ep: string) => ep === HELPER_PLAYLIST_EP
+/** The models one helper flow tries, in order: the model an endpoint ref
+ *  names, or every usable entry of the playlist a playlist ref names. */
+export const helperFlowModelsOf = (s: { eps: Ep[]; pls?: Pl[] }, ep: string, model?: string): Ep[] => {
+  if (!ep) return []
+  if (isPlaylistRef(ep)) {
+    const pl = (s.pls ?? []).find((p) => p.id === model)
+    return pl ? playlistEntries(s, pl).filter(usable) : []
+  }
+  const found = s.eps.find((e) => e.id === ep && usable(e))
+  if (!found) return []
+  return [{ ...found, model: model && modelsOf(found).includes(model) ? model : found.model }]
+}
+
 /* The page-summary model candidates, in the order they should be tried.
  * - Picked model: exactly the model the user chose. No silent fallback,
  *   because a summary from a random endpoint could be much more expensive or
@@ -715,6 +735,7 @@ export const readerSummaryModelsOf = (
   s: { eps: Ep[]; pls?: Pl[] },
   prefs: Pick<SearchPrefs, 'readerSummaryEp' | 'readerSummaryModel' | 'readerSummaryFlow' | 'readerSummaryPl'>,
 ): Ep[] => {
+  if (isPlaylistRef(prefs.readerSummaryEp)) return helperFlowModelsOf(s, prefs.readerSummaryEp, prefs.readerSummaryModel)
   if (prefs.readerSummaryFlow && prefs.readerSummaryPl) {
     const pl = (s.pls ?? []).find((p) => p.id === prefs.readerSummaryPl)
     if (!pl) return []
@@ -1039,39 +1060,38 @@ export const toggleFavRef = (favs: string[] | undefined, ref: string): string[] 
 }
 /** Resolve the playlist routing classifier: the playlist's own classifier
  * when set, otherwise the global helper classification model as fallback. */
-export const playlistClassifierOf = (s: { eps: Ep[]; memoryPrefs: { classifierEp: string; classifierModel: string } }, pl: Pl): Ep | undefined => {
+type HelperState = { eps: Ep[]; pls?: Pl[] }
+export const playlistClassifiersOf = (s: HelperState & { memoryPrefs: { classifierEp: string; classifierModel: string } }, pl: Pl): Ep[] => {
   // An explicit opt-out: no playlist classifier and no helper fallback, so the
   // list keeps its own order.
-  if (pl.cls === 'none') return undefined
-  const pick = (epId: string, model?: string): Ep | undefined => {
-    if (!epId) return undefined
-    const found = s.eps.find((e) => e.id === epId && usable(e))
-    if (!found) return undefined
-    return { ...found, model: model && modelsOf(found).includes(model) ? model : found.model }
-  }
-  return pick(pl.cls, pl.clsModel) ?? pick(s.memoryPrefs.classifierEp, s.memoryPrefs.classifierModel)
+  if (pl.cls === 'none') return []
+  const own = helperFlowModelsOf(s, pl.cls, pl.clsModel)
+  return own.length ? own : helperFlowModelsOf(s, s.memoryPrefs.classifierEp, s.memoryPrefs.classifierModel)
 }
-/** Resolve the configured memory-recall model, if usable. Prefers the
- * dedicated recall slot; falls back to the legacy classification slot. */
-export const recallClassifierOf = (s: { eps: Ep[]; prefs: { recallEp: string; recallModel?: string }; memoryPrefs: { classifierEp: string; classifierModel: string } }): Ep | undefined => {
-  const pick = (epId: string, model?: string): Ep | undefined => {
-    if (!epId) return undefined
-    const found = s.eps.find((e) => e.id === epId && usable(e))
-    if (!found) return undefined
-    return { ...found, model: model && modelsOf(found).includes(model) ? model : found.model }
-  }
-  return pick(s.prefs?.recallEp, s.prefs?.recallModel) ?? pick(s.memoryPrefs.classifierEp, s.memoryPrefs.classifierModel)
+export const playlistClassifierOf = (s: HelperState & { memoryPrefs: { classifierEp: string; classifierModel: string } }, pl: Pl): Ep | undefined =>
+  playlistClassifiersOf(s, pl)[0]
+/** Resolve the configured memory-recall flow. Prefers the dedicated recall
+ * slot; falls back to the legacy classification slot. */
+export const recallClassifiersOf = (s: HelperState & { prefs: { recallEp: string; recallModel?: string }; memoryPrefs: { classifierEp: string; classifierModel: string } }): Ep[] => {
+  const own = helperFlowModelsOf(s, s.prefs?.recallEp, s.prefs?.recallModel)
+  return own.length ? own : helperFlowModelsOf(s, s.memoryPrefs.classifierEp, s.memoryPrefs.classifierModel)
 }
-/** Resolve the configured context-handoff writer, if usable. Empty keeps the
- *  replying model, which is the historical behaviour. */
-export const compactionModelOf = (s: { eps: Ep[]; prefs: { compactEp?: string; compactModel?: string } }): Ep | undefined => {
+export const recallClassifierOf = (s: HelperState & { prefs: { recallEp: string; recallModel?: string }; memoryPrefs: { classifierEp: string; classifierModel: string } }): Ep | undefined =>
+  recallClassifiersOf(s)[0]
+/** Resolve the configured context-handoff flow. Empty keeps the replying
+ *  model, which is the historical behaviour. */
+export const compactionModelsOf = (s: HelperState & { prefs: { compactEp?: string; compactModel?: string } }): Ep[] => {
   // 'main' (and the empty value older saves hold) means the replying model
   // writes the handoff; 'none' means no model-written handoff at all.
-  if (!s.prefs?.compactEp || s.prefs.compactEp === 'main') return undefined
-  const found = s.eps.find((e) => e.id === s.prefs.compactEp && usable(e))
-  if (!found) return undefined
-  return { ...found, model: s.prefs.compactModel && modelsOf(found).includes(s.prefs.compactModel) ? s.prefs.compactModel : found.model }
+  const ep = s.prefs?.compactEp
+  if (!ep || ep === 'main' || ep === 'none') return []
+  // Saves written before per-task picks were split stored `ep::model` in this
+  // slot; still read them rather than silently dropping the choice.
+  const [id, model] = splitHelperRef(ep)
+  return helperFlowModelsOf(s, id || ep, id ? model : s.prefs.compactModel)
 }
+export const compactionModelOf = (s: HelperState & { prefs: { compactEp?: string; compactModel?: string } }): Ep | undefined =>
+  compactionModelsOf(s)[0]
 /** Lowest thinking level a model supports, or '' when none is known.
  * Classifier calls use this so background routing stays cheap. */
 const EFFORT_RANK: Record<string, number> = { none: 0, minimal: 1, low: 2, medium: 3, high: 4, xhigh: 5, max: 6 }
@@ -1300,12 +1320,15 @@ export const useS = create<S>()(
         }
         const um = [...chat.msgs].reverse().find((m) => m.r === 'user') ?? { id: 'compaction', r: 'user' as const, t: '' }
         const p = plan(st, um)
-        const ep = compactionModelOf(st) ?? (opts.ep && usable(opts.ep) ? opts.ep : p.cand[0])
-        if (!ep) {
+        const picked = compactionModelsOf(st)
+        const fallback = opts.ep && usable(opts.ep) ? opts.ep : p.cand[0]
+        const cands = picked.length ? picked : fallback ? [fallback] : []
+        const first = cands[0]
+        if (!first) {
           opts.log?.push({ n: 'Context compaction', m: '', err: 'No usable endpoint could write a handoff; older messages will be trimmed instead.', at: Date.now() })
           return null
         }
-        const { limit, cpt } = contextBudget(st, p.cand.length ? p.cand : [ep])
+        const { limit, cpt } = contextBudget(st, p.cand.length ? p.cand : [first])
         const effective = withCompaction(chat.msgs, chat.compact)
         const chunk = selectCompactionMessages(effective, opts.excludeId, compactionInputChars(limit, cpt))
         const anchor = compactionAnchor(chunk, chat.compact?.through)
@@ -1317,35 +1340,41 @@ export const useS = create<S>()(
         const transcript = transcriptFor(chunk, compactionInputChars(limit, cpt))
         if (transcript.trim().length < 80) return null
         const t0 = Date.now()
-        try {
-          const x = await stream(ep, compactionSystemPrompt(limit), [{ role: 'user', content: compactionAsk(transcript) }], () => {}, opts.ctl, { cap: compactionOutputTokens(limit), effort: helperEffortOf('compact', ep, st.prefs.helperEffort?.compact) })
-          const raw = x.text.trim()
-          if (!raw) throw Error('the handoff was empty')
-          const maxChars = Math.max(2000, compactionOutputTokens(limit) * cpt)
-          const text = raw.length > maxChars ? `${raw.slice(0, maxChars).trimEnd()}\n\n[Handoff truncated to fit its context allowance.]` : raw
-          const rec: CompactionRecord = {
-            text,
-            through: anchor,
-            at: Date.now(),
-            messages: real.length,
-            tokens: estimateTokens(text, cpt),
-            before: estimateTokens(transcript, cpt),
-            model: `${ep.name} · ${ep.model}`,
+        /* A playlist flow walks its models until one writes the handoff: a
+         * rate-limited or broken model must not cost the whole handoff. */
+        for (const ep of cands) {
+          try {
+            const x = await stream(ep, compactionSystemPrompt(limit), [{ role: 'user', content: compactionAsk(transcript) }], () => {}, opts.ctl, { cap: compactionOutputTokens(limit), effort: helperEffortOf('compact', ep, st.prefs.helperEffort?.compact) })
+            const raw = x.text.trim()
+            if (!raw) throw Error('the handoff was empty')
+            const maxChars = Math.max(2000, compactionOutputTokens(limit) * cpt)
+            const text = raw.length > maxChars ? `${raw.slice(0, maxChars).trimEnd()}\n\n[Handoff truncated to fit its context allowance.]` : raw
+            const rec: CompactionRecord = {
+              text,
+              through: anchor,
+              at: Date.now(),
+              messages: real.length,
+              tokens: estimateTokens(text, cpt),
+              before: estimateTokens(transcript, cpt),
+              model: `${ep.name} · ${ep.model}`,
+            }
+            set((s) => ({ chats: s.chats.map((c) => (c.id === chatId ? { ...c, compact: rec } : c)) }))
+            bump(x.tin, x.tout)
+            addCost(ep, ep.model, x.tin, x.tout, (x as any).cost ?? 0, x)
+            const entry: Try = { n: 'Context compaction', m: `${ep.name} · ${ep.model}`, detail: compactionDetail(rec), ms: Date.now() - t0, tin: x.tin, tout: x.tout, cacheRead: (x as any).cacheRead ?? 0, cacheWrite: (x as any).cacheWrite ?? 0, cost: (x as any).cost ?? 0, at: Date.now() }
+            if (opts.log) opts.log.push(entry)
+            else if (opts.hostMsgId) {
+              edit(chatId, opts.hostMsgId, (m) => ({ ...m, log: [...(m.log ?? []), entry] }))
+              keepUsage(chatId, opts.hostMsgId, [entry])
+            }
+            return rec
+          } catch (x: any) {
+            if (opts.ctl.signal.aborted) return null
+            const more = ep !== cands[cands.length - 1]
+            opts.log?.push({ n: 'Context compaction', m: `${ep.name} · ${ep.model}`, err: `Could not write a handoff with this model${more ? ', so the next one in the flow was tried' : ''} (${errText(ep, (x as Error)?.message)}); older messages will be trimmed instead.`, at: Date.now() })
           }
-          set((s) => ({ chats: s.chats.map((c) => (c.id === chatId ? { ...c, compact: rec } : c)) }))
-          bump(x.tin, x.tout)
-          addCost(ep, ep.model, x.tin, x.tout, (x as any).cost ?? 0, x)
-          const entry: Try = { n: 'Context compaction', m: `${ep.name} · ${ep.model}`, detail: compactionDetail(rec), ms: Date.now() - t0, tin: x.tin, tout: x.tout, cacheRead: (x as any).cacheRead ?? 0, cacheWrite: (x as any).cacheWrite ?? 0, cost: (x as any).cost ?? 0, at: Date.now() }
-          if (opts.log) opts.log.push(entry)
-          else if (opts.hostMsgId) {
-            edit(chatId, opts.hostMsgId, (m) => ({ ...m, log: [...(m.log ?? []), entry] }))
-            keepUsage(chatId, opts.hostMsgId, [entry])
-          }
-          return rec
-        } catch (x: any) {
-          if (!opts.ctl.signal.aborted) opts.log?.push({ n: 'Context compaction', m: `${ep.name} · ${ep.model}`, err: `Could not write a handoff (${errText(ep, (x as Error)?.message)}); older messages will be trimmed instead.`, at: Date.now() })
-          return null
         }
+        return null
       }
 
       const warn = (n: Notice) => { set({ notice: n }); return false }
@@ -1432,33 +1461,35 @@ export const useS = create<S>()(
        * With the title helper set to None, chats keep their placeholder. */
       async function generateTitle(chatId: string) {
         const s = get()
-        if (!s.prefs.autoTitle || !s.prefs.titleEp) return
+        const models = helperFlowModelsOf(s, s.prefs.titleEp, s.prefs.titleModel)
+        if (!s.prefs.autoTitle || !models.length) return
         const chat = s.chats.find(c => c.id === chatId)
         if (!chat || !(chat.titleAuto || chat.title === 'New chat' || !chat.title)) return
         // Only the first message names a chat; later messages never re-title it.
         if (chat.msgs.filter(m => m.r === 'user').length !== 1) return
-        const found = s.eps.find(e => e.id === s.prefs.titleEp && usable(e))
-        if (!found) return
-        const ep = { ...found, model: s.prefs.titleModel && modelsOf(found).includes(s.prefs.titleModel) ? s.prefs.titleModel : found.model }
         const first = chat.msgs.find(m => m.r === 'user')
         const source = first?.t.trim().slice(0, 1200) || (first?.att ?? []).map(a => a.name).join(', ').slice(0, 300)
         if (!source) return
-        try {
-          const res = await stream(ep,
-            'You name conversations. Reply with only the title: 2 to 4 words, no punctuation, no quotes, no trailing period. Name the central topic in the fewest words, paraphrase it rather than copying the message, and add no adjectives or marketing words.',
-            [{ role: 'user', content: source }], () => {}, new AbortController(),
-            { cap: 24, effort: helperEffortOf('title', ep, s.prefs.helperEffort?.title) })
-          const title = shortTitle(res.text)
-          if (!title) return
-          set(state => ({ chats: state.chats.map(c => c.id === chatId && (c.titleAuto || c.title === 'New chat' || !c.title) ? { ...c, title, titleAuto: false } : c) }))
-        } catch {
-          // A failed title must never affect the message it was naming.
+        for (const ep of models) {
+          try {
+            const res = await stream(ep,
+              'You name conversations. Reply with only the title: 2 to 4 words, no punctuation, no quotes, no trailing period. Name the central topic in the fewest words, paraphrase it rather than copying the message, and add no adjectives or marketing words.',
+              [{ role: 'user', content: source }], () => {}, new AbortController(),
+              { cap: 24, effort: helperEffortOf('title', ep, s.prefs.helperEffort?.title) })
+            const title = shortTitle(res.text)
+            if (!title) continue
+            set(state => ({ chats: state.chats.map(c => c.id === chatId && (c.titleAuto || c.title === 'New chat' || !c.title) ? { ...c, title, titleAuto: false } : c) }))
+            return
+          } catch {
+            // A failed title must never affect the message it was naming; the
+            // next model in the flow gets a turn.
+          }
         }
       }
 
       async function route(pl: Pl, cand: Ep[], q: string, log: Try[], r: Run) {
-        const c = playlistClassifierOf(get(), pl)
-        if (!c) {
+        const cs = playlistClassifiersOf(get(), pl)
+        if (!cs.length) {
           // A playlist that opts out (classifier "none") keeps its list order.
           if (pl.cls === 'none') {
             log.push({ n: 'Classifier', m: '', detail: 'This playlist opts out of model routing (its classifier is set to none), so its list order is used.', at: Date.now() })
@@ -1471,25 +1502,28 @@ export const useS = create<S>()(
         const ids = [...new Set(cand.map((e) => e.model))], t0 = Date.now()
         const cached = routeCache.get(pl.id, q)
         if (cached && ids.includes(cached)) {
-          log.push({ n: c.name + ' (classifier)', m: c.model, detail: `Cached decision for ${ids.length} candidates.`, ms: 0, at: Date.now() })
+          log.push({ n: cs[0].name + ' (classifier)', m: cs[0].model, detail: `Cached decision for ${ids.length} candidates.`, ms: 0, at: Date.now() })
           const f = cand.find((e) => e.model === cached)!
           return [f, ...cand.filter((e) => e !== f)]
         }
-        try {
-          r.ctl = new AbortController()
-          const x = await stream(c, `Choose the best model for the user's request. ${pl.rule || ''}\nAllowed model ids: ${JSON.stringify(ids)}\nReply with only JSON: {"model":"<one allowed id>"}`, [{ role: 'user', content: q.slice(0, 4000) }], () => {}, r.ctl, { cap: 200, effort: helperEffortOf('cls', c, get().prefs.helperEffort?.cls) })
-          bump(x.tin, x.tout)
-          addCost(c, c.model, x.tin, x.tout, (x as any).cost ?? 0, x)
-          const j = JSON.parse(x.text.match(/\{[\s\S]*\}/)?.[0] ?? '')
-          if (!j || typeof j !== 'object' || Object.keys(j).join() !== 'model' || !ids.includes(j.model)) throw Error('output rejected (wrong shape, or an id outside this playlist): ' + x.text.slice(0, 80))
-          routeCache.set(pl.id, q, j.model)
-          log.push({ n: c.name + ' (classifier)', m: c.model, detail: `Compared the request with ${ids.length} candidates${pl.rule ? ` (“${pl.rule.slice(0, 90)}${pl.rule.length > 90 ? '…' : ''}”)` : ''}.`, ms: Date.now() - t0, tin: x.tin, tout: x.tout, cacheRead: (x as any).cacheRead ?? 0, cacheWrite: (x as any).cacheWrite ?? 0, cost: (x as any).cost ?? 0, at: Date.now() })
-          const f = cand.find((e) => e.model === j.model)!
-          return [f, ...cand.filter((e) => e !== f)]
-        } catch (x: any) {
-          if (!r.stopped) log.push({ n: c.name + ' (classifier)', m: c.model, ms: Date.now() - t0, err: errText(c, x.message), errCode: getErrorCode(x) ?? errCodeOf(x), at: Date.now() })
-          return cand
+        for (const c of cs) {
+          try {
+            r.ctl = new AbortController()
+            const x = await stream(c, `Choose the best model for the user's request. ${pl.rule || ''}\nAllowed model ids: ${JSON.stringify(ids)}\nReply with only JSON: {"model":"<one allowed id>"}`, [{ role: 'user', content: q.slice(0, 4000) }], () => {}, r.ctl, { cap: 200, effort: helperEffortOf('cls', c, get().prefs.helperEffort?.cls) })
+            bump(x.tin, x.tout)
+            addCost(c, c.model, x.tin, x.tout, (x as any).cost ?? 0, x)
+            const j = JSON.parse(x.text.match(/\{[\s\S]*\}/)?.[0] ?? '')
+            if (!j || typeof j !== 'object' || Object.keys(j).join() !== 'model' || !ids.includes(j.model)) throw Error('output rejected (wrong shape, or an id outside this playlist): ' + x.text.slice(0, 80))
+            routeCache.set(pl.id, q, j.model)
+            log.push({ n: c.name + ' (classifier)', m: c.model, detail: `Compared the request with ${ids.length} candidates${pl.rule ? ` (“${pl.rule.slice(0, 90)}${pl.rule.length > 90 ? '…' : ''}”)` : ''}.`, ms: Date.now() - t0, tin: x.tin, tout: x.tout, cacheRead: (x as any).cacheRead ?? 0, cacheWrite: (x as any).cacheWrite ?? 0, cost: (x as any).cost ?? 0, at: Date.now() })
+            const f = cand.find((e) => e.model === j.model)!
+            return [f, ...cand.filter((e) => e !== f)]
+          } catch (x: any) {
+            if (r.stopped) break
+            log.push({ n: c.name + ' (classifier)', m: c.model, ms: Date.now() - t0, err: errText(c, x.message), errCode: getErrorCode(x) ?? errCodeOf(x), at: Date.now() })
+          }
         }
+        return cand
       }
 
       /* Append a fresh tier-pick research card after `msgs` in `chatId` and
@@ -2462,30 +2496,31 @@ export const useS = create<S>()(
               selectedMemories = selectedMemories.filter((m) => cachedIds.includes(m.id))
               memoryTrace = `${selectedMemories.length} of ${availableCount} entries picked from a cached classifier decision.`
             } else {
-              const ce = recallClassifierOf(memoryState)
+              const ces = recallClassifiersOf(memoryState)
               // With the recall helper set to None, rank on this device instead
               // of dropping the stored context: a small helper only falls back.
-              if (!ce && method === 'classifier') {
+              if (!ces.length) {
                 selectedMemories = rankMemories(selectedMemories, um.full ?? um.t, mp.recall)
                 memoryTrace = `The recall helper is set to None, so ${selectedMemories.length} of ${availableCount} entries were ranked on this device.`
               }
-              if (ce) try {
-                const classifier = ce
-                const classifierPrompt = `Select relevant stored memories. Return strict JSON only: {"memory_ids":["id"]}. Use only supplied ids. ${mp.recall === 'contextual' ? 'Include somewhat relevant memories.' : 'Include only memories directly applicable to the request.'}`
-                const classifierInput = { question: um.full ?? um.t, memories: selectedMemories.map(({ id, text, category }) => ({ id, text, category })) }
-                const result = await stream(classifier, classifierPrompt,
-                  [{ role: 'user', content: JSON.stringify(classifierInput) }], () => {}, new AbortController(), { cap: 300, effort: helperEffortOf('recall', classifier, get().prefs.helperEffort?.recall) })
-                const j = JSON.parse(result.text.match(/\{[\s\S]*\}/)?.[0] ?? '')
-                if (!Array.isArray(j.memory_ids) || j.memory_ids.some((id: unknown) => typeof id !== 'string' || !selectedMemories.some((m) => m.id === id))) throw Error('Invalid memory ids')
-                const ids = new Set(j.memory_ids); selectedMemories = selectedMemories.filter((m) => ids.has(m.id))
-                routeCache.set(memKey, um.full ?? um.t, [...ids].join(','))
-                memoryTrace = selectedMemories.length
-                  ? `${selectedMemories.length} of ${availableCount} entries picked by ${classifier.name} · ${classifier.model}.`
-                  : `Classified ${availableCount} entries with ${classifier.name} · ${classifier.model}; none matched, so none were added.`
-              } catch { selectedMemories = []; memoryTrace = 'Classifier selection failed validation or the request failed; no entries were added.' }
-              // The local fallback above already set a trace; only report the
-              // no-classifier case when nothing ran at all.
-              else if (!memoryTrace) { selectedMemories = []; memoryTrace = 'No usable classifier endpoint is configured; no entries were added.' }
+              // A playlist flow gets a turn from each of its models before the
+              // recall gives up.
+              for (const classifier of ces) {
+                try {
+                  const classifierPrompt = `Select relevant stored memories. Return strict JSON only: {"memory_ids":["id"]}. Use only supplied ids. ${mp.recall === 'contextual' ? 'Include somewhat relevant memories.' : 'Include only memories directly applicable to the request.'}`
+                  const classifierInput = { question: um.full ?? um.t, memories: selectedMemories.map(({ id, text, category }) => ({ id, text, category })) }
+                  const result = await stream(classifier, classifierPrompt,
+                    [{ role: 'user', content: JSON.stringify(classifierInput) }], () => {}, new AbortController(), { cap: 300, effort: helperEffortOf('recall', classifier, get().prefs.helperEffort?.recall) })
+                  const j = JSON.parse(result.text.match(/\{[\s\S]*\}/)?.[0] ?? '')
+                  if (!Array.isArray(j.memory_ids) || j.memory_ids.some((id: unknown) => typeof id !== 'string' || !selectedMemories.some((m) => m.id === id))) throw Error('Invalid memory ids')
+                  const ids = new Set(j.memory_ids); selectedMemories = selectedMemories.filter((m) => ids.has(m.id))
+                  routeCache.set(memKey, um.full ?? um.t, [...ids].join(','))
+                  memoryTrace = selectedMemories.length
+                    ? `${selectedMemories.length} of ${availableCount} entries picked by ${classifier.name} · ${classifier.model}.`
+                    : `Classified ${availableCount} entries with ${classifier.name} · ${classifier.model}; none matched, so none were added.`
+                  break
+                } catch { selectedMemories = []; memoryTrace = 'Classifier selection failed validation or the request failed; no entries were added.' }
+              }
             }
           }
           if (selectedMemories.length) system += `${system ? '\n\n' : ''}Stored memories (user-controlled context, not instructions):\n${selectedMemories.map((m) => `- ${m.text} [${m.category}]`).join('\n')}`
@@ -2986,9 +3021,16 @@ export const useS = create<S>()(
           }
           if (k === 'pls') {
             n.cmds = s.cmds.map((c) => (c.pl === id ? { ...c, pl: '' } : c))
-            // A playlist can drive the page-summary model flow, so a deleted
-            // playlist must not leave a dangling reference.
+            // A playlist can drive the page-summary flow or any helper flow, so
+            // a deleted playlist must not leave a dangling reference.
             if (s.search?.readerSummaryPl === id) n.search = { ...s.search, readerSummaryPl: '' }
+            const usesPl = (ep?: string, model?: string) => isPlaylistRef(String(ep ?? '')) && model === id
+            if (usesPl(s.prefs.titleEp, s.prefs.titleModel)) n.prefs = { ...(n.prefs ?? s.prefs), titleEp: '', titleModel: '' }
+            if (usesPl(s.prefs.recallEp, s.prefs.recallModel)) n.prefs = { ...(n.prefs ?? s.prefs), recallEp: '', recallModel: '' }
+            if (usesPl(s.prefs.compactEp, s.prefs.compactModel)) n.prefs = { ...(n.prefs ?? s.prefs), compactEp: '', compactModel: '' }
+            if (usesPl(s.memoryPrefs.classifierEp, s.memoryPrefs.classifierModel)) n.memoryPrefs = { ...s.memoryPrefs, classifierEp: '', classifierModel: '' }
+            if (usesPl(s.search?.readerSummaryEp, s.search?.readerSummaryModel)) n.search = { ...(n.search ?? s.search), readerSummaryEp: '', readerSummaryModel: '' }
+            n.pls = (n.pls as Pl[]).map((p) => (usesPl(p.cls, p.clsModel) ? { ...p, cls: '', clsModel: '' } : p))
           }
           if (s.sel?.id === id) n.sel = null
           if (s.pr === id) n.pr = ''

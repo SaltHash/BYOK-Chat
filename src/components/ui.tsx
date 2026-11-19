@@ -255,9 +255,13 @@ export const Sel = ({ value, set, opts, placeholder, inline, ariaLabel, classNam
   <SearchSelect value={value} set={set} opts={opts} {...(placeholder ? { placeholder } : {})} {...(inline ? { inline } : {})} {...(ariaLabel ? { ariaLabel } : {})} {...(className ? { className } : {})} />
 )
 
+/* The option list caps its own height; while a menu is open it holds that
+ * height so typing a search cannot shrink the panel under the pointer. */
+const OPTION_LIST_MAX = 224
+
 export function SearchSelect({ value, set, opts, ariaLabel = 'Choose an option', placeholder = 'Type to search', inline = false, allowCustom = false, className }: { value: string; set: (v: string) => void; opts: [string, string][]; ariaLabel?: string; placeholder?: string; inline?: boolean; /** Accept whatever was typed when nothing matches (font names). */ allowCustom?: boolean; className?: string }) {
-  const [open, setOpen] = useState(false), [query, setQuery] = useState(''), [active, setActive] = useState(0)
-  const root = useRef<HTMLDivElement>(null), search = useRef<HTMLInputElement>(null), trigger = useRef<HTMLButtonElement>(null)
+  const [open, setOpen] = useState(false), [query, setQuery] = useState(''), [active, setActive] = useState(0), [listH, setListH] = useState(0)
+  const root = useRef<HTMLDivElement>(null), search = useRef<HTMLInputElement>(null), trigger = useRef<HTMLButtonElement>(null), list = useRef<HTMLDivElement>(null)
   const dismiss = () => { setOpen(false); setQuery('') }
   useEscapeClose(() => { dismiss(); trigger.current?.focus() }, open)
   const filtered = opts.filter(([, label]) => label.toLowerCase().includes(query.toLowerCase()))
@@ -265,12 +269,19 @@ export function SearchSelect({ value, set, opts, ariaLabel = 'Choose an option',
   const pickCustom = () => { const v = query.trim(); if (!v) return; set(v); setOpen(false); setQuery(''); trigger.current?.focus() }
   useEffect(() => { if (!open) return; const close = (e: PointerEvent) => { if (!root.current?.contains(e.target as Node)) { setOpen(false); setQuery('') } }; addEventListener('pointerdown', close); return () => removeEventListener('pointerdown', close) }, [open])
   useEffect(() => { if (open) search.current?.focus() }, [open])
+  /* Measured once per open, from the unfiltered list: the panel keeps that
+   * height until it closes, so neither a query nor a hover resizes it. */
+  useLayoutEffect(() => {
+    if (!open) { setListH(0); return }
+    const el = list.current
+    if (el) setListH(Math.min(el.scrollHeight, OPTION_LIST_MAX))
+  }, [open])
   const choose = (item: [string, string]) => { set(item[0]); setOpen(false); setQuery(''); trigger.current?.focus() }
   return <div ref={root} className={cx('relative', inline && 'min-w-0 max-w-full', className)}>
     <button ref={trigger} type="button" aria-label={ariaLabel} aria-haspopup="listbox" aria-expanded={open} onClick={() => setOpen(!open)} onKeyDown={(e) => { if (e.key === 'ArrowDown' || e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setOpen(true) } }} className={inline ? 'ml-auto flex max-w-full items-center justify-end gap-1.5 rounded-md px-1.5 py-1 text-sm text-mu transition-colors hover:text-tx focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ac/40' : cx(FIELD, FIELD_SIZE.md, FIELD_TONE.surf, 'flex items-center justify-between text-left')}><span className="truncate">{opts.find(([k]) => k === value)?.[1] ?? value}</span>{inline ? <ChevronDown size={14} aria-hidden="true" className={cx('shrink-0 transition-transform', open && 'rotate-180')} /> : <ChevronRight size={14} aria-hidden="true" className={cx('ml-2 shrink-0 text-mu transition-transform', open && 'rotate-90')} />}</button>
     {open && <div className={cx('absolute z-40 mt-1', inline ? 'right-0 w-64 max-w-[min(16rem,80vw)]' : 'w-full')}><Menu>
       <Input ref={search} autoFocus value={query} set={(v) => { setQuery(v); setActive(0) }} onKeyDown={(e) => { if (e.key === 'ArrowDown') { e.preventDefault(); setActive((n) => Math.min(n + 1, filtered.length - 1)) } else if (e.key === 'ArrowUp') { e.preventDefault(); setActive((n) => Math.max(n - 1, 0)) } else if (e.key === 'Enter') { e.preventDefault(); if (filtered[active]) choose(filtered[active]); else if (canCreate) pickCustom() } else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); dismiss(); trigger.current?.focus() } }} placeholder={placeholder} aria-label="Search options" className="mb-1" />
-      <div role="listbox" aria-label={ariaLabel} className="dd-list max-h-56 overflow-y-auto overscroll-contain">{filtered.map((item, i) => <button type="button" role="option" aria-selected={item[0] === value} key={item[0]} onMouseEnter={() => setActive(i)} onClick={() => choose(item)} className={cx('block w-full rounded-lg px-2.5 py-2 text-left text-sm', active === i ? 'bg-hov text-tx' : 'text-mu')}>{item[1]}</button>)}{!filtered.length && !canCreate && <div className="px-2.5 py-2 text-sm text-mu">No matches</div>}{canCreate && <button type="button" role="option" aria-selected={false} onClick={pickCustom} className="block w-full rounded-lg px-2.5 py-2 text-left text-sm text-mu hover:bg-hov hover:text-tx">Use “{query.trim()}”</button>}</div>
+      <div ref={list} role="listbox" aria-label={ariaLabel} className="dd-list max-h-56 overflow-y-auto overscroll-contain" style={listH > 0 && filtered.length ? { height: listH } : undefined}>{filtered.map((item, i) => <button type="button" role="option" aria-selected={item[0] === value} key={item[0]} onMouseEnter={() => setActive(i)} onClick={() => choose(item)} className={cx('block w-full rounded-lg px-2.5 py-2 text-left text-sm', active === i ? 'bg-hov text-tx' : 'text-mu')}>{item[1]}</button>)}{!filtered.length && !canCreate && <div className="px-2.5 py-2 text-sm text-mu">No matches</div>}{canCreate && <button type="button" role="option" aria-selected={false} onClick={pickCustom} className="block w-full rounded-lg px-2.5 py-2 text-left text-sm text-mu hover:bg-hov hover:text-tx">Use “{query.trim()}”</button>}</div>
     </Menu></div>}
   </div>
 }

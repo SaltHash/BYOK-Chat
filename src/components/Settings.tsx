@@ -1,7 +1,7 @@
 import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { X, Plus, Trash2, ArrowUp, ArrowDown, CornerDownRight, ChevronDown, ChevronLeft, ChevronRight, Eye, EyeOff, Play, ShieldCheck, Shield, Download, Upload, Check, CircleCheck, CircleX, Cpu, Route, GripVertical, Server, ListMusic, ScrollText, Terminal, Wrench, Palette, FolderOpen, PanelRight, TrendingUp, Keyboard, Search, Brain, Pencil, Sparkles, RotateCcw, SlidersHorizontal, FlaskConical, Library, Database, Lock, LockOpen, LayoutTemplate, Share2, Plug, Image as ImageIcon, Volume2, AudioLines, Code2, Star, TriangleAlert } from 'lucide-react'
 import { discoveredModelPatch, modelListEdit, priceText, tierAllowed } from '../models'
-import { useS, useSConfig, PRE, BLANK, THEMES, DARK_THEMES, LIGHT_THEMES, THEME_COLOR_KEYS, THEME_COLOR_LABELS, THEME_COLORS, defaultCustomTheme, customThemeColors, normCustomTheme, SEARCH_PROVIDERS, READER_PROVIDERS, FEATURES, LIBRARY_ITEMS, FEATURE_TABS, FEATURE_WIDGETS, DEFAULT_LIBRARY_SHOW, DEFAULT_ADVANCED, featOn, normSearch, normAdvanced, normLogDetail, normDocs, usable, modelsOf, modelNameOf, helperRef, splitHelperRef, favRef, toggleFavRef, pageSummaryEffortOf, readerSummaryModelsOf, MODEL_TIERS, TOOL_ROUNDS_DEFAULT, TOOL_ROUNDS_MIN, TOOL_ROUNDS_BASE_MAX, TOOL_ROUNDS_MAX, toolRoundLimitOf, isToolRoundsUnlimited, GENERAL_PROMPT_TEXT, STARTUP_MODES, normStartup, PROMPT_RECALL_MODES, normPromptRecall, uid, REPLY_METRICS, DEFAULT_REPLY_STATS, HELPER_TASKS, HELPER_REQUIRED, helperAutoEffort, type HelperTask, type PromptRecallMode, type ReplyMetric, type ReplyModelLabel, type Kind, type FeatureId, type DocPrefs, type ModelPrice } from '../store'
+import { useS, useSConfig, PRE, BLANK, THEMES, DARK_THEMES, LIGHT_THEMES, THEME_COLOR_KEYS, THEME_COLOR_LABELS, THEME_COLORS, defaultCustomTheme, customThemeColors, normCustomTheme, SEARCH_PROVIDERS, READER_PROVIDERS, FEATURES, LIBRARY_ITEMS, FEATURE_TABS, FEATURE_WIDGETS, DEFAULT_LIBRARY_SHOW, DEFAULT_ADVANCED, featOn, normSearch, normAdvanced, normLogDetail, normDocs, usable, modelsOf, modelNameOf, helperRef, helperPlRef, helperFlowModelsOf, isPlaylistRef, splitHelperRef, favRef, toggleFavRef, pageSummaryEffortOf, readerSummaryModelsOf, MODEL_TIERS, TOOL_ROUNDS_DEFAULT, TOOL_ROUNDS_MIN, TOOL_ROUNDS_BASE_MAX, TOOL_ROUNDS_MAX, toolRoundLimitOf, isToolRoundsUnlimited, GENERAL_PROMPT_TEXT, STARTUP_MODES, normStartup, PROMPT_RECALL_MODES, normPromptRecall, uid, REPLY_METRICS, DEFAULT_REPLY_STATS, HELPER_TASKS, HELPER_REQUIRED, helperAutoEffort, type HelperTask, type PromptRecallMode, type ReplyMetric, type ReplyModelLabel, type Kind, type FeatureId, type DocPrefs, type ModelPrice } from '../store'
 import { normSkills, resolveSkill, validateCustomSkill, enabledSkills, BUILTIN_SKILLS, SKILL_TOOL_NAME, type SkillState } from '../skills'
 import { findDuplicatePairs, mergeMemory } from '../recall'
 import { TOOL_REGISTRY, can, stream } from '../engine'
@@ -52,9 +52,13 @@ export const goSetting = (t: string) => {
   try { window.dispatchEvent(new CustomEvent('byok:setting', { detail: t })) } catch { /* ignore */ }
 }
 /** Readable label for a helper-model ref (`<epId>::<model>` or ''). */
-export const helperLabel = (s: { eps: any[] }, ref: string, emptyLabel: string) => {
+export const helperLabel = (s: { eps: any[]; pls?: any[] }, ref: string, emptyLabel: string) => {
   if (!ref) return emptyLabel
   const [id, model] = splitHelperRef(ref)
+  if (isPlaylistRef(id)) {
+    const pl = (s.pls ?? []).find((p) => p.id === model)
+    return pl ? `Playlist: ${pl.name}` : 'Removed playlist'
+  }
   const e = s.eps.find((x) => x.id === id)
   if (!e) return 'Removed endpoint'
   const m = model && modelsOf(e).includes(model) ? model : e.model
@@ -660,26 +664,37 @@ function HelperModels() {
     recall: helperRef(s.prefs.recallEp, s.prefs.recallModel),
     title: helperRef(s.prefs.titleEp, s.prefs.titleModel),
     // 'main' writes the handoff with the replying model; 'none' turns it off.
-    compact: !s.prefs.compactEp || s.prefs.compactEp === 'main' ? 'main' : s.prefs.compactEp,
-    page: helperRef(search.readerSummaryEp, search.readerSummaryModel),
+    compact: !s.prefs.compactEp || s.prefs.compactEp === 'main'
+      ? 'main'
+      : s.prefs.compactEp === 'none'
+        ? 'none'
+        // Saves from before per-task picks split the pair hold `ep::model` here.
+        : String(s.prefs.compactEp).includes('::') ? String(s.prefs.compactEp) : helperRef(s.prefs.compactEp, s.prefs.compactModel),
+    page: search.readerSummaryFlow && search.readerSummaryPl
+      ? helperPlRef(search.readerSummaryPl)
+      : helperRef(search.readerSummaryEp, search.readerSummaryModel),
   }
+  /* A helper flow is one model or a whole playlist, so this switcher decides
+   * which list the pickers below offer — the same Models/Playlists switch the
+   * composer's model picker uses. It starts on whatever is in use today. */
+  const [source, setSource] = useState<'ep' | 'pl'>(() =>
+    HELPER_TASKS.some((t) => isPlaylistRef(splitHelperRef(refs[t])[0])) ? 'pl' : 'ep')
   const efforts = s.prefs.helperEffort ?? {}
-  /* The endpoint a helper ref points at, with its model resolved the same way
-   * the helper call resolves it. */
-  const helperEp = (ref: string) => {
+  /* The models a helper ref resolves to, with each model resolved the same way
+   * the helper call resolves it. A playlist ref yields all of its entries. */
+  const helperModels = (ref: string) => {
     const [id, model] = splitHelperRef(ref)
-    const e = s.eps.find((x) => x.id === id)
-    return e ? { ...e, model: model && modelsOf(e).includes(model) ? model : e.model } : undefined
+    return helperFlowModelsOf(s, id, model)
   }
-  /* The reasoning levels each helper's own model reports. A model that reports
-   * none can only run at whatever its provider defaults to. */
+  /* The reasoning levels a helper's models report, merged for a playlist flow.
+   * A model that reports none can only run at whatever its provider defaults
+   * to, and one that lacks the chosen level runs at its own automatic level. */
   const levelsOf = (ref: string): string[] => {
-    const e = helperEp(ref)
-    if (!e) return []
-    return [...new Set((e.modelEfforts?.[e.model] ?? []).filter((l): l is string => typeof l === 'string' && !!l))].sort((a, b) => helperEffortRank(a) - helperEffortRank(b))
+    const levels = helperModels(ref).flatMap((e) => e.modelEfforts?.[e.model] ?? [])
+    return [...new Set(levels.filter((l): l is string => typeof l === 'string' && !!l))].sort((a, b) => helperEffortRank(a) - helperEffortRank(b))
   }
   const autoLabel = (task: HelperTask, ref: string): string => {
-    const e = helperEp(ref)
+    const e = helperModels(ref)[0]
     const auto = e ? helperAutoEffort(task, e) : ''
     return auto ? `Automatic · ${helperEffortLabel(auto)}` : 'Automatic'
   }
@@ -715,41 +730,57 @@ function HelperModels() {
   const refLabel = (ref: string) => {
     if (!ref) return 'None'
     const [id, model] = splitHelperRef(ref)
+    if (isPlaylistRef(id)) {
+      const pl = s.pls.find((p) => p.id === model)
+      return pl ? `Playlist: ${pl.name}` : 'Removed playlist'
+    }
     const e = s.eps.find((x) => x.id === id)
     if (!e) return 'Removed endpoint'
     const m = model && modelsOf(e).includes(model) ? model : e.model
     return `${e.name} · ${modelNameOf(e, m || model)}`
   }
+  /* The switcher picks the list every row offers; a row whose flow is the
+   * other kind keeps its own label instead of showing a raw ref. */
+  const pickOpts: [string, string][] = source === 'pl'
+    ? s.pls.map((p) => [helperPlRef(p.id), `Playlist: ${p.name}`] as [string, string])
+    : s.eps.flatMap((e) => modelsOf(e).map((m) => [`${e.id}::${m}`, `${e.name} · ${modelNameOf(e, m)}`] as [string, string]))
+  const withCurrent = (list: [string, string][], ref: string): [string, string][] =>
+    !ref || ref === '__mixed__' || list.some(([k]) => k === ref) ? list : [...list, [ref, refLabel(ref)]]
   const opts: [string, string][] = [
     ['', 'None'],
     ...(mixed ? [['__mixed__', 'Mixed'] as [string, string]] : []),
-    ...s.eps.flatMap((e) => modelsOf(e).map((m) => [`${e.id}::${m}`, `${e.name} · ${modelNameOf(e, m)}`] as [string, string])),
+    ...pickOpts,
   ]
-  const singleOpts: [string, string][] = [
-    ['', 'None'],
-    ...s.eps.flatMap((e) => modelsOf(e).map((m) => [`${e.id}::${m}`, `${e.name} · ${modelNameOf(e, m)}`] as [string, string])),
-  ]
+  const singleOpts: [string, string][] = [['', 'None'], ...pickOpts]
   const setAll = (ref: string) => {
     if (ref === '__mixed__') return
     const [ep, model] = splitHelperRef(ref)
-    s.patch({ prefs: { ...s.prefs, titleEp: ep, titleModel: model, recallEp: ep, recallModel: model, compactEp: ep, compactModel: model }, memoryPrefs: { ...s.memoryPrefs, classifierEp: ep, classifierModel: model }, search: { ...search, readerSummaryEp: ep, readerSummaryModel: model, readerSummary: !!ep } })
+    const pl = isPlaylistRef(ep)
+    s.patch({
+      prefs: { ...s.prefs, titleEp: ep, titleModel: model, recallEp: ep, recallModel: model, compactEp: ep, compactModel: model },
+      memoryPrefs: { ...s.memoryPrefs, classifierEp: ep, classifierModel: model },
+      search: { ...search, readerSummaryEp: pl ? '' : ep, readerSummaryModel: pl ? '' : model, readerSummaryFlow: pl, readerSummaryPl: pl ? model : '', readerSummary: !!ep },
+    })
   }
+  /* A playlist ref rides in the endpoint slot as `pl`, with the playlist id in
+   * the model slot, so every helper setting keeps its two-field shape. */
   const setOne = (which: HelperTask, ref: string) => {
     const [ep, model] = splitHelperRef(ref)
     if (which === 'cls') s.patch({ memoryPrefs: { ...s.memoryPrefs, classifierEp: ep, classifierModel: model } })
     else if (which === 'title') s.patch({ prefs: { ...s.prefs, titleEp: ep, titleModel: model } })
     else if (which === 'recall') s.patch({ prefs: { ...s.prefs, recallEp: ep, recallModel: model } })
-    else if (which === 'page') s.patch({ search: { ...search, readerSummaryEp: ep, readerSummaryModel: model, readerSummary: !!ep } })
-    else s.patch({ prefs: { ...s.prefs, compactEp: ref || 'main', compactModel: model } })
+    else if (which === 'page') s.patch({ search: { ...search, readerSummaryEp: isPlaylistRef(ep) ? '' : ep, readerSummaryModel: isPlaylistRef(ep) ? '' : model, readerSummaryFlow: isPlaylistRef(ep), readerSummaryPl: isPlaylistRef(ep) ? model : '', readerSummary: !!ep } })
+    else if (ref === 'main' || ref === 'none' || !ref) s.patch({ prefs: { ...s.prefs, compactEp: ref || 'main', compactModel: '' } })
+    else s.patch({ prefs: { ...s.prefs, compactEp: ep, compactModel: model } })
   }
-  const handleOpts: [string, string][] = [['main', 'The replying model'], ['none', 'Off (trim instead)'], ...singleOpts.slice(1)]
-  const row = (label: string, task: HelperTask, ref: string, set: (v: string) => void, opts: [string, string][] = singleOpts) => {
+  const handleOpts = (ref: string): [string, string][] => [['main', 'The replying model'], ['none', 'Off (trim instead)'], ...withCurrent(singleOpts.slice(1), ref)]
+  const row = (label: string, task: HelperTask, ref: string, set: (v: string) => void, list: [string, string][] = singleOpts) => {
     const error = HELPER_REQUIRED.includes(task) && !ref ? REQUIRED_HELPER_ERROR : undefined
     return (
     <div>
       <SettingRow label={label}>
         <div className="flex w-60 max-w-full flex-col items-end gap-1">
-          <Sel value={ref} set={set} opts={opts} inline />
+          <Sel value={ref} set={set} opts={withCurrent(list, ref)} inline />
           <div className="flex items-center gap-1.5">
             <span className="text-xs text-mu">Reasoning</span>
             <Sel value={storedEffort(task)} set={(v) => setEffort(task, v)} opts={effortOpts(task, ref)} inline />
@@ -766,7 +797,14 @@ function HelperModels() {
   return (
     <Anchor id="helper-models">
       <div className="py-1">
-        <SettingRow label="Model for all helpers"><div className="w-60 max-w-full"><Sel value={main} set={setAll} opts={opts} inline /></div></SettingRow>
+        <div className="flex flex-wrap items-center justify-between gap-3 py-2">
+          <div className="min-w-0">
+            <div className="text-sm font-medium">Helper flows</div>
+            <p className="text-xs text-mu">Each helper runs on one model, or on a whole playlist in its list order.</p>
+          </div>
+          <Seg label="Helper flow source" v={source} set={setSource} opts={[['ep', 'Models', Cpu], ['pl', 'Playlists', ListMusic]]} />
+        </div>
+        <SettingRow label="Model for all helpers"><div className="w-60 max-w-full"><Sel value={main} set={setAll} opts={withCurrent(opts, main)} inline /></div></SettingRow>
         <SettingRow label="Reasoning level for all helpers"><div className="w-60 max-w-full"><Sel value={bulkEffort} set={setAllEfforts} opts={bulkOpts} inline /></div></SettingRow>
         <p className="pb-2 text-xs text-mu">A helper whose model does not offer the level runs at its automatic level.</p>
         <details className="group" open>
@@ -783,9 +821,9 @@ function HelperModels() {
             <div className="space-y-1">
               <p className="px-0 text-xs font-medium text-mu">Writing helpers</p>
               {row('Chat titles', 'title', refs.title, (v) => setOne('title', v))}
-              {row('Context handoff', 'compact', refs.compact, (v) => setOne('compact', v), handleOpts)}
+              {row('Context handoff', 'compact', refs.compact, (v) => setOne('compact', v), handleOpts(refs.compact))}
               {row('Page summaries', 'page', refs.page, (v) => setOne('page', v))}
-              <p className="px-0 pb-1 text-xs text-mu">With a helper set to None: model routing stops playlists that need it with an error; memory recall ranks on this device; chat titles are left alone; context handoff trims instead (or uses the replying model); page reads send the raw page.</p>
+              <p className="px-0 pb-1 text-xs text-mu">With a helper set to None: model routing stops playlists that need it with an error; memory recall ranks on this device; chat titles are left alone; context handoff trims instead (or uses the replying model); page reads send the raw page. A playlist flow tries its models in order until one answers.</p>
             </div>
           </div>
         </details>

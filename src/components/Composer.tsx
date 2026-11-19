@@ -229,7 +229,9 @@ function ModelMenu({ close, cfg }: { close: () => void; cfg: (t: string) => void
   const activeEffort = effortChoices[effortIndex] ?? ''
   const toggleProvider = (id: string) => s.patch({ prefs: { ...s.prefs, collapsedProviders: collapsed.includes(id) ? collapsed.filter((x) => x !== id) : [...collapsed, id] } })
   return (
-    <div className="flex flex-col" style={{ maxHeight: `min(${s.prefs.modelPickerHeight ?? 480}px, 85dvh)` }}>
+    /* A fixed height, not a max: switching to Playlists, typing a search or
+     * opening the effort slider must not resize the picker under the pointer. */
+    <div className="flex flex-col" style={{ height: `min(${s.prefs.modelPickerHeight ?? 480}px, 85dvh)` }}>
       {plsOn && <Seg label="Model source" v={t} set={setT} opts={[['ep', 'Models', Cpu], ['pl', 'Playlists', ListMusic]]} />}
       <div className="my-2"><SearchInput value={q} set={setQ} label="Search models and playlists" placeholder="Search" /></div>
       {activeModel && effortChoices.length > 0 && <div className="shrink-0 border-b border-bor px-2.5 py-3" onClick={(e) => e.stopPropagation()}>
