@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 
 const { parseModelProviders, fetchModelProviders } = await import('./catalog.ts')
-const { buildStreamRequest } = await import('./streamRequest.ts')
+const { buildStreamRequest, tieredModelId } = await import('./streamRequest.ts')
 
 const jsonResponse = (value) => new Response(JSON.stringify(value), { headers: { 'content-type': 'application/json' } })
 
@@ -36,8 +36,10 @@ test('fetchModelProviders queries OpenRouter endpoints and forwards the key', as
 test('fetchModelProviders strips OpenRouter routing variants and rejects non-OpenRouter bases', async () => {
   const seen = []
   const fetchFn = async (url) => { seen.push(url); return jsonResponse({ data: { endpoints: [] } }) }
-  await fetchModelProviders('deepseek/deepseek-r1:free', { url: 'https://openrouter.ai/api/v1' }, fetchFn)
-  assert.equal(seen[0], 'https://openrouter.ai/api/v1/models/deepseek/deepseek-r1/endpoints')
+  // A routing variant is dropped; the catalog variant (`:free`) is kept,
+  // because it names a different entry with its own endpoints.
+  await fetchModelProviders('deepseek/deepseek-r1:free:nitro', { url: 'https://openrouter.ai/api/v1' }, fetchFn)
+  assert.equal(seen[0], 'https://openrouter.ai/api/v1/models/deepseek/deepseek-r1:free/endpoints')
 
   const off = await fetchModelProviders('anthropic/claude-sonnet-4.5', { url: 'https://api.openai.com/v1' }, fetchFn)
   assert.equal(off.providers.length, 0)
@@ -56,4 +58,20 @@ test('buildStreamRequest pins an OpenRouter model to its chosen provider', () =>
   // A pin on a non-OpenRouter base must not leak the OpenRouter-only field.
   const other = buildStreamRequest({ ...base, url: 'https://api.openai.com/v1', modelProviders: { 'anthropic/claude-sonnet-4.5': { tag: 'amazon-bedrock', name: 'Amazon Bedrock' } } }, '', [{ role: 'user', content: 'hi' }])
   assert.equal(other.body.provider, undefined)
+})
+
+test('an OpenRouter routing tier rides on the model id as a variant suffix', () => {
+  const base = { id: 'e1', name: 'OR', type: 'openai', url: 'https://openrouter.ai/api/v1', key: 'k', model: 'openai/gpt-5', on: true }
+  const tiered = (tier, e = base) => buildStreamRequest({ ...e, modelTiers: { 'openai/gpt-5': tier } }, '', [{ role: 'user', content: 'hi' }]).body.model
+  assert.equal(tiered('nitro'), 'openai/gpt-5:nitro')
+  assert.equal(tiered('floor'), 'openai/gpt-5:floor')
+  // Standard routing and non-OpenRouter bases send the bare id.
+  assert.equal(tiered(undefined), 'openai/gpt-5')
+  assert.equal(tiered('nitro', { ...base, url: 'https://api.openai.com/v1' }), 'openai/gpt-5')
+  // A variant already on the id is kept rather than doubled, and a tier is
+  // refused when it is not one OpenRouter defines.
+  assert.equal(tieredModelId('openai/gpt-5:floor', 'nitro'), 'openai/gpt-5:floor')
+  // Free endpoints have no priority/flex tier to admit, so no tier is sent.
+  assert.equal(tieredModelId('openai/gpt-5:free', 'floor'), 'openai/gpt-5:free')
+  assert.equal(tieredModelId('openai/gpt-5', undefined), 'openai/gpt-5')
 })

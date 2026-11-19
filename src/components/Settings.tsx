@@ -1,7 +1,7 @@
 import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { X, Plus, Trash2, ArrowUp, ArrowDown, CornerDownRight, ChevronDown, ChevronLeft, ChevronRight, Eye, EyeOff, Play, ShieldCheck, Shield, Download, Upload, Check, CircleCheck, CircleX, Cpu, Route, GripVertical, Server, ListMusic, ScrollText, Terminal, Wrench, Palette, FolderOpen, PanelRight, TrendingUp, Keyboard, Search, Brain, Pencil, Sparkles, RotateCcw, SlidersHorizontal, FlaskConical, Library, Database, Lock, LockOpen, LayoutTemplate, Share2, Plug, Image as ImageIcon, Volume2, AudioLines, Code2, Star, TriangleAlert } from 'lucide-react'
-import { discoveredModelPatch, modelListEdit } from '../models'
-import { useS, useSConfig, PRE, BLANK, THEMES, DARK_THEMES, LIGHT_THEMES, THEME_COLOR_KEYS, THEME_COLOR_LABELS, THEME_COLORS, defaultCustomTheme, customThemeColors, normCustomTheme, SEARCH_PROVIDERS, READER_PROVIDERS, FEATURES, LIBRARY_ITEMS, FEATURE_TABS, FEATURE_WIDGETS, DEFAULT_LIBRARY_SHOW, DEFAULT_ADVANCED, featOn, normSearch, normAdvanced, normLogDetail, normDocs, usable, modelsOf, modelNameOf, helperRef, splitHelperRef, favRef, toggleFavRef, effortClassifierOf, TOOL_ROUNDS_DEFAULT, TOOL_ROUNDS_MIN, TOOL_ROUNDS_BASE_MAX, TOOL_ROUNDS_MAX, toolRoundLimitOf, isToolRoundsUnlimited, GENERAL_PROMPT_TEXT, STARTUP_MODES, normStartup, PROMPT_RECALL_MODES, normPromptRecall, uid, REPLY_METRICS, DEFAULT_REPLY_STATS, HELPER_TASKS, helperAutoEffort, type HelperTask, type PromptRecallMode, type ReplyMetric, type ReplyModelLabel, type Kind, type FeatureId, type DocPrefs, type ModelPrice } from '../store'
+import { discoveredModelPatch, modelListEdit, tierAllowed } from '../models'
+import { useS, useSConfig, PRE, BLANK, THEMES, DARK_THEMES, LIGHT_THEMES, THEME_COLOR_KEYS, THEME_COLOR_LABELS, THEME_COLORS, defaultCustomTheme, customThemeColors, normCustomTheme, SEARCH_PROVIDERS, READER_PROVIDERS, FEATURES, LIBRARY_ITEMS, FEATURE_TABS, FEATURE_WIDGETS, DEFAULT_LIBRARY_SHOW, DEFAULT_ADVANCED, featOn, normSearch, normAdvanced, normLogDetail, normDocs, usable, modelsOf, modelNameOf, helperRef, splitHelperRef, favRef, toggleFavRef, pageSummaryEffortOf, readerSummaryModelsOf, MODEL_TIERS, TOOL_ROUNDS_DEFAULT, TOOL_ROUNDS_MIN, TOOL_ROUNDS_BASE_MAX, TOOL_ROUNDS_MAX, toolRoundLimitOf, isToolRoundsUnlimited, GENERAL_PROMPT_TEXT, STARTUP_MODES, normStartup, PROMPT_RECALL_MODES, normPromptRecall, uid, REPLY_METRICS, DEFAULT_REPLY_STATS, HELPER_TASKS, HELPER_REQUIRED, helperAutoEffort, type HelperTask, type PromptRecallMode, type ReplyMetric, type ReplyModelLabel, type Kind, type FeatureId, type DocPrefs, type ModelPrice } from '../store'
 import { normSkills, resolveSkill, validateCustomSkill, enabledSkills, BUILTIN_SKILLS, SKILL_TOOL_NAME, type SkillState } from '../skills'
 import { findDuplicatePairs, mergeMemory } from '../recall'
 import { TOOL_REGISTRY, can, stream } from '../engine'
@@ -36,6 +36,7 @@ const TABS = SETTINGS_TABS
 // The stats dashboard is a large, self-contained surface. Keep it out of the
 // Settings chunk until its tab is actually opened.
 const UsageStats = lazy(() => import('./UsageStats').then((m) => ({ default: m.UsageStats })))
+const ArenaTab = lazy(() => import('./Arena').then((m) => ({ default: m.ArenaTab })))
 /** Briefly highlight a deep-linked section after scrolling to it. */
 export function flashAnchor(anchor: string) {
   try {
@@ -549,6 +550,7 @@ function ModelsEditor({ e, update }: { e: any; update: (p: object) => void }) {
       </div>
       {!!model && (isOpenRouter || e.modelEffortSource?.[model] !== 'auto') && <div className="ml-8 mt-1 flex flex-wrap items-center gap-3 text-xs text-mu">
         <ProviderPicker e={e} model={model} openRouter={isOpenRouter} update={update} />
+        {isOpenRouter && tierAllowed(model) && <Anchor id="model-routing-tier"><span className="flex items-center gap-1.5" title="How OpenRouter picks the provider for this model">Routing:<Seg v={e.modelTiers?.[model] ?? 'standard'} set={(v) => { const next = { ...(e.modelTiers ?? {}) }; if (v === 'standard') delete next[model]; else next[model] = v as 'nitro' | 'floor'; update({ modelTiers: next }) }} opts={[['standard', 'Standard'], ...MODEL_TIERS]} size="sm" label="Routing tier" /></span></Anchor>}
         {e.modelEffortSource?.[model] !== 'auto' && <span className="flex flex-wrap items-center gap-2"><span>Reasoning effort support:</span>{(['low','medium','high','xhigh','max','minimal','none'] as const).map(level => { const levels: string[] = e.modelEfforts?.[model] ?? []; const checked = levels.includes(level); return <Checkbox key={level} checked={checked} set={() => update({ modelEfforts: { ...e.modelEfforts, [model]: checked ? levels.filter(x => x !== level) : [...new Set([...levels, level])] }, modelEffortSource: { ...e.modelEffortSource, [model]: 'manual' } })} label={<span className="capitalize">{level}</span>} /> })}<span className="opacity-70">(manual)</span></span>}
       </div>}
     </div>
@@ -641,12 +643,14 @@ const helperEffortRank = (level: string): number => {
 
 function HelperModels() {
   const s = useSConfig()
+  const search = normSearch(s.search)
   const refs = {
     cls: helperRef(s.memoryPrefs.classifierEp, s.memoryPrefs.classifierModel),
-    eff: helperRef(s.prefs.effortEp, s.prefs.effortModel),
     recall: helperRef(s.prefs.recallEp, s.prefs.recallModel),
     title: helperRef(s.prefs.titleEp, s.prefs.titleModel),
-    compact: helperRef(s.prefs.compactEp ?? '', s.prefs.compactModel),
+    // 'main' writes the handoff with the replying model; 'none' turns it off.
+    compact: !s.prefs.compactEp || s.prefs.compactEp === 'main' ? 'main' : s.prefs.compactEp,
+    page: helperRef(search.readerSummaryEp, search.readerSummaryModel),
   }
   const efforts = s.prefs.helperEffort ?? {}
   /* The endpoint a helper ref points at, with its model resolved the same way
@@ -692,7 +696,9 @@ function HelperModels() {
     for (const t of HELPER_TASKS) next[t] = level
     s.patch({ prefs: { ...s.prefs, helperEffort: next } })
   }
-  const unique = new Set(Object.values(refs))
+  /* Context handoff's main/none values are not models, so they are left out
+   * of the "one model for all helpers" comparison. */
+  const unique = new Set([refs.cls, refs.recall, refs.title, refs.page])
   const mixed = unique.size > 1
   const main = mixed ? '__mixed__' : refs.cls
   const refLabel = (ref: string) => {
@@ -715,27 +721,37 @@ function HelperModels() {
   const setAll = (ref: string) => {
     if (ref === '__mixed__') return
     const [ep, model] = splitHelperRef(ref)
-    s.patch({ prefs: { ...s.prefs, titleEp: ep, titleModel: model, effortEp: ep, effortModel: model, recallEp: ep, recallModel: model, compactEp: ep, compactModel: model }, memoryPrefs: { ...s.memoryPrefs, classifierEp: ep, classifierModel: model } })
+    s.patch({ prefs: { ...s.prefs, titleEp: ep, titleModel: model, recallEp: ep, recallModel: model, compactEp: ep, compactModel: model }, memoryPrefs: { ...s.memoryPrefs, classifierEp: ep, classifierModel: model }, search: { ...search, readerSummaryEp: ep, readerSummaryModel: model, readerSummary: !!ep } })
   }
-  const setOne = (which: 'cls' | 'title' | 'eff' | 'recall' | 'compact', ref: string) => {
+  const setOne = (which: HelperTask, ref: string) => {
     const [ep, model] = splitHelperRef(ref)
     if (which === 'cls') s.patch({ memoryPrefs: { ...s.memoryPrefs, classifierEp: ep, classifierModel: model } })
     else if (which === 'title') s.patch({ prefs: { ...s.prefs, titleEp: ep, titleModel: model } })
     else if (which === 'recall') s.patch({ prefs: { ...s.prefs, recallEp: ep, recallModel: model } })
-    else if (which === 'compact') s.patch({ prefs: { ...s.prefs, compactEp: ep, compactModel: model } })
-    else s.patch({ prefs: { ...s.prefs, effortEp: ep, effortModel: model } })
+    else if (which === 'page') s.patch({ search: { ...search, readerSummaryEp: ep, readerSummaryModel: model, readerSummary: !!ep } })
+    else s.patch({ prefs: { ...s.prefs, compactEp: ref || 'main', compactModel: model } })
   }
-  const row = (label: string, task: HelperTask, ref: string, set: (v: string) => void) => (
-    <SettingRow label={label}>
-      <div className="flex w-60 max-w-full flex-col items-end gap-1">
-        <Sel value={ref} set={set} opts={singleOpts} inline />
-        <div className="flex items-center gap-1.5">
-          <span className="text-xs text-mu">Reasoning</span>
-          <Sel value={storedEffort(task)} set={(v) => setEffort(task, v)} opts={effortOpts(task, ref)} inline />
+  const handleOpts: [string, string][] = [['main', 'The replying model'], ['none', 'Off (trim instead)'], ...singleOpts.slice(1)]
+  const row = (label: string, task: HelperTask, ref: string, set: (v: string) => void, opts: [string, string][] = singleOpts) => {
+    const error = HELPER_REQUIRED.includes(task) && !ref ? REQUIRED_HELPER_ERROR : undefined
+    return (
+    <div>
+      <SettingRow label={label}>
+        <div className="flex w-60 max-w-full flex-col items-end gap-1">
+          <Sel value={ref} set={set} opts={opts} inline />
+          <div className="flex items-center gap-1.5">
+            <span className="text-xs text-mu">Reasoning</span>
+            <Sel value={storedEffort(task)} set={(v) => setEffort(task, v)} opts={effortOpts(task, ref)} inline />
+          </div>
         </div>
-      </div>
-    </SettingRow>
+      </SettingRow>
+      {error && <p className="pb-2 text-xs text-er">{error}</p>}
+    </div>
   )
+  }
+  /* Model routing is the one required helper: a multi-model playlist cannot
+   * choose a model without it, so choosing None is an error, not a fallback. */
+  const REQUIRED_HELPER_ERROR = 'This helper is required: model routing picks the model for multi-model playlists, and a reply that needs it fails while it is set to None.'
   return (
     <Anchor id="helper-models">
       <div className="py-1">
@@ -751,13 +767,14 @@ function HelperModels() {
             <div className="space-y-1">
               <p className="px-0 text-xs font-medium text-mu">Decision helpers</p>
               {row('Model routing', 'cls', refs.cls, (v) => setOne('cls', v))}
-              {row('Reasoning level', 'eff', refs.eff, (v) => setOne('eff', v))}
               {row('Memory recall', 'recall', refs.recall, (v) => setOne('recall', v))}
             </div>
             <div className="space-y-1">
               <p className="px-0 text-xs font-medium text-mu">Writing helpers</p>
               {row('Chat titles', 'title', refs.title, (v) => setOne('title', v))}
-              {row('Context handoff', 'compact', refs.compact, (v) => setOne('compact', v))}
+              {row('Context handoff', 'compact', refs.compact, (v) => setOne('compact', v), handleOpts)}
+              {row('Page summaries', 'page', refs.page, (v) => setOne('page', v))}
+              <p className="px-0 pb-1 text-xs text-mu">With a helper set to None: model routing stops playlists that need it with an error; memory recall ranks on this device; chat titles are left alone; context handoff trims instead (or uses the replying model); page reads send the raw page.</p>
             </div>
           </div>
         </details>
@@ -1593,28 +1610,13 @@ function Tools() {
   /* The page-summary picker lists every endpoint model, so the user picks
    * the exact model (not just an endpoint) that writes page summaries. */
   const summaryRef = search.readerSummaryEp ? `${search.readerSummaryEp}::${search.readerSummaryModel ?? ''}` : ''
-  const summaryOpts: [string, string][] = [
-    ['', 'None (send the raw page)'],
-    ...s.eps.flatMap((e) => modelsOf(e).map((m) => [`${e.id}::${m}`, `${e.name} · ${modelNameOf(e, m)}`] as [string, string])),
-  ]
-  const setSummaryRef = (ref: string) => {
-    const i = ref.indexOf('::')
-    setSearch({ readerSummaryEp: i < 0 ? '' : ref.slice(0, i), readerSummaryModel: i < 0 ? '' : ref.slice(i + 2) })
-  }
-  /* The model-flow mode picks a source, not a model: an endpoint's default
-   * model and the rest of its model list, or a whole playlist's entries,
-   * form the flow in order. Playlist values are prefixed with `pl:` so one
-   * dropdown can hold both kinds of source. */
-  const summaryFlowRef = search.readerSummaryPl ? `pl:${search.readerSummaryPl}` : search.readerSummaryEp
-  const summaryEpOpts: [string, string][] = [
-    ['', 'None (send the raw page)'],
-    ...s.eps.filter(usable).map((e) => [e.id, `${e.name} · ${e.model}`] as [string, string]),
-    ...(featOn(s, 'playlists') ? s.pls.map((p) => [`pl:${p.id}`, `Playlist: ${p.name} (${p.e.length} entries)`] as [string, string]) : []),
-  ]
-  const setSummaryFlowRef = (ref: string) => {
-    if (ref.startsWith('pl:')) setSearch({ readerSummaryPl: ref.slice(3), readerSummaryEp: '', readerSummaryModel: '' })
-    else setSearch({ readerSummaryEp: ref, readerSummaryPl: '', readerSummaryModel: '' })
-  }
+  /* Page summaries are configured with the other helpers (Model helpers,
+   * further down this tab); this block only reports what is in force and
+   * links there. With no summary model the raw page is sent instead. */
+  const summaryCands = readerSummaryModelsOf(s, search)
+  const summaryModel = summaryCands[0]
+  const summaryReasoning = summaryModel ? helperEffortLabel(pageSummaryEffortOf(summaryModel, s.prefs.helperEffort?.page) || 'provider default') : ''
+  const openHelpers = () => { try { window.dispatchEvent(new CustomEvent('byok:setting', { detail: 'tools#helper-models' })) } catch { /* the tab still opens */ } }
   /* Enabling a tool re-sorts the list. Capture the scroll position first so the
    * page stays where the reader was instead of following the card that moved. */
   const cardEls = useRef(new Map<string, HTMLElement>())
@@ -1777,26 +1779,14 @@ function Tools() {
             <Anchor id="reader-summary">
             <div className="flex items-center justify-between gap-3"><div className="flex items-center gap-1.5 text-sm font-medium">Summarize pages with another model</div><Toggle on={search.readerSummary} set={(readerSummary) => setSearch({ readerSummary })} label="Summarize pages with another model" /></div>
             </Anchor>
-            {search.readerSummary && <>
-              <Anchor id="reader-summary-mode">
-              <Field label="Summary model" row>
-                <Seg v={search.readerSummaryFlow ? 'flow' : 'picked'} set={(v) => setSearch({ readerSummaryFlow: v === 'flow' })} opts={[['picked', 'Picked model'], ['flow', 'Model flow']]} />
-              </Field>
+            {search.readerSummary && (
+              <Anchor id="reader-summary-model">
+              <p className="text-xs text-mu">
+                {summaryModel ? <>Summary model: <span className="text-tx">{summaryModel.name} · {modelNameOf(summaryModel, summaryModel.model)}</span> · reasoning {summaryReasoning}. </> : 'No summary model is set, so the raw page is sent. '}
+                <button type="button" onClick={openHelpers} className="underline decoration-dotted underline-offset-2 hover:text-tx">Change in Model helpers</button>
+              </p>
               </Anchor>
-              {search.readerSummaryFlow ? (
-                <Anchor id="reader-summary-endpoint">
-                <Field label="Summary flow source" row>
-                  <Sel value={summaryFlowRef} set={setSummaryFlowRef} opts={summaryEpOpts} />
-                </Field>
-                </Anchor>
-              ) : (
-                <Anchor id="reader-summary-model">
-                <Field label="Summary model" row>
-                  <Sel value={summaryRef} set={setSummaryRef} opts={summaryOpts} />
-                </Field>
-                </Anchor>
-              )}
-            </>}
+            )}
             <Anchor id="fetch-timeout">
             <Field label={`Page request timeout · ${(search.fetchTimeoutMs / 1000).toFixed(search.fetchTimeoutMs % 1000 ? 1 : 0)}s`}>
               <RangeSlider label="Page request timeout" min={1000} max={30000} step={1000} value={search.fetchTimeoutMs} valueText={`${(search.fetchTimeoutMs / 1000).toFixed(search.fetchTimeoutMs % 1000 ? 1 : 0)} seconds`} set={(fetchTimeoutMs) => setSearch({ fetchTimeoutMs: Math.round(fetchTimeoutMs) })} className="w-full" />
@@ -2494,7 +2484,8 @@ function LibraryTab() {
   )
 }
 
-const VIEWS: Record<string, () => ReactNode> = { features: FeaturesTab, eps: Eps, prompts: QualitiesTab, skills: SkillsTab, pls: Pls, cmds: Cmds, workspace: WorkspaceTab, tools: Tools, mcp: McpTab, memory: MemoryTab, widgets: WidgetsTab, library: LibraryTab, look: AppearanceSettings, chats: Chats, voice: VoiceTab, keys: KeysTab, data: DataTab, adv: AdvancedTab }
+const ArenaView = () => <Suspense fallback={<div role="status" className="py-10 text-center text-sm text-mu">Loading the arena…</div>}><ArenaTab /></Suspense>
+const VIEWS: Record<string, () => ReactNode> = { features: FeaturesTab, eps: Eps, prompts: QualitiesTab, skills: SkillsTab, pls: Pls, cmds: Cmds, workspace: WorkspaceTab, tools: Tools, mcp: McpTab, memory: MemoryTab, widgets: WidgetsTab, library: LibraryTab, look: AppearanceSettings, chats: Chats, voice: VoiceTab, keys: KeysTab, data: DataTab, adv: AdvancedTab, arena: ArenaView }
 
 export function Settings({ tab, setTab }: { tab: string; setTab: (t: string) => void }) {
   const features = useS((s) => s.features)

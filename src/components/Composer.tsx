@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import { Plus, FileUp, FileText, ArrowUp, Square, CornerDownRight, ChevronRight, ListMusic, ListPlus, Cpu, ScrollText, Settings, Search, BookOpen, X, TriangleAlert, Wrench, Link as LinkIcon, ScanText, Loader2, Mic, Star, GripVertical, Check, Globe, Pencil, Undo2 } from 'lucide-react'
-import { useS, usable, modelsOf, modelNameOf, featOn, normDocs, normSearch, fetchOptsOf, effortClassifierOf, helperRef, splitHelperRef, toggleFavRef, type Att, type Ep } from '../store'
+import { useS, usable, modelsOf, modelNameOf, featOn, normDocs, normSearch, fetchOptsOf, helperRef, splitHelperRef, toggleFavRef, type Att, type Ep } from '../store'
 import { DEFAULT_QUALITY_FAVS, normQualities, normQualityFavs, type PromptQuality } from '../flair'
 import { CI } from '../meta'
 import { composerWidth } from '../layout'
@@ -215,17 +215,16 @@ function ModelMenu({ close, cfg }: { close: () => void; cfg: (t: string) => void
   const activeEp = t === 'ep' && s.sel?.k === 'ep' && s.sel.model ? s.eps.find((x) => x.id === s.sel?.id) : undefined
   const activeModel = activeEp && s.sel?.model
   const efforts: string[] = activeModel ? activeEp?.modelEfforts?.[activeModel] ?? [] : []
-  const effortRank: Record<string, number> = { none: 0, minimal: 1, low: 2, medium: 3, high: 4, xhigh: 5, max: 6, auto: -1 }
+  const effortRank: Record<string, number> = { none: 0, minimal: 1, low: 2, medium: 3, high: 4, xhigh: 5, max: 6 }
   // Dedupe case-insensitively: a provider list that already contains "none"
   // must not produce a second, synthetic one.
   const effortLevels = [...new Map(efforts.filter(Boolean).map((x) => [x.toLowerCase(), x])).values()]
     .sort((a, b) => (effortRank[a.toLowerCase()] ?? 50) - (effortRank[b.toLowerCase()] ?? 50))
-  // Auto is only a choice when the model actually reports levels: a slider
-  // whose ends are both "Auto" is not a control.
-  const autoOn = effortLevels.length > 0 && !!effortClassifierOf(s)
-  const effortChoices = [...(autoOn ? ['auto'] : []), ...effortLevels]
+  // The level is always the reader's own choice: there is no automatic
+  // selection, so the slider only exists for models that report levels.
+  const effortChoices = effortLevels
   const storedEffort = activeModel ? s.effort[activeModel] : undefined
-  const effortValue = storedEffort && effortChoices.includes(storedEffort) ? storedEffort : (effortLevels[0] ?? (autoOn ? 'auto' : ''))
+  const effortValue = storedEffort && effortChoices.includes(storedEffort) ? storedEffort : (effortLevels[0] ?? '')
   const effortIndex = Math.max(0, effortChoices.indexOf(effortValue))
   const activeEffort = effortChoices[effortIndex] ?? ''
   const toggleProvider = (id: string) => s.patch({ prefs: { ...s.prefs, collapsedProviders: collapsed.includes(id) ? collapsed.filter((x) => x !== id) : [...collapsed, id] } })
@@ -900,14 +899,13 @@ export function Composer({ cfg, quote, onClearQuote }: { cfg: (t: string) => voi
             const activeEp = s.sel?.k === 'ep' && s.sel?.id ? s.eps.find((e) => e.id === s.sel!.id) : undefined
             const activeModel = s.sel?.k === 'ep' && s.sel.model ? s.sel.model : undefined
             const effortsArr = activeModel ? activeEp?.modelEfforts?.[activeModel] ?? [] : []
-            const effortRank: Record<string, number> = { none: 0, minimal: 1, low: 2, medium: 3, high: 4, xhigh: 5, max: 6, auto: -1 }
+            const effortRank: Record<string, number> = { none: 0, minimal: 1, low: 2, medium: 3, high: 4, xhigh: 5, max: 6 }
             const effortLevels = [...new Map(effortsArr.filter(Boolean).map((x) => [x.toLowerCase(), x])).values()]
               .sort((a, b) => (effortRank[a.toLowerCase()] ?? 50) - (effortRank[b.toLowerCase()] ?? 50))
-            // Without reported levels there is no effort to label or route.
-            const autoOn = effortLevels.length > 0 && !!effortClassifierOf(s)
-            const allChoices = [...(autoOn ? ['auto'] : []), ...effortLevels]
+            // Without reported levels there is no effort to label.
+            const allChoices = effortLevels
             const stored = activeModel ? s.effort[activeModel] : undefined
-            const currentEffort = stored && allChoices.includes(stored) ? stored : (effortLevels[0] ?? (autoOn ? 'auto' : ''))
+            const currentEffort = stored && allChoices.includes(stored) ? stored : (effortLevels[0] ?? '')
             return (
             <button className={chip}>
               {s.sel?.k === 'pl' && featOn(s, 'playlists') ? <ListMusic size={16} /> : <Cpu size={16} />}

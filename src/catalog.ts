@@ -155,8 +155,17 @@ export function parseModelProviders(body: unknown): CatalogProvider[] {
   }).filter((p) => p.tag)
 }
 
-/** Strip routing variant suffixes (`:free`, `:nitro`, …) OpenRouter adds to ids. */
-const baseModelId = (id: string) => id.replace(/^~+/, '').replace(/:(free|nitro|floor|beta|extended|thinking)$/i, '').trim()
+/** Resolve an OpenRouter id to the catalog entry it addresses: routing
+ *  variants (`:nitro`, `:floor`, `:exacto`, `:online`) are dropped, while a
+ *  catalog variant (`:free`, `:batch`, `:thinking`, `:extended`) is kept — it
+ *  names a different entry with its own endpoints and pricing. */
+const CATALOG_VARIANTS = /^(free|batch|thinking|extended)$/i
+const ROUTING_VARIANTS = /^(nitro|floor|exacto|online)$/i
+const baseModelId = (id: string) => {
+  const [slug, ...suffixes] = String(id ?? '').replace(/^~+/, '').trim().split(':')
+  const catalog = suffixes.filter((x) => CATALOG_VARIANTS.test(x)).slice(0, 1)
+  return [slug, ...catalog].filter(Boolean).join(':')
+}
 
 /** List the providers currently serving `model`, using OpenRouter's public
  *  endpoints API. Only meaningful for OpenRouter endpoints; other bases get a

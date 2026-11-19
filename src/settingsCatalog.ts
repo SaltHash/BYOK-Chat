@@ -2,6 +2,7 @@ import {
   SlidersHorizontal, Server, ScrollText, Sparkles, ListMusic, Terminal,
   FolderOpen, Wrench, Brain, PanelRight, Palette as PaletteIcon, Keyboard,
   TrendingUp, Database, FlaskConical, MessagesSquare, Plug, Volume2, Library,
+  Swords,
 } from 'lucide-react'
 import type { Ic } from './components/ui'
 import { FEATURE_TABS, featOn, type FeatureId } from './store'
@@ -15,7 +16,7 @@ import { FEATURE_TABS, featOn, type FeatureId } from './store'
 export type SettingsTabId =
   | 'features' | 'eps' | 'prompts' | 'skills' | 'pls' | 'cmds'
   | 'workspace' | 'tools' | 'mcp' | 'memory' | 'widgets' | 'library' | 'look' | 'chats'
-  | 'voice' | 'keys' | 'stats' | 'data' | 'adv'
+  | 'voice' | 'keys' | 'stats' | 'data' | 'adv' | 'arena'
 
 /** Tabs hidden while their owning feature is disabled. Lives here (not in
  *  Settings.tsx) so the command palette can filter tabs without pulling the
@@ -48,11 +49,12 @@ export const SETTINGS_TABS: [SettingsTabId, string, Ic][] = [
   ['stats', 'Stats', TrendingUp],
   ['data', 'Data controls', Database],
   ['adv', 'Advanced', FlaskConical],
+  ['arena', 'Arena', Swords],
 ]
 
 export const TAB_KEYWORDS: Record<SettingsTabId, string> = {
   features: 'features toggles enable disable library advanced',
-  eps: 'endpoints models providers api keys connections model aliases base url preset credentials pricing test helper classification title effort auto recall aihubmix openrouter requesty portkey litellm bifrost',
+  eps: 'endpoints models providers api keys connections model aliases base url preset credentials pricing test helper classification title effort recall aihubmix openrouter requesty portkey litellm bifrost',
   prompts: 'qualities qualities favorites favourite personality tone instant concise playful sophisticated thorough reasoning effort skills safety global system prompt instructions style',
   skills: 'skills instructions custom builtin extra tasks',
   pls: 'playlists routes groups ordered fastest cheapest classifier routing performance',
@@ -70,6 +72,7 @@ export const TAB_KEYWORDS: Record<SettingsTabId, string> = {
   stats: 'stats usage dashboard tokens cost messages chats reset totals windowed period session 24 hours 7 days 30 days month custom range average per million cache read write output estimated unpriced model endpoint overview models over time trends activity bucket hourly daily weekly monthly lifetime',
   data: 'data import backup privacy export erase encrypted history storage compact',
   adv: 'advanced debugging verbose errors additional capabilities system prompt payloads token counts model parameters temperature top p max tokens',
+  arena: 'arena benchmark benchmarks judge contestant compare models side by side grading eval leaderboard custom prompt long context recall needle page summary web general',
 }
 
 /** Navigation groups preserve tab ids and deep links while organizing by task.
@@ -81,7 +84,7 @@ export const SETTINGS_GROUPS: { label: string; tabs: SettingsTabId[] }[] = [
   // switchboard that gates the rest, so it sits on its own above the groups.
   { label: '', tabs: ['features'] },
   { label: 'Essentials', tabs: ['look', 'chats', 'prompts', 'eps', 'tools'] },
-  { label: 'More', tabs: ['pls', 'skills', 'cmds', 'voice', 'mcp', 'memory', 'workspace', 'widgets', 'library'] },
+  { label: 'More', tabs: ['pls', 'skills', 'cmds', 'voice', 'mcp', 'memory', 'workspace', 'widgets', 'library', 'arena'] },
   { label: 'System', tabs: ['keys', 'stats', 'data', 'adv'] },
 ]
 
@@ -119,6 +122,9 @@ export const SETTING_LINKS: SettingLink[] = [
   { tab: 'eps', anchor: 'model-behavior', title: 'Model behavior (playlist mode)', keywords: 'playlist separate models mode behavior' },
   { tab: 'eps', anchor: 'credentials', title: 'Endpoint API key', keywords: 'api key credentials stored browser' },
   { tab: 'eps', anchor: 'advanced-connection', title: 'Advanced connection settings', keywords: 'base url api format endpoint id openrouter brand' },
+  { tab: 'eps', anchor: 'model-routing-tier', title: 'Model routing tier (OpenRouter)', keywords: 'openrouter routing tier nitro floor standard throughput price provider pick' },
+  { tab: 'arena', anchor: 'arena-judge', title: 'Arena judge model', keywords: 'arena judge grader model benchmark eval compare' },
+  { tab: 'arena', anchor: 'arena-benchmark', title: 'Arena benchmark', keywords: 'arena benchmark long context recall page summary web general custom prompt' },
   { tab: 'eps', anchor: 'model-pricing', title: 'Model pricing', keywords: 'pricing input output cost per million detected' },
   { tab: 'eps', anchor: 'test-connection', title: 'Test endpoint connections', keywords: 'test connection reachable all endpoints' },
 
@@ -180,7 +186,7 @@ export const SETTING_LINKS: SettingLink[] = [
   { tab: 'tools', anchor: 'reader-key', title: 'Reader API key', keywords: 'reader key jina firecrawl exa credentials stored browser' },
   { tab: 'tools', anchor: 'reader-url', title: 'Custom reader API URL', keywords: 'reader url endpoint custom {url} json text' },
   { tab: 'tools', anchor: 'reader-summary', title: 'Summarize pages with another model', keywords: 'summary subagent summarize page model context clean' },
-  { tab: 'tools', anchor: 'reader-summary-model', title: 'Page summary model', keywords: 'summary model endpoint model id picker helper' },
+  { tab: 'tools', anchor: 'reader-summary-model', title: 'Page summary model and reasoning', keywords: 'summary model endpoint model id picker helper reasoning level page summaries' },
   { tab: 'tools', anchor: 'fetch-retries', title: 'Page retries', keywords: 'page reader fetch retries transient backoff rate limit' },
   { tab: 'tools', anchor: 'fetch-retry-delay', title: 'Page retry delay', keywords: 'page reader fetch retry base delay backoff ms' },
   { tab: 'tools', anchor: 'citations', title: 'Sources and citations', keywords: 'citations off pills links sources open strict warnings' },

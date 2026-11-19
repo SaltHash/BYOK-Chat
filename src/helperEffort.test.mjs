@@ -10,11 +10,11 @@ const ep = (modelEfforts) => ({ id: 'e', name: 'E', model: 'gpt', modelEfforts }
 test('helpers keep their automatic level when nothing is configured', () => {
   const e = ep({ gpt: ['medium', 'low', 'high'] })
   assert.equal(helperAutoEffort('cls', e), 'low')
-  assert.equal(helperAutoEffort('eff', e), 'low')
   assert.equal(helperAutoEffort('recall', e), 'low')
   assert.equal(helperAutoEffort('title', e), '')
   assert.equal(helperAutoEffort('compact', e), '')
-  for (const task of ['cls', 'eff', 'recall', 'title', 'compact']) {
+  assert.equal(helperAutoEffort('page', e), 'low')
+  for (const task of ['cls', 'recall', 'title', 'compact', 'page']) {
     assert.equal(helperEffortOf(task, e, ''), helperAutoEffort(task, e))
     assert.equal(helperEffortOf(task, e, undefined), helperAutoEffort(task, e))
   }
@@ -40,7 +40,7 @@ test('an unsupported level falls back to the automatic level', () => {
 
 test('the stored helper levels are normalized', () => {
   assert.deepEqual(normHelperEffort({ cls: ' high ', title: 'low' }), { cls: 'high', title: 'low' })
-  assert.deepEqual(normHelperEffort({ cls: '', title: 'auto', recall: 'off', compact: 7, eff: 'medium' }), { eff: 'medium' })
+  assert.deepEqual(normHelperEffort({ cls: '', title: 'auto', recall: 'off', compact: 7, page: 'medium' }), { page: 'medium' })
   assert.deepEqual(normHelperEffort(null), {})
   assert.deepEqual(normHelperEffort('nope'), {})
   assert.deepEqual(normHelperEffort({ unknown: 'high' }), {})

@@ -3,7 +3,8 @@ import assert from 'node:assert/strict'
 
 const { TOOLS } = await import('./meta.ts')
 const { executeTool, executeToolCalls, runToolLoop, stream, toolsFor, wire, searchWeb, fetchPage, formatPage, clearSessionCache, MAX_TOOL_RESULT_CHARS, TOOL_BUDGET_NOTE } = await import('./engine.ts')
-const { normSearch, searchCountOf, readerKeyOf, fetchOptsOf } = await import('./store.ts')
+const store = await import('./store.ts')
+const { normSearch, searchCountOf, readerKeyOf, fetchOptsOf, pageSummaryEffortOf, helperEffortOf } = store
 const jsonResponse = (value) => new Response(JSON.stringify(value), { headers: { 'content-type': 'application/json' } })
 const openai = { type: 'openai', url: 'https://provider.example/v1', key: 'test-key', model: 'test-model' }
 const anthropic = { ...openai, type: 'anthropic' }
@@ -1204,4 +1205,27 @@ test('a Stop before the request starts is honoured without waiting for the timeo
     )
     assert.equal(called, false, 'an already-stopped reply must not start a request')
   } finally { globalThis.fetch = original }
+})
+
+test('page summaries run at the cheapest reasoning level unless a level is chosen', () => {
+  const ep = { type: 'openai', url: 'https://provider.example/v1', key: 'k', model: 'm', modelEfforts: { m: ['high', 'Low', 'medium'] } }
+  assert.equal(pageSummaryEffortOf(ep), 'Low')
+  assert.equal(pageSummaryEffortOf(ep, 'medium'), 'medium')
+  // A level this model does not report falls back to its cheapest one.
+  assert.equal(pageSummaryEffortOf(ep, 'max'), 'Low')
+  assert.equal(pageSummaryEffortOf({ ...ep, modelEfforts: {} }), '')
+  // The page helper takes the same level the Model helpers row stores.
+  assert.equal(helperEffortOf('page', ep, 'high'), 'high')
+})
+
+test('a chat title is 2-4 words with no punctuation', () => {
+  const t = (raw) => {
+    const { shortTitle } = store
+    return shortTitle(raw)
+  }
+  assert.equal(t('  Markdown Syntax Reference.  '), 'Markdown Syntax Reference')
+  assert.equal(t('"What is a vector database?"'), 'What is a vector')
+  assert.equal(t('one two three four five six'), 'One two three four')
+  assert.equal(t('ok'), '')
+  assert.equal(t('   '), '')
 })

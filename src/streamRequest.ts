@@ -1,4 +1,5 @@
-import type { Ep } from './store'
+import type { Ep, ModelTier } from './store'
+import { tierAllowed } from './models'
 import type { Wire } from './engine'
 import { withCode } from './errors'
 import { hasUnresolvedPlaceholder, providerBaseUrl, providerHeaders, resolveProvider } from './providerRegistry'
@@ -9,6 +10,16 @@ export type StreamOptions = { cap?: number; max?: number; temp?: number; topp?: 
 /** Whether the model reports reasoning-effort levels (single source of truth). */
 export const supportsEffort = (_model: string, _type: Ep['type'], detected?: string[]) =>
   Array.isArray(detected) && detected.length > 0
+
+/** OpenRouter's routing-tier suffixes: `:nitro` sorts the model's providers
+ * by throughput (admitting priority endpoints), `:floor` by price (admitting
+ * flex endpoints). The suffix changes routing only; the model stays the same. */
+export const tieredModelId = (model: string, tier?: ModelTier): string => {
+  if (tier !== 'nitro' && tier !== 'floor') return model
+  // Free endpoints have no paid tier for the variant to admit.
+  if (!tierAllowed(model)) return model
+  return /:(nitro|floor)$/i.test(model) ? model : `${model}:${tier}`
+}
 
 /** Pure request builder for stream(): no fetch, no side effects, unit-testable. */
 export function buildStreamRequest(
@@ -57,6 +68,10 @@ export function buildStreamRequest(
       // provider must mean that provider. Absent = OpenRouter's default routing.
       const providerTag = e.modelProviders?.[e.model]?.tag
       if (providerTag) body.provider = { order: [providerTag], allow_fallbacks: false }
+      // Routing tier chosen for this model (Settings → Endpoints → model →
+      // Routing). Sent as the model's variant suffix; standard routing is the
+      // bare id.
+      body.model = tieredModelId(e.model, e.modelTiers?.[e.model])
     }
     if (availableTools.length) { body.tools = availableTools; body.tool_choice = 'auto' }
     if (o.max != null) body.max_tokens = o.max

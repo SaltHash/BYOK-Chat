@@ -90,3 +90,10 @@ export const modelNameOf = (e: Ep, model: string) => {
   if (name) return stripVendorPrefix(name, [e.name, e.endpointId, model.split('/')[0]])
   return prettyModelId(model)
 }
+
+/** Free (`:free`) endpoints are not served on the priority or flex tiers that
+ *  OpenRouter's `:nitro`/`:floor` variants admit, so a routing tier is refused
+ *  for them. Kept here (not in the store) so request building never imports the
+ *  store and creates a module cycle. */
+export const tierAllowed = (model: string): boolean =>
+  !String(model ?? '').split(':').slice(1).some((s) => /^free$/i.test(s.trim()))
