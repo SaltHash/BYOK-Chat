@@ -41,6 +41,22 @@ export function followStep(current: number, target: number, share = 0.3, floor =
   return Math.min(target, current + Math.max(floor, (target - current) * share))
 }
 
+/** Whether the transcript should keep following the end after a scroll event.
+ *
+ * `followPos` is the last position the eased follow wrote (or the reader's
+ * last known position). A position above it is the reader scrolling up, and
+ * it ends the follow at once: waiting until the view left a near-bottom band
+ * swallowed small nudges while text kept arriving, so the reader could not
+ * get out of the follow without scrolling most of a screen. A position equal
+ * to `followPos` is the follow's own write and changes nothing — the view
+ * trails the end on purpose, and content can grow past the band between two
+ * frames. Returns null when the event is that echo. */
+export function stickAfterScroll(scrollTop: number, followPos: number, scrollHeight: number, clientHeight: number, band = 80): boolean | null {
+  if (Math.abs(scrollTop - followPos) <= 2) return null
+  if (scrollTop < followPos - 2) return false
+  return scrollHeight - scrollTop - clientHeight < band
+}
+
 /** Latest-value, one-per-frame throttle. */
 export function createFrameThrottle<A extends unknown[]>(run: (...args: A) => void, options: FrameThrottleOptions = {}): FrameThrottle<A> {
   const request = options.request ?? defaultRequest

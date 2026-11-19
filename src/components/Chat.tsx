@@ -5,7 +5,7 @@ import { useS, useLive, usable, modelNameOf, featOn, previewSysFor, activeWorksp
 import { clampWorkspaceFrac, roundFrac, CHAT_WIDTH } from '../layout'
 import { focusComposer, startPointerDrag } from '../hooks'
 import { useProcessLogEpoch } from '../uiSignals'
-import { followStep } from '../throttle'
+import { followStep, stickAfterScroll } from '../throttle'
 import { CI, fmtDuration } from '../meta'
 import { toolLabel } from '../toolLabels'
 import { summarizeToolCalls, splitToolTrail, type ToolKind, type TrailCall } from '../toolSummary'
@@ -1430,10 +1430,13 @@ export function Chat({ side, toggle, cfg, pal }: { side: boolean; toggle: () => 
   const followPos = useRef(-1)
   const onScrollBox = (e: React.UIEvent<HTMLDivElement>) => {
     const b = e.currentTarget
-    if (Math.abs(b.scrollTop - followPos.current) > 2) {
-      const near = b.scrollHeight - b.scrollTop - b.clientHeight < 80
-      stick.current = near
-      setAtEnd((was) => (was === near ? was : near))
+    // Any upward scroll ends the follow immediately; only scrolling back to
+    // the end resumes it (see stickAfterScroll).
+    const next = stickAfterScroll(b.scrollTop, followPos.current, b.scrollHeight, b.clientHeight)
+    if (next !== null) {
+      stick.current = next
+      setAtEnd((was) => (was === next ? was : next))
+      followPos.current = b.scrollTop
     }
     if (s.chat) scrollMemo.current.set(s.chat, { top: b.scrollTop, atEnd: stick.current })
   }
