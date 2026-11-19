@@ -114,6 +114,9 @@ export const SETTING_LINKS: SettingLink[] = [
   { tab: 'features', anchor: 'show-disabled-features', title: 'Show disabled features', keywords: 'disabled features off hidden settings tabs signpost show hide' },
   { tab: 'features', anchor: 'feature-workspace', title: 'Feature: Workspace', keywords: 'feature workspace toggle files' },
   { tab: 'features', anchor: 'feature-advanced', title: 'Feature: Advanced', keywords: 'feature advanced toggle debugging' },
+  { tab: 'features', anchor: 'feature-mcp', title: 'Feature: MCP servers', keywords: 'feature mcp model context protocol toggle servers external tools' },
+  { tab: 'features', anchor: 'feature-voice', title: 'Feature: Voice', keywords: 'feature voice toggle dictation read aloud microphone' },
+  { tab: 'features', anchor: 'feature-arena', title: 'Feature: Arena', keywords: 'feature arena toggle benchmarks compare models' },
 
   // Endpoints
   { tab: 'eps', anchor: 'helper-models', title: 'Helper models', keywords: 'helper classification title effort auto detection mixed model memory recall reasoning level thinking' },
@@ -125,6 +128,7 @@ export const SETTING_LINKS: SettingLink[] = [
   { tab: 'eps', anchor: 'model-routing-tier', title: 'Model routing tier (OpenRouter)', keywords: 'openrouter routing tier nitro floor standard throughput price provider pick' },
   { tab: 'arena', anchor: 'arena-judge', title: 'Arena judge model', keywords: 'arena judge grader model benchmark eval compare' },
   { tab: 'arena', anchor: 'arena-benchmark', title: 'Arena benchmark', keywords: 'arena benchmark long context recall page summary web general custom prompt' },
+  { tab: 'arena', anchor: 'arena-prompt', title: 'Arena custom prompt', keywords: 'arena benchmark custom prompt question task' },
   { tab: 'eps', anchor: 'model-pricing', title: 'Model pricing', keywords: 'pricing input output cost per million detected' },
   { tab: 'eps', anchor: 'test-connection', title: 'Test endpoint connections', keywords: 'test connection reachable all endpoints' },
 
@@ -153,6 +157,7 @@ export const SETTING_LINKS: SettingLink[] = [
   { tab: 'workspace', anchor: 'gist-sharing', title: 'GitHub Gist sharing', keywords: 'gist token share github' },
 
   // MCP
+  { tab: 'mcp', anchor: 'add-mcp', title: 'Add MCP server', keywords: 'add mcp server new connection external tools' },
   { tab: 'mcp', anchor: 'import-mcp', title: 'Import MCP servers from JSON', keywords: 'mcp import json claude desktop cursor vscode zed claude code config servers paste file stdio command args url headers' },
 
   // Tools
@@ -170,6 +175,10 @@ export const SETTING_LINKS: SettingLink[] = [
   { tab: 'chats', anchor: 'per-file-chars', title: 'Text per document', keywords: 'per file characters budget document attachments' },
   { tab: 'chats', anchor: 'total-file-chars', title: 'Text across all files', keywords: 'total characters budget message attachments context window' },
   { tab: 'chats', anchor: 'private-file-names', title: 'Private file names', keywords: 'file name anonymize neutral private attachments model prompt' },
+  { tab: 'chats', anchor: 'custom-search', title: 'Custom find in conversation (Ctrl+F)', keywords: 'custom find in page search conversation ctrl f in-chat highlight' },
+  { tab: 'chats', anchor: 'pinned-share', title: 'Pinned reply share', keywords: 'pinned reply share percent context window budget truncate' },
+  { tab: 'chats', anchor: 'temporary-chats', title: 'Temporary chats', keywords: 'temporary chats retention shown streaming finished expires disappear' },
+  { tab: 'chats', anchor: 'archived-chats', title: 'Archived chats', keywords: 'archived chats retention delete days keep' },
   { tab: 'tools', anchor: 'deep-research', title: 'Deep research default depth', keywords: 'research quick standard thorough tier' },
   { tab: 'tools', anchor: 'search-provider', title: 'Search API provider', keywords: 'tinyfish you exa firecrawl brightdata jina provider grounding' },
   { tab: 'tools', anchor: 'search-key', title: 'Search API key', keywords: 'search key bring your own stored browser' },
@@ -191,7 +200,7 @@ export const SETTING_LINKS: SettingLink[] = [
   { tab: 'tools', anchor: 'fetch-retry-delay', title: 'Page retry delay', keywords: 'page reader fetch retry base delay backoff ms' },
   { tab: 'tools', anchor: 'citations', title: 'Sources and citations', keywords: 'citations off pills links sources open strict warnings' },
   { tab: 'tools', anchor: 'workspace-view', title: 'Workspace tool defaults', keywords: 'workspace pinned latest auto open follow tiles' },
-  { tab: 'tools', anchor: 'hidden-capabilities', title: 'Additional capabilities', keywords: 'additional capabilities read only show' },
+  { tab: 'tools', anchor: 'hidden-capabilities', title: 'Additional capabilities list', keywords: 'additional capabilities read only show list' },
 
   // Memory
   { tab: 'memory', anchor: 'memory-tool', title: 'Memory tool toggle', keywords: 'memory enabled browser stored' },
@@ -224,6 +233,14 @@ export const SETTING_LINKS: SettingLink[] = [
   { tab: 'look', anchor: 'high-contrast', title: 'High contrast', keywords: 'high contrast muted text borders readable accessibility theme' },
   { tab: 'look', anchor: 'message-times', title: 'Message times', keywords: 'message times timestamps clock sent at' },
   { tab: 'look', anchor: 'message-actions', title: 'Always show message actions', keywords: 'message actions hover always show copy regenerate delete' },
+  { tab: 'look', anchor: 'user-markdown', title: 'Markdown in your messages', keywords: 'markdown user messages render rich text formatting' },
+  { tab: 'look', anchor: 'reply-picker', title: 'Response picker', keywords: 'response picker alternate replies versions arrows' },
+  { tab: 'look', anchor: 'reply-copy', title: 'Copy button', keywords: 'copy button reply action clipboard' },
+  { tab: 'look', anchor: 'reply-pin', title: 'Pin button', keywords: 'pin button reply action' },
+  { tab: 'look', anchor: 'reply-bookmark', title: 'Bookmark button', keywords: 'bookmark button reply action save' },
+  { tab: 'look', anchor: 'reply-retry', title: 'Retry button', keywords: 'retry button reply action regenerate' },
+  { tab: 'look', anchor: 'reply-branch', title: 'New path button', keywords: 'new path branch button reply action alternative' },
+  { tab: 'look', anchor: 'reply-delete', title: 'Delete button', keywords: 'delete button reply action remove message' },
   { tab: 'chats', anchor: 'revert-send', title: 'Revert send button', keywords: 'revert send revert message edit message edit prompt resend replace prompt delete later messages undo send undo' },
   { tab: 'widgets', anchor: 'context-meter', title: 'Context meter', keywords: 'context meter tokens circle header appearance' },
   { tab: 'widgets', anchor: 'context-compact', title: 'Auto-compact context', keywords: 'context compaction compact summarize handoff threshold percent auto' },
@@ -245,11 +262,14 @@ export const SETTING_LINKS: SettingLink[] = [
   { tab: 'look', anchor: 'model-picker-labels-secondary', title: 'Model picker secondary label', keywords: 'model picker secondary label provider name id none' },
   { tab: 'look', anchor: 'palette-height', title: 'Command palette height', keywords: 'palette height maximum result list scroll' },
   { tab: 'look', anchor: 'chat-width', title: 'Message width', keywords: 'narrow standard wide conversation column' },
-  { tab: 'look', anchor: 'settings-size', title: 'Settings window size', keywords: 'settings width height window' },
+  { tab: 'look', anchor: 'settings-size', title: 'Settings window width', keywords: 'settings width window size' },
+  { tab: 'look', anchor: 'settings-height', title: 'Settings window height', keywords: 'settings height window size modal' },
   { tab: 'look', anchor: 'model-picker-height', title: 'Model picker height', keywords: 'model menu height picker' },
   { tab: 'look', anchor: 'model-favorites', title: 'Favorite models', keywords: 'favorites favorite starred star models picker section providers collapse provider name hide show' },
+  { tab: 'look', anchor: 'model-favorites-provider', title: 'Hide favorites from provider lists', keywords: 'favorites provider lists duplicate model picker hide show' },
   { tab: 'eps', anchor: 'model-pricing-toggle', title: 'Show model pricing controls', keywords: 'pricing fields endpoint per model' },
-  { tab: 'look', anchor: 'overlay', title: 'Overlay appearance', keywords: 'modal blur settings opacity backdrop dim' },
+  { tab: 'look', anchor: 'overlay', title: 'Overlay blur', keywords: 'modal blur settings opacity backdrop dim' },
+  { tab: 'look', anchor: 'settings-opacity', title: 'Overlay dimming', keywords: 'overlay dimming background opacity settings backdrop' },
   { tab: 'chats', anchor: 'stream-fade', title: 'Reply fade-in', keywords: 'fade in streaming chunks duration ms' },
   { tab: 'chats', anchor: 'startup', title: 'Open on load', keywords: 'startup open load launch new temporary recent permanent conversation' },
   { tab: 'chats', anchor: 'temp-visible', title: 'Temporary chats shown', keywords: 'temporary chats sidebar shown expand collapse count' },
@@ -265,12 +285,16 @@ export const SETTING_LINKS: SettingLink[] = [
   { tab: 'chats', anchor: 'temp-retention', title: 'Temporary chat retention', keywords: 'temporary retention hours immediate expires' },
   { tab: 'chats', anchor: 'archive-retention', title: 'Archived chat retention', keywords: 'archive archived retention delete days never 60 180' },
   { tab: 'chats', anchor: 'draft-survival', title: 'Drafts across reloads', keywords: 'draft unsent typed survive reload persistence new chat existing both never' },
-  { tab: 'look', anchor: 'fonts', title: 'Fonts', keywords: 'body heading monospace font google' },
+  { tab: 'look', anchor: 'fonts', title: 'Body font', keywords: 'body heading monospace font google typeface' },
+  { tab: 'look', anchor: 'fonts-heading', title: 'Heading font', keywords: 'heading display font typeface title' },
+  { tab: 'look', anchor: 'fonts-mono', title: 'Monospace font', keywords: 'monospace code font typeface terminal' },
   { tab: 'look', anchor: 'text-size', title: 'Text size', keywords: 'text size scale root font larger smaller zoom percent accessibility' },
   { tab: 'look', anchor: 'code-wrap', title: 'Wrap long code lines', keywords: 'code blocks wrap soft wrap long lines scroll overflow' },
   { tab: 'look', anchor: 'code-line-numbers', title: 'Code line numbers', keywords: 'code blocks line numbers gutter numbered' },
   { tab: 'look', anchor: 'code-max-height', title: 'Code block height cap', keywords: 'code blocks maximum height scroll collapse long' },
   { tab: 'look', anchor: 'glass-composer', title: 'Glass composer', keywords: 'glass composer frosted translucent backdrop blur opacity solid transparency message box' },
+  { tab: 'look', anchor: 'glass-blur', title: 'Composer blur', keywords: 'glass composer blur radius frosted' },
+  { tab: 'look', anchor: 'glass-opacity', title: 'Composer opacity', keywords: 'glass composer opacity transparency percent' },
   { tab: 'look', anchor: 'reduce-transparency', title: 'Reduce transparency', keywords: 'reduce transparency flat opaque glass blur shadow gpu performance' },
   { tab: 'look', anchor: 'title-model', title: 'Title generation model', keywords: 'title model chat names endpoint helper endpoints' },
 
@@ -301,6 +325,8 @@ export const SETTING_LINKS: SettingLink[] = [
 
   // Data
   { tab: 'data', anchor: 'local-backups', title: 'Local backups', keywords: 'backup backups automatic daily local indexeddb restore snapshot' },
+  { tab: 'data', anchor: 'device-sync', title: 'Device sync', keywords: 'device sync encrypted devices token connect upload pull' },
+  { tab: 'data', anchor: 'sync-conflicts', title: 'Sync conflicts', keywords: 'sync conflicts resolve encrypted devices merge' },
   { tab: 'data', anchor: 'export', title: 'Export data', keywords: 'export json data backup categories include keys encrypted password aes' },
   { tab: 'data', anchor: 'import', title: 'Import data', keywords: 'import json data file merge replace categories encrypted password' },
   { tab: 'data', anchor: 'chat-history', title: 'Chat history controls', keywords: 'delete all chats history stats kept' },

@@ -1,11 +1,11 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-const { BUILTIN_SKILLS, DEFAULT_SKILL_STATE, normSkills, resolveSkill, enabledSkills, getSkillInstructions, composeSystemPrompt, validateCustomSkill, SKILL_TOOL_NAME } = await import('./skills.ts')
+const { BUILTIN_SKILLS, RETIRED_SKILL_IDS, DEFAULT_SKILL_STATE, normSkills, resolveSkill, enabledSkills, getSkillInstructions, composeSystemPrompt, validateCustomSkill, SKILL_TOOL_NAME } = await import('./skills.ts')
 
 test('built-in skills cover the required domains with descriptions and instructions', () => {
   const ids = BUILTIN_SKILLS.map((s) => s.id)
-  for (const id of ['frontend-design', 'software-engineering', 'debugging', 'testing', 'writing', 'prompt-writing', 'prompt-architect']) {
+  for (const id of ['software-engineering', 'debugging', 'testing', 'code-review', 'writing', 'prompt-writing']) {
     assert.ok(ids.includes(id), `missing built-in skill: ${id}`)
   }
   for (const skill of BUILTIN_SKILLS) {
@@ -19,37 +19,28 @@ test('built-in skills cover the required domains with descriptions and instructi
   assert.ok(DEFAULT_SKILL_STATE.every((s) => !('auto' in s)), 'no auto/always modes')
 })
 
-test('frontend-design skill preserves the official Anthropic instructions', () => {
-  const skill = BUILTIN_SKILLS.find((s) => s.id === 'frontend-design')
-  assert.match(skill.instructions, /^# Frontend Design\n/)
-  assert.match(skill.instructions, /Approach this as the design lead at a design studio/)
-  assert.match(skill.instructions, /Consider Chanel's advice/)
-  assert.match(skill.instructions, /Let each written element do exactly one job\./)
-  assert.equal(skill.source, 'https://github.com/anthropics/skills/tree/main/skills/frontend-design')
-  assert.match(skill.license || '', /Apache-2\.0/)
+test('duplicate, design and prompt-architect skills are gone from the catalog', () => {
+  const ids = BUILTIN_SKILLS.map((s) => s.id)
+  assert.deepEqual([...RETIRED_SKILL_IDS].sort(), ['frontend-design', 'modular-code', 'prompt-architect'])
+  for (const id of RETIRED_SKILL_IDS) assert.ok(!ids.includes(id), `${id} must not ship as a built-in skill`)
+  // The modular-file guidance now lives in the software-engineering skill.
+  const se = BUILTIN_SKILLS.find((s) => s.id === 'software-engineering')
+  assert.match(se.instructions, /small, focused files/)
+  assert.match(se.instructions, /unless the user explicitly asks for a single file/)
 })
 
-test('prompt-writing skill covers conventions and the writing skill is scoped to creative prose', () => {
+test('prompt-writing is the single prompt-authoring skill, and writing stays creative prose', () => {
   const promptSkill = BUILTIN_SKILLS.find((s) => s.id === 'prompt-writing')
   assert.equal(promptSkill.name, 'Prompt writing')
   assert.match(promptSkill.description, /prompt/i)
   assert.match(promptSkill.instructions, /^# Prompt writing\n/)
   assert.match(promptSkill.instructions, /## Definition of done/)
   assert.match(promptSkill.instructions, /placeholders/)
+  assert.equal(BUILTIN_SKILLS.filter((s) => /prompt/i.test(s.name)).length, 1)
   const writing = BUILTIN_SKILLS.find((s) => s.id === 'writing')
   assert.equal(writing.name, 'Creative writing')
   assert.match(writing.description, /creative/i)
   assert.doesNotMatch(writing.description, /README|summaries/)
-})
-
-test('prompt-architect carries the implementation-prompt contract', () => {
-  const skill = BUILTIN_SKILLS.find((s) => s.id === 'prompt-architect')
-  assert.equal(skill.name, 'Prompt architect')
-  assert.match(skill.description, /implementation-ready/i)
-  assert.match(skill.instructions, /^# Role\n/)
-  assert.match(skill.instructions, /## Acceptance criteria/)
-  assert.match(skill.instructions, /## Verification/)
-  assert.match(skill.instructions, /exactly one fenced code block/)
 })
 
 test('model decides: catalog lists skills, instructions load by id', () => {
@@ -67,6 +58,28 @@ test('model decides: catalog lists skills, instructions load by id', () => {
   const disabled = states.map((s) => (s.id === 'debugging' ? { ...s, enabled: false } : s))
   assert.deepEqual(enabledSkills(disabled).filter((x) => x.id === 'debugging'), [])
   assert.equal(getSkillInstructions('debugging', disabled), null)
+})
+
+test('built-in skills can be deleted and restored', () => {
+  const { skills } = normSkills([{ id: 'testing', deleted: true }])
+  const testing = skills.find((s) => s.id === 'testing')
+  assert.equal(testing.deleted, true)
+  assert.equal(resolveSkill(testing), null)
+  assert.equal(getSkillInstructions('testing', skills), null)
+  assert.ok(!enabledSkills(skills).some((s) => s.id === 'testing'))
+  assert.doesNotMatch(composeSystemPrompt('Base prompt.', enabledSkills(skills)), /- testing: /)
+  const restored = normSkills([{ id: 'testing', deleted: false }]).skills
+  assert.ok(enabledSkills(restored).some((s) => s.id === 'testing'))
+  assert.equal(restored.find((s) => s.id === 'testing').deleted, undefined)
+})
+
+test('stored state for retired skills is dropped instead of becoming a custom skill', () => {
+  const { skills } = normSkills([
+    { id: 'frontend-design', enabled: true },
+    { id: 'prompt-architect', enabled: true, name: 'Prompt architect', description: 'Old skill.', instructions: 'Old text.' },
+    { id: 'modular-code', enabled: true },
+  ])
+  for (const id of RETIRED_SKILL_IDS) assert.ok(!skills.some((s) => s.id === id), `${id} should be dropped`)
 })
 
 test('malformed stored skills are skipped with useful warnings', () => {
@@ -101,7 +114,7 @@ test('prompt composition lists the catalog instead of inlining instructions', ()
 
 test('custom skill validation rejects bad input with useful errors', () => {
   assert.throws(() => validateCustomSkill({ id: '!!!', instructions: 'x', description: 'd' }), /lowercase/)
-  assert.throws(() => validateCustomSkill({ id: 'frontend-design', instructions: 'x', description: 'd' }), /built-in/)
+  assert.throws(() => validateCustomSkill({ id: 'testing', instructions: 'x', description: 'd' }), /built-in/)
   assert.throws(() => validateCustomSkill({ id: 'mine', instructions: '   ', description: 'd' }), /needs instructions/)
   assert.throws(() => validateCustomSkill({ id: 'mine', instructions: 'x', description: '  ' }), /description/)
   const skill = validateCustomSkill({ id: 'API Docs!', name: 'API docs', instructions: 'Follow the docs.', description: 'Use for API docs questions.' })

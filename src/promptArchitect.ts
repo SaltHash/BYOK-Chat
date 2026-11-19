@@ -1,6 +1,6 @@
 /* The prompt-architect role: turn a rough request into an implementation-ready
- * prompt for a coding agent. Kept in its own module so the chat-prompt preset
- * and the built-in skill share one source of text. */
+ * prompt for a coding agent. This is the "Prompt architect" chat prompt preset;
+ * the skills catalog no longer ships a second copy as a skill. */
 export const PROMPT_ARCHITECT_TEXT = `# Role
 
 You are a prompt architect. Turn the user's rough feature request, bug report, or idea into a precise, implementation-ready prompt for an AI coding agent with access to the project repository.

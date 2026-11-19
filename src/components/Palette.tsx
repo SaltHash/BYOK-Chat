@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
-import { Search, Plus, MessageSquare, Settings, Palette as Pi, Cpu, ScrollText, Download, PanelRight, Server, Trash2, Type, Maximize2, Sparkles, Wrench, Keyboard, FolderOpen, SlidersHorizontal, Brain, ListMusic, Terminal, TrendingUp, Database, FlaskConical, Library, Eraser, Activity, Square } from 'lucide-react'
-import { useS, THEMES, themePatch, modelsOf, modelNameOf, exportChat, featOn, FEATURES, LIBRARY_ITEMS, type FeatureId } from '../store'
+import { Search, Plus, MessageSquare, Settings, Palette as Pi, Cpu, ScrollText, Download, PanelRight, Server, Trash2, Type, Maximize2, Sparkles, Keyboard, FolderOpen, ListMusic, Terminal, Eraser, Activity, Square } from 'lucide-react'
+import { useS, THEMES, themePatch, modelsOf, modelNameOf, exportChat, featOn, type FeatureId } from '../store'
 import { nextThemePatch, stepModelSelection, stepPromptSelection } from '../selection'
 import { SETTINGS_TABS, SETTING_LINKS, TAB_KEYWORDS, visibleTabs } from '../settingsCatalog'
 import { normSkills, resolveSkill } from '../skills'
@@ -16,12 +16,6 @@ const TAB_FEATURE: Record<string, FeatureId> = {
   tools: 'tools', memory: 'memory', widgets: 'widgets', keys: 'shortcuts', stats: 'stats', adv: 'advanced', workspace: 'workspace',
 }
 
-const FEATURE_ICON: Record<string, Ic> = {
-  prompts: ScrollText, skills: Sparkles, tools: Wrench, playlists: ListMusic, commands: Terminal,
-  stats: TrendingUp, memory: Brain, widgets: PanelRight, shortcuts: Keyboard, library: Library,
-  workspace: FolderOpen, advanced: FlaskConical,
-}
-
 export function Palette({ close, cfg, toggleSide }: { close: () => void; cfg: (t: string) => void; toggleSide: () => void }) {
   /* Narrow slice: the palette is rebuilt from these fields only, so composer
      keystrokes, streaming text updates and widget state no longer re-render it. */
@@ -29,7 +23,7 @@ export function Palette({ close, cfg, toggleSide }: { close: () => void; cfg: (t
     chats: st.chats, skills: st.skills, eps: st.eps, pls: st.pls, prompts: st.prompts, cmds: st.cmds, pr: st.pr,
     features: st.features, prefs: st.prefs, sel: st.sel, rail: st.rail, tools: st.tools, busyChats: st.busyChats,
     themeMode: st.themeMode, themeLight: st.themeLight, themeDark: st.themeDark,
-    newChat: st.newChat, patch: st.patch, add: st.add,
+    newChat: st.newChat, patch: st.patch,
   })))
   const [q, setQ] = useState('')
   const [i, setI] = useState(0)
@@ -47,10 +41,9 @@ export function Palette({ close, cfg, toggleSide }: { close: () => void; cfg: (t
     // keystroke away even when the sidebar is long or scrolled away.
     ...s.chats.filter((c) => s.busyChats?.[c.id] === true).map((c) => action(Activity, c.title, 'Running', `running streaming reply chat ${c.title}`, () => { s.patch({ chat: c.id }); focusComposer() })),
     ...(Object.keys(s.busyChats ?? {}).length ? [action(Square, 'Stop every running reply', 'Action', 'stop all abort running streaming replies chats', () => useS.getState().stopAll())] : []),
-    ...s.chats.map((c) => action(MessageSquare, c.title, 'Chat', `chat conversation ${c.title}`, () => s.patch({ chat: c.id }))),
+    ...s.chats.filter((c) => s.busyChats?.[c.id] !== true).map((c) => action(MessageSquare, c.title, 'Chat', `chat conversation ${c.title}`, () => s.patch({ chat: c.id }))),
     ...s.eps.flatMap((e) => modelsOf(e).map((model) => action(Cpu, modelNameOf(e, model), e.name, `model ${modelNameOf(e, model)} ${model} ${e.name} provider endpoint switch select`, () => s.patch({ sel: { k: 'ep', id: e.id, model } })))),
     ...(featOn(s, 'playlists') ? s.pls.map((p) => action(Cpu, p.name, 'Playlist', `playlist model route ${p.name}`, () => s.patch({ sel: { k: 'pl', id: p.id } }))) : []),
-    action(Server, 'Add endpoint', 'Action', 'provider model connection api', () => { s.add('eps'); cfg('eps#add-endpoint') }),
     action(Settings, 'Open settings', 'Action', 'preferences configure options', () => cfg('eps')),
     action(Settings, 'Close settings', 'Action', 'dismiss settings', () => cfg('')),
     action(PanelRight, 'Toggle widgets panel', 'Action', 'sidebar widgets panel show hide', () => (featOn(s, 'widgets') ? s.patch({ rail: !s.rail }) : cfg('features#feature-widgets'))),
@@ -68,12 +61,8 @@ export function Palette({ close, cfg, toggleSide }: { close: () => void; cfg: (t
     ...SETTING_LINKS.filter((l) => visible.has(l.tab) && (!TAB_FEATURE[l.tab] || featOn(s, TAB_FEATURE[l.tab]))).map((l) => action(tabIcon(l.tab), l.title, 'Setting', `${l.title} ${l.keywords} settings ${l.tab}`, () => cfg(`${l.tab}#${l.anchor}`))),
     // Every endpoint card.
     ...s.eps.map((e) => action(Server, `Endpoint: ${e.name}`, 'Setting', `endpoint ${e.name} ${e.model} settings eps`, () => cfg(`eps#ep-${e.id}`))),
-    // Every feature toggle.
-    ...FEATURES.map(([id, label, desc]) => action(FEATURE_ICON[id] ?? SlidersHorizontal, `Feature: ${label}`, 'Setting', `feature ${label} ${desc} toggle enable disable`, () => cfg(`features#feature-${id}`))),
-    // Every library entry.
-    ...LIBRARY_ITEMS.map(([k, l]: [string, string]) => action(Library, `Library: ${l}`, 'Setting', `library sidebar ${l} show entries`, () => cfg('library#library-entries'))),
     // Every skill (built-in + custom).
-    ...(featOn(s, 'skills') ? skills.map((st) => {
+    ...(featOn(s, 'skills') ? skills.filter((st) => st.deleted !== true).map((st) => {
       const def = resolveSkill(st)
       const name = def?.name ?? st.id
       return action(Sparkles, `Skill: ${name}`, 'Setting', `skill ${name} ${st.id} ${st.description ?? def?.description ?? ''} instructions`, () => cfg(`skills#skill-${st.id}`))

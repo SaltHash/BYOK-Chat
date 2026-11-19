@@ -1241,6 +1241,7 @@ function QualitiesTab() {
       {editQ && <QualityEditor key={editQ === 'new' ? 'new' : editQ.id} {...(editQ === 'new' ? {} : { initial: editQ })} existingIds={qualityList.map((q) => q.id)} close={() => setEditQ(null)} save={saveQuality} />}
 
       <Section>
+        <Anchor id="add-prompt">
         <div className="flex items-center gap-3 py-3">
           <div className="min-w-0 flex-1">
             <p className="text-sm font-medium">Reusable prompts</p>
@@ -1248,6 +1249,7 @@ function QualitiesTab() {
           </div>
           <Btn v="soft" icon={Plus} onClick={() => useS.getState().add('prompts')}>Add prompt</Btn>
         </div>
+        </Anchor>
         <SortableCards k="prompts" ids={prompts.map((x) => x.id)} label="Prompt" renderCard={(pid, handle) => {
           const p = prompts.find((x) => x.id === pid)
           if (!p) return null
@@ -1277,7 +1279,7 @@ function Pls() {
     })
     .sort((a, b) => b.calls - a.calls)
   return (
-    <Panel id="pls" k="pls" add="Add playlist">
+    <Panel id="pls" k="pls" add="Add playlist" addId="add-playlist">
       <Section>
       {!pls.length && <p className="py-6 text-center text-sm text-mu">No playlists yet.</p>}
       <SortableCards k="pls" ids={pls.map((x) => x.id)} label="Playlist" renderCard={(plid, handle) => {
@@ -1352,7 +1354,7 @@ function Pls() {
 function Cmds() {
   const { cmds, pls, upd } = useSConfig()
   return (
-    <Panel id="cmds" k="cmds" add="Add command">
+    <Panel id="cmds" k="cmds" add="Add command" addId="add-command">
       <Section>
       {!cmds.length && <p className="py-6 text-center text-sm text-mu">No commands yet.</p>}
       <SortableCards k="cmds" ids={cmds.map((x) => x.id)} label="Command" renderCard={(cid, handle) => {
@@ -1451,7 +1453,9 @@ function DocumentsSettings() {
         <Sel value={String(d.totalChars)} set={(v) => set({ totalChars: Number(v) })} opts={[['100000', '100k characters'], ['250000', '250k characters'], ['500000', '500k characters (default)'], ['750000', '750k characters'], ['1000000', '1M characters']]} />
       </Field>
       </Anchor>
+      <Anchor id="private-file-names">
       <div className="flex items-center justify-between gap-3"><div className="flex items-center gap-1.5 text-sm font-medium">Private file names</div><Toggle on={d.privateNames} set={(privateNames) => set({ privateNames })} label="Private file names" /></div>
+      </Anchor>
     </div>
     </Anchor>
   )
@@ -1923,13 +1927,26 @@ function SkillsTab() {
       setError('')
     } catch (x: any) { setError(x?.message || 'Could not add the skill.') }
   }
+  /** Custom skills leave the list; a built-in keeps a deleted marker so it stays removed after reload. */
+  const remove = (id: string) => setSkills(BUILTIN_SKILLS.some((b) => b.id === id) ? skills.map((x) => (x.id === id ? { ...x, deleted: true } : x)) : skills.filter((x) => x.id !== id))
+  const startAdd = () => {
+    // Open the add card before scrolling: its fields do not exist until it expands.
+    try { window.dispatchEvent(new CustomEvent('byok:anchor', { detail: 'add-skill' })) } catch { /* the card still opens on click */ }
+    setTimeout(() => document.querySelector('[data-anchor="add-skill"]')?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 60)
+  }
+  const live = skills.filter((x) => x.deleted !== true)
+  const removed = skills.filter((x) => x.deleted === true)
   return (
     <Panel id="skills">
+      <div className="flex items-center gap-3">
+        <h2 className="flex-1 text-sm font-medium">Skills</h2>
+        <Btn v="soft" icon={Plus} onClick={startAdd}>Add skill</Btn>
+      </div>
       <Section>
       {!!warnings.length && <p role="status" className="rounded-xl bg-er/10 px-3 py-2 text-xs text-er">{warnings[0]} Edit or reset the skill below to fix it.</p>}
-      {skills.map((st) => {
+      {live.map((st) => {
         const def = resolveSkill(st)
-        if (!def) return <Anchor key={st.id} id={`skill-${st.id}`}><Card icon={Sparkles} title={st.id} sub="Missing instructions" muted><p className="text-sm text-er">This skill has no instructions, so it can't be used. Edit it or remove it.</p><div><Btn v="danger" icon={Trash2} onClick={() => setSkills(skills.filter((x) => x.id !== st.id))}>Remove</Btn></div></Card></Anchor>
+        if (!def) return <Anchor key={st.id} id={`skill-${st.id}`}><Card icon={Sparkles} title={st.id} sub="Missing instructions" muted><p className="text-sm text-er">This skill has no instructions, so it can't be used. Edit it or remove it.</p><div><Btn v="danger" icon={Trash2} onClick={() => remove(st.id)}>Remove</Btn></div></Card></Anchor>
         const builtin = BUILTIN_SKILLS.some((b) => b.id === st.id)
         return (
           <Anchor key={st.id} id={`skill-${st.id}`}>
@@ -1939,13 +1956,24 @@ function SkillsTab() {
             <Field label="Instructions"><Area rows={6} value={st.instructions ?? def.instructions} set={(instructions) => upd(st.id, { instructions })} /></Field>
             <div className="flex gap-2">
               {builtin && <Btn v="soft" icon={RotateCcw} onClick={() => upd(st.id, { name: undefined, description: undefined, instructions: undefined } as Partial<SkillState>)}>Reset</Btn>}
-              {!builtin && <Btn v="danger" icon={Trash2} onClick={() => setSkills(skills.filter((x) => x.id !== st.id))}>Remove</Btn>}
+              <Btn v="danger" icon={Trash2} onClick={() => remove(st.id)}>Remove</Btn>
             </div>
           </Card>
           </Anchor>
         )
       })}
       </Section>
+      {!!removed.length && (
+        <Section title="Removed">
+          {removed.map((st) => (
+            <div key={st.id} className="flex items-center gap-3 py-3">
+              <Sparkles size={16} className="shrink-0 text-mu/60" />
+              <span className="min-w-0 flex-1 truncate text-sm text-mu">{BUILTIN_SKILLS.find((b) => b.id === st.id)?.name ?? st.id}</span>
+              <Btn v="soft" icon={RotateCcw} onClick={() => upd(st.id, { deleted: false })}>Restore</Btn>
+            </div>
+          ))}
+        </Section>
+      )}
       <Section title="Custom skills">
       <Anchor id="add-skill">
       <Card icon={Plus} title="Add a custom skill" open0={false}>
@@ -2048,7 +2076,7 @@ function McpTab() {
     try { importJson(await file.text()) } catch { setImportMsg({ bad: true, lines: ['Could not read that file.'] }) }
   }
   return (
-    <Panel id="mcp" k="mcps" add="Add server">
+    <Panel id="mcp" k="mcps" add="Add server" addId="add-mcp">
       <Section title="Import from JSON">
       <Anchor id="import-mcp">
         <div className="space-y-3 py-3">
