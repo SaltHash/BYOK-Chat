@@ -1,5 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { spawnSync } from 'node:child_process'
 import { hydrateDurable, blobIdFor } from './boot.ts'
 import { durableEraseAll, durableGetChats, durablePutChats, durableSetMeta, blobPut } from './durable.ts'
 import { planPersistShards, QUOTA_FLAG } from '../persistence.ts'
@@ -15,6 +16,63 @@ const putSharded = chats => {
   localStorage.setItem('byok.v1', plan.main)
   for (const write of plan.writes) localStorage.setItem(write.key, write.value)
 }
+
+/* Boot reports a recovery once per session, so each scenario that checks the
+ * warning runs in its own process: the module-level message is sticky. */
+const shardedPairs = chats => {
+  const plan = planPersistShards(JSON.stringify({ version: 22, state: { chats, workspaces: {}, chat: chats[0]?.id ?? '' } }), new Map())
+  return [['byok.v1', plan.main], ...plan.writes.map(w => [w.key, w.value])]
+}
+const bootInChild = (pairs, durableChats = null) => {
+  const script = `
+    const values = new Map(${JSON.stringify(pairs)})
+    globalThis.localStorage = { getItem: k => values.has(k) ? values.get(k) : null, setItem: (k, v) => { values.set(k, String(v)) }, removeItem: k => { values.delete(k) }, key: i => [...values.keys()][i] ?? null, get length() { return values.size } }
+    const { hydrateDurable } = await import('./src/storage/boot.ts')
+    ${durableChats ? `const { durablePutChats, durableSetMeta } = await import('./src/storage/durable.ts'); await durablePutChats(${JSON.stringify(durableChats)}); await durableSetMeta({ migratedAt: 1 })` : ''}
+    let patch = {}
+    await hydrateDurable(p => { patch = { ...patch, ...p } })
+    const { getStorageWarning } = await import('./src/persistence.ts')
+    console.log(JSON.stringify({ ids: (patch.chats ?? []).map(c => c.id), patched: 'chats' in patch, warning: getStorageWarning() }))
+  `
+  const result = spawnSync(process.execPath, ['--import', './tests/register-loader.mjs', '--input-type=module', '-e', script], { encoding: 'utf8' })
+  assert.equal(result.status, 0, result.stderr)
+  return JSON.parse(result.stdout)
+}
+
+test('a healthy sharded store boots without asking for a backup', () => {
+  const out = bootInChild(shardedPairs([chat('a'), chat('b')]))
+  assert.equal(out.warning, '')
+  assert.equal(out.patched, false)
+})
+
+test('a malformed chat index is rebuilt silently: no data was lost', () => {
+  const pairs = shardedPairs([chat('a'), chat('b')])
+  const main = JSON.parse(pairs[0][1])
+  main.state.__byokChatIds = 'bad-index'
+  const out = bootInChild([['byok.v1', JSON.stringify(main)], ...pairs.slice(1)])
+  assert.deepEqual(out.ids, ['a', 'b'])
+  assert.equal(out.warning, '')
+})
+
+test('a missing row the durable copy restores is repaired silently', () => {
+  const pairs = shardedPairs([chat('kept'), chat('missing')]).filter(([key]) => key !== 'byok.v1:chat:missing')
+  const out = bootInChild(pairs, [chat('kept'), chat('missing')])
+  assert.deepEqual(out.ids, ['kept', 'missing'])
+  assert.equal(out.warning, '')
+})
+
+test('a missing row nothing can restore is reported as lost data', () => {
+  const pairs = shardedPairs([chat('kept'), chat('missing')]).filter(([key]) => key !== 'byok.v1:chat:missing')
+  const out = bootInChild(pairs)
+  assert.deepEqual(out.ids, ['kept'])
+  assert.match(out.warning, /could not be read/)
+})
+
+test('an unreadable main record is reported: settings went with it', () => {
+  const out = bootInChild([['byok.v1', '{broken'], ...shardedPairs([chat('a')]).slice(1)])
+  assert.deepEqual(out.ids, ['a'])
+  assert.match(out.warning, /could not be read/)
+})
 
 test('durable hydration reconciles sharded storage without resurrecting deleted chats', async () => {
   globalThis.localStorage = memoryStorage()

@@ -61,7 +61,16 @@ export async function restoreAttachmentBytes(chats: Array<{ msgs: Array<{ id: st
   return restored
 }
 
-type LocalSnapshot = { state: Record<string, unknown>; version: number; missing: string[]; repaired: boolean }
+type LocalSnapshot = {
+  state: Record<string, unknown>
+  version: number
+  /** Indexed chats whose own row is missing; the durable copy may still have them. */
+  missing: string[]
+  /** The stored records disagreed and the snapshot was reassembled: publish it. */
+  repaired: boolean
+  /** Settings or chat rows were unreadable beyond what the local records can rebuild. */
+  lost: boolean
+}
 type StoredChat = { id: string; msgs: unknown[] }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -165,11 +174,17 @@ function readLocal(): LocalSnapshot | null {
   const embedded = Array.isArray(state.chats) ? state.chats : []
   const chats = mergeChats(embedded, rows)
   const missing = indexIds ? indexIds.filter((id) => !shards.ids.has(id)) : []
+  // A main record that exists but cannot be read took the settings (and any
+  // chats embedded in it) with it; so did a main record that is gone while
+  // rows remain. Everything else is bookkeeping: a malformed id index is
+  // rebuilt from the rows themselves and loses nothing.
+  const unreadableMain = raw !== null && !mainValid
   return {
     state: { ...state, chats },
     version,
     missing,
-    repaired: !mainValid || indexCorrupt || missing.length > 0 || (raw === null && shards.chats.length > 0),
+    repaired: unreadableMain || indexCorrupt || missing.length > 0 || (raw === null && shards.chats.length > 0),
+    lost: unreadableMain || (raw === null && shards.chats.length > 0),
   }
 }
 
@@ -206,9 +221,11 @@ export async function hydrateDurable(patch: (p: Record<string, unknown>) => void
     // An indexed row may be missing or truncated after interruption. Restore
     // those IDs from durable, never unrelated chats deleted locally. A row that
     // cannot be found anywhere is skipped instead of aborting the whole boot.
+    let unrecovered = saved?.missing ?? []
     if (local?.missing.length) {
       const recovered = new Map((Array.isArray(dChats) ? dChats : []).filter((c): c is { id: string; msgs: unknown[] } => !!c && typeof c === 'object' && typeof (c as { id?: unknown }).id === 'string' && Array.isArray((c as { msgs?: unknown }).msgs)).map(c => [c.id, c]))
       const found = local.missing.map(id => recovered.get(id)).filter((c): c is { id: string; msgs: unknown[] } => !!c)
+      unrecovered = local.missing.filter(id => !recovered.has(id))
       const chats = mergeChats(local.state.chats, found)
       local.state = { ...local.state, chats }
       patch({ chats })
@@ -246,10 +263,13 @@ export async function hydrateDurable(patch: (p: Record<string, unknown>) => void
         patch({ chats })
       }
     }
-    // Repairing the index is a normal boot, not a fatal error: publish the
-    // recovered rows to the live store and tell the user to keep a backup.
+    // Rebuilding the index is a normal boot, not a fatal error: publish the
+    // recovered rows to the live store. Warn only when something could not be
+    // restored from any copy — a rebuilt index, or a row the durable mirror
+    // still had, costs the user nothing and does not need a backup prompt on
+    // every reload.
+    if (saved?.lost || unrecovered.length) reportStorageRecovery()
     if (saved?.repaired) {
-      reportStorageRecovery()
       if (!useDurableChats) {
         const chats = withoutExpiredTemps((Array.isArray(local?.state.chats) ? local.state.chats : []).filter(isLiveChat) as Array<{ temporary?: boolean; expiresAt?: number }>)
         patch({ chats })
@@ -266,7 +286,9 @@ export async function hydrateDurable(patch: (p: Record<string, unknown>) => void
     if (saved?.repaired && local) {
       const chats = withoutExpiredTemps((Array.isArray(local.state.chats) ? local.state.chats : []).filter(isLiveChat) as Array<{ temporary?: boolean; expiresAt?: number }>)
       patch({ chats })
-      reportStorageRecovery()
+      // Durable is unavailable here, so a row it might have held cannot be
+      // restored in this session: treat the index's missing rows as lost.
+      if (saved.lost || saved.missing.length) reportStorageRecovery()
       return { migrated, restoredBlobs: 0, backend: 'memory' }
     }
     reportStorageFailure()

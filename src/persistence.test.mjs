@@ -155,6 +155,44 @@ test('persist mapper reuses the mapped array until the chats array changes', () 
   assert.notEqual(map([...chats]), first, 'a new chats array is mapped again')
 })
 
+test('a failed row rewrite still lets the written index drop a deleted chat row', async () => {
+  const { spawnSync } = await import('node:child_process')
+  const script = `
+    globalThis.window = { addEventListener() {}, removeEventListener() {}, dispatchEvent() {} };
+    const values = new Map();
+    let failKey = '';
+    globalThis.localStorage = {
+      getItem: k => values.get(k) ?? null,
+      setItem: (k, v) => { if (k === failKey) { const e = new Error('full'); e.name = 'QuotaExceededError'; throw e } values.set(k, String(v)) },
+      removeItem: k => values.delete(k), key: i => [...values.keys()][i] ?? null, get length() { return values.size },
+    };
+    const { persistStorage, allowPersistWritesAfterBoot } = await import('./src/persistence.ts');
+    allowPersistWritesAfterBoot();
+    const chat = (id, t = 'hi') => ({ id, msgs: [{ id: id + '-m', r: 'user', t }] });
+    const write = chats => { persistStorage.setItem('byok.v1', { version: 27, state: { chats } }); persistStorage.flush() };
+    const ids = () => JSON.parse(values.get('byok.v1')).state.__byokChatIds;
+    write([chat('a'), chat('b')]);
+    // One row cannot be rewritten (quota) in the same write that drops another
+    // chat: the deleted chat's row must still go, or storage fills with rows
+    // no index names.
+    failKey = 'byok.v1:chat:a';
+    write([chat('a', 'newer')]);
+    failKey = '';
+    if (values.has('byok.v1:chat:b')) throw Error('deleted chat left an orphaned row');
+    if (!values.has('byok.v1:chat:a')) throw Error('previous row was lost when its rewrite failed');
+    if (JSON.stringify(ids()) !== '["a"]') throw Error('index was not written');
+    // A failed index write must not delete rows the stored index still names.
+    write([chat('a', 'newer'), chat('c')]);
+    failKey = 'byok.v1';
+    write([chat('a', 'newer')]);
+    failKey = '';
+    if (!values.has('byok.v1:chat:c')) throw Error('row deleted while the stored index still listed it');
+    if (JSON.stringify(ids()) !== '["a","c"]') throw Error('failed index write changed the stored index');
+  `
+  const result = spawnSync(process.execPath, ['--import', './tests/register-loader.mjs', '--input-type=module', '-e', script], { encoding: 'utf8' })
+  assert.equal(result.status, 0, result.stderr)
+})
+
 test('a settings-only change writes the main record immediately and leaves chat rows alone', async () => {
   const { spawnSync } = await import('node:child_process')
   const script = `

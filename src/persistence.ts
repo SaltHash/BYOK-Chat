@@ -8,19 +8,25 @@ export const QUOTA_FLAG = 'byok.v1:quota-full'
 // A session-wide warning: a successful write to one storage tier does not prove
 // that an earlier failure in another tier was repaired.
 let storageWarning = ''
+let storageWarningUrgent = false
 export const getStorageWarning = () => storageWarning
-function reportWarning(message: string): void {
-  if (storageWarning) return
+/** Keep the most useful message for the session: a failed write is actionable,
+ *  so it replaces a recovery notice, while the notice never hides a failure. */
+function reportWarning(message: string, urgent: boolean): void {
+  if (storageWarning && (storageWarningUrgent || !urgent)) return
   storageWarning = message
+  storageWarningUrgent = urgent
   if (typeof window !== 'undefined') window.dispatchEvent(new Event('byok:storage-failure'))
 }
 export function reportStorageFailure(): void {
-  reportWarning('Browser storage could not save all data. Export a backup now, free space or check browser storage permissions, then reload.')
+  reportWarning('Browser storage could not save all data. Export a backup now, free space or check browser storage permissions, then reload.', true)
 }
-/** A corrupt index or missing row was repaired from the remaining records. The
- *  app can continue, but the user should review the result and keep a copy. */
+/** Saved data was unreadable and no copy could restore it, so it is gone.
+ *  Bookkeeping that rebuilds itself (a malformed chat index) and a row the
+ *  durable mirror still holds are repaired silently: nothing was lost, and a
+ *  backup prompt for those was noise on every reload. */
 export function reportStorageRecovery(): void {
-  reportWarning('Some saved data was repaired from local recovery records. Review your chats and export a backup now.')
+  reportWarning('Some saved data could not be read and is missing. Review your chats and export a backup now.', false)
 }
 export function subscribeStorageWarning(callback: () => void): () => void {
   if (typeof window === 'undefined') return () => {}
@@ -394,13 +400,18 @@ const rawStorage: StateStorage = {
         catch { /* keep the previous shard; durable has the full copy */ }
       }
     }
-    try { localStorage.setItem(k, plan.main) }
+    let mainWritten = false
+    try { localStorage.setItem(k, plan.main); mainWritten = true }
     catch (x) {
       if (!isQuotaError(x)) throw x
       quota = true
     }
-    if (!quota) {
-      localStorage.removeItem(QUOTA_FLAG)
+    if (!quota) localStorage.removeItem(QUOTA_FLAG)
+    // Remove only rows the *stored* index no longer names. When the index write
+    // failed, the previous index still lists those chats, so deleting their
+    // rows would leave the index pointing at nothing: the next boot would find
+    // "missing" chats that were never really gone and report a repair.
+    if (mainWritten) {
       const retained = new Set(plan.index)
       const deleted = new Set([...plan.deletes, ...previousIds.filter(id => !retained.has(id)).map(id => CHAT_SHARD_PREFIX + id)])
       for (const key of deleted) { try { localStorage.removeItem(key) } catch { /* ignore */ } writtenShards.delete(key) }
