@@ -632,7 +632,7 @@ export function Composer({ cfg, quote, onClearQuote }: { cfg: (t: string) => voi
       )}
       <ToolApprovalPrompt chatId={s.chat} />
       <QuestionPrompt chatId={s.chat} />
-      <div ref={box} style={{ padding: 'var(--ui-composer-pad)', '--glass-blur': `${s.prefs.glassBlur ?? 14}px`, '--glass-opacity': `${s.prefs.glassOpacity ?? 80}%` } as CSSProperties} className={cx('composer-shell relative rounded-2xl', s.prefs.glassComposer !== false ? 'glass-composer border border-hov shadow-lg shadow-black/10' : 'edge-border bg-surf')} onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); add(e.dataTransfer.files) }}>
+      <div ref={box} style={{ padding: 'var(--ui-composer-pad)', '--glass-blur': `${s.prefs.glassBlur ?? 14}px`, '--glass-opacity': `${s.prefs.glassOpacity ?? 80}%` } as CSSProperties} className={cx('composer-shell relative rounded-2xl', s.prefs.glassComposer !== false ? 'glass-composer border border-hov/70 shadow-lg shadow-black/10' : 'border border-bor/70 bg-surf')} onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); add(e.dataTransfer.files) }}>
         {quote && <QuoteBanner text={quote} onDismiss={() => { onClearQuote?.(); ta.current?.focus() }} />}
         {banner && <MentionBanner kind={banner} onDismiss={dismissBanner} warning={banner === 'search' && !searchEnabled ? 'Web search is off.' : undefined} onEnable={banner === 'search' && !searchEnabled ? () => { s.patch({ features: { ...s.features, tools: true }, tools: { ...s.tools, search: true }, toolMode: 'full' }) } : undefined} />}
         {menu && !menuOff && (

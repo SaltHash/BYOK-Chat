@@ -452,6 +452,14 @@ html[data-codewrap] .code-lines .code-line > code { flex: 1 1 auto; min-width: 0
   content: attr(data-placeholder);
   color: color-mix(in srgb, var(--mu) 70%, transparent);
   pointer-events: none;
+  transition: color 180ms ease, text-shadow 180ms ease;
+}
+/* The greeting warms while the composer is being written in: the placeholder
+   lifts a little and picks up a soft accent halo, then settles back when focus
+   leaves. */
+.composer-input:empty:focus::before {
+  color: color-mix(in srgb, var(--mu) 88%, var(--tx));
+  text-shadow: 0 0 12px color-mix(in srgb, var(--ac) 35%, transparent);
 }
 .mention-pill-off {
   color: var(--mu);
