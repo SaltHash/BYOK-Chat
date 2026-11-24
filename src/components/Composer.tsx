@@ -331,12 +331,6 @@ export function Composer({ cfg, quote, onClearQuote }: { cfg: (t: string) => voi
     return () => cancelAnimationFrame(id)
   }, [])
   const [menuOff, setMenuOff] = useState(false)
-  // Any composer menu (+ attach, model, prompt) or dictation keeps the frame
-  // lit even after the pointer leaves it.
-  const [menusOpen, setMenusOpen] = useState(false)
-  // The frame also lifts while the message surface itself has focus, so typing
-  // reads as an active composer and not only when a menu is open.
-  const [typing, setTyping] = useState(false)
   // Escape hides the slash/@ popup until the draft changes again.
   useEffect(() => { setMenuOff(false) }, [v])
   const [ime, setIme] = useState(false)
@@ -638,7 +632,7 @@ export function Composer({ cfg, quote, onClearQuote }: { cfg: (t: string) => voi
       )}
       <ToolApprovalPrompt chatId={s.chat} />
       <QuestionPrompt chatId={s.chat} />
-      <div ref={box} style={{ padding: 'var(--ui-composer-pad)', '--glass-blur': `${s.prefs.glassBlur ?? 14}px`, '--glass-opacity': `${s.prefs.glassOpacity ?? 80}%` } as CSSProperties} className={cx('composer-shell relative rounded-2xl transition-colors', s.prefs.glassComposer !== false ? 'glass-composer border border-hov hover:border-bor focus-within:border-bor shadow-lg shadow-black/10' : 'edge-border bg-surf hover:border-bor focus-within:border-bor')} data-lit={menusOpen || listening || typing ? '1' : undefined} onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); add(e.dataTransfer.files) }}>
+      <div ref={box} style={{ padding: 'var(--ui-composer-pad)', '--glass-blur': `${s.prefs.glassBlur ?? 14}px`, '--glass-opacity': `${s.prefs.glassOpacity ?? 80}%` } as CSSProperties} className={cx('composer-shell relative rounded-2xl', s.prefs.glassComposer !== false ? 'glass-composer border border-hov shadow-lg shadow-black/10' : 'edge-border bg-surf')} onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); add(e.dataTransfer.files) }}>
         {quote && <QuoteBanner text={quote} onDismiss={() => { onClearQuote?.(); ta.current?.focus() }} />}
         {banner && <MentionBanner kind={banner} onDismiss={dismissBanner} warning={banner === 'search' && !searchEnabled ? 'Web search is off.' : undefined} onEnable={banner === 'search' && !searchEnabled ? () => { s.patch({ features: { ...s.features, tools: true }, tools: { ...s.tools, search: true }, toolMode: 'full' }) } : undefined} />}
         {menu && !menuOff && (
@@ -839,8 +833,7 @@ export function Composer({ cfg, quote, onClearQuote }: { cfg: (t: string) => voi
             onClick={clickPill}
             onCompositionStart={() => { composing.current = true; setIme(true) }}
             onCompositionEnd={() => { composing.current = false; setIme(false); commitInput() }}
-            onBlur={() => { setTyping(false); setActive(null) }}
-            onFocus={() => setTyping(true)}
+            onBlur={() => setActive(null)}
             onPaste={(e) => {
               if (e.clipboardData.files.length) { e.preventDefault(); void add(e.clipboardData.files); return }
               const text = e.clipboardData.getData('text/plain')
@@ -880,7 +873,7 @@ export function Composer({ cfg, quote, onClearQuote }: { cfg: (t: string) => voi
         )}
         <input ref={fi} type="file" multiple hidden onChange={(e) => { add(e.target.files); e.target.value = '' }} />
         <div className="mt-2 flex items-center gap-1">
-          <Pop up w="w-64" onOpenChange={setMenusOpen} trigger={() => <Btn icon={Plus} title="Attach files or manage tools" className="rounded-full" />}>
+          <Pop up w="w-64" trigger={() => <Btn icon={Plus} title="Attach files or manage tools" className="rounded-full" />}>
             {(close) => (
               <>
                 <Item icon={FileUp} onClick={() => { pick(''); close() }}
@@ -897,7 +890,7 @@ export function Composer({ cfg, quote, onClearQuote }: { cfg: (t: string) => voi
               </>
             )}
           </Pop>
-          <Pop up w="w-[26rem]" scroll={false} onOpenChange={setMenusOpen} trigger={(o) => {
+          <Pop up w="w-[26rem]" scroll={false} trigger={(o) => {
             const activeEp = s.sel?.k === 'ep' && s.sel?.id ? s.eps.find((e) => e.id === s.sel!.id) : undefined
             const activeModel = s.sel?.k === 'ep' && s.sel.model ? s.sel.model : undefined
             const effortsArr = activeModel ? activeEp?.modelEfforts?.[activeModel] ?? [] : []
@@ -917,7 +910,7 @@ export function Composer({ cfg, quote, onClearQuote }: { cfg: (t: string) => voi
             </button>
             )
           }}>{(close) => <ModelMenu close={close} cfg={cfg} />}</Pop>
-          {featOn(s, 'prompts') && <Pop up onOpenChange={setMenusOpen} trigger={(o) => (
+          {featOn(s, 'prompts') && <Pop up trigger={(o) => (
             <button className={chip} title={normQualities(s.globalPrompt?.qualities, s.qualities.map((q) => q.id)).length ? `${normQualities(s.globalPrompt?.qualities, s.qualities.map((q) => q.id)).length} qualities on` : undefined}><ScrollText size={16} /><span className="max-w-20 truncate sm:max-w-32">{pr ? pr.name : 'No prompt'}</span>{(() => { const n = normQualities(s.globalPrompt?.qualities, s.qualities.map((q) => q.id)).length; return n ? <span className="inline-flex items-center gap-0.5 text-xs text-mu"><Star size={11} />{n}</span> : null })()}<ChevronRight size={14} className={cx('transition-transform', o && 'rotate-90')} /></button>
           )}>
             {(close) => {

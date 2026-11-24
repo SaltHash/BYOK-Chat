@@ -402,10 +402,11 @@ export function customPalette(opts: CustomPaletteOptions): Record<CustomPaletteK
   for (const [key, value] of Object.entries(opts.overrides ?? {})) {
     if ((CUSTOM_PALETTE_KEYS as readonly string[]).includes(key) && isHexColor(value)) out[key as CustomPaletteKey] = value.toLowerCase()
   }
-  // The app's border is normally a mix of hover and muted text. Its weight
-  // follows the same curve, so it fades out of the canvas continuously instead
-  // of stepping to the background only at the very end of the slider.
-  const bor = mixOklch(out.hov, out.mu, spread(0.2, 0.36))
+  // The border is one small step off the panel surface toward hover: a quiet
+  // hairline on every canvas. It rides the same curve as the surfaces, so it
+  // fades into the canvas at low contrast instead of popping out only at the
+  // end of the slider.
+  const bor = mixOklch(out.surf, out.hov, 0.35)
   return { ...out, bor }
 }
 
