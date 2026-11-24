@@ -41,6 +41,12 @@ export type WriteCoalescer<T> = {
 const defaultSchedule = (fn: () => void, ms: number) => setTimeout(fn, ms)
 const defaultCancel = (timer: TimerHandle) => clearTimeout(timer)
 
+/** `StateStorage.getItem` is allowed to answer with a promise, but the
+ *  synchronous backends must stay synchronous. Narrowing on `then` rather
+ *  than `instanceof Promise` also covers a thenable from another realm. */
+const isThenable = (value: string | PromiseLike<string | null> | null): value is PromiseLike<string | null> =>
+  typeof (value as PromiseLike<string | null> | null)?.then === 'function'
+
 /** Throttled trailing writer: at most one write per `wait` ms, always with
  *  the newest value. A wrapper is used so `undefined` can be a value. */
 export function createWriteCoalescer<T>(write: (value: T) => void, options: CoalescerOptions = {}): WriteCoalescer<T> {
@@ -97,7 +103,7 @@ export function createCoalescedPersistStorage<S>(storage: StateStorage, options:
       const pending = coalescer.peek()
       if (pending && pending.name === name) return pending.value
       const raw = storage.getItem(name)
-      return raw instanceof Promise ? raw.then(parse) : parse(raw)
+      return isThenable(raw) ? raw.then(parse) : parse(raw)
     },
     setItem: (name, value) => { coalescer.push({ name, value }) },
     removeItem: (name) => {
