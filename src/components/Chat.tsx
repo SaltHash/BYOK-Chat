@@ -7,6 +7,7 @@ import { focusComposer, startPointerDrag } from '../hooks'
 import { useProcessLogEpoch } from '../uiSignals'
 import { followStep, stickAfterScroll } from '../throttle'
 import { splitFadeUnits } from '../streamFade'
+import { arrivalFadeMs, fadeMsOf, segmentFade } from '../replyFade'
 import { CI, fmtDuration } from '../meta'
 import { toolLabel } from '../toolLabels'
 import { summarizeToolCalls, splitToolTrail, type ToolKind, type TrailCall } from '../toolSummary'
@@ -502,11 +503,13 @@ function ProcessStep({ t, detail, timing, models, tokens, open, toggle }: {
  * ends, which is what lets a retry of the same message fade in normally. */
 const fadeStarted = new Set<string>()
 
-/* Replies whose word-by-word fade really reached the screen. A reply can mount
- * the live body and still finish before a frame with any text in it is painted
- * — a fast endpoint, or an answer that arrives inside one frame — and then the
- * fade never happens at all. The mark is set from a frame callback, so it only
- * covers text the reader actually saw appear. */
+/* Replies whose word-by-word fade really reached the page. A reply can mount
+ * the live body and still finish before any word of it is rendered — a fast
+ * endpoint, or an answer that arrives inside one frame — and then the words
+ * never fade at all. The mark is set from the live body's own DOM (see the
+ * effect in `M`), so it covers exactly the replies whose fade spans were
+ * rendered, whichever live path drew them. A reply that finished without one
+ * gets the whole-body fade instead. */
 const fadePainted = new Set<string>()
 
 /* The reply body while it is arriving.
@@ -523,9 +526,12 @@ function LiveReply({ mid, chunks, busy }: { mid: string; chunks: string[]; busy:
   if (!latch.current) {
     const replay = !fadeStarted.has(mid)
     fadeStarted.add(mid)
+    // A retried reply fades from its first word again, so it must not keep the
+    // mark of the attempt that already faded it.
+    if (replay) fadePainted.delete(mid)
     latch.current = {
       md: prefs.streamMd !== false,
-      fadeMs: prefs.streamFade > 0 ? Math.round(Math.min(1, prefs.streamFade) * 1000) : 0,
+      fadeMs: fadeMsOf(prefs.streamFade),
       // A reply that was already on screen when this chat was left keeps its
       // text and continues from there.
       resume: !replay,
@@ -855,7 +861,19 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
    * streamed around tool calls renders its pieces directly (there is no paced
    * live body for them); without this their words appeared with no fade at
    * all, unlike every other streaming path. */
-  const liveFadeMs = prefs.streamFade > 0 ? Math.round(Math.min(1, prefs.streamFade) * 1000) : 0
+  const liveFadeMs = fadeMsOf(prefs.streamFade)
+  /* What each trail segment was first rendered with. See `segmentFade`: a
+   * segment whose duration changes while it is mounted is re-parsed, and an
+   * animation that starts over takes words the reader already read back to
+   * transparent. The answer is remembered so it never changes. */
+  const segFades = useRef<number[]>([])
+  const segOpening = useRef(true)
+  const liveSegFade = (i: number, count: number) => {
+    const fade = segmentFade(segFades.current[i], i === count - 1, liveFadeMs, segOpening.current && i === 0)
+    segFades.current[i] = fade
+    segOpening.current = false
+    return fade
+  }
   /* A reply can finish before it is ever painted — a fast endpoint, or one
    * whose whole answer arrived within a frame — so the live body above never
    * mounts and its word-by-word fade never runs; the text simply appears. The
@@ -868,15 +886,19 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
   useLayoutEffect(() => {
     const finished = wasBusy.current && !busy
     wasBusy.current = busy
-    if (!finished || !last || fadePainted.has(m.id)) return
-    const fade = useS.getState().prefs.streamFade
-    const ms = fade > 0 ? Math.round(Math.min(1, fade) * 1000) : 0
+    if (!finished || !last) return
+    const ms = arrivalFadeMs({
+      finished,
+      live: !!liveChunks?.length,
+      painted: fadePainted.has(m.id),
+      setting: useS.getState().prefs.streamFade,
+    })
     if (!ms) return
     fadeStarted.add(m.id)
     setArrivalFade(ms)
     const timer = setTimeout(() => setArrivalFade(0), ms + 80)
     return () => clearTimeout(timer)
-  }, [busy, last, m.id])
+  }, [busy, last, m.id, liveChunks])
   const [showRawErr, setShowRawErr] = useState(false)
   const [confirmDel, setConfirmDel] = useState(false)
   // Jump-to-message from ranked sidebar search: scroll + temporary highlight.
@@ -917,6 +939,25 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
   // Keep the find-in-conversation marks in step with the rendered body. Runs
   // after render so it can wrap text inside the already-rendered markdown.
   const contentRef = useRef<HTMLDivElement>(null)
+  /* The mark `arrivalFade` consults. The live body is the only thing that knows
+   * whether this reply's words faded on screen, and both live paths — the paced
+   * renderer and the segments around tool rounds — put their fade spans inside
+   * this container. Reading them back after the render is exact: a frame
+   * callback cancelled by the next chunk (the earlier approach) marked only
+   * some replies, and the rest flashed transparent once the answer was already
+   * readable. The query runs until the first span appears, then this is a Set
+   * lookup. */
+  useLayoutEffect(() => {
+    if (!liveChunks?.length || fadePainted.has(m.id)) return
+    if (contentRef.current?.querySelector('.sd-fade')) fadePainted.add(m.id)
+  }, [liveChunks, m.id])
+  // A new reply body starts over, so the remembered fades go with it.
+  useEffect(() => {
+    if (!liveChunks?.length) {
+      segFades.current = []
+      segOpening.current = true
+    }
+  }, [liveChunks])
   useLayoutEffect(() => {
     applySearchHighlights(contentRef.current, searchQuery, searchOpen)
   }, [searchQuery, searchOpen, citedText, m.id])
@@ -1209,7 +1250,7 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
                         <div key={`live-seg-${i}`} className={i ? 'mt-3' : undefined}>
                           {/* Only the piece still being written fades: the ones
                               before it are finished text the reader already saw. */}
-                          {seg.text && <Md t={seg.text} cites={cites} fade={i === streamingSegments!.length - 1 ? liveFadeMs : 0} />}
+                          {seg.text && <Md t={seg.text} cites={cites} fade={liveSegFade(i, streamingSegments!.length)} />}
                           {seg.calls.length > 0 && <ToolTrail calls={seg.calls} />}
                         </div>
                       ))
