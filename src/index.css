@@ -452,20 +452,17 @@ html[data-codewrap] .code-lines .code-line > code { flex: 1 1 auto; min-width: 0
   content: attr(data-placeholder);
   color: color-mix(in srgb, var(--mu) 70%, transparent);
   pointer-events: none;
-  transition: color 180ms ease, text-shadow 180ms ease;
+  transition: color 180ms ease;
 }
 /* The greeting warms while the composer is being written in: the placeholder
-   lifts a little and picks up a soft white halo, then settles back when focus
-   leaves. The halo is deliberately diffuse — a wide, faint bloom rather than a
-   lit edge. Hovering the empty composer previews it at 60% of that strength
-   (18% against 30%), a hint of the warmth rather than the warmth itself; the
-   focus rule comes last, so it wins when a hovered composer is also focused. */
+   lifts toward the text colour, then settles back when focus leaves. Hovering
+   the empty composer previews that lift at a lower strength; the focus rule
+   comes last, so it wins when a hovered composer is also focused. */
 .composer-input:empty:hover::before {
-  text-shadow: 0 0 12px rgb(255 255 255 / 18%);
+  color: color-mix(in srgb, var(--mu) 79%, var(--tx));
 }
 .composer-input:empty:focus::before {
   color: color-mix(in srgb, var(--mu) 88%, var(--tx));
-  text-shadow: 0 0 12px rgb(255 255 255 / 30%);
 }
 .mention-pill-off {
   color: var(--mu);
