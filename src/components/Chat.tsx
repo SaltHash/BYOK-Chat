@@ -1113,8 +1113,16 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
                       streamingSegments!.map((seg, i) => (
                         <div key={`live-seg-${i}`} className={i ? 'mt-3' : undefined}>
                           {/* Only the piece still being written fades: the ones
-                              before it are finished text the reader already saw. */}
-                          {seg.text && <Md t={seg.text} cites={cites} fade={liveSegFade(i, streamingSegments!.length)} />}
+                              before it are finished text the reader already saw.
+                              The tail is still incomplete markdown, so it is
+                              rendered `live` (remend closes a half-typed **bold**,
+                              `code` or [link): without it the block re-parses into
+                              a new shape as each token lands, recreating the fade
+                              spans and replaying the animation on words the reader
+                              already read — the whole tail flashing on every
+                              token. Settled pieces are complete, so they render
+                              without it. */}
+                          {seg.text && <Md t={seg.text} cites={cites} live={i === streamingSegments!.length - 1} fade={liveSegFade(i, streamingSegments!.length)} />}
                           {seg.calls.length > 0 && <ToolTrail calls={seg.calls} />}
                         </div>
                       ))
