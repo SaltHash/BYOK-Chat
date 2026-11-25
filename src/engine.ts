@@ -830,16 +830,14 @@ const decodeTextBytes = (bytes: Uint8Array): string => {
   }
 }
 /* Decode the base64 payload an attachment carries (readAtt strips the data:
- * prefix). `atob` is global in browsers and modern Node; the Buffer branch
- * keeps older Node runtimes working. */
+ * prefix). `atob` is global in browsers and in Node 18+, which is the floor
+ * package.json declares, so there is no Buffer fallback to carry: the project
+ * has no Node type definitions, and naming `Buffer` broke `tsc --noEmit`. */
 const fromBase64 = (b64: string): Uint8Array => {
-  if (typeof atob === 'function') {
-    const bin = atob(b64)
-    const out = new Uint8Array(bin.length)
-    for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i)
-    return out
-  }
-  return new Uint8Array(Buffer.from(b64, 'base64'))
+  const bin = atob(b64)
+  const out = new Uint8Array(bin.length)
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i)
+  return out
 }
 /* Structured attachment loader: success carries the Att, failures carry a
  * machine-readable reason + user-facing message. Never returns a bare string.
