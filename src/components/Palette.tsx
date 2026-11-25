@@ -97,7 +97,10 @@ export function Palette({ close, cfg, toggleSide }: { close: () => void; cfg: (t
   useEffect(() => { refs.current[i]?.scrollIntoView({ block: 'nearest' }) }, [i, L.length])
   return (
     <Modal close={close} labelledBy="palette-title">
-      <DialogPanel padded={false} gap={false} className="mt-[10vh] max-w-lg self-start overflow-hidden bg-surf">
+      {/* The palette is a menu, not a canvas: its surface is the same `surf` as
+       *  every other popup. Set inline so it cannot lose to the dialog panel's
+       *  own `bg-bg` depending on stylesheet order. */}
+      <DialogPanel padded={false} gap={false} style={{ background: 'var(--surf)' }} className="mt-[10vh] max-w-lg self-start overflow-hidden">
         <h2 id="palette-title" className="sr-only">Command palette</h2>
         <div className="flex items-center gap-3 px-4 py-3">
           <Search size={18} className="text-mu" />

@@ -78,7 +78,7 @@ function RowBody({ c, mv, del, dnd, container, index, shift, onNavigate, time }:
   return (
     <div ref={dnd ? dnd.register(c.id) : undefined} data-chat-row={c.id}
       title={dnd ? 'Drag to move to a project' : finished ? 'Finished while you were away' : busy ? 'Replying in the background' : undefined}
-      className={cx('group relative flex items-center rounded-lg pr-1 text-sm', dnd && 'dnd-handle cursor-grab', selected ? 'bg-hov' : 'hover:bg-surf', dragging && 'opacity-25')}>
+      className={cx('group relative flex items-center rounded-lg pr-1 text-sm transition-colors', dnd && 'dnd-handle cursor-grab', selected ? 'bg-hov' : 'hover:bg-surf', dragging && 'opacity-25')}>
       {ed ? <Name v={c.title} save={(t) => useS.getState().rename(c.id, t)} done={() => setEd(false)} /> : (
         <button {...dragProps} onDoubleClick={() => setEd(true)} onClick={() => { useS.getState().patch({ chat: c.id, activeProject: '' }); onNavigate() }} aria-current={selected ? 'page' : undefined} className="side-item flex min-w-0 flex-1 items-center gap-2.5 px-2.5 text-left">
           {c.pin && <Pin size={15} className="shrink-0 text-ac" />}
@@ -550,7 +550,12 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
       || (keepFinished && s.doneChats?.[c.id] === true))
     : tempBase
   const tempMore = temporary.filter((c) => !tempVisible.includes(c)).length
+  /* Two row shapes on purpose: a menu item sits on a `surf` popup and highlights
+   * with `hov`, while a sidebar row sits on `side` and steps up to `surf` — the
+   * same ladder the chat rows above it use. One shared class made the library
+   * highlight twice as loud as every row beside it. */
   const item = 'side-item group flex w-full items-center gap-2.5 rounded-lg px-2.5 text-left text-sm hover:bg-hov'
+  const libRow = 'side-item group flex w-full items-center gap-2.5 rounded-lg px-2.5 text-left text-sm transition-colors hover:bg-surf'
   const safeWidth = clampSidebarWidth(width)
   return (
     <aside ref={asideRef} aria-label="Chats and projects" style={{ width: safeWidth, maxWidth: '90vw', padding: 'var(--ui-side-pad)', gap: 'var(--ui-side-gap)' }} className="side-shell z-20 flex min-w-0 shrink-0 flex-col border-r border-bor bg-side max-md:fixed max-md:inset-y-0 max-md:left-0">
@@ -569,7 +574,7 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
               const c = s.chats.find((x) => x.id === h.chatId)
               if (!c) return null
               return (
-                <button key={h.chatId} onClick={() => jump(h.chatId, h.msgId)} className={cx('side-item block w-full rounded-lg px-2.5 text-left text-sm hover:bg-surf', s.chat === h.chatId && 'bg-hov')}>
+                <button key={h.chatId} onClick={() => jump(h.chatId, h.msgId)} className={cx('side-item block w-full rounded-lg px-2.5 text-left text-sm transition-colors hover:bg-surf', s.chat === h.chatId && 'bg-hov')}>
                   <span className="flex items-center gap-2">
                     {c.pin ? <Pin size={13} className="shrink-0 text-ac" /> : <span aria-hidden="true" className="size-[13px] shrink-0" />}
                     <span className="fade-name font-medium">{c.title}</span>
@@ -617,7 +622,7 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
           const active = s.activeProject === f.id
           return (
             <div key={f.id} ref={registerZone(f.id)} className="rounded-lg">
-              <div className={cx('group flex items-center rounded-lg pr-1 text-sm hover:bg-surf', active && 'bg-hov')}>
+              <div className={cx('group flex items-center rounded-lg pr-1 text-sm transition-colors hover:bg-surf', active && 'bg-hov')}>
                 {fe === f.id ? <Name v={f.name} save={(t) => s.renameProject(f.id, t)} done={() => setFe('')} /> : (
                   <button onClick={() => { s.openProject(f.id); onNavigate() }} onDoubleClick={() => setFe(f.id)}
                     title="Open the project overview"
@@ -651,7 +656,7 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
             </div>
             <div className="side-rows">
               {(marksAll ? marks : marks.slice(0, 4)).map((b) => (
-                <div key={b.msgId} className="group flex items-center rounded-lg pr-1 text-sm hover:bg-surf">
+                <div key={b.msgId} className="group flex items-center rounded-lg pr-1 text-sm transition-colors hover:bg-surf">
                   <button onClick={() => jump(b.chatId, b.msgId)} title={`${b.chatTitle}: ${b.text}`} className="side-item flex min-w-0 flex-1 items-start gap-2 px-2.5 text-left">
                     <Bookmark size={14} className="mt-0.5 shrink-0 text-ac" aria-hidden="true" />
                     <span className="min-w-0 flex-1">
@@ -690,7 +695,7 @@ export function Sidebar({ open, toggle, cfg, width = 288 }: { open: boolean; tog
       <div className="space-y-0.5">
         <div className="px-2.5 pb-1 text-xs font-medium text-mu">Library</div>
         {library.map(([key, l, I, n]) => (
-          <button key={key} onClick={() => cfg(key)} className={item}>
+          <button key={key} onClick={() => cfg(key)} className={libRow}>
             <I size={16} className="text-mu transition-colors group-hover:text-tx" /><span className="flex-1 text-left">{l}</span>{n !== null && <span className="text-xs text-mu">{n}</span>}
           </button>
         ))}

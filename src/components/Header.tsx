@@ -103,7 +103,7 @@ export function Header({ side, toggle, cfg, pal, title }: { side: boolean; toggl
       {curTemporary && <TemporaryFlair cfg={cfg} expiresAt={tempExpiresAt} tempHours={tempHours} />}
       <ContextMeter cfg={cfg} />
       <span>
-        <Pop right autoFocus w="w-64" trigger={() => <Btn icon={MoreVertical} title="Chat actions" aria-label="Chat actions">Actions</Btn>}>
+        <Pop right autoFocus w="w-64" trigger={() => <Btn icon={MoreVertical} title="Chat actions" aria-label="Chat actions"><span className="hidden sm:inline">Actions</span></Btn>}>
           {(close) => (
             <>
               <Item icon={Command} onClick={() => { close(); pal() }}>Command palette</Item>

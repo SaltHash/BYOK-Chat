@@ -252,7 +252,7 @@ export default function App() {
         <Btn v="soft" onClick={() => setCfg('data#export')}>Export data</Btn>
         <Btn sm onClick={() => setStorageWarning('')}>Dismiss</Btn>
       </div>}
-      {side && <div className="fixed inset-0 z-10 bg-black/50 md:hidden" onClick={() => setSide(false)} />}
+      {side && <div className="fixed inset-0 z-10 md:hidden" style={{ backgroundColor: 'color-mix(in srgb, var(--scrim, #000) 50%, transparent)' }} onClick={() => setSide(false)} />}
       <Sidebar open={side} toggle={() => setSide((v) => !v)} cfg={setCfg} width={clampSidebarWidth(prefs.sidebarWidth)} />
       {side && <div role="separator" aria-orientation="vertical" aria-label="Resize sidebar" onPointerDown={resize('sidebarWidth')} className="shell-resizer hidden w-1 shrink-0 cursor-col-resize md:block" />}
       {/* A render failure inside the conversation stays in the conversation:
@@ -262,7 +262,7 @@ export default function App() {
       </ErrorBoundary>
       {rail && featOn({ features }, 'widgets') && Object.values(widgets).some(Boolean) && (
         <>
-          <div className="fixed inset-0 z-10 bg-black/50 lg:hidden" onClick={() => useS.getState().patch({ rail: false })} />
+          <div className="fixed inset-0 z-10 lg:hidden" style={{ backgroundColor: 'color-mix(in srgb, var(--scrim, #000) 50%, transparent)' }} onClick={() => useS.getState().patch({ rail: false })} />
           <div role="separator" aria-orientation="vertical" aria-label="Resize widget panel" onPointerDown={resize('widgetWidth', true)} className="shell-resizer hidden w-1 shrink-0 cursor-col-resize lg:block" />
           <Suspense fallback={<div className="hidden w-80 shrink-0 lg:block" aria-hidden="true" />}>
             <ErrorBoundary compact title="The widgets panel could not render"><Widgets width={clampWidgetWidth(prefs.widgetWidth)} /></ErrorBoundary>

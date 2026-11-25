@@ -1427,7 +1427,7 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
 })
 
 const Tile = ({ icon: I, t, d, on }: { icon: Ic; t: string; d: string; on: () => void }) => (
-  <button onClick={on} className="flex items-center gap-3 rounded-xl bg-surf p-3 text-left hover:bg-hov">
+  <button onClick={on} className="flex items-center gap-3 rounded-xl border border-bor/70 bg-surf p-3 text-left transition-colors hover:border-mu/40 hover:bg-hov focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ac/40">
     <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-bg text-ac"><I size={18} /></span>
     <span className="min-w-0"><span className="block text-sm font-medium">{t}</span><span className="block truncate text-xs text-mu">{d}</span></span>
   </button>
@@ -1993,7 +1993,7 @@ export function Chat({ side, toggle, cfg, pal }: { side: boolean; toggle: () => 
                 what actually happens to the conversation. */}
             {empty && (
               <>
-                <div className={cx('px-4 text-center text-2xl font-semibold leading-tight tracking-tight text-tx', isTemp ? 'mb-2' : 'mb-6')}>
+                <div className={cx('px-4 text-center text-balance text-2xl font-semibold leading-tight tracking-tight text-tx', isTemp ? 'mb-2' : 'mb-6')}>
                   {flairLine(new Date(), { temporary: isTemp, seasonal: s.prefs.seasonal, seed: s.chats.length })}
                 </div>
                 {isTemp && <div className="mb-6 px-8 text-center text-xs leading-relaxed text-mu">{TEMPORARY_NOTE}</div>}

@@ -2610,7 +2610,11 @@ export function Settings({ tab, setTab }: { tab: string; setTab: (t: string) => 
   }, [setTab])
   return (
     <Modal close={() => setTab('')} blur={false} opacity={settingsOpacity} labelledBy="settings-title">
-      <DialogPanel padded={false} gap={false} style={{ width: `min(${settingsWidth}px, 100%)`, height: `min(${settingsHeight}px, 92dvh)` }} className="settings-root overflow-hidden rounded-xl bg-side">
+      {/* The frame's radius comes from the shared dialog panel and its tone is
+       *  set inline: `rounded-xl` and `bg-side` sat beside the panel's own
+       *  `rounded-2xl` and `bg-bg`, so two utilities competed for one property
+       *  and the winner was decided by stylesheet order, not by intent. */}
+      <DialogPanel padded={false} gap={false} style={{ width: `min(${settingsWidth}px, 100%)`, height: `min(${settingsHeight}px, 92dvh)`, background: 'var(--side)' }} className="settings-root overflow-hidden">
         <div className="flex h-12 shrink-0 items-center justify-between border-b border-bor px-4">
           <h2 id="settings-title" className="text-sm font-semibold">Settings</h2>
           <Btn sm icon={X} title="Close settings" onClick={() => setTab('')} />

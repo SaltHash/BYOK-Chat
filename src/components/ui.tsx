@@ -5,9 +5,11 @@ import { Check, ChevronRight, Search, Star, TriangleAlert, X, type LucideIcon } 
 export type Ic = LucideIcon
 export const cx = (...a: unknown[]) => a.filter(Boolean).join(' ')
 
+/* Hover states move the fill, never the opacity of the whole button: fading a
+ * control to 80% dimmed its label as well and read as disabled. */
 const V = {
-  solid: 'bg-ac text-acx hover:opacity-90',
-  soft: 'bg-hov hover:opacity-80',
+  solid: 'bg-ac text-acx hover:brightness-110 active:brightness-95',
+  soft: 'bg-hov hover:bg-mu/25 active:bg-mu/30',
   ghost: 'text-mu hover:bg-hov hover:text-tx',
   danger: 'text-er hover:bg-er/10',
   /** Inline text action ("Use another URL"), not a boxed button. */
@@ -44,8 +46,8 @@ export const Chip = ({ icon: I, children }: { icon?: Ic; children: ReactNode }) 
  * 20px tall; a pseudo-element widens the hit area to 32x28 for touch and
  * motor-impaired users without changing the row rhythm. */
 export const Toggle = ({ on, set, label, disabled = false }: { on: boolean; set: (v: boolean) => void; label: string; disabled?: boolean }) => (
-  <button type="button" role="switch" aria-checked={on} aria-label={label} disabled={disabled} onClick={() => set(!on)} className={cx('relative h-5 w-9 shrink-0 rounded-full p-0.5 transition-colors before:absolute before:-inset-x-1.5 before:-inset-y-1 before:content-[""] disabled:opacity-40', on ? 'bg-ac' : 'bg-hov')}>
-    <span className={cx('block size-4 rounded-full transition-transform', on ? 'translate-x-4 bg-acx' : 'bg-mu')} />
+  <button type="button" role="switch" aria-checked={on} aria-label={label} disabled={disabled} onClick={() => set(!on)} className={cx('relative h-5 w-9 shrink-0 rounded-full p-0.5 transition-colors before:absolute before:-inset-x-1.5 before:-inset-y-1 before:content-[""] disabled:opacity-40', on ? 'bg-ac' : 'bg-mu/35 hover:bg-mu/45')}>
+    <span className={cx('block size-4 rounded-full shadow-sm transition-transform duration-150', on ? 'translate-x-4 bg-acx' : 'bg-surf')} />
   </button>
 )
 
@@ -64,7 +66,7 @@ export const Menu = ({ children, className }: { children: ReactNode; className?:
 
 export function Checkbox({ checked, set, label, sub, disabled = false, className = '' }: { checked: boolean; set: (v: boolean) => void; /** Plain text or a row layout. */ label: ReactNode; /** Secondary line under the label, for option rows with detail. */ sub?: ReactNode; disabled?: boolean; className?: string }) {
   return <button type="button" role="checkbox" aria-checked={checked} aria-label={typeof label === 'string' ? label : undefined} disabled={disabled} onClick={() => set(!checked)} className={cx('inline-flex min-h-8 items-center gap-2 rounded-md text-left text-sm disabled:cursor-not-allowed disabled:opacity-40', className)}>
-    <span aria-hidden="true" className={cx('grid size-4 shrink-0 place-items-center self-start rounded border transition-colors', checked ? 'border-ac bg-ac text-acx' : 'border-mu/60 bg-bg text-transparent')}><Check size={12} strokeWidth={3} /></span>
+    <span aria-hidden="true" className={cx('grid size-4 shrink-0 place-items-center self-start rounded border transition-colors', checked ? 'border-ac bg-ac text-acx' : 'border-mu/50 text-transparent hover:border-mu')}><Check size={12} strokeWidth={3} /></span>
     <span className="min-w-0">{sub ? <><span className="block">{label}</span><span className="mt-0.5 block text-xs text-mu">{sub}</span></> : label}</span>
   </button>
 }
@@ -200,7 +202,7 @@ export function Seg<T extends string>({ v, set, opts, label, fill = false, kind 
       {pill && (
         <span
           aria-hidden="true"
-          className="seg-pill pointer-events-none absolute left-0 top-0 rounded-md border border-tx/20 bg-hov"
+          className="seg-pill pointer-events-none absolute left-0 top-0 rounded-md border border-bor bg-hov shadow-sm"
           style={{ width: pill.w, height: pill.h, transform: `translate(${pill.x}px, ${pill.y}px)` }}
         />
       )}
@@ -305,7 +307,10 @@ export function RangeSlider({ value, set, min, max, step = 1, label, valueText, 
   const move = (n: number) => { setDrag(n); push(n) }
   const commit = (n: number) => { setDrag(null); if (timer.current) { clearTimeout(timer.current); timer.current = null } pending.current = null; lastPush.current = Date.now(); if (n !== valRef.current) setRef.current(n) }
   return <div ref={ref} id={id} role="slider" tabIndex={disabled ? -1 : 0} aria-label={label} aria-valuemin={min} aria-valuemax={max} aria-valuenow={Math.round(shown * 100) / 100} aria-valuetext={valueText ?? String(shown)} aria-orientation="horizontal" aria-describedby={describedBy} aria-disabled={disabled} onPointerDown={(e) => { if (disabled) return; e.currentTarget.setPointerCapture(e.pointerId); move(snap(e.clientX)) }} onPointerMove={(e) => { if (!disabled && e.buttons) move(snap(e.clientX)) }} onPointerUp={() => { if (!disabled && drag !== null) commit(drag) }} onPointerCancel={() => { if (timer.current) { clearTimeout(timer.current); timer.current = null } pending.current = null; setDrag(null) }} onKeyDown={(e) => { if (disabled) return; const delta = e.shiftKey ? step * 10 : step; if (e.key === 'ArrowRight' || e.key === 'ArrowUp') { e.preventDefault(); setDrag(null); set(Math.min(max, shown + delta)) } else if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') { e.preventDefault(); setDrag(null); set(Math.max(min, shown - delta)) } else if (e.key === 'Home') { e.preventDefault(); setDrag(null); set(min) } else if (e.key === 'End') { e.preventDefault(); setDrag(null); set(max) } else if (e.key === 'PageUp') { e.preventDefault(); setDrag(null); set(Math.min(max, shown + step * 10)) } else if (e.key === 'PageDown') { e.preventDefault(); setDrag(null); set(Math.max(min, shown - step * 10)) } }} className={cx('group relative h-7 touch-none select-none outline-none focus-visible:ring-2 focus-visible:ring-ac/40 rounded-md', disabled && 'opacity-40', className)}>
-    <div className="absolute inset-x-0 top-1/2 h-2 -translate-y-1/2 rounded-full border border-mu/50 bg-mu/35 shadow-inner"><div className="h-full rounded-full bg-ac shadow-[0_0_5px_color-mix(in_srgb,var(--ac)_55%,transparent)]" style={{ width: `${pct}%` }} /></div><div className="absolute top-1/2 size-[18px] -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-bg bg-ac shadow-md ring-1 ring-ac/50 group-focus-visible:ring-4 group-focus-visible:ring-ac/30" style={{ left: `${pct}%` }} />
+    {/* A hairline rail with an accent fill and a ringed thumb: the previous
+     *  muddy grey track with a glowing edge read as a disabled control, and
+     *  the glow was invisible on the light themes. */}
+    <div className="absolute inset-x-0 top-1/2 h-1.5 -translate-y-1/2 overflow-hidden rounded-full bg-hov ring-1 ring-inset ring-bor/60"><div className="h-full rounded-full bg-ac" style={{ width: `${pct}%` }} /></div><span className="absolute top-1/2 size-4 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-ac bg-bg shadow-sm transition-transform group-hover:scale-110 group-active:scale-95" style={{ left: `${pct}%` }} />
   </div>
 }
 
@@ -452,7 +457,10 @@ export function Modal({ children, close, blur = true, opacity = 55, keyboard = t
     if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus() }
     else if (e.shiftKey && (document.activeElement === first || document.activeElement === node)) { e.preventDefault(); last.focus() }
   }
-  return <div ref={root} role="dialog" aria-modal="true" aria-labelledby={labelledBy} aria-label={labelledBy ? undefined : label} tabIndex={-1} onKeyDown={onKeyDown} style={{ backgroundColor: `rgb(0 0 0 / ${Math.max(0, Math.min(100, opacity))}%)`, backdropFilter: blur ? 'blur(var(--modal-blur, 12px))' : undefined }} className="fixed inset-0 z-50 grid place-items-center overflow-y-auto overscroll-contain p-4 outline-none" onMouseDown={(e) => e.target === e.currentTarget && close()}>{children}</div>
+  /* The scrim is the theme's own canvas pushed into shadow instead of a fixed
+   * black: a light theme dims in its own grey rather than under a slab of ink,
+   * and a custom theme keeps its hue. */
+  return <div ref={root} role="dialog" aria-modal="true" aria-labelledby={labelledBy} aria-label={labelledBy ? undefined : label} tabIndex={-1} onKeyDown={onKeyDown} style={{ backgroundColor: `color-mix(in srgb, var(--scrim, #000) ${Math.max(0, Math.min(100, opacity))}%, transparent)`, backdropFilter: blur ? 'blur(var(--modal-blur, 12px))' : undefined }} className="fixed inset-0 z-50 grid place-items-center overflow-y-auto overscroll-contain p-4 outline-none" onMouseDown={(e) => e.target === e.currentTarget && close()}>{children}</div>
 }
 
 /** Full-screen image viewer. Clicking the backdrop, the close button, or

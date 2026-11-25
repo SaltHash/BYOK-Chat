@@ -8,6 +8,7 @@ import { DENSITIES, DENSITY_IDS, SPACING_LIMITS, STYLE_PRESETS, STYLE_PRESET_IDS
 import { Btn, Input, RangeSlider, SearchSelect, Seg, Toggle, cx } from './ui'
 import { Anchor, Panel, Section, SettingRow } from './settingsPrimitives'
 import { ColorPicker } from './ColorPicker'
+import { ThemePreview } from './ThemePreview'
 
 const FONT_OPTIONS: [string, string][] = [['system', 'System default'], ['Arial', 'Arial'], ['Verdana', 'Verdana'], ['Georgia', 'Georgia'], ['Trebuchet MS', 'Trebuchet MS'], ['Times New Roman', 'Times New Roman'], ['Inter', 'Inter'], ['Roboto', 'Roboto'], ['Open Sans', 'Open Sans'], ['Segoe UI', 'Segoe UI'], ['Helvetica Neue', 'Helvetica Neue']]
 const MONO_OPTIONS: [string, string][] = [['system', 'System monospace'], ['Consolas', 'Consolas'], ['Menlo', 'Menlo'], ['Monaco', 'Monaco'], ['Courier New', 'Courier New'], ['Cascadia Code', 'Cascadia Code'], ['JetBrains Mono', 'JetBrains Mono'], ['Fira Code', 'Fira Code']]
@@ -73,6 +74,9 @@ export function AppearanceSettings() {
             {[...(mode === 'light' ? LIGHT_THEMES : DARK_THEMES), 'custom'].map((k) => {
               const name = THEMES[k as keyof typeof THEMES]
               const active = (mode === 'light' ? s.themeLight : s.themeDark) === k
+              // A custom entry previews the palette that is actually saved, so
+              // the card is a live look at the theme rather than a placeholder.
+              const colors = k === 'custom' ? customColors : THEME_COLORS[k]
               return (
                 <button
                   key={k}
@@ -89,15 +93,13 @@ export function AppearanceSettings() {
                       s.patch(mode === 'light' ? { themeLight: k as typeof s.themeLight } : { themeDark: k as typeof s.themeDark })
                     }
                   }}
-                  className={cx('space-y-2 rounded-lg border bg-surf p-2 text-left text-sm transition-colors', active ? 'border-ac ring-1 ring-ac' : 'border-bor hover:bg-hov')}
+                  className={cx('space-y-1.5 rounded-lg border p-1.5 text-left text-sm transition-colors', active ? 'border-ac ring-1 ring-ac/50' : 'border-bor hover:border-mu/50 hover:bg-hov')}
                 >
-                  <span className="flex h-14 overflow-hidden rounded-md">
-                    <span className="w-1/4" style={{ background: k === 'custom' ? customColors.side : THEME_COLORS[k].side }} />
-                    <span className="flex-1 p-2" style={{ background: k === 'custom' ? customColors.bg : THEME_COLORS[k].bg }}>
-                      <span className="block h-2 w-2/3 rounded-sm" style={{ background: k === 'custom' ? customColors.ac : THEME_COLORS[k].ac }} />
-                    </span>
+                  <ThemePreview colors={colors} />
+                  <span className="flex items-center justify-between gap-2 px-0.5 pb-0.5 text-xs font-medium">
+                    <span className="min-w-0 truncate">{name}</span>
+                    {active && <Check size={13} className="shrink-0 text-ac" aria-hidden="true" />}
                   </span>
-                  <span className="flex items-center justify-between gap-2 px-0.5">{name}</span>
                 </button>
               )
             })}
@@ -116,16 +118,11 @@ export function AppearanceSettings() {
                         type="button"
                         onClick={() => s.applySavedTheme(t.id)}
                         title={`Apply ${t.name}`}
-                        className="w-full space-y-2 rounded-lg border border-bor bg-surf p-2 pr-8 text-left text-sm transition-colors hover:bg-hov focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ac/40"
+                        className="w-full space-y-1.5 rounded-lg border border-bor p-1.5 pr-8 text-left text-sm transition-colors hover:border-mu/50 hover:bg-hov focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ac/40"
                       >
-                        <span className="flex h-14 overflow-hidden rounded-md">
-                          <span className="w-1/4" style={{ background: palette?.side }} />
-                          <span className="flex-1 p-2" style={{ background: palette?.bg }}>
-                            <span className="block h-2 w-2/3 rounded-sm" style={{ background: palette?.ac }} />
-                          </span>
-                        </span>
-                        <span className="flex items-center justify-between gap-2 px-0.5">
-                          <span className="min-w-0 truncate">{t.name}</span>
+                        {palette && <ThemePreview colors={palette} />}
+                        <span className="flex items-center justify-between gap-2 px-0.5 text-xs">
+                          <span className="min-w-0 truncate font-medium">{t.name}</span>
                           <span className="shrink-0 text-[11px] text-mu">{t.mode === 'light' ? 'Light' : 'Dark'}</span>
                         </span>
                       </button>

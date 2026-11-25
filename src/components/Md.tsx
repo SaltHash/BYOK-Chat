@@ -106,7 +106,7 @@ export function UserText({ m, searchQuery, searchOpen }: { m: Msg; searchQuery?:
     )
   return (
     <div className="group/u flex flex-col items-end gap-1">
-      <div className={cx('max-w-full overflow-hidden rounded-2xl', cmdMsg ? 'min-w-40 border border-ac/40 bg-ac/5 shadow-sm' : 'bg-surf')}>
+      <div className={cx('max-w-full overflow-hidden rounded-2xl border shadow-sm', cmdMsg ? 'min-w-40 border-ac/40 bg-ac/5' : 'border-bor/70 bg-surf')}>
         {quoted && <SentQuoteBanner text={quoted.quote} />}
         {sentBanner && <SentMentionBanner kind={sentBanner} />}
         {(messageText || sentBanner) && (

@@ -243,6 +243,10 @@ html[data-codewrap] .code-lines .code-line > code { flex: 1 1 auto; min-width: 0
 @layer base {
   body { @apply bg-bg font-sans text-tx antialiased; }
   h1, h2, h3, h4, h5, h6 { font-family: var(--font-heading, var(--font-body)); }
+  /* Headings balance across their lines instead of leaving one word alone on
+   * the last one. Body copy is left ragged on purpose (see `.md` below): a
+   * balanced paragraph evens out an entire reply into a mechanical block. */
+  :is(h1, h2, h3) { text-wrap: balance; }
   code, pre, kbd { font-family: var(--font-mono-custom, ui-monospace, monospace); }
   ::placeholder { color: color-mix(in srgb, var(--mu) 70%, transparent); }
   /* One selection colour everywhere, tinted by the active theme. */
@@ -306,6 +310,13 @@ html[data-codewrap] .code-lines .code-line > code { flex: 1 1 auto; min-width: 0
   border: 1px solid color-mix(in srgb, var(--mu) 20%, var(--bor));
   box-shadow: var(--menu-shadow);
 }
+/* Menus, popovers and pickers settle into place instead of appearing whole: a
+ * short fade with a barely-there scale, on the same easing as the rest of the
+ * app. Direction-agnostic, so it works for menus that open upwards too, and
+ * nothing moves when the reader asked for reduced motion. */
+@keyframes menu-in { from { opacity: 0; transform: scale(.985); } to { opacity: 1; transform: none; } }
+.menu-surface { animation: menu-in 120ms cubic-bezier(.22, .8, .2, 1) both; }
+@media (prefers-reduced-motion: reduce) { .menu-surface { animation: none; } }
 /* Hover cards and chart tooltips are popups too, so they share the softer
    elevation instead of carrying their own utility shadow. */
 .popup-shadow { box-shadow: var(--menu-shadow); }
@@ -354,14 +365,14 @@ html[data-codewrap] .code-lines .code-line > code { flex: 1 1 auto; min-width: 0
   will-change: transform;
 }
 .dnd-overlay > * { pointer-events: none !important; }
+/* The wireframe gap a dragged row leaves behind: a wash of the theme's muted
+ * colour, so it reads as a hole on every palette. A fixed black needed a
+ * per-theme override list and still went wrong on custom light themes. */
 .dnd-placeholder {
-  background: rgb(0 0 0 / 20%);
+  background: color-mix(in srgb, var(--mu) 18%, transparent);
   border: none;
   border-radius: 12px;
   box-sizing: border-box;
-}
-[data-t="paper"] .dnd-placeholder, [data-t="sage"] .dnd-placeholder, [data-t="frost"] .dnd-placeholder, [data-t="sunset"] .dnd-placeholder {
-  background: var(--hov);
 }
 .dnd-lift {
   scale: 1.015;
@@ -408,16 +419,23 @@ html[data-codewrap] .code-lines .code-line > code { flex: 1 1 auto; min-width: 0
   backdrop-filter: blur(var(--glass-blur, 14px)) saturate(160%);
 }
 
-/* Hairline edges: panes, menus and dialogs read as separate surfaces. */
-/* --bor is the single border color used across the app; --edge aliases it. */
-:root { --bor: color-mix(in srgb, var(--hov) 88%, var(--mu)); --edge: var(--bor); }
+/* Hairline edges: panes, menus and dialogs read as separate surfaces.
+ * `--bor` is the single border colour used across the app; `--edge` aliases it.
+ * The fallback lives in `:where(:root)`, which has zero specificity, so every
+ * palette above — and a generated custom theme's inline `--bor` — wins on its
+ * own. Written as `:root { … }` it came later in the sheet with the same
+ * specificity and silently replaced the border of all eight built-in themes. */
+:where(:root) { --bor: color-mix(in srgb, var(--hov) 88%, var(--mu)); --edge: var(--bor); }
+
+/* Backdrop behind dialogs, the mobile drawers and the command palette. Derived
+ * from the canvas instead of a fixed black: a light theme is veiled in its own
+ * shadowed grey rather than a slab of ink, and a custom theme keeps its hue.
+ * Consumed at a chosen alpha by the modal and drawer scrims. */
+:where(:root) { --scrim: color-mix(in oklab, var(--bg) 45%, #07080b); }
 /* Composer frame: a single quiet hairline that never changes colour — hover,
    focus and open menus leave it as it is, so the frame reads calm at rest and
    while typing. */
 
-/* Each built-in palette declares its own --bor above; the mix below is only
-   the fallback for surfaces that do not (neutral boot, generated custom themes
-   carry an explicit border too). */
 /* Only the dialog panel itself gets a hairline. A structural
    `[role="dialog"] > div` rule also framed every first-level div inside
    nested dialogs, which put borders on ordinary modal content. */
@@ -649,10 +667,17 @@ html[data-codewrap] .code-lines .code-line > code { flex: 1 1 auto; min-width: 0
 
 .md > :first-child { margin-top: 0; }
 .md > :last-child { margin-bottom: 0; }
+/* Paragraphs, list items and definitions are left ragged rather than balanced:
+ * an evener block would cost the reply its rhythm, while `pretty` only moves a
+ * line or two to avoid a single orphaned word. */
+.md :is(p, li, dd) { text-wrap: pretty; }
 .md :not(pre) > code { border-radius: 0.375rem; background: var(--hov); padding: 0.1em 0.4em; font-size: 0.9em; }
 .md pre code { background: none; padding: 0; }
 .md .katex-display { overflow-x: auto; overflow-y: hidden; padding: 0.25rem 0; }
-.search-highlight { background: var(--ac); color: inherit; border-radius: 0.25em; padding: 0.05em 0.15em; }
+/* A find-in-conversation hit takes the accent fill with the ink that accent was
+ * paired with, so the highlighted words stay readable on every palette; the
+ * inherited text colour went pale over a bright accent. */
+.search-highlight { background: var(--ac); color: var(--acx); border-radius: 0.25em; padding: 0.05em 0.15em; }
 .hljs-comment, .hljs-quote { color: var(--mu); font-style: italic; }
 .hljs-keyword, .hljs-selector-tag, .hljs-literal, .hljs-doctag { color: var(--ac); }
 .hljs-string, .hljs-regexp, .hljs-addition, .hljs-attribute, .hljs-template-variable { color: var(--c2); }

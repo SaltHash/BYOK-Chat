@@ -30,7 +30,9 @@ export const clampWorkspaceSplit = (v: unknown): number => {
 
 export const roundFrac = (v: number): number => Math.round(v * 1000) / 1000
 
-/* Chat column widths (message list) and the composer, which is slightly wider. */
+/* Chat column widths (the message list) and the composer above it. The composer
+ * takes the conversation column's own box, so both frames share a width and
+ * their edges line up; an overhang read as a misalignment rather than a style. */
 export const CHAT_WIDTH = { narrow: 640, standard: 768, wide: 1024 } as const
-export const COMPOSER_EXTRA = 64
+export const COMPOSER_EXTRA = 0
 export const composerWidth = (w: keyof typeof CHAT_WIDTH): number => CHAT_WIDTH[w] + COMPOSER_EXTRA

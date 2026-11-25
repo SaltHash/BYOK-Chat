@@ -378,7 +378,7 @@ const makeC = (bare: boolean, cites: CiteMap | undefined, live: boolean): any =>
   ul: ({ node, className, ...p }: any) => createElement('ul', { ...p, className: cx('my-3.5 space-y-1.5', /contains-task-list/.test(className ?? '') ? 'list-none pl-1' : 'list-disc pl-6 marker:text-mu') }),
   li: E('li', 'pl-1 [&>ol]:my-1 [&>p]:my-1 [&>ul]:my-1'),
   input: ({ type, checked }: any) => (type === 'checkbox'
-    ? <span role="checkbox" aria-label="Task complete" aria-checked={!!checked} aria-disabled="true" className={cx('mr-2 inline-grid size-4 translate-y-0.5 place-items-center rounded border', checked ? 'border-ac bg-ac text-acx' : 'border-mu/60 bg-bg text-transparent')}>{checked && <Check size={12} strokeWidth={3} />}</span> : null),
+    ? <span role="checkbox" aria-label="Task complete" aria-checked={!!checked} aria-disabled="true" className={cx('mr-2 inline-grid size-4 translate-y-0.5 place-items-center rounded border', checked ? 'border-ac bg-ac text-acx' : 'border-mu/50 text-transparent')}>{checked && <Check size={12} strokeWidth={3} />}</span> : null),
   a: ({ node, href, children, ...p }: any) => {
     // Attachment citations ([file-1], [file-2.pdf]) render as their own pill:
     // neutral surface, file icon, no link behaviour and no source styling.
