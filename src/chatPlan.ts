@@ -64,8 +64,11 @@ export function planRequest(s: PlanState, um: Msg, defaultFeatures: Record<Featu
   const ready = pool.filter(usable)
   // Media without a transcript is unreadable by every endpoint, so it
   // constrains the pool to nothing (the error message says what to do).
-  const cand = ready.filter((e) => need.every((n) => n !== 'media' && can(e, n))).flatMap((e) => modelsOf(e)
+  // Image/PDF support is per model, so a text-only model is dropped while its
+  // vision/file-capable siblings on the same endpoint stay.
+  const cand = ready.flatMap((e) => modelsOf(e)
     .filter((model) => !(s.sel?.k === 'ep' && s.sel.id === e.id && s.sel.model) || s.sel?.model === model)
+    .filter((model) => need.every((n) => n === 'media' || can(e, model, n)))
     .map((model) => ({ ...e, model })))
   // User-facing prompt text may use {variable} placeholders (e.g. {date});
   // they are resolved here, once, right before the request is built.

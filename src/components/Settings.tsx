@@ -207,6 +207,7 @@ function EndpointWizard({ close }: { close: () => void }) {
       ...modelListEdit(base, models.models, Date.now(), models.model),
       ...(models.modelNames ? { modelNames: models.modelNames } : {}),
       ...(models.modelContext ? { modelContext: models.modelContext } : {}),
+      ...(models.modelModalities ? { modelModalities: models.modelModalities } : {}),
     }
     // New endpoints land at the top of the list, where the card is in view.
     const state = useS.getState()
@@ -511,8 +512,9 @@ function ModelsEditor({ e, update }: { e: any; update: (p: object) => void }) {
       const detectedSources = Object.fromEntries(detectedEntries.map(x => [storedId(x.id), 'auto']))
       const providedNames = Object.fromEntries(found.filter(x => liveModels.includes(storedId(x.id)) && x.name && !cur.modelNames?.[storedId(x.id)]).map(x => [storedId(x.id), x.name]))
       const providedContext = Object.fromEntries(found.filter(x => liveModels.includes(storedId(x.id)) && x.context && Number(x.context) > 0).map(x => [storedId(x.id), Number(x.context)]))
+      const providedModalities = Object.fromEntries(found.filter(x => liveModels.includes(storedId(x.id)) && x.inputModalities?.length && !cur.modelModalities?.[storedId(x.id)]).map(x => [storedId(x.id), x.inputModalities!]))
       const providedPrices = Object.fromEntries(found.filter(x => liveModels.includes(storedId(x.id)) && !cur.prices?.[storedId(x.id)] && x.inputPrice !== undefined && x.outputPrice !== undefined).map(x => [storedId(x.id), { input: x.inputPrice!, output: x.outputPrice!, source: source === 'openrouter' ? 'openrouter' as const : 'provider' as const, ...(x.cacheReadPrice !== undefined ? { cacheRead: x.cacheReadPrice } : {}) }]))
-      if (Object.keys(detected).length || Object.keys(providedNames).length || Object.keys(providedContext).length || Object.keys(providedPrices).length) update({ modelEfforts: { ...cur.modelEfforts, ...detected }, modelEffortSource: { ...cur.modelEffortSource, ...detectedSources }, modelNames: { ...cur.modelNames, ...providedNames }, modelContext: { ...cur.modelContext, ...providedContext }, ...(Object.keys(providedPrices).length ? { prices: { ...cur.prices, ...providedPrices } } : {}) })
+      if (Object.keys(detected).length || Object.keys(providedNames).length || Object.keys(providedContext).length || Object.keys(providedModalities).length || Object.keys(providedPrices).length) update({ modelEfforts: { ...cur.modelEfforts, ...detected }, modelEffortSource: { ...cur.modelEffortSource, ...detectedSources }, modelNames: { ...cur.modelNames, ...providedNames }, modelContext: { ...cur.modelContext, ...providedContext }, ...(Object.keys(providedModalities).length ? { modelModalities: { ...cur.modelModalities, ...providedModalities } } : {}), ...(Object.keys(providedPrices).length ? { prices: { ...cur.prices, ...providedPrices } } : {}) })
       const from = source === 'provider' ? 'this provider' : source === 'openrouter' ? 'OpenRouter' : source === 'litellm' ? 'the LiteLLM catalog' : 'this server'
       const staleNote = stale && error ? ` Showing the last known list because the refresh failed: ${error}` : ''
       setCatalogState(found.length ? `${found.length} models found from ${from}.${staleNote || ' Catalog entries are suggestions; confirm any model ID.'}` : 'No catalog entries were returned. Enter a model ID below.')
@@ -525,8 +527,9 @@ function ModelsEditor({ e, update }: { e: any; update: (p: object) => void }) {
     const item = catalog.find(x => storedId(x.id) === clean)
     const providedName = item?.name
     const providedCtx = item?.context
+    const providedMods = item?.inputModalities
     const providedPrice = priceFrom(item)
-    update({ modelEfforts: { ...e.modelEfforts, [clean]: efforts }, modelEffortSource: { ...e.modelEffortSource, [clean]: autoDetected ? (efforts.length ? 'auto' : item?.source ?? 'manual') : 'manual' }, ...(providedName && !e.modelNames?.[clean] ? { modelNames: { ...e.modelNames, [clean]: providedName } } : {}), ...(providedCtx && Number(providedCtx) > 0 ? { modelContext: { ...e.modelContext, [clean]: Number(providedCtx) } } : {}), ...(providedPrice && !e.prices?.[clean] ? { prices: { ...e.prices, [clean]: providedPrice } } : {}) })
+    update({ modelEfforts: { ...e.modelEfforts, [clean]: efforts }, modelEffortSource: { ...e.modelEffortSource, [clean]: autoDetected ? (efforts.length ? 'auto' : item?.source ?? 'manual') : 'manual' }, ...(providedName && !e.modelNames?.[clean] ? { modelNames: { ...e.modelNames, [clean]: providedName } } : {}), ...(providedCtx && Number(providedCtx) > 0 ? { modelContext: { ...e.modelContext, [clean]: Number(providedCtx) } } : {}), ...(providedMods?.length && !e.modelModalities?.[clean] ? { modelModalities: { ...e.modelModalities, [clean]: providedMods } } : {}), ...(providedPrice && !e.prices?.[clean] ? { prices: { ...e.prices, [clean]: providedPrice } } : {}) })
     setPicker(false); setQuery(''); setSearchIdea(null)
   }
   // Bulk-add from the picker. Extracted from the button so pricing and effort
@@ -538,8 +541,9 @@ function ModelsEditor({ e, update }: { e: any; update: (p: object) => void }) {
     const effortEntries = selectedModels.flatMap(id => { const item = itemFor(id); return item ? [[id, item.efforts] as const] : [] })
     const modelNames = Object.fromEntries(adding.flatMap(id => { const name = itemFor(id)?.name; return name ? [[id, name] as const] : [] }))
     const modelCtx = Object.fromEntries(adding.flatMap(id => { const ctx = itemFor(id)?.context; return ctx && Number(ctx) > 0 ? [[id, Number(ctx)] as const] : [] }))
+    const modelMods = Object.fromEntries(adding.flatMap(id => { const mods = itemFor(id)?.inputModalities; return mods?.length && !e.modelModalities?.[id] ? [[id, mods] as const] : [] }))
     const modelPrices = Object.fromEntries(adding.flatMap(id => { const price = priceFrom(itemFor(id)); return price && !e.prices?.[id] ? [[id, price] as const] : [] }))
-    update({ ...modelListEdit({ ...e, models }, next), modelNames: { ...e.modelNames, ...modelNames }, modelContext: { ...e.modelContext, ...modelCtx }, ...(Object.keys(modelPrices).length ? { prices: { ...e.prices, ...modelPrices } } : {}), modelEfforts: { ...e.modelEfforts, ...Object.fromEntries(effortEntries) }, modelEffortSource: { ...e.modelEffortSource, ...Object.fromEntries(effortEntries.map(([id, levels]) => [id, levels.length ? 'auto' : itemFor(id)?.source ?? 'manual'])) } })
+    update({ ...modelListEdit({ ...e, models }, next), modelNames: { ...e.modelNames, ...modelNames }, modelContext: { ...e.modelContext, ...modelCtx }, ...(Object.keys(modelMods).length ? { modelModalities: { ...e.modelModalities, ...modelMods } } : {}), ...(Object.keys(modelPrices).length ? { prices: { ...e.prices, ...modelPrices } } : {}), modelEfforts: { ...e.modelEfforts, ...Object.fromEntries(effortEntries) }, modelEffortSource: { ...e.modelEffortSource, ...Object.fromEntries(effortEntries.map(([id, levels]) => [id, levels.length ? 'auto' : itemFor(id)?.source ?? 'manual'])) } })
     setPicker(false); setSelectedModels([]); setSearchIdea(null)
   }
   return <div className="space-y-2">
@@ -961,10 +965,12 @@ function Eps() {
     const models = ids.length ? [...new Set(ids)] : (provider.model ? [provider.model] : [''])
     const names = Object.fromEntries(found.entries.filter((x) => x.name).map((x) => [x.id, x.name]))
     const contexts = Object.fromEntries(found.entries.filter((x) => x.context && x.context > 0).map((x) => [x.id, x.context!]))
+    const modalities = Object.fromEntries(found.entries.filter((x) => x.inputModalities?.length).map((x) => [x.id, x.inputModalities!]))
     s.upd('eps', endpoint.id, {
       ...modelListEdit({ ...live, models: live.models ?? endpoint.models }, models, Date.now(), provider.model || models[0] || ''),
       ...(Object.keys(names).length ? { modelNames: { ...live.modelNames, ...names } } : {}),
       ...(Object.keys(contexts).length ? { modelContext: { ...live.modelContext, ...contexts } } : {}),
+      ...(Object.keys(modalities).length ? { modelModalities: { ...live.modelModalities, ...modalities } } : {}),
     })
     if (found.entries.length) return `Added ${provider.name}. Found ${found.entries.length} model${found.entries.length === 1 ? '' : 's'} at ${found.workingUrl}.`
     return `Added ${provider.name}. ${found.error || 'No model list was found.'} The model from the cURL command is still ready to use, and failed model-list URLs are cached so they are not retried.`
@@ -1050,7 +1056,8 @@ function Eps() {
                     // their real (discounted / surcharged) price.
                     const read = Number(item.pricing.input_cache_read ?? 0) * 1e6
                     const write = Number(item.pricing.input_cache_write ?? 0) * 1e6
-                    u({ prices: { ...cur.prices, [model]: { input: round2(Number(item.pricing.prompt) * 1e6), output: round2(Number(item.pricing.completion) * 1e6), source: 'openrouter', ...(read > 0 ? { cacheRead: round2(read) } : {}), ...(write > 0 ? { cacheWrite: round2(write) } : {}) } }, ...(Number(item.context_length) > 0 ? { modelContext: { ...cur.modelContext, [model]: Number(item.context_length) } } : {}) })
+                    const mods = Array.isArray(item.architecture?.input_modalities) ? item.architecture.input_modalities.map((m: unknown) => String(m).toLowerCase()).filter(Boolean) as string[] : []
+                    u({ prices: { ...cur.prices, [model]: { input: round2(Number(item.pricing.prompt) * 1e6), output: round2(Number(item.pricing.completion) * 1e6), source: 'openrouter', ...(read > 0 ? { cacheRead: round2(read) } : {}), ...(write > 0 ? { cacheWrite: round2(write) } : {}) } }, ...(Number(item.context_length) > 0 ? { modelContext: { ...cur.modelContext, [model]: Number(item.context_length) } } : {}), ...(mods.length && !cur.modelModalities?.[model] ? { modelModalities: { ...cur.modelModalities, [model]: mods } } : {}) })
                   } catch (x: any) { useS.getState().patch({ notice: { t: x?.message ?? 'Could not detect a price.' } }) }
                 }
                 const setPrice = (kind: 'input' | 'output', value: string) => u({ prices: { ...e.prices, [model]: { ...price, [kind]: Math.max(0, Math.round(((Number(value) || 0) + Number.EPSILON) * 100) / 100), source: 'manual' } } })
@@ -1423,7 +1430,7 @@ function DocumentsSettings() {
   const s = useSConfig()
   const d = normDocs(s.docPrefs)
   const set = (p: Partial<DocPrefs>) => s.patch({ docPrefs: { ...d, ...p } })
-  const visionEps = s.eps.filter((e) => usable(e) && can(e, 'img'))
+  const visionEps = s.eps.filter((e) => usable(e) && can(e, e.model, 'img'))
   const ocrEp = s.eps.find((e) => e.id === d.ocrEp)
   return (
     <Anchor id="documents">

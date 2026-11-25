@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { discoveredModelPatch, modelsOf, priceText } from './models.ts'
+import { discoveredModelPatch, modelSupports, modelsOf, priceText } from './models.ts'
 
 test('a per-million price shows at least two decimals and at most four', () => {
   assert.equal(priceText(3), '3.00')
@@ -53,4 +53,28 @@ test('the first discovered model is the default when none was picked', () => {
   assert.deepEqual(patch.models, ['first', 'second'])
   assert.equal(patch.model, 'first')
   assert.deepEqual(modelsOf({ models: patch.models, model: patch.model }), ['first', 'second'])
+})
+
+test('modelSupports reads per-model input modalities and assumes support when unknown', () => {
+  const e = { modelModalities: { 'text-only': ['text'], vision: ['text', 'image'], full: ['text', 'image', 'file'], doc: ['text', 'file'] } }
+  assert.equal(modelSupports(e, 'text-only', 'img'), false)
+  assert.equal(modelSupports(e, 'text-only', 'pdf'), false)
+  assert.equal(modelSupports(e, 'vision', 'img'), true)
+  assert.equal(modelSupports(e, 'vision', 'pdf'), false)
+  assert.equal(modelSupports(e, 'full', 'img'), true)
+  assert.equal(modelSupports(e, 'full', 'pdf'), true)
+  assert.equal(modelSupports(e, 'doc', 'pdf'), true)
+  assert.equal(modelSupports(e, 'doc', 'img'), false)
+  // No metadata for the model: assume capable and let the provider decide.
+  assert.equal(modelSupports(e, 'unknown', 'pdf'), true)
+  assert.equal(modelSupports({}, 'x', 'img'), true)
+})
+
+test('discoveredModelPatch carries input modalities per model', () => {
+  const out = discoveredModelPatch([
+    { id: 'a', inputModalities: ['text', 'image'] },
+    { id: 'b', inputModalities: ['text', 'image', 'file'] },
+    { id: 'c' },
+  ], 'b')
+  assert.deepEqual(out.modelModalities, { a: ['text', 'image'], b: ['text', 'image', 'file'] })
 })

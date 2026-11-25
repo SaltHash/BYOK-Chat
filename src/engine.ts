@@ -7,6 +7,7 @@ import { withCode, type ErrorCode } from './errors'
 import { buildStreamRequest, splitSseBuffer } from './streamRequest'
 import { errorMessageFromBody, mapNetworkError, providerError, resolveProvider } from './providerAdapter'
 import { providerFetch, ProxyUnavailableError } from './net'
+import { modelSupports } from './models'
 import { normalizeGraphSpec, summarizeGraphSpec } from './graph'
 import { ARTIFACT_INSTRUCTIONS } from './artifacts'
 import { readApproximateLocation } from './location'
@@ -15,12 +16,10 @@ export { supportsEffort } from './streamRequest'
 
 export const est = (s: string) => Math.ceil(s.length / 4)
 export const redact = (e: Ep, s: unknown) => String(s).split(e.key || '\u0000').join('•••').replace(/\b(sk|gsk|pk|xai|AIza)[-\w]{12,}/g, '•••')
-/* Both kinds are sent natively to every endpoint: images as image blocks, and
- * PDFs as Anthropic document blocks or OpenAI-compatible `file` blocks. The
- * gate stays as a named predicate because the composer, planner and wire all
- * ask it, and a future kind that cannot travel natively would be excluded
- * here. */
-export const can = (e: Ep, k: 'img' | 'pdf') => k === 'img' || k === 'pdf' || e.type === 'anthropic'
+/* Whether a specific model can take a file kind natively. Decided from the
+ * input modalities the provider published (see modelSupports); when the
+ * provider said nothing, it is assumed capable and the provider decides. */
+export const can = (e: Ep, model: string, k: 'img' | 'pdf') => modelSupports(e, model, k)
 
 /* ---- Session cache ----
  * A small TTL + LRU cache so the same search query or page URL is not fetched
@@ -1096,7 +1095,7 @@ export function wire(e: Ep, msgs: Msg[]): Wire[] {
         continue
       }
       if (a.kind !== 'img' && a.kind !== 'pdf') { t += `\n[${promptNameOf(a)} omitted: this model cannot process it]`; continue }
-      if (!can(e, a.kind as 'img' | 'pdf')) { t += `\n[${promptNameOf(a)} omitted: this model cannot process it]`; continue }
+      if (!can(e, e.model, a.kind as 'img' | 'pdf')) { t += `\n[${promptNameOf(a)} omitted: this model cannot process it]`; continue }
       if (!a.data) { t += `\n[${promptNameOf(a)}: not retained after reload]`; continue }
       // Files dragged in without a MIME mapping carry an empty `type`;
       // never send an empty media_type to Anthropic.

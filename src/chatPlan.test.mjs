@@ -59,3 +59,19 @@ test('a PDF with no text layer still sends on an OpenAI-compatible endpoint', ()
   assert.equal(p.err, null)
   assert.ok(p.cand.length)
 })
+
+test('PDF gating is per model: a text-only model drops out, a file-capable sibling stays', () => {
+  const multi = { ...ep, id: 'e2', name: 'Multi', model: 'text-only', models: ['text-only', 'reader'], modelModalities: { 'text-only': ['text'], reader: ['text', 'file'] } }
+  const st = state({ eps: [multi], sel: { k: 'ep', id: 'e2' } })
+  const pdf = { id: 'u', r: 'user', t: 'read', att: [{ name: 'doc.pdf', kind: 'pdf', size: '1 KB', data: 'AAA' }] }
+  const p = planRequest(st, pdf, {})
+  assert.equal(p.err, null)
+  assert.deepEqual(p.cand.map((c) => c.model), ['reader'])
+
+  // When every model is text-only, the send is refused with guidance.
+  const only = { ...multi, models: ['text-only'], modelModalities: { 'text-only': ['text'] } }
+  const p2 = planRequest(state({ eps: [only], sel: { k: 'ep', id: 'e2' } }), pdf, {})
+  assert.ok(p2.err)
+  assert.match(p2.err.t, /can process PDFs/)
+  assert.equal(p2.cand.length, 0)
+})

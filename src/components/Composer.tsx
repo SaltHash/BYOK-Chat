@@ -395,7 +395,10 @@ export function Composer({ cfg, quote, onClearQuote }: { cfg: (t: string) => voi
   const sel = s.sel ? (s.sel.k === 'pl' ? s.pls : s.eps).find((x) => x.id === s.sel!.id) : undefined
   const ep = s.sel?.k === 'ep' ? s.eps.find((e) => e.id === s.sel!.id) : undefined
   const pr = s.prompts.find((p) => p.id === s.pr)
-  const bad = (a: Att) => !!ep && !a.text && (a.kind === 'media' || ((a.kind === 'img' || a.kind === 'pdf') && !can(ep, a.kind)))
+  // The model a send would use: the picked model when the endpoint is selected
+  // with one, otherwise the endpoint's default. Capability is per model.
+  const activeModel = ep ? (s.sel?.k === 'ep' && s.sel.model ? s.sel.model : ep.model) : ''
+  const bad = (a: Att) => !!ep && !a.text && (a.kind === 'media' || ((a.kind === 'img' || a.kind === 'pdf') && !can(ep, activeModel, a.kind)))
   const pick = (accept: string) => { if (fi.current) { fi.current.accept = accept; fi.current.click() } }
   const add = async (l: FileList | File[] | null) => {
     if (!l) return
@@ -464,9 +467,9 @@ export function Composer({ cfg, quote, onClearQuote }: { cfg: (t: string) => voi
   const ocrOne = async (a: Att) => {
     if (!a || a.kind !== 'img' || !a.data || a.text || ocrBusy != null) return
     const dp = normDocs(s.docPrefs)
-    const vex = s.eps.find((e) => e.id === dp.ocrEp && usable(e) && can(e, 'img'))
-      ?? s.eps.find((e) => usable(e) && can(e, 'img'))
-      ?? (ep && can(ep, 'img') ? ep : undefined)
+    const vex = s.eps.find((e) => e.id === dp.ocrEp && usable(e) && can(e, e.model, 'img'))
+      ?? s.eps.find((e) => usable(e) && can(e, e.model, 'img'))
+      ?? (ep && can(ep, ep.model, 'img') ? ep : undefined)
     if (!vex) { s.patch({ notice: { t: 'Transcription needs a vision-capable endpoint, and none is set up yet. Add one in Settings → Endpoints, then try again.', tab: 'eps', label: 'Open endpoints' } }); return }
     const model = vex.id === dp.ocrEp && dp.ocrModel ? dp.ocrModel : vex.model
     setOcrBusy(a)

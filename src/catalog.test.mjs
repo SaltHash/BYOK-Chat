@@ -162,3 +162,12 @@ test('catalogProviderOf recognizes presets and legacy URLs', () => {
   assert.equal(catalogProviderOf({ url: 'https://api.perplexity.ai' }), null)
   assert.equal(catalogProviderOf({ url: 'https://example.com/v1' }), 'generic')
 })
+
+test('parseCatalogModels reads input modalities from OpenRouter and plain fields', () => {
+  const [or] = parseCatalogModels({ data: [{ id: 'a', architecture: { input_modalities: ['text', 'image', 'file'] } }] })
+  assert.deepEqual(or.inputModalities, ['text', 'image', 'file'])
+  const [plain] = parseCatalogModels({ data: [{ id: 'b', input_modalities: ['Text', 'Image'] }] })
+  assert.deepEqual(plain.inputModalities, ['text', 'image'])
+  const [none] = parseCatalogModels({ data: [{ id: 'c' }] })
+  assert.equal(none.inputModalities, undefined)
+})

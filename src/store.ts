@@ -69,7 +69,7 @@ export type ModelProvider = { tag: string; name: string }
 /* Explicit names (preferred for new code); short aliases kept as deprecated. */
 export type Endpoint = { id: string; name: string; type: 'openai' | 'anthropic'; url: string; key: string; auth?: EndpointAuth; headers?: string; model: string; preset?: string; endpointId?: string; endpointFilter?: 'author' | 'provider'; models?: string[]; /** When the model list was last edited. Sync uses it to resolve deletions,
    *  which otherwise look identical to an endpoint that never had the model. */
-  modelsAt?: number; modelAdds?: Record<string, number>; modelDrops?: Record<string, number>; modelNames?: Record<string, string>; modelContext?: Record<string, number>; modelProviders?: Record<string, ModelProvider>; modelTiers?: Record<string, ModelTier>; modelEfforts?: Record<string, string[]>; modelEffortSource?: Record<string, 'auto' | 'manual'>; modelsMode?: 'separate' | 'playlist'; prices?: Record<string, ModelPrice>; accountId?: string; gatewayId?: string; on: boolean }
+  modelsAt?: number; modelAdds?: Record<string, number>; modelDrops?: Record<string, number>; modelNames?: Record<string, string>; modelContext?: Record<string, number>; modelModalities?: Record<string, string[]>; modelProviders?: Record<string, ModelProvider>; modelTiers?: Record<string, ModelTier>; modelEfforts?: Record<string, string[]>; modelEffortSource?: Record<string, 'auto' | 'manual'>; modelsMode?: 'separate' | 'playlist'; prices?: Record<string, ModelPrice>; accountId?: string; gatewayId?: string; on: boolean }
 export type Ep = Endpoint
 /** `cls` is an endpoint id, '' for the default helper classifier, or 'none'
  *  for no classifier at all. */
@@ -3255,9 +3255,9 @@ export const useS = create<S>()(
               // keeps a second send from slipping through this await window.
               sendPause.add(chatId)
               try {
-                const visionEps = s.eps.filter((e) => usable(e) && can(e, 'img'))
+                const visionEps = s.eps.filter((e) => usable(e) && can(e, e.model, 'img'))
                 if (dp.ocr === 'always' || !visionEps.length) {
-                  const picked = s.eps.find((e) => e.id === dp.ocrEp && usable(e) && can(e, 'img')) ?? visionEps[0]
+                  const picked = s.eps.find((e) => e.id === dp.ocrEp && usable(e) && can(e, e.model, 'img')) ?? visionEps[0]
                   if (!picked) return warn({ t: 'These images need text extraction, but no usable vision-capable endpoint is configured. Add one in Settings → Endpoints, pick it as the OCR endpoint in Settings → Chats → Documents, or remove the images.', tab: 'eps', label: 'Open endpoints' })
                   const model = picked.id === dp.ocrEp && dp.ocrModel && modelsOf(picked).includes(dp.ocrModel) ? dp.ocrModel : picked.model
                   try {
@@ -3837,7 +3837,7 @@ export const useS = create<S>()(
           const directAuthor = !/openrouter\.ai/i.test(e.url) && (e.endpointFilter ?? (preset ? PRE[preset]?.[3] : 'author')) === 'author' ? endpointId : ''
           const strip = (id: string) => directAuthor && id.toLowerCase().startsWith(`${directAuthor.toLowerCase()}/`) ? id.slice(directAuthor.length + 1) : id
           const remap = (obj?: Record<string, any>) => obj ? Object.fromEntries(Object.entries(obj).map(([id, value]) => [strip(id), value])) : obj
-          return { ...e, ...(preset ? { preset } : {}), name: oldGoogle && e.name === 'Gemini' ? 'Google' : e.name, endpointId, endpointFilter: e.endpointFilter ?? (preset ? PRE[preset]?.[3] : undefined), model: strip(e.model), models: e.models?.map(strip), modelNames: remap(e.modelNames), modelContext: remap(e.modelContext), modelProviders: remap(e.modelProviders), modelTiers: remap(e.modelTiers), modelEfforts: remap(e.modelEfforts), modelEffortSource: remap(e.modelEffortSource), prices: remap(e.prices) }
+          return { ...e, ...(preset ? { preset } : {}), name: oldGoogle && e.name === 'Gemini' ? 'Google' : e.name, endpointId, endpointFilter: e.endpointFilter ?? (preset ? PRE[preset]?.[3] : undefined), model: strip(e.model), models: e.models?.map(strip), modelNames: remap(e.modelNames), modelContext: remap(e.modelContext), modelModalities: remap(e.modelModalities), modelProviders: remap(e.modelProviders), modelTiers: remap(e.modelTiers), modelEfforts: remap(e.modelEfforts), modelEffortSource: remap(e.modelEffortSource), prices: remap(e.prices) }
         })
         // Effort is only ever a level the reader chose; the removed automatic
         // mode ('auto') now means no level at all.
@@ -3954,7 +3954,7 @@ export const useS = create<S>()(
         p.widgetPrefs = { usageGroup: 'endpoint', usageMode: 'success', usageFormat: '{in}/{out}', usageTotal: false, usagePeriod: 'all', lastSpeed: true, timeUnit: 'auto', widgetOrder: WIDGETS.map(([k]) => k), shortcuts: KEYS.map(([k]) => k), contextLimit: 128000, showDisabledEndpoints: true, scratchRows: 6, snippetLimit: 20, costDecimals: 4, activePromptsOnly: false, charsPerToken: 4, hideDoneTodos: false, ...(p.widgetPrefs ?? {}) }
         p.widgetPrefs.widgetOrder = [...new Set([...(p.widgetPrefs.widgetOrder ?? []), ...WIDGETS.map(([k]) => k)])].filter((k) => k !== 'ctx')
         p.stats = { ...ZERO(), ...p.stats }
-        p.eps = (p.eps ?? []).map((e: Ep) => ({ ...e, modelsMode: e.modelsMode ?? 'separate', models: e.models?.length ? e.models : [e.model], modelNames: e.modelNames ?? {}, modelContext: e.modelContext ?? {}, modelProviders: e.modelProviders ?? {}, modelTiers: e.modelTiers ?? {}, prices: e.prices ?? {} }))
+        p.eps = (p.eps ?? []).map((e: Ep) => ({ ...e, modelsMode: e.modelsMode ?? 'separate', models: e.models?.length ? e.models : [e.model], modelNames: e.modelNames ?? {}, modelContext: e.modelContext ?? {}, modelModalities: e.modelModalities ?? {}, modelProviders: e.modelProviders ?? {}, modelTiers: e.modelTiers ?? {}, prices: e.prices ?? {} }))
 
         p.pls = (p.pls ?? []).map((pl: Pl) => ({ ...pl, e: (pl.e ?? []).flatMap((ref) => {
           if (ref.includes('::')) return [ref]

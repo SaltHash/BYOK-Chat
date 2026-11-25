@@ -10,26 +10,47 @@ export type DiscoveredModels = {
   model: string
   modelNames?: Record<string, string>
   modelContext?: Record<string, number>
+  /** Input modalities the provider published per model (e.g. `text`,
+   *  `image`, `file`), used to decide what each model can actually take. */
+  modelModalities?: Record<string, string[]>
 }
 
 /** What a model-list discovery contributes to a new endpoint. The whole list
  *  is kept, not just the model the user picked: the endpoint then offers every
  *  model it advertised, with the picked one first so it stays the default.
- *  Names and context lengths ride along when the provider published them. */
-export function discoveredModelPatch(found: { id: string; name?: string; context?: number }[], picked: string): DiscoveredModels {
+ *  Names, context lengths and input modalities ride along when the provider
+ *  published them. */
+export function discoveredModelPatch(found: { id: string; name?: string; context?: number; inputModalities?: string[] }[], picked: string): DiscoveredModels {
   const chosen = String(picked ?? '').trim()
   const models = [...new Set([...(chosen ? [chosen] : []), ...found.map((f) => f.id).filter(Boolean)])]
   const names: Record<string, string> = {}
   const contexts: Record<string, number> = {}
+  const modalities: Record<string, string[]> = {}
   for (const f of found) {
     if (!f.id) continue
     if (f.name) names[f.id] = f.name
     if (f.context && f.context > 0) contexts[f.id] = f.context
+    if (f.inputModalities?.length) modalities[f.id] = f.inputModalities
   }
   const out: DiscoveredModels = { models: models.length ? models : [''], model: chosen || models[0] || '' }
   if (Object.keys(names).length) out.modelNames = names
   if (Object.keys(contexts).length) out.modelContext = contexts
+  if (Object.keys(modalities).length) out.modelModalities = modalities
   return out
+}
+
+/** Whether a model can take a file kind natively, from the input modalities
+ *  the provider published (OpenRouter's `architecture.input_modalities`, and
+ *  the equivalent `input_modalities`/`modalities` fields other catalogs use).
+ *  When the provider said nothing, assume it can: the send path lets the
+ *  provider decide, the same default images already rely on. */
+export function modelSupports(e: Ep, model: string, kind: 'img' | 'pdf'): boolean {
+  const mods = e.modelModalities?.[model]
+  if (!mods?.length) return true
+  if (kind === 'img') return mods.includes('image')
+  // File/PDF input is published as `file` (OpenRouter), sometimes `pdf` or
+  // `document`.
+  return mods.includes('file') || mods.includes('pdf') || mods.includes('document')
 }
 
 /** Apply an edit to an endpoint's model list and stamp it.

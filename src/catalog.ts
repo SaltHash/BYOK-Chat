@@ -13,6 +13,8 @@ export type CatalogEntry = {
   context?: number
   inputPrice?: number
   outputPrice?: number
+  /** Input modalities the provider published (e.g. `text`, `image`, `file`). */
+  inputModalities?: string[]
   /** USD per 1M cached input tokens, when the provider publishes it. */
   cacheReadPrice?: number
 }
@@ -61,6 +63,8 @@ export function parseCatalogModels(body: unknown, opts: CatalogParseOptions = {}
       supported_efforts?: unknown; supported_reasoning_efforts?: unknown
       supports_reasoning?: unknown; supports_reasoning_effort?: unknown
       capabilities?: { reasoning_effort?: unknown }
+      architecture?: { input_modalities?: unknown }
+      input_modalities?: unknown; supported_input_modalities?: unknown; modalities?: unknown
       id?: unknown; model_id?: unknown; model_name?: unknown
       name?: unknown; display_name?: unknown; displayName?: unknown
       provider?: unknown; litellm_provider?: unknown; provider_name?: unknown; organization?: unknown; owned_by?: unknown
@@ -82,12 +86,17 @@ export function parseCatalogModels(body: unknown, opts: CatalogParseOptions = {}
     const providerId = String(r.provider ?? r.litellm_provider ?? r.provider_name ?? r.organization ?? r.owned_by ?? '')
     const modelLabel = stripVendorPrefix(name, [providerId, endpointId, endpointName, id.split('/')[0]])
     const context = Number(r.context_length ?? r.context_window ?? r.max_input_tokens ?? r.max_context_length)
+    // OpenRouter publishes `architecture.input_modalities`; other catalogs use
+    // a plainer `input_modalities`/`modalities` field. "file" is PDF support.
+    const rawMods = r.architecture?.input_modalities ?? r.input_modalities ?? r.supported_input_modalities ?? r.modalities
+    const inputModalities = Array.isArray(rawMods) ? [...new Set(rawMods.map((m) => String(m).toLowerCase()).filter(Boolean))] : []
     const inputPrice = toPerMillion(r.pricing?.prompt ?? r.pricing?.input ?? r.prompt_text_token_price ?? r.input_cost_per_token, priceUnit)
     const outputPrice = toPerMillion(r.pricing?.completion ?? r.pricing?.output ?? r.completion_text_token_price ?? r.output_cost_per_token, priceUnit)
     const cacheReadPrice = toPerMillion(r.pricing?.input_cache_read ?? r.pricing?.cached_input ?? r.cached_prompt_text_token_price, priceUnit)
     return {
       id, efforts, source: effortKnown ? 'auto' as const : 'manual' as const, providerId, name: modelLabel,
       ...(context > 0 ? { context } : {}),
+      ...(inputModalities.length ? { inputModalities } : {}),
       ...(inputPrice !== undefined ? { inputPrice } : {}),
       ...(outputPrice !== undefined ? { outputPrice } : {}),
       ...(cacheReadPrice !== undefined ? { cacheReadPrice } : {}),

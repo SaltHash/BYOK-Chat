@@ -1270,3 +1270,14 @@ test('a chat title is 2-4 words with no punctuation', () => {
   assert.equal(t('ok'), '')
   assert.equal(t('   '), '')
 })
+
+test('wire respects per-model file capability', () => {
+  const pdf = { id: 'u', r: 'user', t: 'read', att: [{ name: 'doc.pdf', kind: 'pdf', size: '1 KB', mime: 'application/pdf', data: 'AAA' }] }
+  const textOnly = { ...openai, model: 'text-only', modelModalities: { 'text-only': ['text'] } }
+  const ow = wire(textOnly, [pdf])
+  assert.equal(typeof ow[0].content, 'string')
+  assert.match(ow[0].content, /omitted: this model cannot process it/)
+  const reader = { ...openai, model: 'reader', modelModalities: { reader: ['text', 'file'] } }
+  const rw = wire(reader, [pdf])
+  assert.ok(rw[0].content.some((c) => c.type === 'file'))
+})
