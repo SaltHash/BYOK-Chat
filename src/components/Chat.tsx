@@ -1216,10 +1216,10 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
               aria-expanded={log}
               onClick={() => setLog(!log)}
               title={log ? 'Hide the steps behind this answer' : 'Show the steps behind this answer'}
-              className="inline-flex items-center gap-1 rounded-md py-0.5 pr-1.5 transition-colors hover:bg-surf hover:text-tx focus-visible:bg-surf focus-visible:text-tx"
+              className="inline-flex items-center gap-1 rounded-md py-0.5 pr-1.5 text-mu/70 transition-colors hover:bg-surf hover:text-tx focus-visible:bg-surf focus-visible:text-tx"
             >
-              <ChevronRight size={12} className={cx('shrink-0 transition-transform', log && 'rotate-90')} aria-hidden="true" />
               {workedLabel}
+              <ChevronRight size={12} className={cx('shrink-0 transition-transform', log && 'rotate-90')} aria-hidden="true" />
             </button>
           )}
           {prefs.showTimestamps && m.at != null && <time dateTime={new Date(m.at).toISOString()} title={formatMsgDateTime(m.at)} className="ml-auto text-xs text-mu">{formatMsgTime(m.at)}</time>}

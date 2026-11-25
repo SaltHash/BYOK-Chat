@@ -1,5 +1,5 @@
 import { useMemo, useState, type ReactNode } from 'react'
-import { Check, ChevronDown, Moon, Star, Sun, X } from 'lucide-react'
+import { Check, ChevronRight, Moon, Star, Sun, X } from 'lucide-react'
 import {
   useSConfig, THEMES, DARK_THEMES, LIGHT_THEMES, THEME_COLOR_KEYS, THEME_COLOR_LABELS, THEME_COLORS,
   defaultCustomTheme, customThemeColors, normCustomTheme, splitHelperRef, modelNameOf,
@@ -182,7 +182,7 @@ export function AppearanceSettings() {
               <details className="group">
                 <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-4 py-3 text-sm [&::-webkit-details-marker]:hidden">
                   <span>Advanced colors</span>
-                  <ChevronDown size={16} className="text-mu transition-transform group-open:rotate-180" />
+                  <ChevronRight size={16} className="text-mu transition-transform group-open:rotate-90" />
                 </summary>
                 <div className="grid gap-2 pb-4 sm:grid-cols-2 lg:grid-cols-3">
                   {advancedKeys.map((key) => {
@@ -236,7 +236,7 @@ export function AppearanceSettings() {
           <details className="group">
             <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-4 py-3 text-sm [&::-webkit-details-marker]:hidden">
               <span>Advanced spacing</span>
-              <ChevronDown size={16} className="text-mu transition-transform group-open:rotate-180" />
+              <ChevronRight size={16} className="text-mu transition-transform group-open:rotate-90" />
             </summary>
             <div className="space-y-5 pb-4 pt-1">
               <div className="grid gap-x-8 gap-y-4 sm:grid-cols-2">

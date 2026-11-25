@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { BookOpen, ChevronDown, ChevronUp, Copy, Check, ExternalLink, FileText, Link2, AlertTriangle, Download } from 'lucide-react'
+import { BookOpen, ChevronRight, ChevronUp, Copy, Check, ExternalLink, FileText, Link2, AlertTriangle, Download } from 'lucide-react'
 import { fetchPage } from '../engine'
 import { fetchOptsOf, normSearch, dl, useS } from '../store'
 import { truncateSnippet, citationCoverage, supportingExcerpt, sourcesToBibtex, sourcesToLinkList, type CiteSource } from '../citations'
@@ -116,7 +116,7 @@ export function SourcesPanel({ msgId, text, sources, defaultOpen, strict, open, 
         >
           <BookOpen size={14} className="text-ac" />
           Sources · {sources.length}
-          <ChevronDown size={14} className={cx('text-mu transition-transform', isOpen && 'rotate-180')} />
+          <ChevronRight size={14} className={cx('text-mu transition-transform', isOpen && 'rotate-90')} />
         </button>
         {cited.length > 0 && <span className="text-xs text-mu">{cited.length} cited</span>}
         {uncited && <span className="text-xs text-mu">not cited in this reply</span>}

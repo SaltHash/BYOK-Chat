@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Check, ChevronDown, Copy, ExternalLink, Loader2, Lock, RefreshCw, Share2, TriangleAlert } from 'lucide-react'
+import { Check, ChevronRight, Copy, ExternalLink, Loader2, Lock, RefreshCw, Share2, TriangleAlert } from 'lucide-react'
 import { useS } from '../store'
 import { createShare, latestShare, shareHash, updateShare, type ShareRecord } from '../share'
 import { Btn, Dialog, Input, Toggle, cx } from './ui'
@@ -157,7 +157,7 @@ export function ShareDialog({ chatId, close }: { chatId: string; close: () => vo
             </div>
             <div className="flex items-center justify-between gap-2">
               {previous.length ? (
-                <Btn v="ghost" sm icon={ChevronDown} className={cx('!h-8', showHistory && '[&>svg]:rotate-180')} onClick={() => setShowHistory((v) => !v)}>
+                <Btn v="ghost" sm icon={ChevronRight} className={cx('!h-8', showHistory && '[&>svg]:rotate-90')} onClick={() => setShowHistory((v) => !v)}>
                   {showHistory ? 'Hide previous links' : `Previous links (${previous.length})`}
                 </Btn>
               ) : <span className="text-xs text-mu">This is the first link for this chat.</span>}
