@@ -13,6 +13,12 @@
   --color-code: var(--code);
   --color-codeh: var(--codeh);
   --color-bor: var(--bor);
+  /* Syntax/chart accent colours, exposed as utilities so diff figures and
+     stat text can use the active theme's own green/amber/blue/violet. */
+  --color-c2: var(--c2);
+  --color-c3: var(--c3);
+  --color-c4: var(--c4);
+  --color-c5: var(--c5);
   --font-sans: var(--font-body, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif);
   /* Style presets own radii and elevation through these indirections, so a
      single `data-style` switch restyles every rounded/shadowed surface. */

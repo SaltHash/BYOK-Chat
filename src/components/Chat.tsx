@@ -1,6 +1,6 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { useShallow } from 'zustand/react/shallow'
-import { GitBranch, ChevronLeft, ChevronRight, ChevronDown, Server, Cpu, Copy, Check, RefreshCw, Trash2, ListOrdered, TriangleAlert, Paperclip, Download, ExternalLink, Volume2, Pin, PinOff, Bookmark, Search, ArrowUp, ArrowDown, X, Quote, FileText, FileCode2, Terminal, Image as ImageIcon, Wrench, Sparkles, Brain, ChartLine, MessageCircle, BookOpen } from 'lucide-react'
+import { GitBranch, ChevronLeft, ChevronRight, ChevronDown, Server, Cpu, Copy, Check, RefreshCw, Trash2, TriangleAlert, Paperclip, Download, ExternalLink, Volume2, Pin, PinOff, Bookmark, Search, ArrowUp, ArrowDown, X, Quote, FileText, FileCode2, Terminal, Image as ImageIcon, Wrench, Sparkles, Brain, ChartLine, MessageCircle, BookOpen } from 'lucide-react'
 import { useS, useLive, usable, modelNameOf, featOn, previewSysFor, activeWorkspaceForChat, pinnedReplyOf, searchCountOf, DEFAULT_REPLY_STATS, type Ep, type LogDetail, type Msg, type ReplyModelLabel } from '../store'
 import { clampWorkspaceFrac, roundFrac, CHAT_WIDTH } from '../layout'
 import { focusComposer, startPointerDrag } from '../hooks'
@@ -830,7 +830,7 @@ function ReplyEmbedView({ embed }: { embed: ReplyEmbed }) {
   return <div className={side}><GraphEmbedCard call={embed.call} /></div>
 }
 
-const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWorkspaceId, cfg, searchQuery, searchOpen }: { m: Msg; last: boolean; onOpenWorkspace: (mid: string, workspaceId: string, filePath?: string) => void; onOpenResearch: (mid: string) => void; selectedWorkspaceId?: string | null; cfg: (t: string) => void; searchQuery?: string; searchOpen?: boolean }) {
+const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWorkspaceId, cfg, searchQuery, searchOpen }: { m: Msg; last: boolean; onOpenWorkspace: (mid: string, workspaceId: string, filePath?: string, view?: 'code' | 'diff') => void; onOpenResearch: (mid: string) => void; selectedWorkspaceId?: string | null; cfg: (t: string) => void; searchQuery?: string; searchOpen?: boolean }) {
   // Granular subscriptions: a streamed chunk only changes `chats`, so these
   // slices stay referentially stable and this message does not re-render
   // unless its own `m` prop (or one of these) actually changed.
@@ -929,6 +929,13 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
   const showTime = replyStats.includes('time') && replyTime > 0
   const replyCost = replyStats.includes('cost') ? messageCostOf(eps, m.log) : null
   const title = replyTitle(m, prefs.replyModelLabel ?? 'name', eps)
+  /* The line under a reply reads as a record of the work — "Worked for 1.2 s"
+   * — rather than the name of a control. Replies saved before timings were
+   * kept fall back to the number of steps, so the trail is still discoverable. */
+  const replySteps = (m.log?.length ?? 0) + (m.toolRounds ?? []).reduce((n, r) => n + r.calls.length, 0)
+  const workedLabel = replyTime > 0
+    ? `Worked for ${duration(replyTime).trim()}`
+    : replySteps > 0 ? `${replySteps} step${replySteps === 1 ? '' : 's'}` : 'Process'
   const displayText = m.toolFinal ?? m.t
   // While the live streamed text is on screen this output is not rendered, so
   // skip the whole-text linkify pass that would otherwise rerun per chunk.
@@ -1042,142 +1049,6 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
     )
   return (
     <div id={`msg-${m.id}`} data-msg-role="assistant" className={cx('group space-y-2 rounded-xl p-1', flash && 'ring-2 ring-ac')}>
-      {/* The process panel is its own control, not part of the byline: hiding
-          which model answered must not make the saved steps unreachable. */}
-      {(prefs.showBy || (m.log && prefs.showLog) || (prefs.showTimestamps && m.at != null)) && (
-        <div className="flex flex-wrap items-center gap-2 text-sm text-mu">
-          {prefs.showBy && <span className={cx('inline-flex items-center gap-1.5', m.err && 'text-er')}>{m.err ? <TriangleAlert size={14} /> : <Cpu size={14} />}{title}</span>}
-          {m.log && prefs.showLog && (
-            <button onClick={() => setLog(!log)} className="inline-flex items-center gap-1.5 rounded-md px-1.5 py-0.5 hover:bg-surf hover:text-tx">
-          <ListOrdered size={14} />Process to answer
-            </button>
-          )}
-          {prefs.showTimestamps && m.at != null && <time dateTime={new Date(m.at).toISOString()} title={formatMsgDateTime(m.at)} className="ml-auto text-xs text-mu">{formatMsgTime(m.at)}</time>}
-        </div>
-      )}
-
-      {log && (
-        <div className="space-y-1.5 rounded-xl bg-surf p-3 text-sm">
-          {adv?.showSystemPrompt && (
-            <div className="rounded-lg bg-bg p-2">
-              {sysText != null ? (
-                <>
-                  <span className="flex items-center gap-2">
-                    <button onClick={() => setSysOpen(!sysOpen)} className="inline-flex items-center gap-1.5 rounded-md px-1.5 py-0.5 text-xs text-mu hover:bg-surf hover:text-tx">
-                      <ChevronRight size={14} className={cx('transition-transform', sysOpen && 'rotate-90')} />Full system prompt ({sysText.length.toLocaleString()} characters)
-                    </button>
-                    <button
-                      onClick={() => { void navigator.clipboard?.writeText(sysText).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500) }).catch(() => {}) }}
-                      className="ml-auto inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs text-mu hover:bg-surf hover:text-tx"
-                      title="Copy the full system prompt"
-                    >
-                      {copied ? <Check size={13} /> : <Copy size={13} />}{copied ? 'Copied' : 'Copy'}
-                    </button>
-                  </span>
-                  {m.sys == null && <p className="mt-1 px-1.5 text-xs text-mu">Reconstructed from current settings — the exact prompt was not saved for this reply.</p>}
-                  {sysOpen && <div className="mt-2 max-h-96 overflow-y-auto rounded-lg bg-surf p-3 leading-7"><Md t={sysText} /></div>}
-                </>
-              ) : (
-                <button onClick={() => setSysPreview(previewSysFor(m.id) ?? '(Could not reconstruct a system prompt for this reply.)')} className="inline-flex items-center gap-1.5 rounded-md px-1.5 py-0.5 text-xs text-mu hover:bg-surf hover:text-tx">
-                  <ChevronRight size={14} />Preview the system prompt for this reply
-                </button>
-              )}
-            </div>
-          )}
-          {/* One pass, in the order the steps happened. The old panel split the
-              log into helper calls and model calls, which put a later retry or
-              memory decision above the request that caused it. */}
-          {(() => {
-            const seenCalls = new Set<string>()
-            const calls = (m.toolRounds ?? []).flatMap((round) => round.calls).filter((c) => {
-              if (!c.id) return true
-              if (seenCalls.has(c.id)) return false
-              seenCalls.add(c.id)
-              return true
-            })
-            // A summarized page otherwise appears twice: once as the helper
-            // model step and once as the fetch_page row that shows its URL.
-            // Pair each summarized read with one successful summary step and
-            // hide that step; failures stay visible because they explain why
-            // the raw excerpt was used instead.
-            let summaryReads = calls.filter((c) => c.name === 'fetch_page' && /^\s*Page summary/i.test(c.result ?? '')).length
-            const steps = (m.log ?? []).flatMap((t, i) => {
-              if (!t.err && /^Page summary$/i.test(t.n) && summaryReads > 0) { summaryReads--; return [] }
-              return [{ t, i }]
-            })
-            // A call that is still running has no saved round yet, so it is
-            // drawn from the live list; ids keep a landed call from showing
-            // twice while the round is being written back.
-            const saved = new Set(calls.map((c) => c.id))
-            const pending = ((live ?? []) as { id?: string; name?: string; arguments?: string }[])
-              .filter((t) => t.name && (!t.id || !saved.has(t.id)))
-            const running = busy && last
-            const count = steps.length + calls.length + pending.length
-            const total = [...steps.map(({ t }) => t.ms ?? 0), ...calls.map((c) => c.ms ?? 0)].reduce((a, b) => a + b, 0)
-            return (
-              <>
-                {count > 0 && !m.err && (
-                  <div className="flex items-baseline gap-2 px-1 text-xs uppercase tracking-wide text-mu">
-                    <span>{count} step{count === 1 ? '' : 's'}</span>
-                    {logTiming && total > 0 && <span className="ml-auto normal-case tracking-normal tabular-nums">{duration(total).trim()} total</span>}
-                  </div>
-                )}
-                {/* A tree, not a list: one rail runs from dot to dot, model
-                    rounds are filled dots, and tool calls are open circles in
-                    the muted tone — work that happened on the way to the
-                    answer. Only a call that is still running animates. */}
-                <ol className="process-tree">
-                  {count === 0 && (
-                    <li className="process-node text-mu">
-                      <ProcessMarker live={busy && last} />
-                      {thinkingLine(m.id)}
-                    </li>
-                  )}
-                  {steps.map(({ t, i }) => (
-                    <ProcessStep key={`step-${i}`} t={t} detail={logDetail} timing={logTiming} models={logModels} tokens={!!adv?.showTokenCounts} open={!!expanded[`step-${i}`]} toggle={() => togglePayload(`step-${i}`)} />
-                  ))}
-                  {calls.map((call, i) => {
-                    const [head, desc] = toolNode(toolStep(call.name, call.arguments, call.result), call.name)
-                    return (
-                      <li key={`tool-${i}`} className="process-node">
-                        <ProcessMarker error={!!call.error} tool />
-                        <div className="min-w-0">
-                          <span className="flex flex-wrap items-baseline gap-x-2">
-                            <span className={cx('min-w-0 break-words text-tx', call.error && 'text-er')}>{head}</span>
-                            {logTiming && call.ms != null && <span className={cx('ml-auto shrink-0 pl-2 text-xs tabular-nums text-mu', call.error && 'text-er')}>{duration(call.ms).trim()}</span>}
-                          </span>
-                          {desc && <div className={cx('mt-0.5 break-words text-xs text-mu', call.error && 'text-er')}>{desc}</div>}
-                          {call.denied && <div className="mt-0.5 text-xs text-er">Denied by you — the tool did not run.</div>}
-                          {call.truncated && <div className="mt-0.5 text-xs text-ac">Result capped at 100,000 characters — ask for a narrower query, line range or page excerpt to read the rest.</div>}
-                          {adv?.showToolPayloads && (
-                            <div className="mt-1 space-y-1">
-                              <Payload label="args" text={prettyArgs(call.arguments)} open={!!expanded[`args-${i}`]} onToggle={() => togglePayload(`args-${i}`)} />
-                              {call.result != null && <Payload label="result" text={call.result} open={!!expanded[`result-${i}`]} onToggle={() => togglePayload(`result-${i}`)} />}
-                            </div>
-                          )}
-                        </div>
-                      </li>
-                    )
-                  })}
-                  {pending.map((tool, i) => {
-                    const name = tool.name!
-                    const [head, desc] = toolNode(toolStep(name, tool.arguments ?? ''), name)
-                    return (
-                      <li key={`pending-${i}`} className="process-node">
-                        <ProcessMarker live={running} />
-                        <div className="min-w-0">
-                          <div className="break-words text-tx">{head}</div>
-                          {desc && <div className="mt-0.5 break-words text-xs text-mu">{desc}</div>}
-                        </div>
-                      </li>
-                    )
-                  })}
-                </ol>
-              </>
-            )
-          })()}
-        </div>
-      )}
       <div className="flow-root leading-7">
         {m.err ? (
           <div className="space-y-3 rounded-xl border border-er/30 bg-er/10 p-4">
@@ -1325,7 +1196,7 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
                   live={live}
                   workspace={workspace}
                   selectedRevisionId={selectedRevId}
-                  onOpen={(filePath) => onOpenWorkspace(m.id, wsId, filePath)}
+                  onOpen={(filePath, view) => onOpenWorkspace(m.id, wsId, filePath, view)}
                   onSelectRevision={(revId) => useS.getState().patch({ selectedRevision: { ...useS.getState().selectedRevision, [wsId]: revId } })}
                 />
               )
@@ -1333,6 +1204,151 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
           </div>
         ) : null
       })()}
+      {/* The reply explains itself first. Model, effort and process sit under
+          the answer as one quiet attribution line instead of a header that
+          pushes the prose down. */}
+      {(prefs.showBy || (m.log && prefs.showLog) || (prefs.showTimestamps && m.at != null)) && (
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 pt-1 text-xs text-mu">
+          {prefs.showBy && <span className={cx('inline-flex items-center gap-1.5', m.err && 'text-er')}>{m.err ? <TriangleAlert size={13} /> : <Cpu size={13} />}{title}</span>}
+          {m.log && prefs.showLog && (
+            <button
+              type="button"
+              aria-expanded={log}
+              onClick={() => setLog(!log)}
+              title={log ? 'Hide the steps behind this answer' : 'Show the steps behind this answer'}
+              className="inline-flex items-center gap-1 rounded-md py-0.5 pr-1.5 transition-colors hover:bg-surf hover:text-tx focus-visible:bg-surf focus-visible:text-tx"
+            >
+              <ChevronRight size={12} className={cx('shrink-0 transition-transform', log && 'rotate-90')} aria-hidden="true" />
+              {workedLabel}
+            </button>
+          )}
+          {prefs.showTimestamps && m.at != null && <time dateTime={new Date(m.at).toISOString()} title={formatMsgDateTime(m.at)} className="ml-auto text-xs text-mu">{formatMsgTime(m.at)}</time>}
+        </div>
+      )}
+
+      {log && (
+        <div className="space-y-1.5 rounded-xl bg-surf p-3 text-sm">
+          {adv?.showSystemPrompt && (
+            <div className="rounded-lg bg-bg p-2">
+              {sysText != null ? (
+                <>
+                  <span className="flex items-center gap-2">
+                    <button onClick={() => setSysOpen(!sysOpen)} className="inline-flex items-center gap-1.5 rounded-md px-1.5 py-0.5 text-xs text-mu hover:bg-surf hover:text-tx">
+                      <ChevronRight size={14} className={cx('transition-transform', sysOpen && 'rotate-90')} />Full system prompt ({sysText.length.toLocaleString()} characters)
+                    </button>
+                    <button
+                      onClick={() => { void navigator.clipboard?.writeText(sysText).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500) }).catch(() => {}) }}
+                      className="ml-auto inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs text-mu hover:bg-surf hover:text-tx"
+                      title="Copy the full system prompt"
+                    >
+                      {copied ? <Check size={13} /> : <Copy size={13} />}{copied ? 'Copied' : 'Copy'}
+                    </button>
+                  </span>
+                  {m.sys == null && <p className="mt-1 px-1.5 text-xs text-mu">Reconstructed from current settings — the exact prompt was not saved for this reply.</p>}
+                  {sysOpen && <div className="mt-2 max-h-96 overflow-y-auto rounded-lg bg-surf p-3 leading-7"><Md t={sysText} /></div>}
+                </>
+              ) : (
+                <button onClick={() => setSysPreview(previewSysFor(m.id) ?? '(Could not reconstruct a system prompt for this reply.)')} className="inline-flex items-center gap-1.5 rounded-md px-1.5 py-0.5 text-xs text-mu hover:bg-surf hover:text-tx">
+                  <ChevronRight size={14} />Preview the system prompt for this reply
+                </button>
+              )}
+            </div>
+          )}
+          {/* One pass, in the order the steps happened. The old panel split the
+              log into helper calls and model calls, which put a later retry or
+              memory decision above the request that caused it. */}
+          {(() => {
+            const seenCalls = new Set<string>()
+            const calls = (m.toolRounds ?? []).flatMap((round) => round.calls).filter((c) => {
+              if (!c.id) return true
+              if (seenCalls.has(c.id)) return false
+              seenCalls.add(c.id)
+              return true
+            })
+            // A summarized page otherwise appears twice: once as the helper
+            // model step and once as the fetch_page row that shows its URL.
+            // Pair each summarized read with one successful summary step and
+            // hide that step; failures stay visible because they explain why
+            // the raw excerpt was used instead.
+            let summaryReads = calls.filter((c) => c.name === 'fetch_page' && /^\s*Page summary/i.test(c.result ?? '')).length
+            const steps = (m.log ?? []).flatMap((t, i) => {
+              if (!t.err && /^Page summary$/i.test(t.n) && summaryReads > 0) { summaryReads--; return [] }
+              return [{ t, i }]
+            })
+            // A call that is still running has no saved round yet, so it is
+            // drawn from the live list; ids keep a landed call from showing
+            // twice while the round is being written back.
+            const saved = new Set(calls.map((c) => c.id))
+            const pending = ((live ?? []) as { id?: string; name?: string; arguments?: string }[])
+              .filter((t) => t.name && (!t.id || !saved.has(t.id)))
+            const running = busy && last
+            const count = steps.length + calls.length + pending.length
+            const total = [...steps.map(({ t }) => t.ms ?? 0), ...calls.map((c) => c.ms ?? 0)].reduce((a, b) => a + b, 0)
+            return (
+              <>
+                {count > 0 && !m.err && (
+                  <div className="flex items-baseline gap-2 px-1 text-xs uppercase tracking-wide text-mu">
+                    <span>{count} step{count === 1 ? '' : 's'}</span>
+                    {logTiming && total > 0 && <span className="ml-auto normal-case tracking-normal tabular-nums">{duration(total).trim()} total</span>}
+                  </div>
+                )}
+                {/* A tree, not a list: one rail runs from dot to dot, model
+                    rounds are filled dots, and tool calls are open circles in
+                    the muted tone — work that happened on the way to the
+                    answer. Only a call that is still running animates. */}
+                <ol className="process-tree">
+                  {count === 0 && (
+                    <li className="process-node text-mu">
+                      <ProcessMarker live={busy && last} />
+                      {thinkingLine(m.id)}
+                    </li>
+                  )}
+                  {steps.map(({ t, i }) => (
+                    <ProcessStep key={`step-${i}`} t={t} detail={logDetail} timing={logTiming} models={logModels} tokens={!!adv?.showTokenCounts} open={!!expanded[`step-${i}`]} toggle={() => togglePayload(`step-${i}`)} />
+                  ))}
+                  {calls.map((call, i) => {
+                    const [head, desc] = toolNode(toolStep(call.name, call.arguments, call.result), call.name)
+                    return (
+                      <li key={`tool-${i}`} className="process-node">
+                        <ProcessMarker error={!!call.error} tool />
+                        <div className="min-w-0">
+                          <span className="flex flex-wrap items-baseline gap-x-2">
+                            <span className={cx('min-w-0 break-words text-tx', call.error && 'text-er')}>{head}</span>
+                            {logTiming && call.ms != null && <span className={cx('ml-auto shrink-0 pl-2 text-xs tabular-nums text-mu', call.error && 'text-er')}>{duration(call.ms).trim()}</span>}
+                          </span>
+                          {desc && <div className={cx('mt-0.5 break-words text-xs text-mu', call.error && 'text-er')}>{desc}</div>}
+                          {call.denied && <div className="mt-0.5 text-xs text-er">Denied by you — the tool did not run.</div>}
+                          {call.truncated && <div className="mt-0.5 text-xs text-ac">Result capped at 100,000 characters — ask for a narrower query, line range or page excerpt to read the rest.</div>}
+                          {adv?.showToolPayloads && (
+                            <div className="mt-1 space-y-1">
+                              <Payload label="args" text={prettyArgs(call.arguments)} open={!!expanded[`args-${i}`]} onToggle={() => togglePayload(`args-${i}`)} />
+                              {call.result != null && <Payload label="result" text={call.result} open={!!expanded[`result-${i}`]} onToggle={() => togglePayload(`result-${i}`)} />}
+                            </div>
+                          )}
+                        </div>
+                      </li>
+                    )
+                  })}
+                  {pending.map((tool, i) => {
+                    const name = tool.name!
+                    const [head, desc] = toolNode(toolStep(name, tool.arguments ?? ''), name)
+                    return (
+                      <li key={`pending-${i}`} className="process-node">
+                        <ProcessMarker live={running} />
+                        <div className="min-w-0">
+                          <div className="break-words text-tx">{head}</div>
+                          {desc && <div className="mt-0.5 break-words text-xs text-mu">{desc}</div>}
+                        </div>
+                      </li>
+                    )
+                  })}
+                </ol>
+              </>
+            )
+          })()}
+        </div>
+      )}
+
       {/* Sources drawer: below workspaces, above the message options.
         Hidden for research runs — sources live in the report side panel. */}
       {!m.err && !hideBody && (
@@ -1353,7 +1369,9 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
         <div aria-label="Reply details" className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-mu opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
           {showSpeed && <span title="Generation speed">{m.tps!.toLocaleString(undefined, { maximumFractionDigits: 1 })} tok/s</span>}
           {showTokens && <span title="Output tokens">{replyTokens.toLocaleString()} tokens</span>}
-          {showTime && <span title="Total response time">{fmtDuration(replyTime)}</span>}
+          {/* The meta line under the reply already states the duration when the
+              process log is on, so the hover row does not repeat it. */}
+          {showTime && !(m.log && prefs.showLog && replyTime > 0) && <span title="Total response time">{fmtDuration(replyTime)}</span>}
           {replyCost && <span title={`Message cost: ${exactCost(replyCost.total)} · ${replyCost.estimated ? 'estimated from endpoint pricing' : 'reported by the provider'}`}>{replyCost.estimated ? '≈ ' : ''}{formatCost(replyCost.total)}</span>}
         </div>
       )}
@@ -1510,7 +1528,7 @@ export function Chat({ side, toggle, cfg, pal }: { side: boolean; toggle: () => 
   const workspacePrefs = useS((st) => st.workspacePrefs ?? { defaultView: 'latest', autoOpen: true, autoFollow: true })
   /* `focus` counts explicit file requests so the panel can re-apply the same
      path when the user asks for it twice. */
-  const [workspacePanel, setWorkspacePanel] = useState<{ mid: string; workspaceId: string; initialFilePath?: string; focus?: number } | null>(null)
+  const [workspacePanel, setWorkspacePanel] = useState<{ mid: string; workspaceId: string; initialFilePath?: string; initialView?: 'code' | 'diff'; focus?: number } | null>(null)
   const prevBusy = useRef(busy)
   /* The user closed the panel: it must stay closed while the current reply
      runs, and open again with the next one. */
@@ -1669,7 +1687,7 @@ export function Chat({ side, toggle, cfg, pal }: { side: boolean; toggle: () => 
 
   // Stable callback identities so memoized message rows do not re-render when
   // the list re-renders for an unrelated (streamed) chunk.
-  const openWorkspace = useCallback((mid: string, wsId: string, filePath?: string) => setWorkspacePanel((prev) => ({ mid, workspaceId: wsId, initialFilePath: filePath, focus: (prev?.focus ?? 0) + 1 })), [])
+  const openWorkspace = useCallback((mid: string, wsId: string, filePath?: string, view?: 'code' | 'diff') => setWorkspacePanel((prev) => ({ mid, workspaceId: wsId, initialFilePath: filePath, initialView: view, focus: (prev?.focus ?? 0) + 1 })), [])
   const openResearch = useCallback((mid: string) => { useS.getState().patch({ researchPanel: { mid } }) }, [])
 
   const workspaceMsg = workspacePanel ? c?.msgs.find((m) => m.id === workspacePanel.mid) : undefined  /* The panel id can be a workspace that does not exist yet (a brand new
@@ -1982,7 +2000,7 @@ export function Chat({ side, toggle, cfg, pal }: { side: boolean; toggle: () => 
           <>
             <div role="separator" aria-orientation="vertical" aria-label="Resize workspace panel" onPointerDown={startResize} className="hidden w-1.5 shrink-0 cursor-col-resize bg-transparent hover:bg-ac/50 sm:block" />
             <aside aria-label="Workspace side panel" style={wide ? { flex: `0 0 ${workspaceFrac * 100}%`, maxWidth: '70%', minWidth: '15%' } : { height: '45dvh', width: '100%' }} className="panel-shell flex min-h-0 shrink-0 flex-col border-t border-bor bg-surf/40 sm:border-l sm:border-t-0">
-              <WorkspacePanel key={`${workspaceMsg.id}:${workspaceMsg.ai ?? 0}:${workspaceId}`} msg={workspaceMsg} live={liveTools[workspaceMsg.id]} workspace={workspace} selectedRevisionId={selectedRevId ?? workspace.revisions[workspace.revisions.length - 1]?.id ?? null} setSelectedRevisionId={(id) => s.patch({ selectedRevision: { ...s.selectedRevision, [workspaceId]: id } })} onClose={() => { panelClosed.current = true; setWorkspacePanel(null) }} initialFilePath={workspacePanel.initialFilePath} focus={workspacePanel.focus ?? 0} sharedOf={sharedWorkspaceOf} />
+              <WorkspacePanel key={`${workspaceMsg.id}:${workspaceMsg.ai ?? 0}:${workspaceId}`} msg={workspaceMsg} live={liveTools[workspaceMsg.id]} workspace={workspace} selectedRevisionId={selectedRevId ?? workspace.revisions[workspace.revisions.length - 1]?.id ?? null} setSelectedRevisionId={(id) => s.patch({ selectedRevision: { ...s.selectedRevision, [workspaceId]: id } })} onClose={() => { panelClosed.current = true; setWorkspacePanel(null) }} initialFilePath={workspacePanel.initialFilePath} initialView={workspacePanel.initialView} focus={workspacePanel.focus ?? 0} sharedOf={sharedWorkspaceOf} />
             </aside>
           </>
         )}
