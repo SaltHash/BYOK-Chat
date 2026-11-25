@@ -656,23 +656,16 @@ function MorphIcon({ kind, size = 15 }: { kind: ActivityKind; size?: number }) {
   )
 }
 
-/** Whole-second timer for the current step. Restarts whenever the activity
- *  changes, so the number always belongs to the line beside it. */
-function useStepElapsed(key: string): string {
-  const [start, setStart] = useState(() => Date.now())
+/** Whole-second timer for the whole response. Anchored to the moment the reply
+ *  began (`m.at`), so the number keeps climbing across tool rounds and prose
+ *  instead of restarting on every step. */
+function useElapsedSince(start: number): string {
   const [now, setNow] = useState(() => Date.now())
-  const previous = useRef(key)
   useEffect(() => {
-    if (previous.current === key) return
-    previous.current = key
-    const at = Date.now()
-    setStart(at)
-    setNow(at)
-  }, [key])
-  useEffect(() => {
+    setNow(Date.now())
     const timer = setInterval(() => setNow(Date.now()), 1000)
     return () => clearInterval(timer)
-  }, [key])
+  }, [start])
   return formatElapsed(now - start)
 }
 
@@ -682,12 +675,12 @@ function useStepElapsed(key: string): string {
  * newest thing happening. It is only mounted while the reply is waiting on
  * something (see `active`), so it has no finished form: a settled step keeps
  * its place in the trail, where it stays readable afterwards. */
-function ActionIndicator({ calls, block }: { calls: TrailCall[]; block?: boolean }) {
+function ActionIndicator({ calls, block, startedAt }: { calls: TrailCall[]; block?: boolean; startedAt: number }) {
   const searchPrefs = useS((s) => s.search)
   const activity = activityOf(calls, { perSearch: (c) => searchCountOf(searchPrefs, trailArgs(c.arguments).count) })
-  // Keyed by kind, not by the full line: a count that grows as results arrive
-  // is still the same step, so its timer must not restart.
-  const elapsed = useStepElapsed(activity.kind)
+  // One clock for the whole response, not the current step: it counts from when
+  // the reply began and keeps running across tool rounds and streamed prose.
+  const elapsed = useElapsedSince(startedAt)
   return (
     <span
       className={cx('activity', block && 'mt-2 block')}
@@ -697,7 +690,7 @@ function ActionIndicator({ calls, block }: { calls: TrailCall[]; block?: boolean
     >
       <MorphIcon kind={activity.kind} />
       <span className="activity-label text-sm">{activity.present}</span>
-      <span className="activity-time" title="Time on this step">{elapsed}</span>
+      <span className="activity-time" title="Time on this response">{elapsed}</span>
     </span>
   )
 }
@@ -1147,7 +1140,7 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
                   )}
                 </div>
               )}
-              {active && <ActionIndicator calls={runningCalls} block={!!m.t} />}
+              {active && <ActionIndicator calls={runningCalls} block={!!m.t} startedAt={m.at ?? Date.now()} />}
             </>
           )
         })()}
@@ -1502,9 +1495,16 @@ export function Chat({ side, toggle, cfg, pal }: { side: boolean; toggle: () => 
   const followPos = useRef(-1)
   const onScrollBox = (e: React.UIEvent<HTMLDivElement>) => {
     const b = e.currentTarget
+    // The box keeps `paddingBottom` of dead space below the last message so it
+    // clears the composer. That padding counts toward scrollHeight, so the
+    // absolute scroll bottom sits well below the last line. Treat the reader as
+    // "at the end" once the content bottom reaches the viewport bottom — i.e.
+    // within the padding band — or the jump-to-latest pill lingers after a
+    // scroll to the bottom.
+    const bottomPad = composerH + (empty ? 32 : 56)
     // Any upward scroll ends the follow immediately; only scrolling back to
     // the end resumes it (see stickAfterScroll).
-    const next = stickAfterScroll(b.scrollTop, followPos.current, b.scrollHeight, b.clientHeight)
+    const next = stickAfterScroll(b.scrollTop, followPos.current, b.scrollHeight, b.clientHeight, bottomPad + 8)
     if (next !== null) {
       stick.current = next
       setAtEnd((was) => (was === next ? was : next))
