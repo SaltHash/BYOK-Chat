@@ -362,20 +362,20 @@ function RemoteImage({ src, alt, title, className }: { src?: string; alt?: strin
 }
 
 const makeC = (bare: boolean, cites: CiteMap | undefined, live: boolean): any => ({
-  h1: E('h1', 'mb-3 mt-6 text-2xl font-semibold'),
-  h2: E('h2', 'mb-2 mt-5 text-xl font-semibold'),
-  h3: E('h3', 'mb-2 mt-4 text-lg font-semibold'),
-  h4: E('h4', 'mb-1.5 mt-3 font-semibold'),
+  h1: E('h1', 'mb-3 mt-7 text-2xl font-semibold'),
+  h2: E('h2', 'mb-2.5 mt-6 text-xl font-semibold'),
+  h3: E('h3', 'mb-2 mt-5 text-lg font-semibold'),
+  h4: E('h4', 'mb-1.5 mt-4 font-semibold'),
   h5: E('h5', 'mb-1 mt-3 text-sm font-semibold'),
   h6: E('h6', 'mb-1 mt-3 text-sm font-medium text-mu'),
-  p: E('p', 'my-3'),
+  p: E('p', 'my-3.5'),
   del: E('del', 'text-mu'),
   mark: E('mark', 'rounded bg-ac/25 px-1 text-tx'),
   kbd: E('kbd', 'rounded-md bg-hov px-1.5 py-0.5 text-xs font-medium'),
   hr: E('hr', 'my-6 h-px border-0 bg-hov'),
   blockquote: E('blockquote', 'my-4 border-l-2 border-ac/60 py-1 pl-4 pr-1 text-mu [&>p]:my-2'),
-  ol: E('ol', 'my-3 list-decimal space-y-1 pl-6 marker:text-mu'),
-  ul: ({ node, className, ...p }: any) => createElement('ul', { ...p, className: cx('my-3 space-y-1', /contains-task-list/.test(className ?? '') ? 'list-none pl-1' : 'list-disc pl-6 marker:text-mu') }),
+  ol: E('ol', 'my-3.5 list-decimal space-y-1.5 pl-6 marker:text-mu'),
+  ul: ({ node, className, ...p }: any) => createElement('ul', { ...p, className: cx('my-3.5 space-y-1.5', /contains-task-list/.test(className ?? '') ? 'list-none pl-1' : 'list-disc pl-6 marker:text-mu') }),
   li: E('li', 'pl-1 [&>ol]:my-1 [&>p]:my-1 [&>ul]:my-1'),
   input: ({ type, checked }: any) => (type === 'checkbox'
     ? <span role="checkbox" aria-label="Task complete" aria-checked={!!checked} aria-disabled="true" className={cx('mr-2 inline-grid size-4 translate-y-0.5 place-items-center rounded border', checked ? 'border-ac bg-ac text-acx' : 'border-mu/60 bg-bg text-transparent')}>{checked && <Check size={12} strokeWidth={3} />}</span> : null),

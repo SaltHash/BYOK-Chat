@@ -219,7 +219,7 @@ export function WorkspaceFileTree<T extends { path: string; content: string }>({
 /* Compact tile beneath the reply: shows workspace name, file count, revision, and file list grouped by folder. */
 export function WorkspaceTile({ msg, live, workspace, selectedRevisionId, onOpen, onSelectRevision }: {
   msg: Msg; live?: ToolCall[]; workspace: Workspace; selectedRevisionId: string | null;
-  onOpen?: (filePath?: string) => void; onSelectRevision?: (revId: string) => void
+  onOpen?: (filePath?: string, view?: 'code' | 'diff') => void; onSelectRevision?: (revId: string) => void
 }) {
   const { groups, isLive } = useWorkspaceFiles(msg, live)
   // Guard against empty placeholder workspace objects
@@ -240,14 +240,14 @@ export function WorkspaceTile({ msg, live, workspace, selectedRevisionId, onOpen
   const changeStat = useMemo(() => {
     if (!prevRev) return null
     const prevMap = new Map(prevRev.files.map((f) => [f.path, f.content]))
-    let added = 0, removed = 0
+    let added = 0, removed = 0, files = 0
     for (const f of revision.files) {
       const old = prevMap.get(f.path)
-      if (old == null) added += f.content.split('\n').length
-      else if (old !== f.content) { const s = diffStat(diffLines(old, f.content)); added += s.added; removed += s.removed }
+      if (old == null) { added += f.content.split('\n').length; files++ }
+      else if (old !== f.content) { const s = diffStat(diffLines(old, f.content)); added += s.added; removed += s.removed; files++ }
     }
-    for (const f of prevRev.files) if (!revision.files.some((x) => x.path === f.path)) removed += f.content.split('\n').length
-    return added + removed > 0 ? { added, removed } : null
+    for (const f of prevRev.files) if (!revision.files.some((x) => x.path === f.path)) { removed += f.content.split('\n').length; files++ }
+    return added + removed > 0 ? { added, removed, files } : null
   }, [prevRev, revision])
 
   const saveName = () => {
@@ -275,25 +275,38 @@ export function WorkspaceTile({ msg, live, workspace, selectedRevisionId, onOpen
 
   return (
     <section aria-label="Workspace files" style={{ padding: 'var(--ui-panel-pad)' }} className="space-y-2 rounded-xl border border-bor bg-surf/50">
-      <div className="flex items-center gap-2 text-sm">
+      {/* The tile reads as a change summary rather than a file manager: what
+          this run touched, how much, and one way into the result. The tree
+          below stays the map of the files. */}
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
         <Files size={15} className="shrink-0 text-ac" />
         {renaming ? (
-          <Input autoFocus aria-label="Rename" value={nameDraft} set={setNameDraft} size="sm" tone="bg" onBlur={saveName} onKeyDown={(e) => { if (e.key === 'Enter') saveName(); if (e.key === 'Escape') setRenaming(false) }} className="flex-1" />
+          <Input autoFocus aria-label="Rename" value={nameDraft} set={setNameDraft} size="sm" tone="bg" onBlur={saveName} onKeyDown={(e) => { if (e.key === 'Enter') saveName(); if (e.key === 'Escape') setRenaming(false) }} className="min-w-32 flex-1" />
         ) : (
-          <>
+          <span className="flex min-w-0 items-center gap-1">
             <span className="truncate font-medium">{workspace.name}</span>
             <button title="Rename workspace" onClick={() => { setNameDraft(workspace.name); setRenaming(true) }} className="grid size-6 shrink-0 place-items-center rounded-md text-mu hover:bg-hov hover:text-tx"><Pencil size={12} /></button>
-          </>
-        )}
-        <span className="text-xs text-mu">· {revision.files.length} file{revision.files.length === 1 ? '' : 's'}</span>
-        <span className="max-w-48 truncate text-xs text-mu">· {revision.name}</span>
-        {changeStat && <span className="shrink-0 font-mono text-xs text-mu" title="Changed lines vs the previous revision">+{changeStat.added} −{changeStat.removed}</span>}
-        {isLive && writingPath && (
-          <span className="inline-flex min-w-0 shrink items-center gap-1.5 text-xs text-mu ml-auto">
-            <span className="size-1.5 shrink-0 animate-pulse rounded-full bg-ac" />
-            <span className="truncate">Writing {writingPath}…</span>
           </span>
         )}
+        <span className="shrink-0 text-xs text-mu">
+          {changeStat ? `${changeStat.files} changed file${changeStat.files === 1 ? '' : 's'}` : `${revision.files.length} file${revision.files.length === 1 ? '' : 's'}`}
+        </span>
+        {changeStat && (
+          <span className="shrink-0 font-mono text-xs tabular-nums" title="Changed lines vs the previous revision">
+            <span className="text-c2">+{changeStat.added}</span> <span className="text-er">−{changeStat.removed}</span>
+          </span>
+        )}
+        <span className="ml-auto flex min-w-0 items-center gap-2">
+          {isLive && writingPath && (
+            <span className="inline-flex min-w-0 items-center gap-1.5 text-xs text-mu">
+              <span className="size-1.5 shrink-0 animate-pulse rounded-full bg-ac" />
+              <span className="truncate">Writing {writingPath}…</span>
+            </span>
+          )}
+          <Btn v="soft" compact icon={prevRev ? DiffIcon : FileCode} onClick={() => onOpen?.(undefined, prevRev ? 'diff' : 'code')} className="shrink-0">
+            {prevRev ? 'Open diff' : 'Open files'}
+          </Btn>
+        </span>
       </div>
       {incompleteFiles.length > 0 && (
         <p role="status" className="break-words rounded-lg bg-er/10 px-3 py-2 text-xs text-er">
@@ -341,9 +354,9 @@ function WorkspaceRevisionPicker({ workspace, selectedId, onSelect, className }:
 }
 
 /* Full file viewer rendered in the resizable splitscreen on the right. */
-export function WorkspacePanel({ msg, live, workspace, selectedRevisionId, setSelectedRevisionId, onClose, initialFilePath, focus = 0, sharedOf }: {
+export function WorkspacePanel({ msg, live, workspace, selectedRevisionId, setSelectedRevisionId, onClose, initialFilePath, initialView, focus = 0, sharedOf }: {
   msg: Msg; live?: ToolCall[]; workspace: Workspace; selectedRevisionId: string | null;
-  setSelectedRevisionId: (id: string) => void; onClose: () => void; initialFilePath?: string; focus?: number; sharedOf?: string
+  setSelectedRevisionId: (id: string) => void; onClose: () => void; initialFilePath?: string; initialView?: 'code' | 'diff'; focus?: number; sharedOf?: string
 }) {
   const send = useS((s) => s.send)
   const busy = useS((s) => s.busyChats?.[s.chat] === true)
@@ -358,7 +371,7 @@ export function WorkspacePanel({ msg, live, workspace, selectedRevisionId, setSe
      the first file of the revision. */
   const [sel, setSel] = useState<{ path: string; source: 'user' | 'follow' } | null>(null)
   const [expandedFolders, setExpandedFolders] = useState<Record<string, boolean>>({})
-  const [view, setView] = useState<'code' | 'preview' | 'diff'>('code')
+  const [view, setView] = useState<'code' | 'preview' | 'diff'>(initialView ?? 'code')
   const [diffBaseId, setDiffBaseId] = useState<string | null>(null)
   const [renaming, setRenaming] = useState(false)
   const [nameDraft, setNameDraft] = useState(workspace.name)
@@ -420,6 +433,11 @@ export function WorkspacePanel({ msg, live, workspace, selectedRevisionId, setSe
     if (!initialFilePath) return
     pickFile(initialFilePath)
   }, [initialFilePath, focus])
+  // "Open diff" names the view it wants; honour each explicit re-open even
+  // when the panel is already mounted on this workspace.
+  useEffect(() => {
+    if (initialView) setView(initialView)
+  }, [initialView, focus])
 
   const files = revision.files
   // The shown file: the chosen one when the revision still has it, else the
