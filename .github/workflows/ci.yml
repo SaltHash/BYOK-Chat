@@ -25,5 +25,8 @@ jobs:
       - run: npm ci
       - run: npx tsc --noEmit
       - run: npm test
-      - run: npm run test:worker
+      # The Worker smoke test serves the built bundle, so the build has to
+      # come first; with them the other way round the step always failed with
+      # "dist/ is missing".
       - run: npm run build
+      - run: npm run test:worker
