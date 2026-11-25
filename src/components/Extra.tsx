@@ -43,7 +43,7 @@ export function Tutorial({ cfg }: { cfg: (t: string) => void }) {
       </div>
       <ol className="space-y-2">
         {steps.map(([I, t, d], i) => (
-          <li key={t} className="flex gap-3 rounded-xl bg-surf p-3">
+          <li key={t} className="flex gap-3 rounded-xl border border-bor/70 bg-surf p-3">
             <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-bg text-ac"><I size={18} /></span>
             <div><div className="text-sm font-medium">{i + 1}. {t}</div><div className="text-xs text-mu">{d}</div></div>
           </li>
