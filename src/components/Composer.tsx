@@ -5,7 +5,7 @@ import { useS, usable, modelsOf, modelNameOf, featOn, normDocs, normSearch, fetc
 import { DEFAULT_QUALITY_FAVS, normQualities, normQualityFavs, type PromptQuality } from '../flair'
 import { CI } from '../meta'
 import { composerWidth } from '../layout'
-import { can, readAtts, ocrImage, fetchPage } from '../engine'
+import { can, readAtts, ocrImage, fetchPage, pdfAttAsText } from '../engine'
 import { fitDoc } from '../docs'
 import { isPill, mentionsOf, tokenizeMentions, type Mention, type Seg as MentionSeg } from '../mentions'
 import { Btn, Input, Item, Menu, Pop, Seg, SearchInput, RangeSlider, ImageLightbox, TextLightbox, cx, type Ic } from './ui'
@@ -480,6 +480,27 @@ export function Composer({ cfg, quote, onClearQuote }: { cfg: (t: string) => voi
     } catch (x: any) { setOcrStatus(''); s.patch({ notice: { t: `Transcription did not finish (${String(x?.message ?? x)}). Try again, or pick a different endpoint in Settings.` } }) }
     finally { setOcrBusy(null) }
   }
+  /* "Send as text" escape hatch for a PDF the selected model cannot take
+   * natively: extract its text layer on demand and attach it, so the message
+   * sends as text instead of being blocked. A scan has no text layer, so the
+   * notice points at the routes that do work. */
+  const [textBusy, setTextBusy] = useState<Att | null>(null)
+  const sendAsText = async (a: Att) => {
+    if (textBusy != null) return
+    setTextBusy(a)
+    try {
+      const next = await pdfAttAsText(a, normDocs(s.docPrefs))
+      if (next) {
+        setAtt((list) => list.map((x) => x === a ? next : x))
+        const kb = Math.max(1, Math.round((next.text?.length ?? 0) / 1024))
+        s.patch({ notice: { t: `${a.name}: extracted ${kb} KB of text. It will be sent as text, so any model can read it.` } })
+      } else {
+        s.patch({ notice: { t: `${a.name} has no readable text layer (it looks like a scan). Use an Anthropic-compatible endpoint to send the file itself, or paste the text into the message.` } })
+      }
+    } catch (x: any) {
+      s.patch({ notice: { t: `Could not extract text from ${a.name} (${String(x?.message ?? x)}). Try another endpoint, or paste the text.` } })
+    } finally { setTextBusy(null) }
+  }
   /** Turn a pasted-text attachment back into editable composer text. */
   const editPasted = (a: Att) => {
     if (!a.text) return
@@ -737,6 +758,9 @@ export function Composer({ cfg, quote, onClearQuote }: { cfg: (t: string) => voi
                         className="inline-flex min-w-0 items-center gap-1.5 rounded-md py-0.5 pr-0.5 transition-colors hover:bg-bor/30 hover:text-tx focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ac/40"
                       >{info}</button>
                     ) : info}
+                    {bad(a) && a.kind === 'pdf' && a.data && (
+                      <Btn sm icon={textBusy === a ? Loader2 : ScanText} className={textBusy === a ? 'animate-spin' : undefined} disabled={textBusy != null} title="Extract this PDF's text and send it as text, so a model without PDF support can read it" onClick={(e) => { e.stopPropagation(); void sendAsText(a) }} onPointerDown={(e) => e.stopPropagation()} />
+                    )}
                     {a.source === 'paste' && <Btn sm icon={Pencil} title="Edit pasted text in the composer" onClick={(e) => { e.stopPropagation(); editPasted(a) }} onPointerDown={(e) => e.stopPropagation()} />}
                     <Btn sm icon={X} title={`Remove ${a.name}`} onClick={remove} />
                   </div>

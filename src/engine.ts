@@ -1,6 +1,6 @@
 import type { Ep, Att, Msg } from './store'
 import { TOOLS } from './meta'
-import { BLANK_DOCS, expandArchives, extractOffThread, fitDoc, pairTranscripts } from './docs'
+import { BLANK_DOCS, expandArchives, extractOffThread, fitDoc, pairTranscripts, type DocPrefs } from './docs'
 import { attachmentAppendix, attachmentManifest, promptNameOf } from './attachments'
 import { WORKSPACE_ACTIONS, compactWorkspaceHistory, isWorkspaceReadAction, sanitizePath, withWorkspaceTags } from './workspace'
 import { withCode, type ErrorCode } from './errors'
@@ -825,6 +825,18 @@ const decodeTextBytes = (bytes: Uint8Array): string => {
     catch { return new TextDecoder().decode(bytes) }
   }
 }
+/* Decode the base64 payload an attachment carries (readAtt strips the data:
+ * prefix). `atob` is global in browsers and modern Node; the Buffer branch
+ * keeps older Node runtimes working. */
+const fromBase64 = (b64: string): Uint8Array => {
+  if (typeof atob === 'function') {
+    const bin = atob(b64)
+    const out = new Uint8Array(bin.length)
+    for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i)
+    return out
+  }
+  return new Uint8Array(Buffer.from(b64, 'base64'))
+}
 /* Structured attachment loader: success carries the Att, failures carry a
  * machine-readable reason + user-facing message. Never returns a bare string.
  * Documents (PDF text layer, Office, RTF, sheets, slides) are extracted to
@@ -940,6 +952,24 @@ export async function readAtts(list: File[] | FileList, existingTxtChars = 0, do
   }
   const paired = pairTranscripts(atts)
   return { atts: paired.atts, notices: [...notices, ...paired.notices] }
+}
+
+/* The "Send as text" fallback for a PDF the selected model cannot take
+ * natively. Re-runs text extraction on the retained bytes (respecting the
+ * per-file budget) and returns a copy carrying the text, or null when the PDF
+ * has no readable text layer — a scan — so the caller can point at the
+ * alternatives instead of pretending it worked. A PDF that already carries
+ * text is returned unchanged. */
+export async function pdfAttAsText(a: Att, docs: DocPrefs = BLANK_DOCS): Promise<Att | null> {
+  if (a.kind !== 'pdf' || !a.data) return null
+  if (a.text) return a
+  try {
+    const { text, pages } = await extractOffThread('pdf', fromBase64(a.data))
+    if (!text.trim()) return null
+    const perFile = Math.min(docs.perFileChars, ATT_TXT_LIMIT)
+    const { text: fit, truncated } = fitDoc(text, perFile)
+    return { ...a, source: 'pdf', pages, chars: text.length, ...(truncated ? { truncated: true } : {}), text: `[extracted from PDF${pages ? `, ${pages} pages` : ''}]\n${fit}` }
+  } catch { return null }
 }
 
 /* Vision OCR: ask a vision-capable endpoint to transcribe an image. Results

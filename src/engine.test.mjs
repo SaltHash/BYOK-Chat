@@ -554,7 +554,7 @@ test('runToolLoop forwards live tool deltas to its callback', async () => {
   } finally { globalThis.fetch = originalFetch; globalThis.requestAnimationFrame = originalRaf }
 })
 
-const { estimateHistoryTokens, trimHistory, readAtt, readAtts, formatSearch } = await import('./engine.ts')
+const { estimateHistoryTokens, trimHistory, readAtt, readAtts, formatSearch, pdfAttAsText } = await import('./engine.ts')
 
 test('completed replies keep search snippets for a couple of messages and page summaries for longer, but never raw pages', () => {
   const searchText = formatSearch({
@@ -836,6 +836,32 @@ test('OpenAI wire inlines PDF text instead of an omission note', () => {
   const scanned = { id: 'u', r: 'user', t: 'read this', att: [{ name: 'scan.pdf', kind: 'pdf', size: '1 KB', mime: 'application/pdf', data: 'AAA', source: 'pdf-scanned' }] }
   const ow2 = wire(openai, [scanned])
   assert.match(ow2[0].content, /omitted/)
+})
+
+test('pdfAttAsText extracts a text layer on demand and reports scans', async () => {
+  const pdfBytes = (body) => {
+    const text = `%PDF-1.4\n1 0 obj << /Type /Catalog >> endobj\n2 0 obj << /Length 0 >> stream\n${body}\nendstream endobj\n`
+    const out = new Uint8Array(text.length)
+    for (let i = 0; i < text.length; i++) out[i] = text.charCodeAt(i) & 0xff
+    return out
+  }
+  const b64 = (bytes) => Buffer.from(bytes).toString('base64')
+
+  const withText = await pdfAttAsText({ name: 'doc.pdf', kind: 'pdf', size: '1 KB', mime: 'application/pdf', data: b64(pdfBytes('BT (Hello PDF) Tj ET')) })
+  assert.ok(withText)
+  assert.equal(withText.kind, 'pdf')
+  assert.equal(withText.source, 'pdf')
+  assert.match(withText.text ?? '', /Hello PDF/)
+
+  // A scan (no text operators) yields null so the UI can explain the routes.
+  const scan = await pdfAttAsText({ name: 'scan.pdf', kind: 'pdf', size: '1 KB', mime: 'application/pdf', data: b64(pdfBytes('')) })
+  assert.equal(scan, null)
+
+  // Already-text PDFs pass through unchanged; non-PDFs and byte-less PDFs return null.
+  const kept = { name: 'x.pdf', kind: 'pdf', data: 'AAA', text: 'already' }
+  assert.equal(await pdfAttAsText(kept), kept)
+  assert.equal(await pdfAttAsText({ name: 'x.png', kind: 'img', data: 'AAA' }), null)
+  assert.equal(await pdfAttAsText({ name: 'x.pdf', kind: 'pdf' }), null)
 })
 
 test('prunePersisted compacts bulky tool results and workspace history', () => {
