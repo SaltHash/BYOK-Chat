@@ -100,13 +100,7 @@ export function planRequest(s: PlanState, um: Msg, defaultFeatures: Record<Featu
   let err: Notice = null
   if (!s.eps.length) err = { t: 'You have not added a model endpoint yet. Open Settings → Endpoints, choose a provider preset, paste your API key and the model id, then press Test connection. After that, send your message again.', tab: 'eps', label: 'Add an endpoint' }
   else if (!ready.length) err = { t: ex ? `${tgt} is disabled or incomplete. An endpoint must be enabled and have a base URL and a model id.` : `No endpoint in ${tgt} is ready. Enable one and make sure it has a base URL and a model id.`, tab: pl ? 'pls' : 'eps', label: 'Fix endpoints' }
-  else if (!cand.length) {
-    const kinds = need.map((n) => (n === 'img' ? 'images' : n === 'media' ? 'audio or video' : 'PDFs')).join(' and ')
-    // A PDF can still travel as its extracted text, so point at the composer's
-    // per-file escape hatch instead of leaving the message at a dead end.
-    const hint = need.includes('pdf') ? " For a PDF, click 'Send as text' on the file to send its extracted text instead." : ''
-    err = { t: `Not sent: no ready endpoint in ${tgt} can process ${kinds}. Your attachments are still in the message box. Choose a compatible endpoint or model.${hint}`, tab: 'eps', label: 'Open endpoints' }
-  }
+  else if (!cand.length) err = { t: `Not sent: no ready endpoint in ${tgt} can process ${need.map((n) => (n === 'img' ? 'images' : n === 'media' ? 'audio or video' : 'PDFs')).join(' and ')}. Your attachments are still in the message box. Choose a compatible endpoint or model.`, tab: 'eps', label: 'Open endpoints' }
   else if (s.sel && !sel && (s.sel.k === 'ep' || F.playlists)) err = { t: `The selected ${s.sel.k === 'pl' ? 'playlist' : 'endpoint'} is no longer available. Choose another model${s.sel.k === 'pl' ? ' or playlist' : ''}, then send again.`, tab: s.sel.k === 'pl' ? 'pls' : 'eps', label: 'Fix selection' }
   return { cmd, pl, ex, sys, cand, err, tgt, skills, effects }
 }

@@ -54,10 +54,8 @@ test('a text-backed PDF sends on a non-Anthropic endpoint', () => {
   assert.ok(p.cand.length)
 })
 
-test('a PDF with no text layer blocks with a pointer to Send as text', () => {
+test('a PDF with no text layer still sends on an OpenAI-compatible endpoint', () => {
   const p = planRequest(state(), { id: 'u', r: 'user', t: 'read', att: [{ name: 'doc.pdf', kind: 'pdf', size: '1 KB', data: 'AAA' }] }, {})
-  assert.ok(p.err)
-  assert.match(p.err.t, /can process PDFs/)
-  assert.match(p.err.t, /Send as text/)
-  assert.equal(p.cand.length, 0)
+  assert.equal(p.err, null)
+  assert.ok(p.cand.length)
 })

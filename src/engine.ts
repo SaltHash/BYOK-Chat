@@ -15,7 +15,12 @@ export { supportsEffort } from './streamRequest'
 
 export const est = (s: string) => Math.ceil(s.length / 4)
 export const redact = (e: Ep, s: unknown) => String(s).split(e.key || '\u0000').join('•••').replace(/\b(sk|gsk|pk|xai|AIza)[-\w]{12,}/g, '•••')
-export const can = (e: Ep, k: 'img' | 'pdf') => k === 'img' || e.type === 'anthropic'
+/* Both kinds are sent natively to every endpoint: images as image blocks, and
+ * PDFs as Anthropic document blocks or OpenAI-compatible `file` blocks. The
+ * gate stays as a named predicate because the composer, planner and wire all
+ * ask it, and a future kind that cannot travel natively would be excluded
+ * here. */
+export const can = (e: Ep, k: 'img' | 'pdf') => k === 'img' || k === 'pdf' || e.type === 'anthropic'
 
 /* ---- Session cache ----
  * A small TTL + LRU cache so the same search query or page URL is not fetched
@@ -1078,15 +1083,11 @@ export function wire(e: Ep, msgs: Msg[]): Wire[] {
     for (let i = 0; i < atts.length; i++) {
       const a = atts[i]
       if (a.kind === 'txt') continue
-      // PDFs ride natively on Anthropic document blocks. Everywhere else the
-      // extracted text (already inlined above via fx) carries the content —
-      // only PDFs without a text layer are omitted with guidance. Unknown
-      // kinds are omitted the same way.
-      if (a.kind === 'pdf' && e.type !== 'anthropic') {
-        if (a.text) continue
-        t += `\n[${promptNameOf(a)} omitted: no readable text layer${a.source === 'pdf-scanned' ? ' (scanned pages)' : ''}; use an Anthropic endpoint for the native file, attach the text instead, or enable image OCR in Settings → Chats → Documents]`
-        continue
-      }
+      // A PDF with a text layer already rides inline (in `fx`) for
+      // OpenAI-compatible endpoints, so its binary would only duplicate the
+      // content. Anthropic still gets the native document block, and a PDF
+      // with no text layer (a scan) travels natively everywhere.
+      if (a.kind === 'pdf' && a.text && e.type !== 'anthropic') continue
       // Media travels as its paired transcript text (inlined above); without
       // one there is nothing the model can hear or see.
       if (a.kind === 'media') {
@@ -1106,7 +1107,9 @@ export function wire(e: Ep, msgs: Msg[]): Wire[] {
       c.push({ type: 'text', text: `[${promptNameOf(a)} — attachment ${i + 1} of ${total}]` })
       c.push(e.type === 'anthropic'
         ? { type: a.kind === 'img' ? 'image' : 'document', source: { type: 'base64', media_type: mime, data: a.data } }
-        : { type: 'image_url', image_url: { url: `data:${mime};base64,${a.data}` } })
+        : a.kind === 'img'
+          ? { type: 'image_url', image_url: { url: `data:${mime};base64,${a.data}` } }
+          : { type: 'file', file: { filename: promptNameOf(a), file_data: `data:${mime};base64,${a.data}` } })
     }
     return [{ role: 'user', content: c.length ? [{ type: 'text', text: t }, ...c] : t }]
   })

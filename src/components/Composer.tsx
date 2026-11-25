@@ -758,8 +758,8 @@ export function Composer({ cfg, quote, onClearQuote }: { cfg: (t: string) => voi
                         className="inline-flex min-w-0 items-center gap-1.5 rounded-md py-0.5 pr-0.5 transition-colors hover:bg-bor/30 hover:text-tx focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ac/40"
                       >{info}</button>
                     ) : info}
-                    {bad(a) && a.kind === 'pdf' && a.data && (
-                      <Btn sm icon={textBusy === a ? Loader2 : ScanText} className={textBusy === a ? 'animate-spin' : undefined} disabled={textBusy != null} title="Extract this PDF's text and send it as text, so a model without PDF support can read it" onClick={(e) => { e.stopPropagation(); void sendAsText(a) }} onPointerDown={(e) => e.stopPropagation()} />
+                    {!a.text && a.kind === 'pdf' && a.data && (
+                      <Btn sm icon={textBusy === a ? Loader2 : ScanText} className={textBusy === a ? 'animate-spin' : undefined} disabled={textBusy != null} title="Send this PDF as extracted text instead of the native file — useful if the model rejects the file or you want to save tokens" onClick={(e) => { e.stopPropagation(); void sendAsText(a) }} onPointerDown={(e) => e.stopPropagation()} />
                     )}
                     {a.source === 'paste' && <Btn sm icon={Pencil} title="Edit pasted text in the composer" onClick={(e) => { e.stopPropagation(); editPasted(a) }} onPointerDown={(e) => e.stopPropagation()} />}
                     <Btn sm icon={X} title={`Remove ${a.name}`} onClick={remove} />

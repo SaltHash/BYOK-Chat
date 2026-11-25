@@ -767,14 +767,27 @@ test('trimHistory can pin a prefix such as a compaction handoff', () => {
   assert.equal(out.msgs[out.msgs.length - 1].id, 'u2')
 })
 
-test('OpenAI wire omits PDFs with a note instead of an image_url block', () => {
+test('OpenAI wire sends a PDF as a file block, Anthropic as a document block', () => {
   const pdf = { id: 'u', r: 'user', t: 'read this', att: [{ name: 'doc.pdf', kind: 'pdf', size: '1 KB', mime: 'application/pdf', data: 'AAA' }] }
   const ow = wire(openai, [pdf])
   assert.equal(ow.length, 1)
-  assert.equal(typeof ow[0].content, 'string')
-  assert.match(ow[0].content, /omitted: no readable text layer/)
+  assert.equal(typeof ow[0].content, 'object')
+  const file = ow[0].content.find((c) => c.type === 'file')
+  assert.ok(file, 'openai gets a file block')
+  assert.match(file.file.file_data, /^data:application\/pdf;base64,AAA$/)
+  assert.ok(!ow[0].content.some((c) => c.type === 'image_url'))
   const aw = wire(anthropic, [pdf])
   assert.equal(typeof aw[0].content, 'object')
+  assert.ok(aw[0].content.some((c) => c.type === 'document'))
+})
+
+test('a text-layer PDF rides inline for OpenAI and needs no file block', () => {
+  const pdf = { id: 'u', r: 'user', t: 'read this', full: 'read this\n\n[file: doc.pdf]\nbody text', att: [{ name: 'doc.pdf', kind: 'pdf', size: '1 KB', mime: 'application/pdf', data: 'AAA', text: 'body text' }] }
+  const ow = wire(openai, [pdf])
+  assert.equal(typeof ow[0].content, 'string')
+  assert.doesNotMatch(ow[0].content, /omitted/)
+  // Anthropic still gets the native document block alongside the text.
+  const aw = wire(anthropic, [pdf])
   assert.ok(aw[0].content.some((c) => c.type === 'document'))
 })
 
@@ -827,15 +840,17 @@ test('readAtts pairs transcripts with media and reports notices', async () => {
   assert.ok(notices.some((n) => /Paired transcript/))
 })
 
-test('OpenAI wire inlines PDF text instead of an omission note', () => {
+test('OpenAI wire inlines PDF text and sends a scan as a file block', () => {
   const pdf = { id: 'u', r: 'user', t: 'read this', full: 'read this\n\n[file: doc.pdf]\n[payload]\nbody text', att: [{ name: 'doc.pdf', kind: 'pdf', size: '1 KB', mime: 'application/pdf', data: 'AAA', text: '[payload]\nbody text' }] }
   const ow = wire(openai, [pdf])
   assert.equal(ow.length, 1)
   assert.equal(typeof ow[0].content, 'string')
   assert.doesNotMatch(ow[0].content, /omitted/)
+  // A scan has no text layer, so the binary travels as a file block instead.
   const scanned = { id: 'u', r: 'user', t: 'read this', att: [{ name: 'scan.pdf', kind: 'pdf', size: '1 KB', mime: 'application/pdf', data: 'AAA', source: 'pdf-scanned' }] }
   const ow2 = wire(openai, [scanned])
-  assert.match(ow2[0].content, /omitted/)
+  assert.ok(ow2[0].content.some((c) => c.type === 'file'))
+  assert.doesNotMatch(JSON.stringify(ow2[0].content), /omitted/)
 })
 
 test('pdfAttAsText extracts a text layer on demand and reports scans', async () => {
