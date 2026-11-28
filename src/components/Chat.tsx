@@ -2068,9 +2068,6 @@ export function Chat({ side, toggle, cfg, pal }: { side: boolean; toggle: () => 
         )}
       </div>
       {project && <div className="px-4 pb-2 text-center text-xs text-mu">Temporary chats are unavailable in projects.</div>}
-      {/* The empty temporary chat already explains itself under the headline;
-          once the conversation starts, the standing provider caveat takes over. */}
-      {isTemp && !project && !empty && <div className="px-4 pb-2 text-center text-xs text-mu">Some providers may retain temporary chats for safety or model training.</div>}
     </main>
   )
 }

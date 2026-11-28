@@ -1,11 +1,12 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { Archive, Check, Copy, ChevronRight, Download, FileCode, FileJson, FileText, FileType, Globe, Image, Music, Video, Braces, Terminal, Database, Cog, Hash, PenTool, LayoutTemplate, Sparkles, File, Files, Folder, FolderOpen, Pencil, X, Diff as DiffIcon, Trash2, Send, Share2, Save, type LucideIcon } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
+import { createPortal } from 'react-dom'
+import { Archive, Check, Copy, ChevronRight, Download, ExternalLink, Maximize2, Minimize2, FileCode, FileJson, FileText, FileType, Globe, Image, Music, Video, Braces, Terminal, Database, Cog, Hash, PenTool, LayoutTemplate, Sparkles, File, Files, Folder, FolderOpen, Pencil, X, Diff as DiffIcon, Trash2, Send, Share2, Save, type LucideIcon } from 'lucide-react'
 import { strToU8, zipSync } from 'fflate'
 import { useS, uid, type Msg } from '../store'
 import { clampWorkspaceSplit } from '../layout'
 import type { ToolCall } from '../engine'
 import { Md } from './Md'
-import { Area, Btn, Confirm, Dialog, Field, Input, Seg, Sel, Toggle, cx } from './ui'
+import { Area, Btn, Confirm, Dialog, Field, Input, Modal, Seg, Sel, Toggle, cx } from './ui'
 import { buildZipEntries, workspaceLines, workspaceSize, buildFolderTree, expandedFoldersForPath, extractWorkspaceIds, findWritingPath, groupWorkspaceVersions, sanitizePath, zipFilename, diffLines, diffStat, changedFilesBetween, sanitizeHtmlPreview, previewKindFor, highlightLanguageFor, parseCsvPreview, isTruncatedContent, type Workspace, type WorkspaceRevision } from '../workspace'
 
 const fence = (lang: string, code: string) => {
@@ -106,11 +107,18 @@ export function FilePreview({ path, language, content }: { path: string; languag
     setSvgUrl(url)
     return () => URL.revokeObjectURL(url)
   }, [kind, content])
+  /* Every preview is a flex child of the panel body (or of the pop-out
+     window), so the frame takes the space it is given instead of collapsing
+     to its min-height, and a small margin keeps it off the toolbar above. */
   if (kind === 'html') {
-    return <iframe title={`Preview of ${path}`} sandbox="" srcDoc={sanitizeHtmlPreview(content)} className="min-h-64 w-full flex-1 bg-white" />
+    return (
+      <div className="flex min-h-0 flex-1 flex-col p-3">
+        <iframe title={`Preview of ${path}`} sandbox="" srcDoc={sanitizeHtmlPreview(content)} className="min-h-64 w-full flex-1 rounded-lg border border-bor bg-white" />
+      </div>
+    )
   }
   if (kind === 'svg' && svgUrl) {
-    return <div className="grid min-h-64 flex-1 place-items-center overflow-auto bg-white p-4"><img src={svgUrl} alt={path} className="max-h-full max-w-full" /></div>
+    return <div className="grid min-h-64 flex-1 place-items-center overflow-auto rounded-lg border border-bor bg-white m-3"><img src={svgUrl} alt={path} className="max-h-full max-w-full p-4" /></div>
   }
   if (kind === 'markdown') {
     return <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3"><Md t={content} /></div>
@@ -128,6 +136,90 @@ export function FilePreview({ path, language, content }: { path: string; languag
     )
   }
   return null
+}
+
+/* A preview can leave the split panel entirely: popped out as a floating,
+ *  resizable window, or opened straight into that window's full-screen state.
+ *  Both entry points render this one shell so they cannot drift apart. */
+function PreviewWindow({ path, language, content, startFull = false, close }: {
+  path: string; language: string; content: string; startFull?: boolean; close: () => void
+}) {
+  const [full, setFull] = useState(startFull)
+  const [pos, setPos] = useState({ x: 0, y: 0 })
+  const [size, setSize] = useState<{ w: number; h: number } | null>(null)
+  const panel = useRef<HTMLDivElement>(null)
+
+  /* Pointer capture keeps a drag alive over the preview's own iframe, which
+     would otherwise swallow the moves. */
+  const track = (e: ReactPointerEvent<HTMLElement>, move: (ev: PointerEvent) => void) => {
+    const node = e.currentTarget
+    node.setPointerCapture(e.pointerId)
+    const end = () => {
+      node.removeEventListener('pointermove', move)
+      node.removeEventListener('pointerup', end)
+      node.removeEventListener('pointercancel', end)
+    }
+    node.addEventListener('pointermove', move)
+    node.addEventListener('pointerup', end)
+    node.addEventListener('pointercancel', end)
+  }
+
+  /* Drag by the title bar, like a desktop window. The bar's own buttons keep
+     their clicks. */
+  const drag = (e: ReactPointerEvent<HTMLDivElement>) => {
+    if (full || (e.target as HTMLElement).closest('button')) return
+    e.preventDefault()
+    const from = { x: e.clientX - pos.x, y: e.clientY - pos.y }
+    track(e, (ev) => setPos({ x: ev.clientX - from.x, y: ev.clientY - from.y }))
+  }
+
+  /* Resize from the bottom-right grip. The window opens at its CSS size, so
+     the first drag measures what is already on screen. */
+  const grab = (e: ReactPointerEvent<HTMLDivElement>) => {
+    const node = panel.current
+    if (!node) return
+    e.preventDefault()
+    const rect = node.getBoundingClientRect()
+    const from = { x: e.clientX, y: e.clientY }
+    track(e, (ev) => setSize({
+      w: Math.max(320, Math.round(rect.width + ev.clientX - from.x)),
+      h: Math.max(240, Math.round(rect.height + ev.clientY - from.y)),
+    }))
+  }
+
+  return createPortal(
+    <Modal close={close} blur={false} opacity={30} label={`Preview of ${path}`}>
+      <div
+        ref={panel}
+        style={full ? undefined : { transform: `translate(${pos.x}px, ${pos.y}px)`, width: size?.w, height: size?.h }}
+        className={cx(
+          'flex flex-col overflow-hidden bg-bg',
+          full
+            ? 'fixed inset-0 z-[51]'
+            : 'relative h-[min(78dvh,760px)] w-[min(92vw,1040px)] min-h-60 min-w-80 rounded-xl border border-bor shadow-2xl',
+        )}
+      >
+        <div onPointerDown={drag} style={full ? undefined : { cursor: 'grab', touchAction: 'none' }} className="flex shrink-0 items-center gap-2 border-b border-bor px-3 py-2">
+          <Globe size={14} className="shrink-0 text-ac" aria-hidden="true" />
+          <span className="min-w-0 flex-1 truncate font-mono text-xs">{path}</span>
+          <Btn sm icon={full ? Minimize2 : Maximize2} title={full ? 'Restore window' : 'Full screen'} onClick={() => setFull(!full)} />
+          <Btn sm icon={X} title="Close preview" onClick={close} />
+        </div>
+        <div className="flex min-h-0 flex-1 flex-col">
+          <FilePreview path={path} language={language} content={content} />
+        </div>
+        {!full && (
+          /* Pointer-only, like a desktop window's corner; keyboard users reach
+             the same sizes through the full-screen button. */
+          <div aria-hidden="true" title="Resize" onPointerDown={grab} style={{ touchAction: 'none' }}
+            className="absolute bottom-0 right-0 z-10 size-4 cursor-nwse-resize">
+            <span className="pointer-events-none absolute bottom-1 right-1 size-2.5 rounded-br-[3px] border-b-2 border-r-2 border-mu/60" />
+          </div>
+        )}
+      </div>
+    </Modal>,
+    document.body,
+  )
 }
 
 /* Optional GitHub Gist export: plain fetch with the user's own token
@@ -376,6 +468,7 @@ export function WorkspacePanel({ msg, live, workspace, selectedRevisionId, setSe
   const [renaming, setRenaming] = useState(false)
   const [nameDraft, setNameDraft] = useState(workspace.name)
   const [gistOpen, setGistOpen] = useState(false)
+  const [previewWindow, setPreviewWindow] = useState<'window' | 'full' | null>(null)
   const [flash, setFlash] = useState<'copy' | 'download' | null>(null)
   const flashFor = (k: 'copy' | 'download') => { setFlash(k); setTimeout(() => setFlash(null), 1200) }
   const split = clampWorkspaceSplit(storedSplit)
@@ -525,6 +618,9 @@ export function WorkspacePanel({ msg, live, workspace, selectedRevisionId, setSe
 
   const kind = selectedFile ? previewKindFor(selectedFile.path, selectedFile.language) : 'code'
   const canPreview = kind !== 'code'
+  /* The tab group must highlight the view actually shown: a non-previewable
+     file leaves `view` on "preview", which is not one of its tabs. */
+  const shownView = view === 'preview' && !canPreview ? 'code' : view
   const highlightLang = selectedFile ? highlightLanguageFor(selectedFile.path, selectedFile.language) : 'plaintext'
 
   // Diff base: explicit older revision, else the nearest earlier revision
@@ -594,8 +690,14 @@ export function WorkspacePanel({ msg, live, workspace, selectedRevisionId, setSe
               <span className="text-xs text-mu">{workspaceLines(selectedFile.content)} lines · {workspaceSize(selectedFile.content)}</span>
               {selectedFile.path === writingPath && <span className="ml-auto inline-flex items-center gap-1.5 text-xs text-ac"><span className="size-1.5 animate-pulse rounded-full bg-ac" />Writing…</span>}
               <span className="flex-1" />
-              <Seg kind="tabs" size="sm" label="File view" v={view} set={setView}
+              <Seg kind="tabs" size="sm" label="File view" v={shownView} set={setView}
                 opts={(['code', 'preview', 'diff'] as const).filter((v) => v !== 'preview' || canPreview).map((v) => [v, v === 'code' ? 'Code' : v === 'preview' ? 'Preview' : 'Diff'] as [typeof v, string])} />
+              {canPreview && shownView === 'preview' && (
+                <>
+                  <Btn sm icon={ExternalLink} title="Pop out preview" onClick={() => setPreviewWindow('window')} />
+                  <Btn sm icon={Maximize2} title="Full screen preview" onClick={() => setPreviewWindow('full')} />
+                </>
+              )}
               <Btn sm icon={flash === 'download' ? Check : Download} title="Download file" onClick={() => { downloadOne(selectedFile.path, selectedFile.content); flashFor('download') }} />
               <Btn sm icon={Pencil} title="Edit locally" onClick={() => { setDraft(selectedFile.content); setEditing(true); setView('code') }} />
               <Btn sm icon={flash === 'copy' ? Check : Copy} title="Copy file" onClick={() => { copy(selectedFile.content); flashFor('copy') }} />
@@ -635,7 +737,7 @@ export function WorkspacePanel({ msg, live, workspace, selectedRevisionId, setSe
                 )}
               </div>
             )}
-            <div className="min-h-0 flex-1 overflow-y-auto">
+            <div className={cx('min-h-0 flex-1', view === 'preview' && canPreview && !editing ? 'flex flex-col overflow-hidden' : 'overflow-y-auto')}>
               {editing ? (
                 <div className="flex h-full min-h-0 flex-col gap-2 p-4">
                   <Area autoFocus value={draft} set={setDraft} spellCheck={false} tone="bg" resize={false} className="min-h-0 flex-1 font-mono" />
@@ -644,9 +746,9 @@ export function WorkspacePanel({ msg, live, workspace, selectedRevisionId, setSe
                     <Btn v="solid" icon={Save} onClick={saveLocalEdit}>Save as new revision</Btn>
                   </div>
                 </div>
-              ) : view === 'preview' && canPreview ? (
+              ) : shownView === 'preview' && canPreview ? (
                 <FilePreview path={selectedFile.path} language={selectedFile.language} content={selectedFile.content} />
-              ) : view === 'diff' ? (
+              ) : shownView === 'diff' ? (
                 <DiffView oldText={diffBaseContent} newText={selectedFile.content} />
               ) : (
                 <Md t={fence(highlightLang, selectedFile.content)} bare />
@@ -663,6 +765,15 @@ export function WorkspacePanel({ msg, live, workspace, selectedRevisionId, setSe
         <Confirm title="Delete this file?" text={`"${selectedFile.path}" is removed in a new "Removed" revision. The model can recreate it later.`} ok="Delete file" close={() => setConfirmDelete(false)} run={deleteLocalFile} />
       )}
       {gistOpen && <GistModal workspace={workspace} revision={revision} close={() => setGistOpen(false)} />}
+      {previewWindow && selectedFile && (
+        <PreviewWindow
+          path={selectedFile.path}
+          language={selectedFile.language}
+          content={selectedFile.content}
+          startFull={previewWindow === 'full'}
+          close={() => setPreviewWindow(null)}
+        />
+      )}
     </div>
   )
 }
