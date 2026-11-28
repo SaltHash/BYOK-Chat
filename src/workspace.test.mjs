@@ -254,6 +254,12 @@ test('sanitizeHtmlPreview strips scripts, handlers and javascript urls', () => {
   assert.match(out, /Hi/)
 })
 
+test('sanitizeHtmlPreview removes the page title with its text', () => {
+  const out = sanitizeHtmlPreview('<!doctype html><html><head><title>Dashboard</title></head><body><h1>Hi</h1></body></html>')
+  assert.doesNotMatch(out, /Dashboard/)
+  assert.match(out, /<h1>Hi<\/h1>/)
+})
+
 test('previewKindFor routes html, svg, markdown and csv', () => {
   assert.equal(previewKindFor('index.html', ''), 'html')
   assert.equal(previewKindFor('pic.svg', ''), 'svg')

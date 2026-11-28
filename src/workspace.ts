@@ -1172,6 +1172,9 @@ export function applyUnifiedDiff(base: string, diff: string): PatchResult {
 export function sanitizeHtmlPreview(html: string): string {
   let s = String(html ?? '')
   s = s.replace(/<script[\s\S]*?<\/script\s*>/gi, '').replace(/<iframe[\s\S]*?<\/iframe\s*>/gi, '')
+  /* Drop the whole title element, not just its tags: an emptied tag would leave
+     the page title as visible text at the top of the preview. */
+  s = s.replace(/<title\b[^>]*>[\s\S]*?<\/title\s*>/gi, '')
     .replace(/<\/?(?:object|embed|applet|form|input|button|textarea|select|option|meta|link|base|title)[^>]*>/gi, '')
   s = s.replace(/\son[a-z]+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, '')
   s = s.replace(/(href|src|xlink:href)\s*=\s*("|')\s*javascript:[^"']*(")/gi, '$1=$2#$3')
