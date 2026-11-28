@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { releaseTo, wordCount } from './replyFade'
 
 /* Pacing for a reply that is still arriving.
  *
@@ -19,92 +20,82 @@ const CATCH_UP = 0.15
 /** How long a trailing, still-open word may stay hidden before it is shown. */
 const IDLE_MS = 200
 
-/** Number of words in `s`, without allocating the match list. */
-function wordCount(s: string): number {
-  let n = 0
-  let inWord = false
-  for (let i = 0; i < s.length; i++) {
-    const space = /\s/.test(s[i])
-    if (!space && !inWord) n++
-    inWord = !space
-  }
-  return n
-}
-
-/** Index just past the last of `limit` complete words at or after `from`.
- *
- *  A word is complete only once whitespace follows it: the last word of the
- *  buffer may still be growing, and releasing it would let the fade-in span be
- *  extended mid-animation. Whitespace on its own is always safe to release. */
-function releaseTo(text: string, from: number, limit: number): number {
-  let i = from
-  let seen = 0
-  while (i < text.length && seen < limit) {
-    if (/\s/.test(text[i])) { i++; continue }
-    let end = i
-    while (end < text.length && !/\s/.test(text[end])) end++
-    if (end >= text.length) break
-    i = end
-    seen++
-  }
-  return i
-}
+/** A monotonic clock that also exists where the hook is rendered outside a
+ *  browser (the module is imported by tests through no DOM at all). */
+const now = (): number => (typeof performance === 'undefined' ? Date.now() : performance.now())
 
 export function useSmoothedStream(full: string, { pace, done = false, resume = false }: { pace: boolean; done?: boolean; resume?: boolean }): string {
-  // Without pacing the text is shown as it arrives (batched to a frame below);
-  // with it, the first paint starts empty and the buffer fills in. `resume` is
-  // for a reply that is mounted again while it is still arriving: what was
-  // already on screen stays on screen, and only the words that arrive next are
-  // paced and faded, instead of replaying the whole reply from nothing.
+  // Without pacing the text is shown as it arrives (no state, no frame); with
+  // it, the first paint starts empty and the buffer fills in. `resume` is for a
+  // reply that is mounted again while it is still arriving: what was already on
+  // screen stays on screen, and only the words that arrive next are paced,
+  // instead of replaying the whole reply from nothing.
   const [released, setReleased] = useState(() => (pace && !resume ? '' : full))
   const text = useRef(full)
   const at = useRef(pace && !resume ? 0 : full.length)
-  const grewAt = useRef(typeof performance === 'undefined' ? 0 : performance.now())
+  const grewAt = useRef(now())
   text.current = full
 
   useEffect(() => {
+    if (!pace) return
     let raf = 0
     let timer = 0
 
     const step = () => {
       raf = 0
       const s = text.current
-      const from = at.current
-      if (from >= s.length) return
-      // The stream has ended: show everything at once rather than keep the
-      // reader waiting for the buffer to catch up.
-      if (!pace || done) {
+      // A retried or rewritten reply can hand us a shorter buffer; the release
+      // point has to stay inside it.
+      if (at.current > s.length) {
         at.current = s.length
-        grewAt.current = performance.now()
+        grewAt.current = now()
         setReleased(s)
         return
       }
-      const words = Math.max(1, Math.ceil(wordCount(s.slice(from)) * CATCH_UP))
-      const target = releaseTo(s, from, words)
-      if (target > from) {
-        at.current = target
-        grewAt.current = performance.now()
-        setReleased(s.slice(0, target))
-      }
       if (at.current >= s.length) return
-      if (releaseTo(s, at.current, 1) > at.current) {
-        raf = requestAnimationFrame(step)
+      // The stream has ended: show everything at once rather than keep the
+      // reader waiting for the buffer to catch up.
+      if (done) {
+        at.current = s.length
+        grewAt.current = now()
+        setReleased(s)
         return
       }
-      // Only a partial word is left. It is held back until whitespace follows
-      // it (the next chunk will schedule another frame), but a stalled stream
-      // must not leave the last word invisible: once the pause is longer than
-      // one fade, show it.
-      const wait = Math.max(0, IDLE_MS - (performance.now() - grewAt.current))
-      timer = window.setTimeout(() => { timer = 0; raf = requestAnimationFrame(step) }, wait + 16)
+      const words = Math.max(1, Math.ceil(wordCount(s, at.current) * CATCH_UP))
+      const target = releaseTo(s, at.current, words)
+      if (target > at.current) {
+        at.current = target
+        grewAt.current = now()
+        setReleased(s.slice(0, target))
+        if (target < s.length) raf = requestAnimationFrame(step)
+        return
+      }
+      /* Only a partial word is left. It is held back until whitespace follows
+       * it (the next chunk schedules another frame), which is what keeps a word
+       * from being shown half-written and then extended. A stream that stops
+       * mid-word must not leave that word invisible, though — and must not keep
+       * waking up to look at it either — so once the pause outlasts one fade the
+       * word is shown as it stands; the rest of it extends the same span when
+       * it arrives. */
+      const wait = IDLE_MS - (now() - grewAt.current)
+      if (wait > 0) {
+        timer = window.setTimeout(() => {
+          timer = 0
+          raf = requestAnimationFrame(step)
+        }, wait + 16)
+        return
+      }
+      at.current = s.length
+      grewAt.current = now()
+      setReleased(s)
     }
 
-    if (at.current < text.current.length) raf = requestAnimationFrame(step)
+    if (at.current !== text.current.length) raf = requestAnimationFrame(step)
     return () => {
       if (raf) cancelAnimationFrame(raf)
       if (timer) clearTimeout(timer)
     }
   }, [full, pace, done])
 
-  return released
+  return pace ? released : full
 }

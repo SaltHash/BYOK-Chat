@@ -30,6 +30,7 @@ import { USAGE_PERIODS } from '../usageStats'
 import { normCompactAt } from '../compaction'
 import { ARCHIVE_RETENTION_NEVER, archiveRetentionLabel, normArchiveDays } from '../archive'
 import { ErrorBoundary } from './ErrorBoundary'
+import { fadeMsOf } from '../replyFade'
 import { AppearanceSettings } from './AppearanceSettings'
 
 const TABS = SETTINGS_TABS
@@ -2406,6 +2407,9 @@ function Chats() {
     <Anchor id={anchor}><SettingRow label={label}><Toggle on={key === 'seasonal' ? prefs[key] !== false : !!prefs[key]} set={(v) => patch({ [key]: v } as Partial<typeof prefs>)} label={label} /></SettingRow></Anchor>
   )
   const footerStats = prefs.replyStats ?? DEFAULT_REPLY_STATS
+  /* The slider's value in milliseconds, through the same conversion the
+   * renderer applies, so the label cannot disagree with what a reply does. */
+  const fadeMs = fadeMsOf(prefs.streamFade)
   const toggleFooterStat = (id: ReplyMetric) => {
     const next = new Set(footerStats)
     if (next.has(id)) next.delete(id)
@@ -2462,8 +2466,11 @@ function Chats() {
         </Anchor>
         <Anchor id="stream-fade">
           <SettingRow label="Reply fade-in">
-            <RangeSlider label="Reply fade-in duration" min={0} max={1} step={0.1} value={prefs.streamFade} set={(streamFade) => patch({ streamFade })} className="w-40" />
-            <span className="w-14 text-right text-sm tabular-nums">{prefs.streamFade === 0 ? 'Off' : `${Math.round(prefs.streamFade * 1000)}ms`}</span>
+            <RangeSlider label="Reply fade-in duration" min={0} max={1} step={0.1} value={prefs.streamFade ?? 0} set={(streamFade) => patch({ streamFade })} className="w-40" />
+            {/* Through `fadeMsOf`, the same conversion the renderer uses, so a
+                saved profile without the setting reads "Off" rather than
+                "NaNms". */}
+            <span className="w-14 text-right text-sm tabular-nums">{fadeMs === 0 ? 'Off' : `${fadeMs}ms`}</span>
           </SettingRow>
         </Anchor>
       </Section>

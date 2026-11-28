@@ -6,7 +6,7 @@ import { clampWorkspaceFrac, roundFrac, CHAT_WIDTH } from '../layout'
 import { focusComposer, startPointerDrag } from '../hooks'
 import { useProcessLogEpoch } from '../uiSignals'
 import { followStep, stickAfterScroll } from '../throttle'
-import { splitFadeUnits } from '../streamFade'
+import { fadeCutoff, splitFadeUnits } from '../streamFade'
 import { arrivalFadeMs, fadeMsOf, segmentFade } from '../replyFade'
 import { CI, fmtDuration } from '../meta'
 import { toolLabel } from '../toolLabels'
@@ -516,22 +516,35 @@ const fadePainted = new Set<string>()
  *
  * `useSmoothedStream` hands out the text one frame at a time, always ending on
  * a word boundary, so a word that has just faded in is never rewritten while
- * it animates. Both settings are latched here, on the first render that has a
- * chunk: this component only exists while a reply is streaming in this
- * session, so toggling a setting mid-reply cannot restyle the text already on
- * screen, and a reply read back from history never mounts it at all. */
+ * it animates. The settings it depends on are latched here, on the first render
+ * that has a chunk: this component only exists while a reply is streaming in
+ * this session, so toggling a setting mid-reply cannot restyle the text already
+ * on screen, and a reply read back from history never mounts it at all. Pacing
+ * and fading are latched separately: a reply mounted again while it streams
+ * keeps the pacing (its remaining words still arrive one by one) but drops the
+ * fade, because its words are already on screen. */
 function LiveReply({ mid, chunks, busy }: { mid: string; chunks: string[]; busy: boolean }) {
   const prefs = useS((s) => s.prefs)
-  const latch = useRef<{ md: boolean; fadeMs: number; resume: boolean } | null>(null)
+  const full = useMemo(() => chunks.join(''), [chunks])
+  const latch = useRef<{ md: boolean; pace: boolean; fadeMs: number; resume: boolean } | null>(null)
   if (!latch.current) {
     const replay = !fadeStarted.has(mid)
     fadeStarted.add(mid)
     // A retried reply fades from its first word again, so it must not keep the
     // mark of the attempt that already faded it.
     if (replay) fadePainted.delete(mid)
+    const setting = fadeMsOf(prefs.streamFade)
+    /* A reply that is mounted again while it is still arriving — the reader
+     * left the chat and came back — already has its words on screen. The
+     * pacing carries on for the words still to come, but nothing fades a
+     * second time, and the reply counts as painted so it does not fade as a
+     * unit once it finishes either. */
+    const shown = !replay && full !== ''
+    if (shown) fadePainted.add(mid)
     latch.current = {
       md: prefs.streamMd !== false,
-      fadeMs: fadeMsOf(prefs.streamFade),
+      pace: setting > 0,
+      fadeMs: shown ? 0 : setting,
       // A reply that was already on screen when this chat was left keeps its
       // text and continues from there.
       resume: !replay,
@@ -542,9 +555,8 @@ function LiveReply({ mid, chunks, busy }: { mid: string; chunks: string[]; busy:
   useEffect(() => () => {
     if (!useLive.getState().chunks[mid]) fadeStarted.delete(mid)
   }, [mid])
-  const { md, fadeMs, resume } = latch.current
-  const full = useMemo(() => chunks.join(''), [chunks])
-  const text = useSmoothedStream(full, { pace: fadeMs > 0, done: !busy, resume })
+  const { md, pace, fadeMs, resume } = latch.current
+  const text = useSmoothedStream(full, { pace, done: !busy, resume })
   const painted = useRef(false)
   useEffect(() => {
     if (painted.current || !fadeMs || !text) return
@@ -602,9 +614,14 @@ function LiveReply({ mid, chunks, busy }: { mid: string; chunks: string[]; busy:
 function StreamedText({ text, fadeMs }: { text: string; fadeMs: number }) {
   // Fade off: one text node, no per-word spans to build or lay out.
   if (!fadeMs) return <>{text}</>
+  /* Only the newest words keep a span, as in the markdown plugin: a word needs
+   * one only while it is new, and the rest of a long reply would otherwise be
+   * rebuilt as hundreds of spans on every released word. */
+  const units = splitFadeUnits(text)
+  const cutoff = fadeCutoff(units.length)
   return (
     <>
-      {splitFadeUnits(text).map((unit, i) => (unit.fade
+      {units.map((unit, i) => (unit.fade && i >= cutoff
         ? <span key={i} className="sd-fade">{unit.t}</span>
         : unit.t))}
     </>
@@ -860,11 +877,19 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
    * animation that starts over takes words the reader already read back to
    * transparent. The answer is remembered so it never changes. */
   const segFades = useRef<number[]>([])
-  const segOpening = useRef(true)
-  const liveSegFade = (i: number, count: number) => {
-    const fade = segmentFade(segFades.current[i], i === count - 1, liveFadeMs, segOpening.current && i === 0)
+  const liveSegFade = (i: number, count: number, text: string) => {
+    /* A segment that already carries text the first time it is seen is prose
+     * that has been on screen — the opening piece the paced body was showing,
+     * or a whole reply remounted while it streamed (a chat switch) — so it must
+     * not fade: taking readable text back to transparent is the flash this is
+     * meant to prevent. A segment that appears empty is new writing. */
+    const fresh = !text
+    const fade = segmentFade(segFades.current[i], i === count - 1, liveFadeMs, fresh)
     segFades.current[i] = fade
-    segOpening.current = false
+    // Text sitting on screen with no fade span of its own still counts as
+    // painted: the reply must not fade as a whole once it finishes. A piece
+    // that does fade is marked from the DOM, once its spans are really there.
+    if (!fresh && fade === 0) fadePainted.add(m.id)
     return fade
   }
   /* A reply can finish before it is ever painted — a fast endpoint, or one
@@ -875,6 +900,12 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
    * word-by-word fade never painted, does this; history and already-faded
    * replies keep their text still. */
   const [arrivalFade, setArrivalFade] = useState(0)
+  /* The one-shot reset belongs to the row, not to the effect that starts it:
+   * that effect re-runs on every streamed chunk, so a cleanup there cancelled
+   * the reset a frame later and left the body wearing the class for the rest
+   * of the session. */
+  const arrivalTimer = useRef(0)
+  useEffect(() => () => { if (arrivalTimer.current) window.clearTimeout(arrivalTimer.current) }, [])
   const wasBusy = useRef(busy)
   useLayoutEffect(() => {
     const finished = wasBusy.current && !busy
@@ -889,8 +920,11 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
     if (!ms) return
     fadeStarted.add(m.id)
     setArrivalFade(ms)
-    const timer = setTimeout(() => setArrivalFade(0), ms + 80)
-    return () => clearTimeout(timer)
+    if (arrivalTimer.current) window.clearTimeout(arrivalTimer.current)
+    arrivalTimer.current = window.setTimeout(() => {
+      arrivalTimer.current = 0
+      setArrivalFade(0)
+    }, ms + 80)
   }, [busy, last, m.id, liveChunks])
   const [showRawErr, setShowRawErr] = useState(false)
   const [confirmDel, setConfirmDel] = useState(false)
@@ -953,10 +987,7 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
   }, [liveChunks, m.id])
   // A new reply body starts over, so the remembered fades go with it.
   useEffect(() => {
-    if (!liveChunks?.length) {
-      segFades.current = []
-      segOpening.current = true
-    }
+    if (!liveChunks?.length) segFades.current = []
   }, [liveChunks])
   useLayoutEffect(() => {
     applySearchHighlights(contentRef.current, searchQuery, searchOpen)
@@ -1110,22 +1141,35 @@ const M = memo(function M({ m, last, onOpenWorkspace, onOpenResearch, selectedWo
                 <div ref={contentRef} className={cx('inline', arrivalFade > 0 && 'sd-fade')} style={arrivalFade > 0 ? ({ '--sd-fade-ms': `${arrivalFade}ms` } as CSSProperties) : undefined}>
                   {liveChunks && liveChunks.length ? (
                     streamingTrail ? (
-                      streamingSegments!.map((seg, i) => (
-                        <div key={`live-seg-${i}`} className={i ? 'mt-3' : undefined}>
-                          {/* Only the piece still being written fades: the ones
-                              before it are finished text the reader already saw.
-                              The tail is still incomplete markdown, so it is
-                              rendered `live` (remend closes a half-typed **bold**,
-                              `code` or [link): without it the block re-parses into
-                              a new shape as each token lands, recreating the fade
-                              spans and replaying the animation on words the reader
-                              already read — the whole tail flashing on every
-                              token. Settled pieces are complete, so they render
-                              without it. */}
-                          {seg.text && <Md t={seg.text} cites={cites} live={i === streamingSegments!.length - 1} fade={liveSegFade(i, streamingSegments!.length)} />}
-                          {seg.calls.length > 0 && <ToolTrail calls={seg.calls} />}
-                        </div>
-                      ))
+                      streamingSegments!.map((seg, i) => {
+                        /* The fade has to be decided once per segment, so it is
+                         * read here rather than inside the JSX: the duration it
+                         * returns is both what the renderer gets and what the
+                         * `--sd-fade-ms` of this piece's own wrapper is set to
+                         * (the whole body's style only carries the arrival fade). */
+                        const fade = liveSegFade(i, streamingSegments!.length, seg.text)
+                        return (
+                          /* The key is the settled branch's: when the stream
+                           * ends the body switches to the saved segments, and
+                           * matching keys let React keep the pieces, the code
+                           * blocks and the images instead of rebuilding the
+                           * whole reply. */
+                          <div key={`seg-${i}`} className={i ? 'mt-3' : undefined} style={fade > 0 ? ({ '--sd-fade-ms': `${fade}ms` } as CSSProperties) : undefined}>
+                            {/* Only the piece still being written fades: the ones
+                                before it are finished text the reader already saw.
+                                The tail is still incomplete markdown, so it is
+                                rendered `live` (remend closes a half-typed **bold**,
+                                `code` or [link): without it the block re-parses into
+                                a new shape as each token lands, recreating the fade
+                                spans and replaying the animation on words the reader
+                                already read — the whole tail flashing on every
+                                token. Settled pieces are complete, so they render
+                                without it. */}
+                            {seg.text && <Md t={seg.text} cites={cites} live={i === streamingSegments!.length - 1} fade={fade} />}
+                            {seg.calls.length > 0 && <ToolTrail calls={seg.calls} />}
+                          </div>
+                        )
+                      })
                     ) : (
                       <LiveReply mid={m.id} chunks={liveChunks} busy={busy} />
                     )

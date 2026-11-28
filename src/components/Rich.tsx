@@ -430,7 +430,10 @@ const makeC = (bare: boolean, cites: CiteMap | undefined, live: boolean): any =>
   img: ({ node, src, alt, title, className }: any) => (live && !src
     ? <span className={cx('my-3 inline-flex items-center gap-2 rounded-xl border border-bor bg-surf px-3 py-2 text-xs text-mu', className)}><ImageOff size={14} className="shrink-0 text-ac" aria-hidden="true" />{alt ? `Loading ${alt}…` : 'Loading image…'}</span>
     : <RemoteImage src={src} alt={alt} title={title} className={className} />),
-  table: ({ className, children }: any) => <div className="my-4 overflow-x-auto rounded-xl bg-surf"><table className={cx('w-full border-collapse text-sm', className)}>{children}</table></div>,
+  /* The fade plugin marks a table as one unit when it appears mid-stream, so
+   * the class belongs on the scroll card rather than inside it: otherwise the
+   * rounded surface sits fully opaque for a beat while the rows fade in. */
+  table: ({ className, children }: any) => <div className={cx('my-4 overflow-x-auto rounded-xl bg-surf', className)}><table className="w-full border-collapse text-sm">{children}</table></div>,
   thead: E('thead', 'bg-hov text-left'),
   tr: E('tr', 'even:bg-bg/40'),
   th: ({ node, align, className, ...p }: any) => createElement('th', { ...p, style: align ? { textAlign: align } : p.style, className: cx('px-3 py-2 font-semibold', className) }),

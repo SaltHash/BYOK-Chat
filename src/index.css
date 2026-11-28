@@ -653,12 +653,17 @@ html[data-codewrap] .code-lines .code-line > code { flex: 1 1 auto; min-width: 0
    on mount and a re-parse that produces the same spans in the same order reuses
    their DOM nodes, so a word that is already on screen never fades again. The
    duration comes from Settings → Chats (Reply fade-in); 200ms is the fallback.
-   Only opacity moves: no layout, no paint of anything else. */
+   Only opacity moves: no layout, no paint of anything else. The span's own
+   `--sd-fade-ms` comes from the live body or the piece it sits in. */
 .sd-fade { animation: sd-fade-in 200ms ease-out both; animation-duration: var(--sd-fade-ms, 200ms); }
 @keyframes sd-fade-in { from { opacity: 0; } to { opacity: 1; } }
 /* A streaming body is re-rendered every frame; containing it keeps that work
-   from invalidating the finished replies above and below it. */
-.sd-stream { contain: content; }
+   from invalidating the finished replies above and below it. Layout and style
+   containment do that on their own: paint containment would also clip the
+   focus rings, shadows and floating figures inside the reply, and an element
+   re-rendered sixty times a second is the last place to ask for a paint
+   boundary. */
+.sd-stream { contain: layout style; }
 
 @media (prefers-reduced-motion: reduce) {
   /* The text is still paced word by word; it simply appears without moving. */
