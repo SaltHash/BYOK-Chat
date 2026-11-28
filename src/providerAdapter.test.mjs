@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 
 const {
-  PROVIDERS, resolveProvider, providerBaseUrl, providerHeaders, providerModelsUrl,
+  PROVIDERS, resolveProvider, providerBaseUrl, providerChatUrl, providerHeaders, providerModelsUrl,
   createSseParser, parseSseData, readChatStream, streamChatCompletion, chatCompletion,
   buildChatRequest, mapProviderError, mapNetworkError, errorMessageFromBody,
   discoverProviderModels, clearProviderDiscoveryCache, filterChatModels, probeProviderCors,
@@ -49,6 +49,33 @@ test('preset entries become label → [type, url, endpointId, filter] rows', () 
   assert.deepEqual(presets['OpenRouter'], ['openai', 'https://openrouter.ai/api/v1', '', 'author'])
   assert.deepEqual(presets['Vercel AI Gateway'], ['openai', 'https://ai-gateway.vercel.sh/v1', 'vercel', 'author'])
   assert.deepEqual(presets['Cloudflare Workers AI'], ['openai', 'https://api.cloudflare.com/client/v4/accounts/{ACCOUNT_ID}/ai/v1', 'cloudflare', 'author'])
+  assert.deepEqual(presets['LM Studio (local)'], ['openai', 'http://localhost:1234/v1', 'lmstudio', 'author'])
+})
+
+test('local server presets are keyless by default and list models under /v1', () => {
+  const lmstudio = resolveProvider('LM Studio (local)')
+  assert.equal(lmstudio.id, 'lmstudio')
+  assert.equal(providerModelsUrl(lmstudio), 'http://localhost:1234/v1/models')
+  assert.deepEqual(providerHeaders(lmstudio, {}), {})
+  const req = buildChatRequest(lmstudio, { endpoint: {}, model: 'qwen3-8b', messages: [{ role: 'user', content: 'hi' }] })
+  assert.equal(req.url, 'http://localhost:1234/v1/chat/completions')
+  assert.equal(req.init.headers.authorization, undefined)
+
+  // Unsloth Studio is the one local server that requires its own key.
+  const unsloth = resolveProvider('Unsloth (local)')
+  assert.equal(unsloth.authRequired, true)
+  assert.equal(providerHeaders(unsloth, { key: 'sk-unsloth-x' }).authorization, 'Bearer sk-unsloth-x')
+
+  // Docker Model Runner serves the OpenAI API under /engines/v1.
+  const docker = resolveProvider({ url: 'http://localhost:12434/engines/v1' })
+  assert.equal(docker.id, 'docker')
+  assert.equal(providerChatUrl(docker), 'http://localhost:12434/engines/v1/chat/completions')
+  assert.equal(providerModelsUrl(docker), 'http://localhost:12434/engines/v1/models')
+
+  // FreeToken and Jan answer on their own loopback ports.
+  assert.equal(resolveProvider('FreeToken (local)').id, 'freetoken')
+  assert.equal(resolveProvider({ url: 'http://127.0.0.1:1919/v1' }).id, 'freetoken')
+  assert.equal(resolveProvider({ url: 'http://127.0.0.1:1337/v1' }).id, 'jan')
 })
 
 test('Portkey authenticates with x-portkey-api-key, never Authorization', () => {
