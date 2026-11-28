@@ -196,8 +196,8 @@ Standard defaults requiring approval: Location, Clipboard, Workspace files, Code
 | 8.4 | **Memory deduplication** | Near-duplicate merge on add; manual duplicate scan with merge. | Add bulk merge and a diff preview before keeping the longer memory. |
 | 8.5 | **Memory tool** | Model can store/update/delete; approval is now configurable. | Add a “propose memory” confirmation path instead of silent writes under Full. |
 | 8.6 | **Built-in skills** | Curated instruction sets with enable switches. | Add versioning and “updated since” notices. |
-| 8.7 | **Custom skills** | User-authored skill instructions; skill tool loads them into context. | Add validation, test-with-sample-prompt, and per-skill token estimates. |
-| 8.8 | **Skill discovery** | Skills are enabled in Settings and offered via the tool. | Add automatic skill suggestions based on the prompt, with user confirmation. |
+| 8.7 | **Custom skills** | User-authored skill instructions, a name-derived id, validation (retired and built-in ids refused, 16k character cap); the skill tool loads them into context. | Add a test-with-sample-prompt preview and per-skill token estimates. |
+| 8.8 | **Skill discovery** | Skills are enabled in Settings, searchable and installable from a public online catalogue (`src/skillCatalog.ts`: the Anthropic Agent Skills repository, fetched over CORS only when the catalogue is opened), and offered via the tool. | Add automatic skill suggestions based on the prompt, with user confirmation. |
 
 ## 9. Widgets and side panels
 

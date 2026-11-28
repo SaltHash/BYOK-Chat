@@ -2,11 +2,12 @@ import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState, 
 import { X, Plus, Trash2, ArrowUp, ArrowDown, CornerDownRight, ChevronLeft, ChevronRight, Eye, EyeOff, Play, ShieldCheck, Shield, Download, Upload, Check, CircleCheck, CircleX, Cpu, Route, GripVertical, Server, ListMusic, ScrollText, Terminal, Wrench, Palette, FolderOpen, PanelRight, TrendingUp, Keyboard, Search, Brain, Pencil, Sparkles, RotateCcw, SlidersHorizontal, FlaskConical, Library, Database, Lock, LockOpen, LayoutTemplate, Share2, Plug, Image as ImageIcon, Volume2, AudioLines, Code2, Star, TriangleAlert } from 'lucide-react'
 import { discoveredModelPatch, modelListEdit, priceText, tierAllowed } from '../models'
 import { useS, useSConfig, PRE, BLANK, THEMES, DARK_THEMES, LIGHT_THEMES, THEME_COLOR_KEYS, THEME_COLOR_LABELS, THEME_COLORS, defaultCustomTheme, customThemeColors, normCustomTheme, SEARCH_PROVIDERS, READER_PROVIDERS, FEATURES, LIBRARY_ITEMS, FEATURE_TABS, FEATURE_WIDGETS, DEFAULT_LIBRARY_SHOW, DEFAULT_ADVANCED, featOn, normSearch, normAdvanced, normLogDetail, normDocs, usable, modelsOf, modelNameOf, helperRef, helperPlRef, helperFlowModelsOf, isPlaylistRef, splitHelperRef, favRef, toggleFavRef, pageSummaryEffortOf, readerSummaryModelsOf, MODEL_TIERS, TOOL_ROUNDS_DEFAULT, TOOL_ROUNDS_MIN, TOOL_ROUNDS_BASE_MAX, TOOL_ROUNDS_MAX, toolRoundLimitOf, isToolRoundsUnlimited, GENERAL_PROMPT_TEXT, STARTUP_MODES, normStartup, PROMPT_RECALL_MODES, normPromptRecall, uid, REPLY_METRICS, DEFAULT_REPLY_STATS, HELPER_TASKS, HELPER_REQUIRED, helperAutoEffort, type HelperTask, type PromptRecallMode, type ReplyMetric, type ReplyModelLabel, type Kind, type FeatureId, type DocPrefs, type ModelPrice } from '../store'
-import { normSkills, resolveSkill, validateCustomSkill, enabledSkills, BUILTIN_SKILLS, SKILL_TOOL_NAME, type SkillState } from '../skills'
+import { normSkills, resolveSkill, validateCustomSkill, enabledSkills, slugifySkillId, RETIRED_SKILL_IDS, BUILTIN_SKILLS, SKILL_TOOL_NAME, type SkillState } from '../skills'
+import { SKILL_SOURCES, installListing, loadSkillCatalog, searchListings, type SkillListing } from '../skillCatalog'
 import { findDuplicatePairs, mergeMemory } from '../recall'
 import { TOOL_REGISTRY, can, stream } from '../engine'
 import { CI, TOOLS, WIDGETS, KEYS, orderTools } from '../meta'
-import { SETTINGS_TABS, SETTINGS_GROUPS, visibleTabs, searchSettings, splitSettingTarget, settingDomId } from '../settingsCatalog'
+import { SETTINGS_TABS, SETTINGS_GROUPS, SETTINGS_TAB_HINTS, visibleTabs, searchSettings, splitSettingTarget, settingDomId } from '../settingsCatalog'
 import { normQualityFavs, type GlobalPrompt, type PromptQuality, type Quality } from '../flair'
 import { DataTab, KeysTab, TestRow, TestAllEndpoints } from './Extra'
 import { ToolAccessCard } from './ToolAccess'
@@ -312,8 +313,10 @@ const collectAnchors = (node: ReactNode, out: string[] = []): string[] => {
   return out
 }
 
-export function Card({ icon: I, title, sub, right, open0, handle, children, muted }: { icon: Ic; title: ReactNode; sub?: string; right?: ReactNode; open0?: boolean; handle?: SortHandleProps | null; children?: ReactNode; muted?: boolean }) {
-  const [o, setO] = useState(!!open0)
+export function Card({ icon: I, title, sub, right, open0, open, onOpenChange, handle, children, muted }: { icon: Ic; title: ReactNode; sub?: string; right?: ReactNode; open0?: boolean; /** Controlled open state, for a tab that opens its card from a header button. */ open?: boolean; onOpenChange?: (open: boolean) => void; handle?: SortHandleProps | null; children?: ReactNode; muted?: boolean }) {
+  const [inner, setInner] = useState(!!open0)
+  const o = open ?? inner
+  const setO = (v: boolean) => { setInner(v); onOpenChange?.(v) }
   const hasBody = children != null && children !== false
   const anchorKey = useMemo(() => collectAnchors(children).join('|'), [children])
   useEffect(() => {
@@ -1919,60 +1922,151 @@ function Tools() {
   )
 }
 
+/** One row of the online catalogue: what it is, where it comes from, and one
+ *  action. Kept beside the tab because it has no other caller. */
+function CatalogRow({ listing, installed, busy, onInstall }: { listing: SkillListing; installed: boolean; busy: boolean; onInstall: () => void }) {
+  const label = listing.name || listing.id
+  // Two lines of description, cut in JS: line-clamp would need a plugin the
+  // project does not build with.
+  const blurb = listing.description.length > 220 ? `${listing.description.slice(0, 217)}…` : listing.description
+  return (
+    <div className="flex flex-wrap items-start gap-x-3 gap-y-2 py-3">
+      <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="text-sm font-medium">{label}</span>
+          {!!listing.group && <span className="rounded-md bg-hov px-1.5 py-0.5 text-[11px] text-mu">{listing.group}</span>}
+          {listing.truncated && <span className="rounded-md bg-hov px-1.5 py-0.5 text-[11px] text-mu" title="Installed with the end of the instructions cut off">Long · trimmed</span>}
+        </div>
+        <p className="mt-0.5 text-xs leading-relaxed text-mu">{blurb || 'No description in the skill file.'}</p>
+      </div>
+      {installed
+        ? <Chip icon={Check}>Installed</Chip>
+        : <Btn v="soft" compact icon={Download} disabled={busy} onClick={onInstall} aria-label={`Install ${label}`}>{busy ? 'Installing…' : 'Install'}</Btn>}
+    </div>
+  )
+}
+
 function SkillsTab() {
   const s = useSConfig()
   const { skills, warnings } = normSkills(s.skills)
   const setSkills = (next: SkillState[]) => s.patch({ skills: next })
   const upd = (id: string, p: Partial<SkillState>) => setSkills(skills.map((x) => (x.id === id ? { ...x, ...p } : x)))
-  const [draft, setDraft] = useState({ id: '', name: '', description: '', instructions: '' })
-  const [error, setError] = useState('')
-  const add = () => {
-    try {
-      const skill = validateCustomSkill({ ...draft })
-      if (skills.some((x) => x.id === skill.id)) throw new Error(`A skill named "${skill.id}" already exists.`)
-      setSkills([...skills, skill])
-      setDraft({ id: '', name: '', description: '', instructions: '' })
-      setError('')
-    } catch (x: any) { setError(x?.message || 'Could not add the skill.') }
-  }
   /** Custom skills leave the list; a built-in keeps a deleted marker so it stays removed after reload. */
   const remove = (id: string) => setSkills(BUILTIN_SKILLS.some((b) => b.id === id) ? skills.map((x) => (x.id === id ? { ...x, deleted: true } : x)) : skills.filter((x) => x.id !== id))
-  const startAdd = () => {
-    // Open the add card before scrolling: its fields do not exist until it expands.
-    try { window.dispatchEvent(new CustomEvent('byok:anchor', { detail: 'add-skill' })) } catch { /* the card still opens on click */ }
-    setTimeout(() => document.querySelector('[data-anchor="add-skill"]')?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 60)
-  }
   const live = skills.filter((x) => x.deleted !== true)
   const removed = skills.filter((x) => x.deleted === true)
+  const on = live.filter((x) => x.enabled && resolveSkill(x)).length
+  const [note, setNote] = useState('')
+
+  /* ---- install from the online catalogue ---- */
+  const source = SKILL_SOURCES[0]
+  const [catOpen, setCatOpen] = useState(false)
+  const [cat, setCat] = useState<{ status: 'idle' | 'loading' | 'ready' | 'error'; listings: SkillListing[]; message: string }>({ status: 'idle', listings: [], message: '' })
+  const [query, setQuery] = useState('')
+  const [busyId, setBusyId] = useState('')
+  const load = (force: boolean) => {
+    setCat((c) => ({ ...c, status: 'loading', message: '' }))
+    void loadSkillCatalog(source, { force }).then((r) => {
+      setCat({ status: r.error ? 'error' : 'ready', listings: r.listings, message: r.error || r.warnings[0] || '' })
+    })
+  }
+  // Read only once the card is open: this app asks the network nothing behind
+  // the reader's back.
+  useEffect(() => { if (catOpen && cat.status === 'idle') load(false) }, [catOpen, cat.status])
+  const install = async (listing: SkillListing) => {
+    setBusyId(listing.id)
+    setNote('')
+    try {
+      const taken = [...normSkills(useS.getState().skills).skills.map((x) => x.id), ...RETIRED_SKILL_IDS]
+      const state = await installListing(listing, taken)
+      // Read the list again after the fetch: a sync pull or another tab may
+      // have changed it while the skill file was loading.
+      const fresh = normSkills(useS.getState().skills).skills
+      setSkills([...fresh, state])
+      setNote(`Installed “${state.name}”. It is in the list above, on and ready to edit.`)
+      setTimeout(() => flashAnchor(`skill-${state.id}`), 60)
+    } catch (x) {
+      setNote((x as Error)?.message || 'That skill could not be installed.')
+    } finally { setBusyId('') }
+  }
+  const installed = new Set(live.map((x) => x.source).filter((x): x is string => !!x))
+  const shown = searchListings(cat.listings, query)
+
+  /* ---- write a skill of your own ---- */
+  const [writeOpen, setWriteOpen] = useState(false)
+  const [draft, setDraft] = useState({ name: '', description: '', instructions: '' })
+  const [error, setError] = useState('')
+  const nameRef = useRef<HTMLInputElement>(null)
+  const derivedId = slugifySkillId(draft.name)
+  const missing = !draft.name.trim() ? 'a name' : !draft.description.trim() ? 'when it applies' : !draft.instructions.trim() ? 'its instructions' : ''
+  const add = () => {
+    try {
+      const skill = validateCustomSkill({ ...draft, id: derivedId })
+      if (skills.some((x) => x.id === skill.id)) throw new Error(`“${skill.id}” is already in use. Give the skill another name.`)
+      setSkills([...skills, skill])
+      setDraft({ name: '', description: '', instructions: '' })
+      setError('')
+      setNote(`Added “${skill.name}”. It is in the list above and on.`)
+      setWriteOpen(false)
+      setTimeout(() => flashAnchor(`skill-${skill.id}`), 60)
+    } catch (x) { setError((x as Error)?.message || 'Could not add the skill.') }
+  }
+  const openCard = (which: 'skill-catalogue' | 'add-skill') => {
+    setCatOpen(which === 'skill-catalogue')
+    setWriteOpen(which === 'add-skill')
+    // The fields only exist once the card is open, so scroll on the next tick.
+    setTimeout(() => {
+      flashAnchor(which)
+      if (which === 'add-skill') nameRef.current?.focus({ preventScroll: true })
+    }, 80)
+  }
+
   return (
     <Panel id="skills">
-      <div className="flex items-center gap-3">
-        <h2 className="flex-1 text-sm font-medium">Skills</h2>
-        <Btn v="soft" icon={Plus} onClick={startAdd}>Add skill</Btn>
+      <div className="space-y-1">
+        <div className="flex flex-wrap items-center gap-2">
+          <h2 className="flex-1 text-sm font-medium">Skills</h2>
+          <Btn v="soft" icon={Library} onClick={() => openCard('skill-catalogue')}>Catalogue</Btn>
+          <Btn v="soft" icon={Plus} onClick={() => openCard('add-skill')}>Write a skill</Btn>
+        </div>
+        <p className="text-xs leading-relaxed text-mu">
+          {live.length
+            ? `${on} of ${live.length} on. Each enabled skill adds one line to the prompt; the rest of it is loaded only when the model decides that skill applies.`
+            : 'A skill is a set of instructions the model loads when it applies to your request.'}
+        </p>
       </div>
-      <Section>
-      {!!warnings.length && <p role="status" className="rounded-xl bg-er/10 px-3 py-2 text-xs text-er">{warnings[0]} Edit or reset the skill below to fix it.</p>}
-      {live.map((st) => {
-        const def = resolveSkill(st)
-        if (!def) return <Anchor key={st.id} id={`skill-${st.id}`}><Card icon={Sparkles} title={st.id} sub="Missing instructions" muted><p className="text-sm text-er">This skill has no instructions, so it can't be used. Edit it or remove it.</p><div><Btn v="danger" icon={Trash2} onClick={() => remove(st.id)}>Remove</Btn></div></Card></Anchor>
-        const builtin = BUILTIN_SKILLS.some((b) => b.id === st.id)
-        return (
-          <Anchor key={st.id} id={`skill-${st.id}`}>
-          <Card icon={Sparkles} title={def.name} muted={!st.enabled} right={<Toggle on={st.enabled} set={(enabled) => upd(st.id, { enabled })} label={`Enable skill ${def.name}`} />}>
-            {def.source && <p className="text-xs text-mu">Source: {def.source}{def.license ? ` · ${def.license}` : ''}</p>}
-            <Field label="When to use"><Input value={st.description ?? def.description} set={(description) => upd(st.id, { description })} placeholder="When this skill applies." /></Field>
-            <Field label="Instructions"><Area rows={6} value={st.instructions ?? def.instructions} set={(instructions) => upd(st.id, { instructions })} /></Field>
-            <div className="flex gap-2">
-              {builtin && <Btn v="soft" icon={RotateCcw} onClick={() => upd(st.id, { name: undefined, description: undefined, instructions: undefined } as Partial<SkillState>)}>Reset</Btn>}
-              <Btn v="danger" icon={Trash2} onClick={() => remove(st.id)}>Remove</Btn>
-            </div>
-          </Card>
-          </Anchor>
-        )
-      })}
+
+      {!!note && <p role="status" className="rounded-xl bg-surf px-3 py-2 text-xs leading-relaxed text-tx">{note}</p>}
+
+      <Section title="Installed" hint="Turn one off to keep it out of the list the model chooses from.">
+        {!!warnings.length && <p role="status" className="py-3 text-xs leading-relaxed text-er">{warnings[0]} Edit or remove the skill below to fix it.</p>}
+        {live.map((st) => {
+          const def = resolveSkill(st)
+          if (!def) return <Anchor key={st.id} id={`skill-${st.id}`}><Card icon={Sparkles} title={st.id} sub="Needs instructions" muted><p className="text-sm text-er">This skill has no instructions, so it can't be used. Edit it or remove it.</p><div><Btn v="danger" icon={Trash2} onClick={() => remove(st.id)}>Remove</Btn></div></Card></Anchor>
+          const builtin = BUILTIN_SKILLS.some((b) => b.id === st.id)
+          const kind = builtin ? 'Built in' : def.source ? 'From the catalogue' : 'Written by you'
+          return (
+            <Anchor key={st.id} id={`skill-${st.id}`}>
+            <Card icon={Sparkles} title={def.name} sub={st.enabled ? kind : `${kind} · off`} muted={!st.enabled} right={<Toggle on={st.enabled} set={(enabled) => upd(st.id, { enabled })} label={`Enable skill ${def.name}`} />}>
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-mu">
+                <span className="font-mono">{st.id}</span>
+                {!!def.source && <span className="min-w-0 truncate">{def.source}</span>}
+              </div>
+              <Field label="When to use"><Input value={st.description ?? def.description} set={(description) => upd(st.id, { description })} placeholder="When this skill applies." /></Field>
+              <Field label="Instructions"><Area rows={8} value={st.instructions ?? def.instructions} set={(instructions) => upd(st.id, { instructions })} /></Field>
+              <div className="flex gap-2">
+                {builtin && <Btn v="soft" icon={RotateCcw} onClick={() => upd(st.id, { name: undefined, description: undefined, instructions: undefined } as Partial<SkillState>)}>Reset</Btn>}
+                <Btn v="danger" icon={Trash2} onClick={() => remove(st.id)}>Remove</Btn>
+              </div>
+            </Card>
+            </Anchor>
+          )
+        })}
+        {!live.length && <p className="py-3 text-sm text-mu">Nothing yet. Install one from the catalogue, or write your own below.</p>}
       </Section>
+
       {!!removed.length && (
-        <Section title="Removed">
+        <Section title="Removed" hint="A built-in skill stays here so it can be put back.">
           {removed.map((st) => (
             <div key={st.id} className="flex items-center gap-3 py-3">
               <Sparkles size={16} className="shrink-0 text-mu/60" />
@@ -1982,19 +2076,47 @@ function SkillsTab() {
           ))}
         </Section>
       )}
-      <Section title="Custom skills">
-      <Anchor id="add-skill">
-      <Card icon={Plus} title="Add a custom skill" open0={false}>
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="ID"><Input value={draft.id} set={(id) => setDraft({ ...draft, id })} placeholder="e.g. api-docs" /></Field>
-          <Field label="Name"><Input value={draft.name} set={(name) => setDraft({ ...draft, name })} placeholder="e.g. API docs" /></Field>
-        </div>
-        <Field label="When to use"><Input value={draft.description} set={(description) => setDraft({ ...draft, description })} placeholder="When this skill applies." /></Field>
-        <Field label="Instructions"><Area rows={5} value={draft.instructions} set={(instructions) => setDraft({ ...draft, instructions })} /></Field>
-        {error && <p role="alert" className="text-xs text-er">{error}</p>}
-        <div><Btn v="solid" icon={Plus} onClick={add}>Add skill</Btn></div>
-      </Card>
-      </Anchor>
+
+      <Section title="Find a skill" hint="Skills are public instruction files. Installing one copies it into your own list, where you can edit or remove it.">
+        <Card icon={Library} title="Online catalogue" sub={source.label} open={catOpen} onOpenChange={setCatOpen}>
+          <Anchor id="skill-catalogue">
+            <div className="space-y-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <SearchInput size="sm" className="flex-1" value={query} set={setQuery} label="Search the skill catalogue" placeholder="Search skills" clear />
+                <Btn sm icon={RotateCcw} title="Reload the catalogue" aria-label="Reload the catalogue" disabled={cat.status === 'loading'} onClick={() => load(true)} />
+              </div>
+              {cat.status === 'loading' && <p role="status" className="text-xs text-mu">Reading the catalogue…</p>}
+              {cat.status === 'error' && <p role="alert" className="text-xs leading-relaxed text-er">{cat.message}</p>}
+              {cat.status === 'ready' && (
+                <div className="divide-y divide-bor">
+                  {shown.map((l) => <CatalogRow key={l.url} listing={l} installed={installed.has(l.origin)} busy={busyId === l.id} onInstall={() => void install(l)} />)}
+                  {!shown.length && <p className="py-3 text-sm text-mu">Nothing matches “{query}”.</p>}
+                </div>
+              )}
+              {cat.status === 'ready' && !!cat.message && <p role="status" className="text-xs leading-relaxed text-mu">{cat.message}</p>}
+              <p className="text-xs leading-relaxed text-mu">
+                From <a href={source.home} target="_blank" rel="noreferrer noopener" className="underline decoration-mu/40 underline-offset-2 hover:text-tx">{source.label}</a>
+                {cat.status === 'ready' ? ` · ${cat.listings.length} skills read from ${source.origin}.` : `. Only the catalogue and the skill files you install are fetched, never your chats or keys.`}
+              </p>
+            </div>
+          </Anchor>
+        </Card>
+
+        <Card icon={Plus} title="Write your own" sub="Saved as a skill you can edit" open={writeOpen} onOpenChange={setWriteOpen}>
+          <Anchor id="add-skill">
+            <div className="space-y-4">
+              <Field label="Name"><Input ref={nameRef} value={draft.name} set={(name) => setDraft({ ...draft, name })} placeholder="e.g. Data cleanup" /></Field>
+              <Field label="When to use"><Input value={draft.description} set={(description) => setDraft({ ...draft, description })} placeholder="When this skill applies, in one line." /></Field>
+              <Field label="Instructions"><Area rows={7} value={draft.instructions} set={(instructions) => setDraft({ ...draft, instructions })} placeholder="The guidance the model should follow. Markdown is fine." /></Field>
+              <p className="text-xs text-mu">{derivedId ? <>Id: <span className="font-mono">{derivedId}</span>, the name the model calls.</> : 'The name becomes the id the model calls.'}</p>
+              {!!error && <p role="alert" className="text-xs leading-relaxed text-er">{error}</p>}
+              <div className="flex flex-wrap items-center gap-2">
+                <Btn v="solid" icon={Plus} onClick={add} disabled={!!missing}>Add skill</Btn>
+                {!!missing && <span className="text-xs text-mu">Still needs {missing}.</span>}
+              </div>
+            </div>
+          </Anchor>
+        </Card>
       </Section>
     </Panel>
   )
@@ -2598,6 +2720,10 @@ export function Settings({ tab, setTab }: { tab: string; setTab: (t: string) => 
   const settingsOpacity = useS((s) => s.prefs.settingsOpacity)
   const settingsWidth = useS((s) => s.prefs.settingsWidth ?? 1024)
   const settingsHeight = useS((s) => s.prefs.settingsHeight ?? 780)
+  /* The pane keeps its scroll offset across a tab change unless it is reset,
+     which opened every tab that follows a long one part-way down. */
+  const pane = useRef<HTMLDivElement>(null)
+  useLayoutEffect(() => { if (pane.current) pane.current.scrollTop = 0 }, [active])
   useEffect(() => {
     if (!anchor) return
     // Cards listen for this and open themselves when the anchor lives inside
@@ -2628,7 +2754,7 @@ export function Settings({ tab, setTab }: { tab: string; setTab: (t: string) => 
         </div>
         <div className="flex min-h-0 flex-1">
         <nav aria-label="Settings sections" className="hidden w-52 shrink-0 flex-col border-r border-bor bg-bg p-2.5 sm:flex">
-          <div className="mb-2"><SearchInput size="sm" value={query} set={setQuery} label="Search settings" placeholder="Search" /></div>
+          <div className="mb-2"><SearchInput size="sm" value={query} set={setQuery} label="Search settings" placeholder="Search" clear /></div>
           <div className="min-h-0 flex-1 overflow-y-auto">
             {query.trim() ? (<>
               {results.map(result => <button key={result.target} onClick={() => openResult(result.target)} className="block w-full rounded-md px-2 py-1.5 text-left text-sm hover:bg-surf"><span className="block">{result.title}</span><span className="block text-xs text-mu">{result.section}</span></button>)}
@@ -2646,16 +2772,19 @@ export function Settings({ tab, setTab }: { tab: string; setTab: (t: string) => 
                 {group.tabs.map(id => {
                   const [k, l, I] = SETTINGS_TABS.find(([x]) => x === id)!
                   const off = !tabs.some(([visible]) => visible === k)
-                  return <button key={k} onClick={() => setTab(k)} aria-current={active === k ? 'page' : undefined} className={cx('flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left text-sm transition-colors', active === k ? 'bg-hov text-tx' : 'text-mu hover:bg-surf hover:text-tx')}><I size={16} className="shrink-0" /><span className="min-w-0 flex-1 truncate">{l}</span>{off && <span className="text-xs">Off</span>}</button>
+                  return <button key={k} onClick={() => setTab(k)} aria-current={active === k ? 'page' : undefined} title={SETTINGS_TAB_HINTS[k]} className={cx('flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left text-sm transition-colors', active === k ? 'bg-hov text-tx' : 'text-mu hover:bg-surf hover:text-tx')}><I size={16} className="shrink-0" /><span className="min-w-0 flex-1 truncate">{l}</span>{off && <span className="text-xs">Off</span>}</button>
                 })}
               </div>
             ))}
           </div>
         </nav>
         <div className="relative min-w-0 flex-1">
-          <div className="h-full overflow-x-hidden overflow-y-auto px-4 py-4 sm:px-8 sm:py-5">
-            <div className="mb-4 space-y-2 sm:hidden">
-              <SearchInput value={query} set={setQuery} label="Search settings" placeholder="Search settings" />
+          <div ref={pane} className="h-full overflow-x-hidden overflow-y-auto px-4 py-4 sm:px-8 sm:py-5">
+            {/* On a phone the section nav is hidden, so the way out of a long
+             *  tab has to stay within reach: this bar pins the section name and
+             *  the search to the top of the pane while it scrolls. */}
+            <div className="sticky top-0 z-20 -mx-4 -mt-4 mb-4 space-y-2 border-b border-bor bg-side/95 px-4 pb-2.5 pt-4 backdrop-blur sm:hidden">
+              <SearchInput value={query} set={setQuery} label="Search settings" placeholder="Search settings" clear />
               {query.trim() ? <div className="max-h-48 overflow-y-auto rounded-md border border-bor">{results.map(result => <button key={result.target} onClick={() => openResult(result.target)} className="block w-full px-3 py-2 text-left text-sm hover:bg-hov">{result.title}<span className="ml-2 text-xs text-mu">{result.section}</span></button>)}{!results.length && <p className="p-3 text-sm text-mu">No settings found.</p>}</div> : <SearchSelect ariaLabel="Settings section" value={active} set={setTab} opts={SETTINGS_TABS.filter(([k]) => showOff || tabs.some(([v]) => v === k)).map(([k, l]) => [k, `${l}${tabs.some(([v]) => v === k) ? '' : ' (off)'}`] as [string, string])} />}
             </div>
             {disabledFeature ? <div className="space-y-3"><h2 className="text-lg font-semibold">{featureLabel} is off</h2><p className="text-sm text-mu">Turn it on in Features to use its settings.</p><Btn v="soft" onClick={() => setTab(`features#feature-${disabledFeature}`)}>Open Features</Btn></div> : active === 'stats'

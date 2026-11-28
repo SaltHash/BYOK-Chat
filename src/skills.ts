@@ -5,9 +5,10 @@
 // loads the full instructions on demand by calling the `use_skill` tool —
 // which is a model capability, not a user-facing tool listed in Settings.
 // Users can enable/disable each skill, edit its description and instructions,
-// add their own custom skills, and delete any skill: custom ones leave the list
-// and a built-in keeps a deleted marker so it can be restored. There is no
-// keyword matching.
+// add a skill of their own, install one from the online catalogue
+// (`skillCatalog.ts`), and delete any skill: custom ones leave the list and a
+// built-in keeps a deleted marker so it can be restored. There is no keyword
+// matching.
 //
 // The catalog keeps one skill per domain. Guidance that belongs inside another
 // skill lives there rather than in a near-duplicate entry.
@@ -30,11 +31,32 @@ export type SkillState = {
   name?: string
   description?: string
   instructions?: string
+  /** Where the skill came from when it was installed from the online
+   *  catalogue (`github.com/anthropics/skills/skills/webapp-testing`). */
+  source?: string
 }
 
 export type ResolvedSkill = SkillDef
 
 export const SKILL_TOOL_NAME = 'use_skill'
+
+/** Longest instruction body one skill may hold. It is only ever put in front of
+ *  the model when that skill is loaded, so this caps a single tool result rather
+ *  than the prompt: roughly 4k tokens, which keeps one skill from crowding out
+ *  the conversation it is meant to guide. */
+export const SKILL_INSTRUCTIONS_MAX = 16000
+
+/** The id a name turns into: lowercase, hyphens for anything else. Also used by
+ *  the catalogue, so a folder named `webapp-testing` and a typed name
+ *  "Webapp testing" land on the same id. */
+export const slugifySkillId = (raw: string): string => String(raw || '')
+  .trim()
+  .toLowerCase()
+  .replace(/[^a-z0-9-_]+/g, '-')
+  .replace(/-+/g, '-')
+  .slice(0, 40)
+  .replace(/^[^a-z0-9]+/, '')
+  .replace(/-+$/, '')
 
 export const BUILTIN_SKILLS: SkillDef[] = [
   {
@@ -242,7 +264,8 @@ export function normSkills(raw: unknown): { skills: SkillState[]; warnings: stri
       ...(e.deleted === true ? { deleted: true } : {}),
       ...((typeof e.name === 'string' && e.name.trim()) ? { name: e.name.trim().slice(0, 80) } : {}),
       ...((typeof e.description === 'string') ? { description: e.description.slice(0, 500) } : {}),
-      ...((typeof e.instructions === 'string') ? { instructions: e.instructions.slice(0, 12000) } : {}),
+      ...((typeof e.instructions === 'string') ? { instructions: e.instructions.slice(0, SKILL_INSTRUCTIONS_MAX) } : {}),
+      ...((typeof e.source === 'string' && e.source.trim()) ? { source: e.source.trim().slice(0, 200) } : {}),
     })
   }
   const skills: SkillState[] = [
@@ -259,12 +282,13 @@ export function resolveSkill(state: SkillState): SkillDef | null {
   const name = state.name?.trim() || def?.name || state.id
   const instructions = (state.instructions !== undefined ? state.instructions.trim() : undefined) ?? def?.instructions ?? ''
   if (!instructions) return null
+  const source = state.source?.trim() || def?.source || ''
   return {
     id: state.id,
     name,
     description: state.description?.trim() || def?.description || '',
     instructions,
-    ...(def?.source ? { source: def.source } : {}),
+    ...(source ? { source } : {}),
     ...(def?.license ? { license: def.license } : {}),
     ...(def?.builtin ? { builtin: true } : {}),
   }
@@ -300,16 +324,27 @@ export function composeSystemPrompt(base: string, skills: ResolvedSkill[]): stri
   return `${trimmed}${trimmed ? '\n\n' : ''}${section}`
 }
 
-/** Validate a user-supplied custom skill before it is stored. Throws on problems. */
-export function validateCustomSkill(input: { id?: string; name?: string; description?: string; instructions?: string }): SkillState {
-  const id = String(input.id || '').trim().toLowerCase().replace(/[^a-z0-9-_]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '').slice(0, 40)
-  if (!id) throw new Error('Give the skill an id using lowercase letters, numbers, or hyphens.')
+/** Validate a user-supplied custom skill before it is stored. Throws on problems.
+ *  An id is derived from the name when none is given, so the form can ask for a
+ *  name and still store something the model can call. */
+export function validateCustomSkill(input: { id?: string; name?: string; description?: string; instructions?: string; source?: string }): SkillState {
+  const id = slugifySkillId(input.id || input.name || '')
+  if (!id) throw new Error('Give the skill a name using letters, numbers, or hyphens.')
+  if (RETIRED_SKILL_IDS.includes(id)) throw new Error(`"${id}" was a built-in skill this version retired, and stored skills with that id are dropped on load. Use another name.`)
   if (BUILTIN_SKILLS.some((d) => d.id === id)) throw new Error(`"${id}" is a built-in skill. Edit it instead of adding a new one.`)
   const instructions = String(input.instructions || '').trim()
   if (!instructions) throw new Error('A skill needs instructions to apply.')
-  if (instructions.length > 12000) throw new Error('Skill instructions are too long (12,000 character limit).')
+  if (instructions.length > SKILL_INSTRUCTIONS_MAX) throw new Error(`Skill instructions are too long (${SKILL_INSTRUCTIONS_MAX.toLocaleString()} character limit).`)
   const name = String(input.name || '').trim().slice(0, 80) || id
   const description = String(input.description || '').trim().slice(0, 500)
   if (!description) throw new Error('A skill needs a short description so the model knows when to use it.')
-  return { id, enabled: true, name, description, instructions }
+  const source = String(input.source || '').trim().slice(0, 200)
+  return {
+    id,
+    enabled: true,
+    name,
+    description,
+    instructions,
+    ...(source ? { source } : {}),
+  }
 }

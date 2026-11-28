@@ -1,6 +1,15 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { SETTINGS_GROUPS, SETTINGS_TABS, SETTING_LINKS, searchSettings, splitSettingTarget } from './settingsCatalog.ts'
+import { SETTINGS_GROUPS, SETTINGS_TABS, SETTINGS_TAB_HINTS, SETTING_LINKS, searchSettings, splitSettingTarget } from './settingsCatalog.ts'
+
+test('every section says what it is for, in one line', () => {
+  for (const [id] of SETTINGS_TABS) {
+    const hint = SETTINGS_TAB_HINTS[id]
+    assert.equal(typeof hint, 'string', `${id} needs a hint`)
+    assert.ok(hint.trim().length > 8 && hint.length <= 80, `${id}'s hint should be one short line`)
+  }
+  assert.deepEqual(Object.keys(SETTINGS_TAB_HINTS).sort(), SETTINGS_TABS.map(([id]) => id).sort())
+})
 
 test('settings groups contain every existing tab exactly once', () => {
   const ids = SETTINGS_GROUPS.flatMap(group => group.tabs)

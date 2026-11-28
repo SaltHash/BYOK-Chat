@@ -56,7 +56,7 @@ export const TAB_KEYWORDS: Record<SettingsTabId, string> = {
   features: 'features toggles enable disable library advanced',
   eps: 'endpoints models providers api keys connections model aliases base url preset credentials pricing test helper classification title effort recall aihubmix openrouter requesty portkey litellm bifrost',
   prompts: 'qualities qualities favorites favourite personality tone instant concise playful sophisticated thorough reasoning effort skills safety global system prompt instructions style',
-  skills: 'skills instructions custom builtin extra tasks',
+  skills: 'skills instructions custom builtin extra tasks catalogue marketplace online install download search browse public repository write own',
   pls: 'playlists routes groups ordered fastest cheapest classifier routing performance',
   cmds: 'commands slash input template run on playlist',
   workspace: 'workspace files panel templates gist share default view auto open follow',
@@ -73,6 +73,31 @@ export const TAB_KEYWORDS: Record<SettingsTabId, string> = {
   data: 'data import backup privacy export erase encrypted history storage compact',
   adv: 'advanced debugging verbose errors additional capabilities system prompt payloads token counts model parameters temperature top p max tokens',
   arena: 'arena benchmark benchmarks judge contestant compare models side by side grading eval leaderboard custom prompt long context recall needle page summary web general',
+}
+
+/** One line saying what each tab is for, shown as the nav's tooltip so a reader
+ *  scanning twenty labels knows what a name like "Qualities" opens. */
+export const SETTINGS_TAB_HINTS: Record<SettingsTabId, string> = {
+  features: 'Turn whole features on or off.',
+  eps: 'Model endpoints, keys and per-model behaviour.',
+  prompts: 'System prompt, qualities and reusable prompts.',
+  skills: 'Instruction packs the model loads when they apply.',
+  pls: 'Ordered model routes with fallback.',
+  cmds: 'Slash commands you type in the composer.',
+  workspace: 'Files the model can write and edit.',
+  tools: 'Search, page reading, code, images and approvals.',
+  mcp: 'External tool servers over HTTP.',
+  memory: 'Facts the model remembers between chats.',
+  widgets: 'The panels beside the conversation.',
+  library: 'Shortcut entries in the sidebar.',
+  look: 'Theme, fonts, spacing and motion.',
+  chats: 'How replies are written, shown and kept.',
+  voice: 'Dictation and read-aloud.',
+  keys: 'Keyboard shortcuts.',
+  stats: 'Tokens, cost and activity.',
+  data: 'Backups, sync, import and export.',
+  adv: 'Diagnostics and model parameters.',
+  arena: 'Compare models on the same prompt.',
 }
 
 /** Navigation groups preserve tab ids and deep links while organizing by task.
@@ -138,7 +163,8 @@ export const SETTING_LINKS: SettingLink[] = [
   { tab: 'prompts', anchor: 'add-prompt', title: 'Add prompt', keywords: 'add prompt new reusable' },
 
   // Skills
-  { tab: 'skills', anchor: 'add-skill', title: 'Add a custom skill', keywords: 'add skill custom id instructions when to use' },
+  { tab: 'skills', anchor: 'skill-catalogue', title: 'Skill catalogue', keywords: 'skill catalogue marketplace browse install download online public repository search find add anthropic' },
+  { tab: 'skills', anchor: 'add-skill', title: 'Write a skill of your own', keywords: 'add skill custom own write new name when to use instructions' },
 
   // Playlists
   { tab: 'pls', anchor: 'routing-mode', title: 'Playlist routing mode', keywords: 'routing ordered fastest cheapest candidate order' },

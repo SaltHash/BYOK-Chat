@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-const { BUILTIN_SKILLS, RETIRED_SKILL_IDS, DEFAULT_SKILL_STATE, normSkills, resolveSkill, enabledSkills, getSkillInstructions, composeSystemPrompt, validateCustomSkill, SKILL_TOOL_NAME } = await import('./skills.ts')
+const { BUILTIN_SKILLS, RETIRED_SKILL_IDS, DEFAULT_SKILL_STATE, normSkills, resolveSkill, enabledSkills, getSkillInstructions, composeSystemPrompt, validateCustomSkill, slugifySkillId, SKILL_INSTRUCTIONS_MAX, SKILL_TOOL_NAME } = await import('./skills.ts')
 
 test('built-in skills cover the required domains with descriptions and instructions', () => {
   const ids = BUILTIN_SKILLS.map((s) => s.id)
@@ -113,12 +113,45 @@ test('prompt composition lists the catalog instead of inlining instructions', ()
 })
 
 test('custom skill validation rejects bad input with useful errors', () => {
-  assert.throws(() => validateCustomSkill({ id: '!!!', instructions: 'x', description: 'd' }), /lowercase/)
+  assert.throws(() => validateCustomSkill({ id: '!!!', instructions: 'x', description: 'd' }), /letters/)
   assert.throws(() => validateCustomSkill({ id: 'testing', instructions: 'x', description: 'd' }), /built-in/)
+  assert.throws(() => validateCustomSkill({ id: 'frontend-design', instructions: 'x', description: 'd' }), /retired/)
   assert.throws(() => validateCustomSkill({ id: 'mine', instructions: '   ', description: 'd' }), /needs instructions/)
   assert.throws(() => validateCustomSkill({ id: 'mine', instructions: 'x', description: '  ' }), /description/)
   const skill = validateCustomSkill({ id: 'API Docs!', name: 'API docs', instructions: 'Follow the docs.', description: 'Use for API docs questions.' })
   assert.equal(skill.id, 'api-docs')
   assert.equal(skill.enabled, true)
   assert.equal(skill.description, 'Use for API docs questions.')
+})
+
+test('a name alone is enough: the id is derived from it', () => {
+  assert.equal(slugifySkillId('  Webapp  Testing! '), 'webapp-testing')
+  assert.equal(slugifySkillId('--x--'), 'x')
+  const skill = validateCustomSkill({ name: 'Data cleanup', description: 'Use for spreadsheets.', instructions: 'Tidy the rows.' })
+  assert.equal(skill.id, 'data-cleanup')
+  assert.equal(skill.name, 'Data cleanup')
+})
+
+test('a skill remembers where it was installed from', () => {
+  const skill = validateCustomSkill({
+    name: 'Webapp testing',
+    description: 'Use when a real browser is needed.',
+    instructions: 'Drive the page.',
+    source: 'github.com/anthropics/skills/skills/webapp-testing',
+  })
+  const { skills } = normSkills([skill])
+  const def = resolveSkill(skills.find((s) => s.id === skill.id))
+  assert.equal(def.source, 'github.com/anthropics/skills/skills/webapp-testing')
+  assert.equal(def.builtin, undefined)
+  // A stored source survives a reload; a built-in keeps the source it ships with.
+  assert.equal(normSkills([skill]).skills.find((s) => s.id === skill.id).source, 'github.com/anthropics/skills/skills/webapp-testing')
+  assert.equal(resolveSkill(normSkills(undefined).skills[0]).source, undefined)
+})
+
+test('instructions are capped at the shared limit on save and on load', () => {
+  assert.throws(() => validateCustomSkill({ name: 'Long', description: 'd', instructions: 'x'.repeat(SKILL_INSTRUCTIONS_MAX + 1) }), /character limit/)
+  const ok = validateCustomSkill({ name: 'Long', description: 'd', instructions: 'x'.repeat(SKILL_INSTRUCTIONS_MAX) })
+  assert.equal(ok.instructions.length, SKILL_INSTRUCTIONS_MAX)
+  const stored = normSkills([{ id: 'long', name: 'Long', description: 'd', instructions: 'y'.repeat(SKILL_INSTRUCTIONS_MAX + 500) }]).skills
+  assert.equal(stored.find((s) => s.id === 'long').instructions.length, SKILL_INSTRUCTIONS_MAX)
 })

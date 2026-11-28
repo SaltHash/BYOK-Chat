@@ -14,11 +14,17 @@ export function Anchor({ id, children }: { id: string; children: ReactNode }) {
   return <div id={settingDomId(id)} data-anchor={id} className="scroll-mt-6">{children}</div>
 }
 
-/** A titled group of related settings inside a tab. */
-export function Section({ title, children }: { title?: string; children: ReactNode }) {
+/** A titled group of related settings inside a tab. `hint` is the one line that
+ *  says what the group is for, so a row's label can stay short. */
+export function Section({ title, hint, children }: { title?: string; hint?: ReactNode; children: ReactNode }) {
   return (
     <section>
-      {title && <h3 className="pb-2 text-sm font-semibold text-tx">{title}</h3>}
+      {(title || hint) && (
+        <div className="pb-2">
+          {title && <h3 className="text-sm font-semibold text-tx">{title}</h3>}
+          {hint && <p className="mt-1 text-xs leading-relaxed text-mu">{hint}</p>}
+        </div>
+      )}
       {/* Hairlines between rows instead of a card per setting. */}
       <div className="divide-y divide-bor">{children}</div>
     </section>
